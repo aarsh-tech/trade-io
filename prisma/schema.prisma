@@ -1,0 +1,207 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ─── Users & Auth ─────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  totpSecret   String?
+  twoFaEnabled Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  brokerAccounts    BrokerAccount[]
+  strategies        Strategy[]
+  orders            Order[]
+  backtests         Backtest[]
+  refreshTokens     RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ─── Broker Accounts ──────────────────────────────────────────────────────────
+
+model BrokerAccount {
+  id           String     @id @default(cuid())
+  userId       String
+  broker       BrokerType
+  apiKeyEnc    String
+  apiSecretEnc String
+  clientId     String?
+  accessToken  String?
+  tokenExpiry  DateTime?
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders     Order[]
+  strategies Strategy[]
+
+  @@map("broker_accounts")
+}
+
+enum BrokerType {
+  ZERODHA
+  ANGEL
+  UPSTOX
+  FIVEPAISA
+}
+
+// ─── Strategies ───────────────────────────────────────────────────────────────
+
+model Strategy {
+  id              String       @id @default(cuid())
+  userId          String
+  brokerAccountId String?
+  name            String
+  type            StrategyType
+  config          String
+  isActive        Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brokerAccount BrokerAccount? @relation(fields: [brokerAccountId], references: [id])
+  executions    StrategyExecution[]
+  backtests     Backtest[]
+
+  @@map("strategies")
+}
+
+enum StrategyType {
+  BREAKOUT_15MIN
+  EMA_CROSSOVER
+  CUSTOM
+}
+
+model StrategyExecution {
+  id         String     @id @default(cuid())
+  strategyId String
+  status     ExecStatus @default(RUNNING)
+  startedAt  DateTime   @default(now())
+  stoppedAt  DateTime?
+  logs       String     @default("[]")
+  errorMsg   String?
+
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  orders   Order[]
+
+  @@map("strategy_executions")
+}
+
+enum ExecStatus {
+  RUNNING
+  STOPPED
+  ERROR
+  COMPLETED
+}
+
+// ─── Orders ───────────────────────────────────────────────────────────────────
+
+model Order {
+  id              String      @id @default(cuid())
+  userId          String
+  brokerAccountId String
+  strategyId      String?
+  executionId     String?
+  symbol          String
+  exchange        String
+  side            OrderSide
+  orderType       OrderType
+  productType     ProductType
+  qty             Int
+  price           Float?
+  triggerPrice    Float?
+  brokerOrderId   String?
+  status          OrderStatus @default(PENDING)
+  filledQty       Int         @default(0)
+  avgPrice        Float?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user          User              @relation(fields: [userId], references: [id])
+  brokerAccount BrokerAccount     @relation(fields: [brokerAccountId], references: [id])
+  execution     StrategyExecution? @relation(fields: [executionId], references: [id])
+
+  @@map("orders")
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+  SL
+  SL_M
+}
+
+enum ProductType {
+  CNC
+  MIS
+  NRML
+}
+
+enum OrderStatus {
+  PENDING
+  OPEN
+  COMPLETE
+  REJECTED
+  CANCELLED
+}
+
+// ─── Backtests ────────────────────────────────────────────────────────────────
+
+model Backtest {
+  id          String        @id @default(cuid())
+  userId      String
+  strategyId  String
+  symbol      String
+  exchange    String
+  fromDate    DateTime
+  toDate      DateTime
+  capital     Float         @default(100000)
+  status      BacktestStatus @default(PENDING)
+  result      String?
+  createdAt   DateTime      @default(now())
+  completedAt DateTime?
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy Strategy @relation(fields: [strategyId], references: [id])
+
+  @@map("backtests")
+}
+
+enum BacktestStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}

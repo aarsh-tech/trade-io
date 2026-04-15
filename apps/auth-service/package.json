@@ -1,0 +1,46 @@
+{
+  "name": "@algo-trade/auth-service",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev":        "nest start --watch",
+    "build":      "nest build",
+    "start":      "node dist/main",
+    "lint":       "eslint \"{src,apps,libs,test}/**/*.ts\"",
+    "test":       "jest"
+  },
+  "dependencies": {
+    "@nestjs/common":        "^11.0.0",
+    "@nestjs/core":          "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/config":        "^4.0.0",
+    "@nestjs/jwt":           "^11.0.0",
+    "@nestjs/passport":      "^11.0.0",
+    "@nestjs/swagger":       "^11.0.0",
+    "@nestjs/throttler":     "^6.0.0",
+    "@prisma/client":        "^6.2.1",
+    "passport":              "^0.7.0",
+    "passport-jwt":          "^4.0.1",
+    "passport-local":        "^1.0.0",
+    "bcryptjs":              "^2.4.3",
+    "speakeasy":             "^2.0.0",
+    "qrcode":                "^1.5.4",
+    "class-validator":       "^0.14.1",
+    "class-transformer":     "^0.5.1",
+    "reflect-metadata":      "^0.2.2",
+    "rxjs":                  "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli":           "^11.0.0",
+    "@nestjs/schematics":    "^11.0.0",
+    "@nestjs/testing":       "^11.0.0",
+    "@types/bcryptjs":       "^2.4.6",
+    "@types/node":           "^22.10.7",
+    "@types/passport-jwt":   "^4.0.1",
+    "@types/speakeasy":      "^2.0.10",
+    "@types/qrcode":         "^1.5.5",
+    "typescript":            "^5.7.3",
+    "prisma":                "^6.2.1",
+    "ts-node":               "^10.9.2"
+  }
+}
