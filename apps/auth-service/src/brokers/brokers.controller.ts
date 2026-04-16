@@ -27,6 +27,32 @@ export class BrokersController {
     return { success: true, data: result };
   }
 
+  @Get(':id/holdings')
+  @ApiOperation({ summary: 'Get holdings for a specific broker account' })
+  async holdings(@Request() req, @Param('id') id: string) {
+    const result = await this.brokersService.getHoldings(req.user.id, id);
+    return { success: true, data: result };
+  }
+
+  @Get(':id/positions')
+  @ApiOperation({ summary: 'Get positions for a specific broker account' })
+  async positions(@Request() req, @Param('id') id: string) {
+    const result = await this.brokersService.getPositions(req.user.id, id);
+    return { success: true, data: result };
+  }
+
+  @Get(':id/login-url')
+  @ApiOperation({ summary: 'Get broker login URL' })
+  async loginUrl(@Request() req, @Param('id') id: string) {
+    return this.brokersService.getLoginUrl(req.user.id, id);
+  }
+
+  @Post(':id/session')
+  @ApiOperation({ summary: 'Set active session for a broker account' })
+  async setSession(@Request() req, @Param('id') id: string, @Body('requestToken') token: string) {
+    return this.brokersService.setSession(req.user.id, id, token);
+  }
+
   @Delete(':id')
   @ApiOperation({ summary: 'Disconnect a broker account' })
   async disconnect(@Request() req, @Param('id') id: string) {

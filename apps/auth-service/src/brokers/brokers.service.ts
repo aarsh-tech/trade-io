@@ -1,11 +1,77 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectBrokerDto } from './dto/broker.dto';
-import { encrypt } from '../common/utils/crypto';
+import { encrypt, decrypt } from '../common/utils/crypto';
+import { BrokerClientFactory } from './broker-client.factory';
 
 @Injectable()
 export class BrokersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private factory: BrokerClientFactory,
+  ) {}
+
+  async getHoldings(userId: string, accountId: string) {
+    const acc = await this.prisma.brokerAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+
+    const client = this.factory.createClient(acc);
+    return client.getHoldings();
+  }
+
+  async getPositions(userId: string, accountId: string) {
+    const acc = await this.prisma.brokerAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+
+    const client = this.factory.createClient(acc);
+    return client.getPositions();
+  }
+
+  async getLoginUrl(userId: string, accountId: string) {
+    const acc = await this.prisma.brokerAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+
+    if (acc.broker === 'ZERODHA') {
+        const apiKey = decrypt(acc.apiKeyEnc);
+        return { url: `https://kite.trade/connect/login?v=3&api_key=${apiKey}` };
+    }
+    
+    throw new BadRequestException('Login URL not available for this broker');
+  }
+
+  async setSession(userId: string, accountId: string, requestToken: string) {
+    const acc = await this.prisma.brokerAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+
+    // Zerodha specific: exchange requestToken for accessToken
+    if (acc.broker === 'ZERODHA') {
+        const { KiteConnect } = require('kiteconnect');
+        const apiKey = decrypt(acc.apiKeyEnc);
+        const apiSecret = decrypt(acc.apiSecretEnc);
+        
+        const kite = new KiteConnect({ api_key: apiKey });
+        const session = await kite.generateSession(requestToken, apiSecret);
+        
+        console.log(`Successfully generated session for ${acc.clientId}`);
+
+        await this.prisma.brokerAccount.update({
+            where: { id: accountId },
+            data: { accessToken: session.access_token },
+        });
+        
+        return { success: true };
+    }
+    
+    throw new BadRequestException('Session refresh not supported for this broker');
+  }
 
   async list(userId: string) {
     return this.prisma.brokerAccount.findMany({

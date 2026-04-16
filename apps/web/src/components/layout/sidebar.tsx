@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   Zap,
   LogOut,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -21,6 +22,7 @@ import { useRouter } from "next/navigation";
 
 const navItems = [
   { href: "/dashboard",   label: "Dashboard",   icon: LayoutDashboard },
+  { href: "/portfolio",   label: "Portfolio",   icon: Wallet },
   { href: "/strategies",  label: "Strategies",  icon: TrendingUp },
   { href: "/backtest",    label: "Backtest",    icon: FlaskConical },
   { href: "/brokers",     label: "Brokers",     icon: Plug },
