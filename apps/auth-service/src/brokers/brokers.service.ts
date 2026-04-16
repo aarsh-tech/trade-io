@@ -62,9 +62,17 @@ export class BrokersService {
         
         console.log(`Successfully generated session for ${acc.clientId}`);
 
+        // Zerodha tokens expire at 6:00 AM next day
+        const expiry = new Date();
+        expiry.setDate(expiry.getDate() + 1);
+        expiry.setHours(6, 0, 0, 0);
+
         await this.prisma.brokerAccount.update({
             where: { id: accountId },
-            data: { accessToken: session.access_token },
+            data: { 
+              accessToken: session.access_token,
+              tokenExpiry: expiry,
+            },
         });
         
         return { success: true };

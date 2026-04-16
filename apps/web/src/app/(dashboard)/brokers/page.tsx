@@ -34,7 +34,7 @@ export default function BrokersPage() {
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedBroker) return;
-    
+
     try {
       await connect({
         broker: selectedBroker.key as any,
@@ -96,17 +96,40 @@ export default function BrokersPage() {
                       </div>
                       <Badge variant="running" dot>Active</Badge>
                     </div>
-                    <div className="text-xs text-slate-500 mb-4">
-                      Token expires: {acc.tokenExpiry ? new Date(acc.tokenExpiry).toLocaleDateString("en-IN") : "No token"}
+                    <div className="text-xs font-medium mb-4">
+                      {acc.tokenExpiry ? (
+                        new Date(acc.tokenExpiry) < new Date() ? (
+                          <span className="text-red-500 flex items-center gap-1">
+                            <X className="h-3 w-3" /> Session expired
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">
+                            Expires: {new Date(acc.tokenExpiry).toLocaleString("en-IN", {
+                              day: '2-digit',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-amber-600 font-semibold italic">Not logged in today</span>
+                      )}
                     </div>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" className="flex-1 gap-1 text-slate-700 bg-white border-slate-200 hover:bg-slate-50">
-                        <ExternalLink className="h-3 w-3" /> Renew Token
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 gap-1 text-slate-700 bg-white border-slate-200 hover:bg-slate-50"
+                      >
+                        <a href="/portfolio">
+                          <ExternalLink className="h-3 w-3" /> Renew Token
+                        </a>
                       </Button>
-                      <Button 
-                        variant="outline" 
-                        size="icon-sm" 
-                        className="text-red-500 bg-white border-slate-200 hover:bg-red-50 hover:border-red-200"
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        className="text-red-500 bg-white border-slate-200 hover:bg-red-50 hover:border-red-200 h-8 w-8"
                         onClick={() => handleDisconnect(acc.id)}
                       >
                         <X className="h-3.5 w-3.5" />
@@ -120,8 +143,8 @@ export default function BrokersPage() {
         </div>
       ) : (
         <div className="p-8 border-2 border-dashed border-slate-100 rounded-2xl text-center bg-slate-50/50">
-           <Plug className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-           <p className="text-slate-500 text-sm font-medium">No brokers connected yet</p>
+          <Plug className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+          <p className="text-slate-500 text-sm font-medium">No brokers connected yet</p>
         </div>
       )}
 
@@ -244,7 +267,7 @@ export default function BrokersPage() {
                     >
                       Cancel
                     </Button>
-                      <Button
+                    <Button
                       className="flex-1 h-12 rounded-xl text-white font-semibold transition-all hover:opacity-90 hover:scale-[1.02] shadow-md"
                       style={{ backgroundColor: selectedBroker.color }}
                       disabled={isConnecting}

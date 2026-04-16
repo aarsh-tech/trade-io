@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 
 export const PORTFOLIO_KEYS = {
   all: ["portfolio"] as const,
@@ -10,6 +11,7 @@ export const PORTFOLIO_KEYS = {
 
 export function usePortfolio(brokerId?: string | null) {
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const holdingsQuery = useQuery({
     queryKey: PORTFOLIO_KEYS.holdings(brokerId || undefined),
@@ -38,7 +40,9 @@ export function usePortfolio(brokerId?: string | null) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PORTFOLIO_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: ["brokers"] }); // Force broker list to refresh
       toast.success("Session renewed successfully!");
+      router.push("/portfolio");
     },
     onError: (err: any) => {
       toast.error(err?.response?.data?.message || "Failed to renew session");
