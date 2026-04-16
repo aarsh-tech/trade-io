@@ -11,6 +11,7 @@ import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import { randomBytes } from 'crypto';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class AuthService {
@@ -139,5 +140,47 @@ export class AuthService {
 
   async validateAccessToken(payload: { sub: string }) {
     return this.users.findById(payload.sub);
+  }
+
+  // ─── Forgot Password ──────────────────────────────────────────────────────────
+  async forgotPassword(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) return { success: true }; // Don't leak user existence
+
+    const token = randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 3600000); // 1 hour
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { resetToken: token, resetExpires: expires },
+    });
+
+    // In production, send email here. For now, log it.
+    console.log(`📧 Password reset link: http://localhost:3000/reset-password?token=${token}`);
+    
+    return { success: true, message: 'If an account exists, a reset link has been sent' };
+  }
+
+  // ─── Reset Password ───────────────────────────────────────────────────────────
+  async resetPassword(token: string, newPass: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { resetToken: token },
+    });
+
+    if (!user || !user.resetExpires || user.resetExpires < new Date()) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    const passwordHash = await bcrypt.hash(newPass, 12);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        resetToken: null,
+        resetExpires: null,
+      },
+    });
+
+    return { success: true, message: 'Password has been reset successfully' };
   }
 }

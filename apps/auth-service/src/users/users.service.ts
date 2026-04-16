@@ -45,6 +45,35 @@ export class UsersService {
     });
   }
 
+  async update(id: string, data: { email?: string; name?: string }) {
+    if (data.email) {
+      const exists = await this.prisma.user.findUnique({ where: { email: data.email } });
+      if (exists && exists.id !== id) throw new ConflictException('Email already in use');
+    }
+
+    return this.prisma.user.update({
+      where: { id },
+      data,
+      select: { id: true, email: true, name: true, twoFaEnabled: true, createdAt: true },
+    });
+  }
+
+  async updatePassword(userId: string, currentPass: string, newPass: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const isValid = await bcrypt.compare(currentPass, user.passwordHash);
+    if (!isValid) throw new ConflictException('Incorrect current password');
+
+    const passwordHash = await bcrypt.hash(newPass, 12);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+
+    return { success: true };
+  }
+
   async validatePassword(user: { passwordHash: string }, password: string): Promise<boolean> {
     return bcrypt.compare(password, user.passwordHash);
   }

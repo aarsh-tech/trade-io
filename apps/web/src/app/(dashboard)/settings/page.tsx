@@ -7,11 +7,13 @@ import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/store";
 import { Lock, User, Shield, Key } from "lucide-react";
 import { toast } from "sonner";
-import { authApi } from "@/lib/api";
+import { useUser, use2FA } from "@/hooks/useAuth";
 
 export default function SettingsPage() {
-  const { user, setAuth } = useAuthStore();
-  const [loading, setLoading] = useState(false);
+  const { user, updateUser } = useAuthStore();
+  const { updateProfile, isUpdatingProfile, changePassword, isChangingPassword } = useUser();
+  const { setup2FA, isSettingUp, verify2FA, isVerifying } = use2FA();
+
   const [profileForm, setProfileForm] = useState({ name: user?.name || "", email: user?.email || "" });
   const [passwordForm, setPasswordForm] = useState({ current: "", newPassword: "", confirm: "" });
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -19,11 +21,11 @@ export default function SettingsPage() {
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    // Mock API call for now
-    await new Promise((r) => setTimeout(r, 1000));
-    toast.success("Profile updated successfully!");
-    setLoading(false);
+    try {
+      await updateProfile(profileForm);
+    } catch {
+      // error handled in hook
+    }
   };
 
   const handlePasswordUpdate = async (e: React.FormEvent) => {
@@ -32,35 +34,26 @@ export default function SettingsPage() {
       toast.error("New passwords do not match");
       return;
     }
-    setLoading(true);
-    // Mock API call
-    await new Promise((r) => setTimeout(r, 1000));
-    toast.success("Password updated successfully!");
-    setPasswordForm({ current: "", newPassword: "", confirm: "" });
-    setLoading(false);
-  };
-
-  const handleSetup2FA = async () => {
     try {
-      const { data } = await authApi.setup2fa();
-      setQrCode(data.data.qrCode);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || "Failed to setup 2FA");
+      await changePassword({
+        currentPassword: passwordForm.current,
+        newPassword: passwordForm.newPassword,
+      });
+      setPasswordForm({ current: "", newPassword: "", confirm: "" });
+    } catch {
+      // error handled in hook
     }
   };
 
-  const verifySetup2FA = async () => {
-    try {
-      await authApi.verify2fa(setup2faCode);
-      toast.success("2-Factor Authentication enabled!");
-      setQrCode(null);
-      // Update local state to reflect 2FA is enabled
-      if (user) {
-        setAuth({ ...user, twoFaEnabled: true }, localStorage.getItem("accessToken") || "", localStorage.getItem("refreshToken") || "");
-      }
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || "Invalid 2FA code");
-    }
+  const onInit2FASetup = async () => {
+    const res = await setup2FA();
+    setQrCode(res.data.data.qrCode);
+  };
+
+  const onVerify2FASetup = async () => {
+    await verify2FA(setup2faCode);
+    setQrCode(null);
+    updateUser({ twoFaEnabled: true });
   };
 
   return (
@@ -107,7 +100,9 @@ export default function SettingsPage() {
                     className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-                <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white" loading={loading}>Save Changes</Button>
+                <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isUpdatingProfile}>
+                  {isUpdatingProfile ? "Saving..." : "Save Changes"}
+                </Button>
               </form>
             </CardContent>
           </Card>
@@ -151,7 +146,9 @@ export default function SettingsPage() {
                     />
                   </div>
                 </div>
-                <Button type="submit" variant="outline" className="border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold" loading={loading}>Update Password</Button>
+                <Button type="submit" variant="outline" className="border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold" disabled={isChangingPassword}>
+                  {isChangingPassword ? "Updating..." : "Update Password"}
+                </Button>
               </form>
             </CardContent>
           </Card>
@@ -180,8 +177,8 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-4">
                   {!qrCode ? (
-                    <Button onClick={handleSetup2FA} className="bg-slate-900 hover:bg-black text-white gap-2">
-                      <Key className="h-4 w-4" /> Setup 2FA
+                    <Button onClick={onInit2FASetup} disabled={isSettingUp} className="bg-slate-900 hover:bg-black text-white gap-2">
+                      <Key className="h-4 w-4" /> {isSettingUp ? "Generating..." : "Setup 2FA"}
                     </Button>
                   ) : (
                     <div className="p-6 border border-slate-200 rounded-xl bg-slate-50 space-y-6">
@@ -204,8 +201,8 @@ export default function SettingsPage() {
                             className="w-full h-12 text-center text-xl tracking-[0.5em] rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono font-bold text-slate-900"
                           />
                         </div>
-                        <Button onClick={verifySetup2FA} className="w-full max-w-[240px] mx-auto block bg-blue-600 hover:bg-blue-700 text-white">
-                          Verify & Enable
+                        <Button onClick={onVerify2FASetup} disabled={isVerifying} className="w-full max-w-[240px] mx-auto block bg-blue-600 hover:bg-blue-700 text-white">
+                          {isVerifying ? "Verifying..." : "Verify & Enable"}
                         </Button>
                       </div>
                     </div>

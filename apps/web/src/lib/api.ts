@@ -51,6 +51,16 @@ export const authApi = {
   logout:   () => api.post("/auth/logout"),
   setup2fa: () => api.post("/auth/2fa/setup"),
   verify2fa:(code: string) => api.post("/auth/2fa/verify", { code }),
+  forgotPassword: (email: string) => api.post("/auth/forgot-password", { email }),
+  resetPassword: (data: { token: string; newPassword: string }) => api.post("/auth/reset-password", data),
+};
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+export const userApi = {
+  updateProfile: (data: { email?: string; name?: string }) =>
+    api.patch("/users/profile", data),
+  changePassword: (data: { currentPassword: string; newPassword: string }) =>
+    api.post("/users/change-password", data),
 };
 
 // ─── Strategies ───────────────────────────────────────────────────────────────

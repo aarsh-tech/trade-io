@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ─── Users & Auth ─────────────────────────────────────────────────────────────
@@ -19,6 +19,8 @@ model User {
   passwordHash String
   totpSecret   String?
   twoFaEnabled Boolean  @default(false)
+  resetToken   String?  @unique
+  resetExpires DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

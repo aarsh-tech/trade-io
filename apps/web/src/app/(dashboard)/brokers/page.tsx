@@ -10,27 +10,22 @@ import { Plug, Plus, X, CheckCircle2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-const BROKERS = [
+import { useBrokers } from "@/hooks/useBrokers";
+
+const BROKERS_CONFIG = [
   { key: "ZERODHA", name: "Zerodha", logo: "Z", color: "#387ED1", desc: "Kite Connect API" },
   { key: "ANGEL", name: "Angel One", logo: "A", color: "#F36B21", desc: "SmartAPI" },
   { key: "UPSTOX", name: "Upstox", logo: "U", color: "#6C5CE7", desc: "Upstox API v2" },
   { key: "FIVEPAISA", name: "5paisa", logo: "5", color: "#E84542", desc: "5paisa Trade API" },
 ];
 
-const connected = [
-  {
-    id: "1", broker: "ZERODHA", name: "Zerodha", logo: "Z", color: "#387ED1",
-    clientId: "AB1234", isActive: true, tokenExpiry: "2026-04-12T06:00:00Z",
-  },
-];
-
 export default function BrokersPage() {
+  const { brokers, isLoading, connect, isConnecting, disconnect } = useBrokers();
   const [showModal, setShowModal] = useState(false);
-  const [selectedBroker, setSelectedBroker] = useState<typeof BROKERS[0] | null>(null);
+  const [selectedBroker, setSelectedBroker] = useState<typeof BROKERS_CONFIG[0] | null>(null);
   const [form, setForm] = useState({ apiKey: "", apiSecret: "", clientId: "" });
-  const [loading, setLoading] = useState(false);
 
-  function openConnect(broker: typeof BROKERS[0]) {
+  function openConnect(broker: typeof BROKERS_CONFIG[0]) {
     setSelectedBroker(broker);
     setForm({ apiKey: "", apiSecret: "", clientId: "" });
     setShowModal(true);
@@ -38,11 +33,23 @@ export default function BrokersPage() {
 
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    setLoading(false);
-    setShowModal(false);
-    toast.success(`${selectedBroker?.name} connected successfully!`);
+    if (!selectedBroker) return;
+    
+    try {
+      await connect({
+        broker: selectedBroker.key as any,
+        ...form,
+      });
+      setShowModal(false);
+    } catch {
+      // toast in hook
+    }
+  }
+
+  async function handleDisconnect(id: string) {
+    if (confirm("Are you sure you want to disconnect this broker?")) {
+      await disconnect(id);
+    }
   }
 
   return (
@@ -55,48 +62,66 @@ export default function BrokersPage() {
       </div>
 
       {/* Connected accounts */}
-      {connected.length > 0 && (
+      {/* Connected accounts */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {[1, 2].map(i => <div key={i} className="h-40 rounded-xl bg-slate-100 animate-pulse" />)}
+        </div>
+      ) : brokers.length > 0 ? (
         <div>
           <h2 className="text-sm font-semibold text-[hsl(var(--muted-foreground))] uppercase tracking-wider mb-3">
             Connected
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {connected.map((acc) => (
-              <Card key={acc.id} className="relative">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ background: acc.color }} />
-                <CardContent className="pt-5">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="h-10 w-10 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-sm"
-                        style={{ background: acc.color }}
-                      >
-                        {acc.logo}
+            {brokers.map((acc: any) => {
+              const config = BROKERS_CONFIG.find(b => b.key === acc.broker) || BROKERS_CONFIG[0];
+              return (
+                <Card key={acc.id} className="relative">
+                  <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ background: config.color }} />
+                  <CardContent className="pt-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="h-10 w-10 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-sm"
+                          style={{ background: config.color }}
+                        >
+                          {config.logo}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900">{config.name}</p>
+                          <p className="text-xs text-slate-500">
+                            Client: {acc.clientId}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-semibold text-slate-900">{acc.name}</p>
-                        <p className="text-xs text-slate-500">
-                          Client: {acc.clientId}
-                        </p>
-                      </div>
+                      <Badge variant="running" dot>Active</Badge>
                     </div>
-                    <Badge variant="running" dot>Active</Badge>
-                  </div>
-                  <div className="text-xs text-slate-500 mb-4">
-                    Token expires: {new Date(acc.tokenExpiry).toLocaleDateString("en-IN")}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="flex-1 gap-1 text-slate-700 bg-white border-slate-200 hover:bg-slate-50">
-                      <ExternalLink className="h-3 w-3" /> Renew Token
-                    </Button>
-                    <Button variant="outline" size="icon-sm" className="text-red-500 bg-white border-slate-200 hover:bg-red-50 hover:border-red-200">
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    <div className="text-xs text-slate-500 mb-4">
+                      Token expires: {acc.tokenExpiry ? new Date(acc.tokenExpiry).toLocaleDateString("en-IN") : "No token"}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" className="flex-1 gap-1 text-slate-700 bg-white border-slate-200 hover:bg-slate-50">
+                        <ExternalLink className="h-3 w-3" /> Renew Token
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="icon-sm" 
+                        className="text-red-500 bg-white border-slate-200 hover:bg-red-50 hover:border-red-200"
+                        onClick={() => handleDisconnect(acc.id)}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
+        </div>
+      ) : (
+        <div className="p-8 border-2 border-dashed border-slate-100 rounded-2xl text-center bg-slate-50/50">
+           <Plug className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+           <p className="text-slate-500 text-sm font-medium">No brokers connected yet</p>
         </div>
       )}
 
@@ -106,14 +131,14 @@ export default function BrokersPage() {
           Available Brokers
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {BROKERS.map((b) => {
-            const isConnected = connected.some((c) => c.broker === b.key);
+          {BROKERS_CONFIG.map((b) => {
+            const isConnected = brokers.some((c: any) => c.broker === b.key);
             return (
               <Card
                 key={b.key}
                 className={cn(
-                  "cursor-pointer hover:scale-[1.02] transition-all",
-                  isConnected && "opacity-60"
+                  "transition-all",
+                  isConnected ? "opacity-60 grayscale-[0.5]" : "cursor-pointer hover:scale-[1.02] hover:shadow-md"
                 )}
                 onClick={() => !isConnected && openConnect(b)}
               >
@@ -219,13 +244,15 @@ export default function BrokersPage() {
                     >
                       Cancel
                     </Button>
-                    <Button
+                      <Button
                       className="flex-1 h-12 rounded-xl text-white font-semibold transition-all hover:opacity-90 hover:scale-[1.02] shadow-md"
                       style={{ backgroundColor: selectedBroker.color }}
-                      loading={loading}
+                      disabled={isConnecting}
                       type="submit"
                     >
-                      {!loading && <CheckCircle2 className="h-5 w-5 mr-2" />} Connect Account
+                      {isConnecting ? "Connecting..." : (
+                        <><CheckCircle2 className="h-5 w-5 mr-2" /> Connect Account</>
+                      )}
                     </Button>
                   </div>
                 </form>

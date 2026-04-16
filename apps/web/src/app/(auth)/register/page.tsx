@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Zap, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/store";
-import { authApi } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 export default function RegisterPage() {
@@ -15,7 +15,7 @@ export default function RegisterPage() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [showPass, setShowPass] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const { register, isRegistering } = useAuth();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,16 +23,13 @@ export default function RegisterPage() {
       toast.error("Password must be at least 8 characters");
       return;
     }
-    setLoading(true);
     try {
-      const { data } = await authApi.register(form);
+      const { data } = await register(form);
       setAuth(data.data.user, data.data.accessToken, data.data.refreshToken);
       toast.success("Account created!", { description: "Welcome to AlgoTrade." });
       router.replace("/dashboard");
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || "Registration failed");
-    } finally {
-      setLoading(false);
+      toast.error(err?.response?.data?.message || err?.response?.data?.error || "Registration failed");
     }
   }
 
@@ -108,8 +105,8 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          <Button type="submit" className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg mt-2" loading={loading}>
-            Create Account
+          <Button type="submit" className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg mt-2" disabled={isRegistering}>
+            {isRegistering ? "Creating Account..." : "Create Account"}
           </Button>
 
           <p className="text-xs text-slate-500 text-center leading-relaxed font-medium pt-2">

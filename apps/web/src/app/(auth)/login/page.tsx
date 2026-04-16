@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Zap, Eye, EyeOff, TrendingUp, Shield, BarChart2 } from "lucide-react";
 import { useAuthStore } from "@/store";
-import { authApi } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -23,26 +23,22 @@ export default function LoginPage() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const [form, setForm] = useState({ email: "", password: "", totpCode: "" });
   const [showPass, setShowPass] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const { login, isLoggingIn } = useAuth();
   const [show2fa, setShow2fa] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     try {
-      const { data } = await authApi.login(form);
+      const { data } = await login(form);
       if (data.data.requireTotp) {
         setShow2fa(true);
-        setLoading(false);
         return;
       }
       setAuth(data.data.user, data.data.accessToken, data.data.refreshToken);
       toast.success("Welcome back!", { description: data.data.user.email });
       router.replace("/dashboard");
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || "Login failed");
-    } finally {
-      setLoading(false);
+      toast.error(err?.response?.data?.message || err?.response?.data?.error || "Login failed");
     }
   }
 
@@ -93,7 +89,7 @@ export default function LoginPage() {
       {/* Right panel - Auth Form */}
       <div className="flex-1 flex items-center justify-center p-8 bg-slate-50">
         <div className="w-full max-w-[400px] space-y-8 bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
-          
+
           <div className="flex lg:hidden items-center gap-2 mb-2 justify-center">
             <div className="h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center shadow-sm">
               <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
@@ -128,7 +124,7 @@ export default function LoginPage() {
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-semibold text-slate-700">Password</label>
                     <Link href="/forgot-password" className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
-                      Forgot?
+                      Forgot Password ?
                     </Link>
                   </div>
                   <div className="relative">
@@ -173,16 +169,12 @@ export default function LoginPage() {
               </div>
             )}
 
-            <Button type="submit" className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg" loading={loading}>
-              {show2fa ? "Verify & Sign In" : "Sign In"}
+            <Button type="submit" className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg" disabled={isLoggingIn}>
+              {isLoggingIn ? "Signing In..." : show2fa ? "Verify & Sign In" : "Sign In"}
             </Button>
           </form>
 
-          <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-center">
-            <div className="bg-slate-100 px-4 py-2 rounded-lg inline-block text-xs font-medium text-slate-500">
-              Demo: <span className="text-slate-700">demo@algotrade.io</span> / <span className="text-slate-700">demo1234</span>
-            </div>
-          </div>
+
         </div>
       </div>
     </div>
