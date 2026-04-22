@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { BrokersModule } from './brokers/brokers.module';
 import { MarketModule } from './market/market.module';
 import { StrategyModule } from './strategy/strategy.module';
+import { BacktestModule } from './backtest/backtest.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { StrategyModule } from './strategy/strategy.module';
     BrokersModule,
     MarketModule,
     StrategyModule,
+    BacktestModule,
   ],
 })
 

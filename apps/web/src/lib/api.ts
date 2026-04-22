@@ -102,10 +102,8 @@ export const marketApi = {
 
 // ─── Backtesting ──────────────────────────────────────────────────────────────
 export const backtestApi = {
-  list:   () => api.get("/backtest"),
-  get:    (id: string) => api.get(`/backtest/${id}`),
-  submit: (data: unknown) => api.post("/backtest", data),
-  delete: (id: string) => api.delete(`/backtest/${id}`),
+  run:    (data: any) => api.post("/backtest/run", data),
+  history: () => api.get("/backtest/history"),
 };
 
 // ─── Orders ───────────────────────────────────────────────────────────────────

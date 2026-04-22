@@ -192,7 +192,8 @@ export default function NewStrategyPage() {
         name: form.name,
         type: form.type,
         brokerAccountId: form.brokerAccountId || undefined,
-        config: JSON.stringify(finalConfig),
+        config: JSON.stringify(config),
+        isPaperTrade: form.isPaperTrade,
       });
 
       toast.success("Strategy created!", {

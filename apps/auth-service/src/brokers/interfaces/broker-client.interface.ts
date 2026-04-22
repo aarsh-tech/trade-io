@@ -50,6 +50,7 @@ export interface IBrokerClient {
   placeOrder(params: OrderParams): Promise<string>;
   getLTP(symbols: string[]): Promise<Record<string, number>>;
   searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]>;
+  getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date): Promise<any[]>;
 }
 
 

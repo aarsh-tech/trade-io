@@ -204,6 +204,39 @@ class ZerodhaClient implements IBrokerClient {
       return [];
     }
   }
+
+  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date): Promise<any[]> {
+    try {
+      const upperSymbol = symbol.toUpperCase().trim();
+      let token: number | null = null;
+
+      // Common index tokens
+      const indexTokens: Record<string, number> = {
+        'NIFTY 50': 256265, 'NIFTY50': 256265,
+        'BANKNIFTY': 260105, 'BANK NIFTY': 260105,
+        'SENSEX': 265, 'NIFTY MIDCAP 50': 288009,
+      };
+
+      if (indexTokens[upperSymbol]) {
+        token = indexTokens[upperSymbol];
+      } else {
+        // Search instruments for token
+        if (!nseInstrumentsCache) {
+          await this.searchInstruments(symbol); // triggers cache load
+        }
+        const found = nseInstrumentsCache?.find(i => i.tradingsymbol === upperSymbol && i.exchange === exchange);
+        if (found) token = found.instrument_token;
+      }
+
+      if (!token) throw new Error(`Instrument token not found for ${symbol}`);
+
+      const data = await this.kite.getHistoricalData(token, interval, from, to, false);
+      return data || [];
+    } catch (err) {
+      console.error('Zerodha getHistoricalData Error:', err);
+      throw err;
+    }
+  }
 }
 
 
@@ -216,6 +249,7 @@ class AngelClient implements IBrokerClient {
   async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
   async getLTP(symbols: string[]) { return {}; }
   async searchInstruments(query: string) { return []; }
+  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
 }
 
 
@@ -227,6 +261,7 @@ class UpstoxClient implements IBrokerClient {
   async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
   async getLTP(symbols: string[]) { return {}; }
   async searchInstruments(query: string) { return []; }
+  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
 }
 
 
@@ -238,6 +273,7 @@ class FivePaisaClient implements IBrokerClient {
   async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
   async getLTP(symbols: string[]) { return {}; }
   async searchInstruments(query: string) { return []; }
+  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
 }
 
 
@@ -249,6 +285,7 @@ class AliceBlueClient implements IBrokerClient {
   async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
   async getLTP(symbols: string[]) { return {}; }
   async searchInstruments(query: string) { return []; }
+  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
 }
 
 

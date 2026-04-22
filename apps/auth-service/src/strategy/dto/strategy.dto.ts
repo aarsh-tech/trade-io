@@ -36,6 +36,11 @@ export class CreateStrategyDto {
   @ApiProperty({ description: 'JSON-serialised strategy config' })
   @IsString()
   config: string;
+
+  @ApiPropertyOptional({ default: true })
+  @IsBoolean()
+  @IsOptional()
+  isPaperTrade?: boolean;
 }
 
 export class UpdateStrategyDto {
@@ -58,4 +63,9 @@ export class UpdateStrategyDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isPaperTrade?: boolean;
 }

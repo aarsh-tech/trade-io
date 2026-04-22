@@ -19,6 +19,7 @@ interface StrategyState {
   executionId: string;
   config: Breakout15MinConfig;
   brokerAccountId: string;
+  isPaperTrade: boolean;
   // 15-min reference candle (9:15–9:30)
   refHigh: number | null;
   refLow: number | null;
@@ -44,7 +45,7 @@ export class Breakout15MinEngine {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
-  ) {}
+  ) { }
 
   // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -77,6 +78,7 @@ export class Breakout15MinEngine {
       executionId: execution.id,
       config,
       brokerAccountId: strategy.brokerAccountId!,
+      isPaperTrade: (strategy as any).isPaperTrade,
       refHigh: null,
       refLow: null,
       refCandleSet: false,
@@ -298,8 +300,13 @@ export class Breakout15MinEngine {
 
     let entryOrderId: string;
     try {
-      entryOrderId = await client.placeOrder(entryParams);
-      this.log(state, `✅ Entry order placed — ID: ${entryOrderId}`);
+      if (state.isPaperTrade) {
+        entryOrderId = `PAPER_${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+        this.log(state, `📝 [PAPER] Entry order simulated — ID: ${entryOrderId}`);
+      } else {
+        entryOrderId = await client.placeOrder(entryParams);
+        this.log(state, `✅ Entry order placed — ID: ${entryOrderId}`);
+      }
     } catch (err) {
       this.log(state, `❌ Entry order FAILED: ${err.message}`);
       return;
@@ -323,8 +330,13 @@ export class Breakout15MinEngine {
 
     let slOrderId: string;
     try {
-      slOrderId = await client.placeOrder(slParams);
-      this.log(state, `🛡 SL order placed — ID: ${slOrderId} @ ₹${slPrice}`);
+      if (state.isPaperTrade) {
+        slOrderId = `PAPER_${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+        this.log(state, `🛡 [PAPER] SL order simulated — ID: ${slOrderId} @ ₹${slPrice}`);
+      } else {
+        slOrderId = await client.placeOrder(slParams);
+        this.log(state, `🛡 SL order placed — ID: ${slOrderId} @ ₹${slPrice}`);
+      }
     } catch (err) {
       this.log(state, `❌ SL order FAILED: ${err.message}`);
       slOrderId = 'FAILED';
@@ -345,8 +357,13 @@ export class Breakout15MinEngine {
 
     let targetOrderId: string;
     try {
-      targetOrderId = await client.placeOrder(targetParams);
-      this.log(state, `🎯 Target order placed — ID: ${targetOrderId} @ ₹${targetPrice}`);
+      if (state.isPaperTrade) {
+        targetOrderId = `PAPER_${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+        this.log(state, `🎯 [PAPER] Target order simulated — ID: ${targetOrderId} @ ₹${targetPrice}`);
+      } else {
+        targetOrderId = await client.placeOrder(targetParams);
+        this.log(state, `🎯 Target order placed — ID: ${targetOrderId} @ ₹${targetPrice}`);
+      }
     } catch (err) {
       this.log(state, `❌ Target order FAILED: ${err.message}`);
       targetOrderId = 'FAILED';
@@ -475,8 +492,9 @@ export class Breakout15MinEngine {
           price: params.price ?? null,
           triggerPrice: params.triggerPrice ?? null,
           brokerOrderId,
-          status: 'OPEN',
-        },
+          status: state.isPaperTrade ? 'COMPLETE' : 'OPEN',
+          isPaperTrade: state.isPaperTrade,
+        } as any,
       });
     } catch (err) {
       this.log(state, `⚠ DB order tracking failed: ${err.message}`);

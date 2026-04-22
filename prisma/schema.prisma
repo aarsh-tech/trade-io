@@ -86,6 +86,7 @@ model Strategy {
   type            StrategyType
   config          String
   isActive        Boolean      @default(false)
+  isPaperTrade    Boolean      @default(true)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -145,6 +146,7 @@ model Order {
   status          OrderStatus @default(PENDING)
   filledQty       Int         @default(0)
   avgPrice        Float?
+  isPaperTrade    Boolean     @default(false)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
