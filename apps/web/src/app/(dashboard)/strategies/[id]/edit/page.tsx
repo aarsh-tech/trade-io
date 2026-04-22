@@ -16,7 +16,7 @@ import Link from "next/link";
 interface Breakout15MinConfig {
   symbol: string;
   exchange: string;
-  instrumentType: "INDEX" | "STOCK";
+  instrumentType: "INDEX" | "STOCK" | "OPTION" | "FUTURE";
   qty: number;
   product: "MIS" | "NRML";
   stopLossRs: number;
@@ -42,7 +42,7 @@ export default function EditStrategyPage() {
     type: "" as "BREAKOUT_15MIN" | "EMA_CROSSOVER" | "",
     symbol: "",
     exchange: "NSE",
-    instrumentType: "INDEX" as "INDEX" | "STOCK",
+    instrumentType: "INDEX" as "INDEX" | "STOCK" | "OPTION" | "FUTURE",
     qty: "1",
     product: "MIS" as "MIS" | "NRML",
     stopLossRs: "500",

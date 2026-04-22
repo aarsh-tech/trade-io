@@ -165,28 +165,39 @@ class ZerodhaClient implements IBrokerClient {
       const upperQuery = query.toUpperCase().trim();
       const now = Date.now();
 
-      // Refresh cache if expired or empty
+      // We use a shared cache for instruments to avoid heavy API calls
       if (!nseInstrumentsCache || (now - cacheTimestamp) > CACHE_TTL_MS) {
-        console.log('Fetching NSE instruments list from Zerodha...');
-        nseInstrumentsCache = await this.kite.getInstruments('NSE');
+        console.log('Fetching NSE & NFO instruments list from Zerodha...');
+        const [nse, nfo] = await Promise.all([
+          this.kite.getInstruments('NSE'),
+          this.kite.getInstruments('NFO'),
+        ]);
+        nseInstrumentsCache = [...nse, ...nfo];
         cacheTimestamp = now;
-        console.log(`Cached ${nseInstrumentsCache.length} NSE instruments.`);
+        console.log(`Cached ${nseInstrumentsCache.length} instruments.`);
       }
 
-      // Filter: prefer symbol-starts-with matches, then name-contains
-      const symbolMatches = nseInstrumentsCache.filter((item: any) =>
-        item.tradingsymbol?.startsWith(upperQuery) && item.instrument_type === 'EQ'
-      );
-      const nameMatches = nseInstrumentsCache.filter((item: any) =>
-        !item.tradingsymbol?.startsWith(upperQuery) &&
-        item.name?.toUpperCase().includes(upperQuery) &&
-        item.instrument_type === 'EQ'
+      // Filter: prefer tradingsymbol matches
+      const matches = nseInstrumentsCache.filter((item: any) =>
+        item.tradingsymbol?.toUpperCase().includes(upperQuery) ||
+        item.name?.toUpperCase().includes(upperQuery)
       );
 
-      return [...symbolMatches, ...nameMatches].slice(0, 12).map((item: any) => ({
+      // Sort: Exact symbol match first, then starts with symbol, then includes
+      const sorted = matches.sort((a: any, b: any) => {
+        const aSym = a.tradingsymbol.toUpperCase();
+        const bSym = b.tradingsymbol.toUpperCase();
+        if (aSym === upperQuery) return -1;
+        if (bSym === upperQuery) return 1;
+        if (aSym.startsWith(upperQuery) && !bSym.startsWith(upperQuery)) return -1;
+        if (!aSym.startsWith(upperQuery) && bSym.startsWith(upperQuery)) return 1;
+        return 0;
+      });
+
+      return sorted.slice(0, 15).map((item: any) => ({
         symbol: item.tradingsymbol,
         name: item.name || item.tradingsymbol,
-        exchange: item.exchange || 'NSE',
+        exchange: item.exchange,
       }));
     } catch (err) {
       console.error('Zerodha searchInstruments Error:', err);

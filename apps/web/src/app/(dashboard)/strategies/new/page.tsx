@@ -11,7 +11,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { strategyApi, brokerApi } from "@/lib/api";
+import { strategyApi, brokerApi, marketApi } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -21,8 +22,26 @@ const PRESET_INSTRUMENTS = [
   { label: "NIFTY 50", symbol: "NIFTY 50", exchange: "NSE", type: "INDEX" },
   { label: "BANK NIFTY", symbol: "BANKNIFTY", exchange: "NSE", type: "INDEX" },
   { label: "SENSEX", symbol: "SENSEX", exchange: "BSE", type: "INDEX" },
-  { label: "Custom Stock", symbol: "", exchange: "NSE", type: "STOCK" },
 ] as const;
+
+const LOT_SIZES: Record<string, number> = {
+  "NIFTY": 65,
+  "BANKNIFTY": 30,
+  "SENSEX": 20,
+  "FINNIFTY": 60,
+  "MIDCPNIFTY": 120,
+};
+
+function getLotSize(symbol: string) {
+  const s = symbol.toUpperCase();
+  if (s.includes("BANKNIFTY")) return 30;
+  if (s.includes("NIFTY")) return 65;
+  if (s.includes("SENSEX")) return 20;
+  for (const key in LOT_SIZES) {
+    if (s.includes(key)) return LOT_SIZES[key];
+  }
+  return 1; // Default for stocks
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,23 +65,66 @@ export default function NewStrategyPage() {
   const [form, setForm] = useState({
     name: "",
     type: "" as "BREAKOUT_15MIN" | "EMA_CROSSOVER" | "",
-    // 15-min breakout
+    // Common
     symbol: "NIFTY 50",
     exchange: "NSE",
-    instrumentType: "INDEX" as "INDEX" | "STOCK",
-    qty: "50",
+    instrumentType: "INDEX" as "INDEX" | "STOCK" | "OPTION" | "FUTURE",
+    lots: "1",
     product: "MIS" as "MIS" | "NRML",
     stopLossRs: "500",
     targetRs: "500",
     maxTradesPerDay: "1",
+    minPremium: "100",
+    maxPremium: "300",
     // EMA crossover
     fastPeriod: "9",
     slowPeriod: "15",
     // Broker
     brokerAccountId: "",
+    isPaperTrade: true,
   });
 
-  function set(k: string, v: string) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  async function handleSymbolSearch(q: string) {
+    setSearchQuery(q);
+  }
+
+  // Debounced search logic
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (searchQuery.length < 2) {
+        setSearchResults([]);
+        return;
+      }
+      setIsSearching(true);
+      try {
+        const res = await marketApi.search(searchQuery, form.brokerAccountId);
+        setSearchResults(res.data?.data ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, form.brokerAccountId]);
+
+  function selectInstrument(item: any) {
+    setForm(f => ({
+      ...f,
+      symbol: item.symbol,
+      exchange: item.exchange,
+      instrumentType: item.exchange === 'NFO' ? 'OPTION' : (item.symbol.includes('NIFTY') || item.symbol.includes('SENSEX') ? 'INDEX' : 'STOCK'),
+    }));
+    setSearchQuery("");
+    setSearchResults([]);
+  }
+
+  function set(k: string, v: any) {
     setForm((f) => ({ ...f, [k]: v }));
   }
 
@@ -78,7 +140,7 @@ export default function NewStrategyPage() {
   // ── Validation ──────────────────────────────────────────────────────────────
   const canNext = () => {
     if (step === 0) return !!form.name && !!form.type;
-    if (step === 1) return !!form.symbol && Number(form.qty) > 0;
+    if (step === 1) return !!form.symbol && Number(form.lots) > 0;
     if (step === 2) {
       if (form.type === "BREAKOUT_15MIN")
         return Number(form.stopLossRs) > 0 && Number(form.targetRs) > 0;
@@ -91,32 +153,46 @@ export default function NewStrategyPage() {
   async function handleSubmit() {
     setSubmitting(true);
     try {
+      const lotSize = getLotSize(form.symbol);
+      const qty = Number(form.lots) * lotSize;
+
       const config =
         form.type === "BREAKOUT_15MIN"
           ? {
             symbol: form.symbol.trim(),
             exchange: form.exchange,
             instrumentType: form.instrumentType,
-            qty: Number(form.qty),
+            qty: qty,
+            lots: Number(form.lots),
             product: form.product,
             stopLossRs: Number(form.stopLossRs),
             targetRs: Number(form.targetRs),
             maxTradesPerDay: Number(form.maxTradesPerDay),
+            minPremium: Number(form.minPremium),
+            maxPremium: Number(form.maxPremium),
           }
           : {
             symbol: form.symbol.trim(),
             exchange: form.exchange,
             fastPeriod: Number(form.fastPeriod),
             slowPeriod: Number(form.slowPeriod),
-            qty: Number(form.qty),
+            qty: qty,
+            lots: Number(form.lots),
             product: form.product,
+            minPremium: Number(form.minPremium),
+            maxPremium: Number(form.maxPremium),
           };
+
+      const finalConfig = {
+        ...config,
+        isPaperTrade: form.isPaperTrade,
+      };
 
       await strategyApi.create({
         name: form.name,
         type: form.type,
         brokerAccountId: form.brokerAccountId || undefined,
-        config: JSON.stringify(config),
+        config: JSON.stringify(finalConfig),
       });
 
       toast.success("Strategy created!", {
@@ -266,20 +342,14 @@ export default function NewStrategyPage() {
                     {PRESET_INSTRUMENTS.map((p) => (
                       <button
                         key={p.label}
-                        id={`preset-${p.label.replace(/\s+/g, "-")}`}
                         onClick={() => {
-                          if (p.type !== "STOCK") {
-                            set("symbol", p.symbol);
-                            set("exchange", p.exchange);
-                            set("instrumentType", p.type);
-                          } else {
-                            set("instrumentType", "STOCK");
-                          }
+                          set("symbol", p.symbol);
+                          set("exchange", p.exchange);
+                          set("instrumentType", p.type);
                         }}
                         className={cn(
                           "px-3 py-1.5 rounded-lg text-sm font-medium border transition-all",
-                          (form.symbol === p.symbol && p.type !== "STOCK") ||
-                            (p.type === "STOCK" && form.instrumentType === "STOCK" && !["NIFTY 50", "BANKNIFTY", "SENSEX"].includes(form.symbol))
+                          form.symbol === p.symbol
                             ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
                             : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.4)]"
                         )}
@@ -291,46 +361,71 @@ export default function NewStrategyPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium mb-2 block">Symbol</label>
+              <div className="relative space-y-2">
+                <label className="text-sm font-medium block">Search Symbol (Stock, Option, Future)</label>
+                <div className="relative">
                   <Input
-                    id="symbol"
-                    placeholder={form.instrumentType === "INDEX" ? "NIFTY 50" : "e.g. RELIANCE"}
-                    value={form.symbol}
-                    onChange={(e) => set("symbol", e.target.value.toUpperCase())}
+                    placeholder="Search e.g. RELIANCE, NIFTY 22000 CE..."
+                    value={searchQuery}
+                    onChange={(e) => handleSymbolSearch(e.target.value)}
+                    className="pr-10"
                   />
+                  {isSearching && (
+                    <div className="absolute right-3 top-2.5">
+                      <Loader2 className="h-5 w-5 animate-spin text-[hsl(var(--muted-foreground))]" />
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label className="text-sm font-medium mb-2 block">Exchange</label>
-                  <select
-                    id="exchange"
-                    value={form.exchange}
-                    onChange={(e) => set("exchange", e.target.value)}
-                    className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
-                  >
-                    <option value="NSE">NSE</option>
-                    <option value="BSE">BSE</option>
-                    <option value="NFO">NFO (F&O)</option>
-                  </select>
+
+                {/* Search Results Dropdown */}
+                {searchResults.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl max-h-60 overflow-y-auto animate-[fade-up_0.2s_ease_both]">
+                    {searchResults.map((item) => (
+                      <button
+                        key={`${item.exchange}:${item.symbol}`}
+                        onClick={() => selectInstrument(item)}
+                        className="w-full flex items-center justify-between p-3 hover:bg-[hsl(var(--secondary)/0.5)] transition-colors border-b last:border-0"
+                      >
+                        <div className="text-left">
+                          <p className="text-sm font-bold">{item.symbol}</p>
+                          <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase">{item.name}</p>
+                        </div>
+                        <Badge className="text-[10px]">{item.exchange}</Badge>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between p-3 rounded-lg bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))]">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Current Selection</p>
+                    <p className="text-sm font-bold">{form.symbol} <span className="text-[10px] font-normal text-[hsl(var(--muted-foreground))]">({form.exchange})</span></p>
+                  </div>
+                  <Badge variant="secondary">{form.instrumentType}</Badge>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Quantity / Lots</label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium block">Number of Lots</label>
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                      1 Lot = {getLotSize(form.symbol)} Qty
+                    </span>
+                  </div>
                   <Input
-                    id="qty"
                     type="number"
                     min={1}
-                    value={form.qty}
-                    onChange={(e) => set("qty", e.target.value)}
+                    value={form.lots}
+                    onChange={(e) => set("lots", e.target.value)}
                   />
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                    Total Quantity: {Number(form.lots) * getLotSize(form.symbol)} shares
+                  </p>
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-2 block">Product Type</label>
                   <select
-                    id="product"
                     value={form.product}
                     onChange={(e) => set("product", e.target.value)}
                     className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
@@ -373,6 +468,38 @@ export default function NewStrategyPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                        <TrendingUp className="h-4 w-4 text-blue-500" />
+                        Min Premium (₹)
+                      </label>
+                      <Input
+                        type="number"
+                        value={form.minPremium}
+                        onChange={(e) => set("minPremium", e.target.value)}
+                        className="focus:ring-blue-300"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                        <TrendingUp className="h-4 w-4 text-blue-600" />
+                        Max Premium (₹)
+                      </label>
+                      <Input
+                        type="number"
+                        value={form.maxPremium}
+                        onChange={(e) => set("maxPremium", e.target.value)}
+                        className="focus:ring-blue-300"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] italic px-1">
+                        When breakout occurs, the bot will pick an Option contract with premium between ₹{form.minPremium} and ₹{form.maxPremium}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                         <Shield className="h-4 w-4 text-red-500" />
                         Stop Loss (₹)
                       </label>
@@ -402,7 +529,7 @@ export default function NewStrategyPage() {
                         className="border-green-200 focus:ring-green-300"
                       />
                       <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Fixed profit target per trade in ₹
+                        Fixed target profit per trade in ₹
                       </p>
                     </div>
                   </div>
@@ -466,74 +593,123 @@ export default function NewStrategyPage() {
 
           {/* ── Step 3: Broker & Review ── */}
           {step === 3 && (
-            <div className="space-y-5">
-              <div>
-                <label className="text-sm font-semibold mb-2 block">Broker Account</label>
-                {brokers.length === 0 ? (
-                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200">
-                    <p className="text-sm text-amber-700 font-medium">No broker connected</p>
-                    <p className="text-xs text-amber-600 mt-1">
-                      Please connect a broker account first from the Brokers page.
-                    </p>
-                  </div>
-                ) : (
-                  <select
-                    id="brokerAccountId"
-                    value={form.brokerAccountId}
-                    onChange={(e) => set("brokerAccountId", e.target.value)}
-                    className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+            <div className="space-y-6">
+              {/* Trading Mode Card */}
+              <div className="p-1 rounded-2xl bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))]">
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    onClick={() => set("isPaperTrade", true)}
+                    className={cn(
+                      "flex flex-col items-center gap-2 py-4 rounded-xl transition-all",
+                      form.isPaperTrade
+                        ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
+                        : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                    )}
                   >
-                    <option value="">Select broker account</option>
-                    {brokers.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.broker} — {b.clientId ?? b.id.slice(0, 8)}
-                        {!b.tokenExpiry || new Date(b.tokenExpiry) < new Date() ? " ⚠ Session expired" : ""}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                    <div className={cn(
+                      "p-2 rounded-lg",
+                      form.isPaperTrade ? "bg-amber-100 text-amber-600" : "bg-[hsl(var(--secondary)/0.5)]"
+                    )}>
+                      <Zap className="h-5 w-5" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-bold uppercase tracking-wider">Paper Trading</p>
+                      <p className="text-[10px] opacity-70">Virtual money, no risk</p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => set("isPaperTrade", false)}
+                    className={cn(
+                      "flex flex-col items-center gap-2 py-4 rounded-xl transition-all",
+                      !form.isPaperTrade
+                        ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
+                        : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                    )}
+                  >
+                    <div className={cn(
+                      "p-2 rounded-lg",
+                      !form.isPaperTrade ? "bg-red-100 text-red-600" : "bg-[hsl(var(--secondary)/0.5)]"
+                    )}>
+                      <TrendingUp className="h-5 w-5" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-bold uppercase tracking-wider">Live Trading</p>
+                      <p className="text-[10px] opacity-70">Real capital execution</p>
+                    </div>
+                  </button>
+                </div>
               </div>
 
-              {/* Summary */}
-              <div className="space-y-2">
-                <p className="text-sm font-bold text-[hsl(var(--muted-foreground))] uppercase tracking-wide text-xs">
-                  Configuration Summary
-                </p>
-                {[
-                  ["Name", form.name],
-                  ["Type", form.type === "BREAKOUT_15MIN" ? "15-Min High/Low Breakout" : "EMA Crossover"],
-                  ["Symbol", `${form.symbol} · ${form.exchange}`],
-                  ["Quantity", form.qty],
-                  ["Product", form.product],
-                  ...(form.type === "BREAKOUT_15MIN" ? [
-                    ["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`],
-                    ["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`],
-                    ["Max Trades", `${form.maxTradesPerDay} / day`],
-                    ["Order Type", "LIMIT (Entry + SL-Limit + Target)"],
-                  ] : [
-                    ["Fast EMA", form.fastPeriod],
-                    ["Slow EMA", form.slowPeriod],
-                  ]),
-                ].map(([label, value]) => (
-                  <div key={label} className="flex justify-between py-2 border-b border-[hsl(var(--border))] last:border-0 px-1">
-                    <span className="text-sm text-[hsl(var(--muted-foreground))]">{label}</span>
-                    <span className="text-sm font-semibold">{value}</span>
-                  </div>
-                ))}
-              </div>
+              <div className="space-y-5">
+                <div>
+                  <label className="text-sm font-semibold mb-2 block">Broker Account</label>
+                  {brokers.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200">
+                      <p className="text-sm text-amber-700 font-medium">No broker connected</p>
+                      <p className="text-xs text-amber-600 mt-1">
+                        Please connect a broker account first from the Brokers page.
+                      </p>
+                    </div>
+                  ) : (
+                    <select
+                      id="brokerAccountId"
+                      value={form.brokerAccountId}
+                      onChange={(e) => set("brokerAccountId", e.target.value)}
+                      className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                    >
+                      <option value="">Select broker account</option>
+                      {brokers.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.broker} — {b.clientId ?? b.id.slice(0, 8)}
+                          {!b.tokenExpiry || new Date(b.tokenExpiry) < new Date() ? " ⚠ Session expired" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
 
-              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900">
-                <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1">⚠ Risk Reminder</p>
-                <p className="text-xs text-amber-600 dark:text-amber-500">
-                  Ensure your Zerodha API has order placement permissions and your IP is whitelisted.
-                  Always test during off-hours or with minimal quantities first.
-                </p>
+                {/* Summary */}
+                <div className="space-y-2">
+                  <p className="text-sm font-bold text-[hsl(var(--muted-foreground))] uppercase tracking-wide text-xs">
+                    Configuration Summary
+                  </p>
+                  {[
+                    ["Name", form.name],
+                    ["Type", form.type === "BREAKOUT_15MIN" ? "15-Min High/Low Breakout" : "EMA Crossover"],
+                    ["Symbol", `${form.symbol} · ${form.exchange}`],
+                    ["Order Size", `${form.lots} Lots (${Number(form.lots) * getLotSize(form.symbol)} Shares)`],
+                    ["Product", form.product],
+                    ...(form.type === "BREAKOUT_15MIN" ? [
+                      ["Premium Range", `₹${form.minPremium} — ₹${form.maxPremium}`],
+                      ["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`],
+                      ["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`],
+                      ["Max Trades", `${form.maxTradesPerDay} / day`],
+                      ["Order Type", "LIMIT (Entry + SL-Limit + Target)"],
+                    ] : [
+                      ["Fast EMA", form.fastPeriod],
+                      ["Slow EMA", form.slowPeriod],
+                    ]),
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex justify-between py-2 border-b border-[hsl(var(--border))] last:border-0 px-1">
+                      <span className="text-sm text-[hsl(var(--muted-foreground))]">{label}</span>
+                      <span className="text-sm font-semibold">{value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900">
+                  <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1">⚠ Risk Reminder</p>
+                  <p className="text-xs text-amber-600 dark:text-amber-500">
+                    Ensure your Zerodha API has order placement permissions and your IP is whitelisted.
+                    Always test during off-hours or with minimal quantities first.
+                  </p>
+                </div>
               </div>
             </div>
           )}
 
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
       {/* Navigation */}
       <div className="flex justify-between">
