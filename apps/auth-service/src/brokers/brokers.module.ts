@@ -6,6 +6,7 @@ import { BrokerClientFactory } from './broker-client.factory';
 @Module({
   controllers: [BrokersController],
   providers: [BrokersService, BrokerClientFactory],
-  exports: [BrokersService],
+  exports: [BrokersService, BrokerClientFactory],
 })
 export class BrokersModule {}
+

@@ -72,7 +72,9 @@ enum BrokerType {
   ANGEL
   UPSTOX
   FIVEPAISA
+  ALICEBLUE
 }
+
 
 // ─── Strategies ───────────────────────────────────────────────────────────────
 

@@ -72,6 +72,7 @@ export const strategyApi = {
   delete:     (id: string) => api.delete(`/strategies/${id}`),
   start:      (id: string) => api.post(`/strategies/${id}/start`),
   stop:       (id: string) => api.post(`/strategies/${id}/stop`),
+  status:     (id: string) => api.get(`/strategies/${id}/status`),
   executions: (id: string) => api.get(`/strategies/${id}/executions`),
 };
 
@@ -95,8 +96,9 @@ export const marketApi = {
     symbol: string; exchange: string; interval: string; from: string; to: string;
   }) => api.get("/market/candles", { params }),
   quote:  (symbol: string) => api.get(`/market/quote/${symbol}`),
-  search: (q: string) => api.get("/market/search", { params: { q } }),
+  search: (q: string, accountId?: string | null) => api.get("/market/search", { params: { q, accountId } }),
 };
+
 
 // ─── Backtesting ──────────────────────────────────────────────────────────────
 export const backtestApi = {

@@ -53,7 +53,16 @@ export class BrokersController {
     return this.brokersService.setSession(req.user.id, id, token);
   }
 
+  @Post(':id/orders')
+  @ApiOperation({ summary: 'Place an order' })
+  async placeOrder(@Request() req, @Param('id') id: string, @Body() orderData: any) {
+    const result = await this.brokersService.placeOrder(req.user.id, id, orderData);
+    return { success: true, data: result };
+  }
+
+
   @Delete(':id')
+
   @ApiOperation({ summary: 'Disconnect a broker account' })
   async disconnect(@Request() req, @Param('id') id: string) {
     await this.brokersService.disconnect(req.user.id, id);

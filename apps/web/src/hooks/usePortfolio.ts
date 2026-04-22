@@ -64,5 +64,13 @@ export function usePortfolio(brokerId?: string | null) {
     },
     renewSession: renewSessionMutation.mutateAsync,
     isRenewing: renewSessionMutation.isPending,
+    placeOrder: async (data: any) => {
+      if (!brokerId) throw new Error("No broker selected");
+      const res = await brokerApi.placeOrder(brokerId, data);
+      queryClient.invalidateQueries({ queryKey: PORTFOLIO_KEYS.positions(brokerId) });
+      toast.success(`Order placed: ${res.data.data.orderId}`);
+      return res.data.data;
+    }
   };
 }
+
