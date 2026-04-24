@@ -200,7 +200,7 @@ model Backtest {
   completedAt DateTime?
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  strategy Strategy @relation(fields: [strategyId], references: [id])
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
 
   @@map("backtests")
 }

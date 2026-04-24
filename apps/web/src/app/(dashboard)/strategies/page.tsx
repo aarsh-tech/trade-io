@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { toast } from "sonner";
 import { strategyApi, brokerApi } from "@/lib/api";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ export default function StrategiesPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Strategy | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -76,8 +79,14 @@ export default function StrategiesPage() {
     }
   }
 
-  async function deleteStrategy(s: Strategy) {
-    if (!confirm(`Delete "${s.name}"? This cannot be undone.`)) return;
+  function askDelete(s: Strategy) {
+    setPendingDelete(s);
+    setShowConfirm(true);
+  }
+
+  async function handleDelete() {
+    if (!pendingDelete) return;
+    const s = pendingDelete;
     setActionId(s.id);
     try {
       await strategyApi.delete(s.id);
@@ -87,6 +96,7 @@ export default function StrategiesPage() {
       toast.error("Failed to delete strategy");
     } finally {
       setActionId(null);
+      setPendingDelete(null);
     }
   }
 
@@ -130,7 +140,7 @@ export default function StrategiesPage() {
             strategy={s}
             busy={actionId === s.id}
             onToggle={toggleStrategy}
-            onDelete={deleteStrategy}
+            onDelete={askDelete}
           />
         ))}
 
@@ -154,6 +164,16 @@ export default function StrategiesPage() {
           <p className="text-sm mt-1">Create your first strategy to start automated trading.</p>
         </div>
       )}
+
+      <ConfirmDialog
+        open={showConfirm}
+        onOpenChange={setShowConfirm}
+        onConfirm={handleDelete}
+        title={pendingDelete ? `Delete "${pendingDelete.name}"?` : "Delete Strategy?"}
+        description="This will permanently delete the strategy and all its backtest history and execution logs. This action cannot be undone."
+        confirmText="Delete Strategy"
+        variant="destructive"
+      />
     </div>
   );
 }

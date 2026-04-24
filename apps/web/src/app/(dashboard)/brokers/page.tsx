@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import Link from "next/link";
 
 import { useBrokers } from "@/hooks/useBrokers";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 const BROKERS_CONFIG = [
   { key: "ZERODHA", name: "Zerodha", logo: "Z", color: "#387ED1", desc: "Kite Connect API" },
@@ -20,6 +21,8 @@ const BROKERS_CONFIG = [
 export default function BrokersPage() {
   const { brokers, isLoading, connect, isConnecting, disconnect } = useBrokers();
   const [showModal, setShowModal] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [selectedBroker, setSelectedBroker] = useState<typeof BROKERS_CONFIG[0] | null>(null);
   const [form, setForm] = useState({ apiKey: "", apiSecret: "", clientId: "", password: "", totpSecret: "" });
 
@@ -41,12 +44,19 @@ export default function BrokersPage() {
       setShowModal(false);
     } catch {
       // toast in hook
+      
     }
   }
 
-  async function handleDisconnect(id: string) {
-    if (confirm("Are you sure you want to disconnect this broker?")) {
-      await disconnect(id);
+  function askDisconnect(id: string) {
+    setPendingDeleteId(id);
+    setShowConfirm(true);
+  }
+
+  async function handleDisconnect() {
+    if (pendingDeleteId) {
+      await disconnect(pendingDeleteId);
+      setPendingDeleteId(null);
     }
   }
 
@@ -130,7 +140,7 @@ export default function BrokersPage() {
                         variant="ghost"
                         size="icon"
                         className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 h-9 w-9 rounded-lg transition-colors"
-                        onClick={() => handleDisconnect(acc.id)}
+                        onClick={() => askDisconnect(acc.id)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -311,6 +321,16 @@ export default function BrokersPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={showConfirm}
+        onOpenChange={setShowConfirm}
+        onConfirm={handleDisconnect}
+        title="Disconnect Broker?"
+        description="Are you sure you want to disconnect this broker account? You will need to reconnect it to resume trading."
+        confirmText="Disconnect"
+        variant="destructive"
+      />
     </div>
   );
 }
