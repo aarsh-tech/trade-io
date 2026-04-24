@@ -14,20 +14,17 @@ import { useBrokers } from "@/hooks/useBrokers";
 
 const BROKERS_CONFIG = [
   { key: "ZERODHA", name: "Zerodha", logo: "Z", color: "#387ED1", desc: "Kite Connect API" },
-  { key: "ANGEL", name: "Angel One", logo: "A", color: "#F36B21", desc: "SmartAPI" },
-  { key: "UPSTOX", name: "Upstox", logo: "U", color: "#6C5CE7", desc: "Upstox API v2" },
-  { key: "FIVEPAISA", name: "5paisa", logo: "5", color: "#E84542", desc: "5paisa Trade API" },
 ];
 
 export default function BrokersPage() {
   const { brokers, isLoading, connect, isConnecting, disconnect } = useBrokers();
   const [showModal, setShowModal] = useState(false);
   const [selectedBroker, setSelectedBroker] = useState<typeof BROKERS_CONFIG[0] | null>(null);
-  const [form, setForm] = useState({ apiKey: "", apiSecret: "", clientId: "" });
+  const [form, setForm] = useState({ apiKey: "", apiSecret: "", clientId: "", password: "", totpSecret: "" });
 
   function openConnect(broker: typeof BROKERS_CONFIG[0]) {
     setSelectedBroker(broker);
-    setForm({ apiKey: "", apiSecret: "", clientId: "" });
+    setForm({ apiKey: "", apiSecret: "", clientId: "", password: "", totpSecret: "" });
     setShowModal(true);
   }
 
@@ -249,6 +246,33 @@ export default function BrokersPage() {
                         required
                       />
                     </div>
+                    {selectedBroker.key === 'ANGEL' && (
+                      <>
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Trading Password</label>
+                          <Input
+                            className="border-slate-200 bg-slate-50 hover:bg-white focus:bg-white h-11 text-slate-900 placeholder:text-slate-400 transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                            style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
+                            type="password"
+                            placeholder="Your Angel Login Password"
+                            value={form.password}
+                            onChange={(e) => setForm({ ...form, password: e.target.value })}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">TOTP Secret Key</label>
+                          <Input
+                            className="border-slate-200 bg-slate-50 hover:bg-white focus:bg-white h-11 text-slate-900 placeholder:text-slate-400 transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                            style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
+                            placeholder="The secret key from QR code"
+                            value={form.totpSecret}
+                            onChange={(e) => setForm({ ...form, totpSecret: e.target.value })}
+                            required
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div className="flex items-start gap-3 p-4 rounded-xl bg-slate-50 border border-slate-100">

@@ -92,6 +92,7 @@ export const brokerApi = {
 
 // ─── Market Data ──────────────────────────────────────────────────────────────
 export const marketApi = {
+  marketOverview: () => api.get("/brokers/market-overview"),
   candles: (params: {
     symbol: string; exchange: string; interval: string; from: string; to: string;
   }) => api.get("/market/candles", { params }),

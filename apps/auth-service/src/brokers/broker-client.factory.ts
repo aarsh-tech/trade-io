@@ -13,14 +13,6 @@ export class BrokerClientFactory {
     switch (account.broker) {
       case BrokerType.ZERODHA:
         return new ZerodhaClient(apiKey, accessToken);
-      case BrokerType.ANGEL:
-        return new AngelClient(apiKey, accessToken);
-      case BrokerType.UPSTOX:
-        return new UpstoxClient(apiKey, accessToken);
-      case BrokerType.FIVEPAISA:
-        return new FivePaisaClient(apiKey, accessToken);
-      case BrokerType.ALICEBLUE:
-        return new AliceBlueClient(apiKey, accessToken);
       default:
         throw new Error('Broker not supported yet');
     }
@@ -237,55 +229,6 @@ class ZerodhaClient implements IBrokerClient {
       throw err;
     }
   }
-}
-
-
-
-class AngelClient implements IBrokerClient {
-  constructor(private apiKey: string, private accessToken: string | null) {}
-  async getHoldings() { return []; }
-  async getPositions() { return []; }
-  async getOrders() { return []; }
-  async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
-  async getLTP(symbols: string[]) { return {}; }
-  async searchInstruments(query: string) { return []; }
-  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
-}
-
-
-class UpstoxClient implements IBrokerClient {
-  constructor(private apiKey: string, private accessToken: string | null) {}
-  async getHoldings() { return []; }
-  async getPositions() { return []; }
-  async getOrders() { return []; }
-  async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
-  async getLTP(symbols: string[]) { return {}; }
-  async searchInstruments(query: string) { return []; }
-  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
-}
-
-
-class FivePaisaClient implements IBrokerClient {
-  constructor(private apiKey: string, private accessToken: string | null) {}
-  async getHoldings() { return []; }
-  async getPositions() { return []; }
-  async getOrders() { return []; }
-  async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
-  async getLTP(symbols: string[]) { return {}; }
-  async searchInstruments(query: string) { return []; }
-  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
-}
-
-
-class AliceBlueClient implements IBrokerClient {
-  constructor(private apiKey: string, private accessToken: string | null) {}
-  async getHoldings() { return []; }
-  async getPositions() { return []; }
-  async getOrders() { return []; }
-  async placeOrder(params: OrderParams) { return 'MOCK_ID'; }
-  async getLTP(symbols: string[]) { return {}; }
-  async searchInstruments(query: string) { return []; }
-  async getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date) { return []; }
 }
 
 

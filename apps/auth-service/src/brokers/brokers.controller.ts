@@ -13,6 +13,13 @@ import { ConnectBrokerDto } from './dto/broker.dto';
 export class BrokersController {
   constructor(private readonly brokersService: BrokersService) {}
 
+  @Get('market-overview')
+  @ApiOperation({ summary: 'Get live market overview indices and stocks' })
+  async marketOverview(@Request() req) {
+    const result = await this.brokersService.getMarketOverview(req.user.id);
+    return { success: true, data: result };
+  }
+
   @Get()
   @ApiOperation({ summary: 'List connected broker accounts' })
   async list(@Request() req) {

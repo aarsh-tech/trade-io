@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  TrendingUp, TrendingDown, Zap, Activity, DollarSign,
-  BarChart2, Target, ArrowUpRight, ArrowDownRight, Play
+  TrendingUp, TrendingDown, Zap, Activity, Wallet,
+  BarChart2, Target, ArrowUpRight, ArrowDownRight, Plus, Search,
+  Briefcase, LineChart, PieChart, Clock
 } from "lucide-react";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import {
@@ -13,298 +14,207 @@ import {
   ResponsiveContainer
 } from "recharts";
 import Link from "next/link";
+import { useDashboard } from "@/hooks/useDashboard";
+import { MarketTicker } from "@/components/dashboard/MarketTicker";
+import { Input } from "@/components/ui/input";
 
-// ─── Mock Data (will be replaced by React Query hooks) ────────────────────────
-const portfolioChartData = [
-  { date: "Jan", value: 100000 },
-  { date: "Feb", value: 108500 },
-  { date: "Mar", value: 104200 },
-  { date: "Apr", value: 118900 },
-  { date: "May", value: 113400 },
-  { date: "Jun", value: 125600 },
-  { date: "Jul", value: 132100 },
-  { date: "Aug", value: 128700 },
-  { date: "Sep", value: 141200 },
-  { date: "Oct", value: 138500 },
-  { date: "Nov", value: 152300 },
-  { date: "Dec", value: 165800 },
+// ─── Chart Mock Data ─────────────────────────────────────────────────────────
+const performanceData = [
+  { time: "09:15", pnl: 0 },
+  { time: "10:00", pnl: 1200 },
+  { time: "11:00", pnl: 800 },
+  { time: "12:00", pnl: 2400 },
+  { time: "13:00", pnl: 3100 },
+  { time: "14:00", pnl: 2800 },
+  { time: "15:00", pnl: 4200 },
+  { time: "15:30", pnl: 3650 },
 ];
-
-const activeStrategies = [
-  {
-    id: "1", name: "Nifty 15min Breakout", type: "BREAKOUT_15MIN",
-    symbol: "NIFTY50", status: "RUNNING", todayPnl: 2450.50, totalPnl: 18200,
-  },
-  {
-    id: "2", name: "Reliance EMA Cross", type: "EMA_CROSSOVER",
-    symbol: "RELIANCE", status: "STOPPED", todayPnl: -650.00, totalPnl: 5400,
-  },
-  {
-    id: "3", name: "Bank Nifty Breakout", type: "BREAKOUT_15MIN",
-    symbol: "BANKNIFTY", status: "RUNNING", todayPnl: 1850.00, totalPnl: 9700,
-  },
-];
-
-const recentOrders = [
-  { symbol: "NIFTY50", side: "BUY",  qty: 50,  price: 22440, status: "COMPLETE", time: "09:16" },
-  { symbol: "RELIANCE", side: "SELL", qty: 10,  price: 2888,  status: "COMPLETE", time: "09:31" },
-  { symbol: "BANKNIFTY",side: "BUY",  qty: 25,  price: 47810, status: "OPEN",     time: "09:45" },
-  { symbol: "TCS",      side: "BUY",  qty: 5,   price: 3740,  status: "CANCELLED",time: "10:02" },
-];
-
-const statCards = [
-  {
-    title: "Portfolio Value",
-    value: formatCurrency(165800),
-    change: +12.5,
-    icon: DollarSign,
-    color: "primary",
-  },
-  {
-    title: "Today's P&L",
-    value: formatCurrency(3650),
-    change: +2.25,
-    icon: TrendingUp,
-    color: "green",
-  },
-  {
-    title: "Active Strategies",
-    value: "2",
-    subtitle: "of 3 deployed",
-    icon: Zap,
-    color: "accent",
-  },
-  {
-    title: "Win Rate",
-    value: "68.4%",
-    subtitle: "last 30 days",
-    icon: Target,
-    color: "gold",
-  },
-];
-
-// ─── Components ────────────────────────────────────────────────────────────────
-
-function StatCard({ title, value, change, subtitle, icon: Icon, color }: typeof statCards[0]) {
-  const colorMap: Record<string, string> = {
-    primary: "var(--primary)",
-    green:   "var(--green)",
-    accent:  "var(--accent)",
-    gold:    "var(--gold)",
-  };
-  const c = colorMap[color];
-
-  return (
-    <Card className="relative overflow-hidden group hover:scale-[1.02] transition-transform duration-200">
-      <div
-        className="absolute inset-0 opacity-5 group-hover:opacity-10 transition-opacity"
-        style={{ background: `radial-gradient(circle at top right, hsl(${c}), transparent 70%)` }}
-      />
-      <CardContent className="flex items-start justify-between pt-0">
-        <div>
-          <p className="text-sm text-[hsl(var(--muted-foreground))] mb-1">{title}</p>
-          <p className="text-2xl font-bold tracking-tight">{value}</p>
-          {change !== undefined && (
-            <p className={cn("text-sm font-medium mt-1 flex items-center gap-1",
-              change >= 0 ? "pnl-positive" : "pnl-negative"
-            )}>
-              {change >= 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-              {formatPercent(change)}
-            </p>
-          )}
-          {subtitle && (
-            <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">{subtitle}</p>
-          )}
-        </div>
-        <div
-          className="h-10 w-10 rounded-lg flex items-center justify-center"
-          style={{ background: `hsl(${c} / 0.15)` }}
-        >
-          <Icon className="h-5 w-5" style={{ color: `hsl(${c})` }} />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CustomTooltip({ active, payload, label }: any) {
-  if (active && payload?.length) {
-    return (
-      <div className="glass rounded-lg p-3 text-sm">
-        <p className="text-[hsl(var(--muted-foreground))] mb-1">{label}</p>
-        <p className="font-semibold text-[hsl(var(--primary))]">
-          {formatCurrency(payload[0].value)}
-        </p>
-      </div>
-    );
-  }
-  return null;
-}
-
-// ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const { market, stats, isLoading } = useDashboard();
+
+  if (isLoading) {
+    return <div className="h-full flex items-center justify-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    </div>;
+  }
+
   return (
-    <div className="space-y-6 animate-[fade-up_0.4s_ease_both]">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">
-            Friday, April 11 · Market Open
-          </p>
+    <div className="flex flex-col h-full -m-6 bg-[#fbfcfd]">
+      {/* Top Real-time Ticker */}
+      <MarketTicker indices={market.indices} />
+
+      <div className="flex flex-1 overflow-hidden p-6 gap-6">
+        
+        {/* Left Side - Market Watchlist (Zerodha Style) */}
+        <div className="w-80 flex flex-col gap-4 hidden lg:flex">
+          <div className="relative group">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 group-focus-within:text-blue-500" />
+            <Input 
+              placeholder="Search eg: infy bse, nifty fut, gold mcx" 
+              className="pl-10 h-10 border-slate-100 bg-white shadow-sm rounded-lg focus-visible:ring-1 focus-visible:ring-blue-500"
+            />
+          </div>
+
+          <Card className="flex-1 shadow-sm border-slate-100 overflow-hidden flex flex-col">
+            <div className="p-3 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Market Watchlist</span>
+              <Plus className="h-3.5 w-3.5 text-slate-400 cursor-pointer hover:text-blue-500" />
+            </div>
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
+              {market.stocks.map((stock: any) => (
+                <div key={stock.symbol} className="p-4 hover:bg-slate-50 cursor-pointer group transition-colors flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">{stock.symbol}</p>
+                    <p className="text-[10px] text-slate-400 font-medium uppercase">NSE</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-slate-900">₹{stock.price.toLocaleString('en-IN')}</p>
+                    <p className={cn("text-[11px] font-bold", stock.change >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                      {stock.change >= 0 ? "+" : ""}{stock.change}%
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
         </div>
-        <Link href="/strategies/new">
-          <Button className="gap-2">
-            <Zap className="h-4 w-4" />
-            New Strategy
-          </Button>
-        </Link>
-      </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        {statCards.map((s) => (
-          <StatCard key={s.title} {...s} />
-        ))}
-      </div>
-
-      {/* Portfolio chart + Active strategies */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Chart */}
-        <Card className="xl:col-span-2">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Portfolio Performance</CardTitle>
-              <div className="flex gap-1">
-                {["1W", "1M", "3M", "1Y"].map((p) => (
-                  <button
-                    key={p}
-                    className={cn(
-                      "px-2 py-0.5 rounded text-xs font-medium transition-colors",
-                      p === "1Y"
-                        ? "bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]"
-                        : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                    )}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={portfolioChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="portfolioGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(217 92% 60%)" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(217 92% 60%)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(222 47% 15%)" vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${(v/1000).toFixed(0)}K`} />
-                <Tooltip content={<CustomTooltip />} />
-                <Area
-                  type="monotone" dataKey="value"
-                  stroke="hsl(217 92% 60%)" strokeWidth={2}
-                  fill="url(#portfolioGrad)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Strategy Overview */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Active Strategies</CardTitle>
-              <Link href="/strategies">
-                <span className="text-xs text-[hsl(var(--primary))] hover:underline">View all</span>
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {activeStrategies.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-center justify-between p-3 rounded-lg bg-[hsl(var(--secondary)/0.5)] hover:bg-[hsl(var(--secondary))] transition-colors"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{s.name}</p>
-                  <p className="text-xs text-[hsl(var(--muted-foreground))]">{s.symbol}</p>
-                </div>
-                <div className="flex flex-col items-end gap-1 ml-2">
-                  <Badge
-                    variant={s.status === "RUNNING" ? "running" : "stopped"}
-                    dot
-                    className="text-[10px] px-1.5 py-0"
-                  >
-                    {s.status === "RUNNING" ? "Live" : "Off"}
-                  </Badge>
-                  <span className={cn("text-xs font-semibold", s.todayPnl >= 0 ? "pnl-positive" : "pnl-negative")}>
-                    {s.todayPnl >= 0 ? "+" : ""}
-                    {formatCurrency(s.todayPnl)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent Orders */}
-      <Card>
-        <CardHeader>
+        {/* Right Side - Dashboard Content */}
+        <div className="flex-1 space-y-6 overflow-y-auto pr-2">
+          
+          {/* Header & Quick Stats */}
           <div className="flex items-center justify-between">
-            <CardTitle>Recent Orders</CardTitle>
-            <Link href="/orders">
-              <span className="text-xs text-[hsl(var(--primary))] hover:underline">View all</span>
-            </Link>
+            <h2 className="text-xl font-bold text-slate-900">Hi, Trader 👋</h2>
+            <div className="flex gap-3">
+              <Button variant="outline" className="h-9 border-slate-200 text-slate-600 gap-2 shadow-sm rounded-lg">
+                <Clock className="h-4 w-4" /> Market History
+              </Button>
+              <Button className="h-9 bg-blue-600 hover:bg-blue-700 text-white gap-2 shadow-md rounded-lg">
+                <Zap className="h-4 w-4" /> Deploy New Bot
+              </Button>
+            </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[hsl(var(--border))]">
-                  {["Symbol", "Side", "Qty", "Price", "Status", "Time"].map((h) => (
-                    <th key={h} className="pb-3 text-left text-xs font-medium text-[hsl(var(--muted-foreground))]">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[hsl(var(--border))]">
-                {recentOrders.map((o, i) => (
-                  <tr key={i} className="hover:bg-[hsl(var(--secondary)/0.3)] transition-colors">
-                    <td className="py-3 font-semibold">{o.symbol}</td>
-                    <td className={cn("py-3 font-bold text-xs", o.side === "BUY" ? "pnl-positive" : "pnl-negative")}>
-                      {o.side}
-                    </td>
-                    <td className="py-3">{o.qty}</td>
-                    <td className="py-3 font-mono">₹{o.price.toLocaleString("en-IN")}</td>
-                    <td className="py-3">
-                      <Badge
-                        variant={
-                          o.status === "COMPLETE" ? "success" :
-                          o.status === "OPEN"     ? "warning" : "stopped"
-                        }
-                        className="text-[10px]"
-                      >
-                        {o.status}
-                      </Badge>
-                    </td>
-                    <td className="py-3 text-[hsl(var(--muted-foreground))]">{o.time}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+          {/* Core Stats Row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="shadow-sm border-slate-100 hover:border-blue-100 transition-colors">
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="h-12 w-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600">
+                  <Wallet className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-tight">Equity Balance</p>
+                  <p className="text-xl font-black text-slate-900">{formatCurrency(stats.portfolioValue)}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm border-slate-100 hover:border-emerald-100 transition-colors">
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+                  <Activity className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-tight">Realized P&L</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xl font-black text-slate-900">{formatCurrency(stats.todayPnl)}</p>
+                    <Badge className="bg-emerald-500/10 text-emerald-600 border-0 text-[10px] font-bold">
+                      +{stats.pnlChange}%
+                    </Badge>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm border-slate-100 hover:border-orange-100 transition-colors">
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="h-12 w-12 rounded-2xl bg-orange-50 flex items-center justify-center text-orange-600">
+                  <Target className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-tight">System Health</p>
+                  <p className="text-xl font-black text-slate-900">98.2% <span className="text-[10px] text-slate-400 font-normal">Uptime</span></p>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </CardContent>
-      </Card>
+
+          {/* Performance Chart & Recent Activity */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            
+            <Card className="xl:col-span-2 shadow-sm border-slate-100 bg-white">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <LineChart className="h-4 w-4 text-blue-500" /> Daily Equity Curve
+                </CardTitle>
+                <div className="flex gap-2">
+                   <Badge variant="outline" className="rounded-md border-slate-100 text-[10px] text-slate-400 uppercase">Live Tracking</Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={280}>
+                  <AreaChart data={performanceData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#387ED1" stopOpacity={0.1} />
+                        <stop offset="95%" stopColor="#387ED1" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis dataKey="time" tick={{ fill: "#94a3b8", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${v}`} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                      labelStyle={{ fontWeight: 'bold', marginBottom: '4px' }}
+                    />
+                    <Area
+                      type="monotone" dataKey="pnl"
+                      stroke="#387ED1" strokeWidth={3}
+                      fill="url(#pnlGrad)"
+                      animationDuration={1500}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm border-slate-100 bg-white">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <PieChart className="h-4 w-4 text-emerald-500" /> Sector Exposure
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4 pt-2">
+                   {[
+                     { name: "Financials", val: 42, color: "#387ED1" },
+                     { name: "IT Services", val: 28, color: "#10b981" },
+                     { name: "Energy", val: 18, color: "#f59e0b" },
+                     { name: "Others", val: 12, color: "#94a3b8" }
+                   ].map((item) => (
+                     <div key={item.name} className="space-y-1.5">
+                       <div className="flex justify-between text-xs font-bold text-slate-600">
+                         <span>{item.name}</span>
+                         <span>{item.val}%</span>
+                       </div>
+                       <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden">
+                         <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${item.val}%`, backgroundColor: item.color }} />
+                       </div>
+                     </div>
+                   ))}
+                </div>
+                <Button variant="ghost" className="w-full mt-6 text-xs text-blue-600 font-bold hover:bg-blue-50 gap-2">
+                  <Briefcase className="h-3 w-3" /> Full Portfolio Breakdown
+                </Button>
+              </CardContent>
+            </Card>
+
+          </div>
+
+        </div>
+
+      </div>
     </div>
   );
 }

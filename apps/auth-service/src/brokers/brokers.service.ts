@@ -44,14 +44,6 @@ export class BrokersService {
     switch (acc.broker) {
       case BrokerType.ZERODHA:
         return { url: `https://kite.trade/connect/login?v=3&api_key=${apiKey}` };
-      case BrokerType.UPSTOX:
-        return { url: `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${apiKey}&redirect_uri=${process.env.UPSTOX_REDIRECT_URI || ''}` };
-      case BrokerType.ANGEL:
-        return { url: `https://smartapi.angelbroking.com/login?api_key=${apiKey}` }; // Mock/Common pattern
-      case BrokerType.FIVEPAISA:
-        return { url: `https://www.5paisa.com/open-demat-account` }; // 5Paisa uses a different flow usually
-      case BrokerType.ALICEBLUE:
-        return { url: `https://ant.aliceblueonline.com/` };
       default:
         throw new BadRequestException('Login URL not available for this broker');
     }
@@ -101,67 +93,26 @@ export class BrokersService {
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
 
-    // Zerodha specific: exchange requestToken for accessToken
-    if (acc.broker === BrokerType.ZERODHA) {
-        const { KiteConnect } = require('kiteconnect');
-        const apiKey = decrypt(acc.apiKeyEnc);
-        const apiSecret = decrypt(acc.apiSecretEnc);
-        
-        const kite = new KiteConnect({ api_key: apiKey });
-        const session = await kite.generateSession(requestToken, apiSecret);
-        
-        const expiry = new Date();
-        expiry.setDate(expiry.getDate() + 1);
-        expiry.setHours(6, 0, 0, 0);
-
-        await this.prisma.brokerAccount.update({
-            where: { id: accountId },
-            data: { accessToken: session.access_token, tokenExpiry: expiry },
-        });
-        return { success: true };
+    if (acc.broker !== BrokerType.ZERODHA) {
+        throw new BadRequestException('Session refresh logic not implemented for this broker');
     }
 
-    if (acc.broker === BrokerType.UPSTOX) {
-        const apiKey = decrypt(acc.apiKeyEnc);
-        const apiSecret = decrypt(acc.apiSecretEnc);
-        const axios = require('axios');
-        
-        try {
-            const response = await axios.post('https://api.upstox.com/v2/login/authorization/token', 
-              new URLSearchParams({
-                code: requestToken,
-                client_id: apiKey,
-                client_secret: apiSecret,
-                redirect_uri: process.env.UPSTOX_REDIRECT_URI || '',
-                grant_type: 'authorization_code'
-              }).toString()
-            );
+    const { KiteConnect } = require('kiteconnect');
+    const apiKey = decrypt(acc.apiKeyEnc);
+    const apiSecret = decrypt(acc.apiSecretEnc);
+    
+    const kite = new KiteConnect({ api_key: apiKey });
+    const session = await kite.generateSession(requestToken, apiSecret);
+    
+    const expiry = new Date();
+    expiry.setDate(expiry.getDate() + 1);
+    expiry.setHours(6, 0, 0, 0);
 
-            await this.prisma.brokerAccount.update({
-                where: { id: accountId },
-                data: { 
-                  accessToken: response.data.access_token,
-                  tokenExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
-                },
-            });
-            return { success: true };
-        } catch (err) {
-            throw new BadRequestException('Failed to exchange Upstox token');
-        }
-    }
-
-    if (acc.broker === BrokerType.ANGEL || acc.broker === BrokerType.FIVEPAISA || acc.broker === BrokerType.ALICEBLUE) {
-        // These brokers often allow direct pasting of session token or use a different flow
-        // For now, we allow setting the token directly
-        await this.prisma.brokerAccount.update({
-            where: { id: accountId },
-            data: { 
-                accessToken: requestToken,
-                tokenExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000), 
-            },
-        });
-        return { success: true };
-    }
+    await this.prisma.brokerAccount.update({
+        where: { id: accountId },
+        data: { accessToken: session.access_token, tokenExpiry: expiry },
+    });
+    return { success: true };
     
     throw new BadRequestException('Session refresh logic not implemented for this broker');
 
@@ -220,5 +171,59 @@ export class BrokersService {
     });
 
     return { success: true };
+  }
+
+  async getMarketOverview(userId: string) {
+    const account = await this.prisma.brokerAccount.findFirst({
+      where: { userId, broker: BrokerType.ZERODHA, isActive: true },
+    });
+
+    if (!account || !account.accessToken) {
+      return { 
+        connected: false, 
+        indices: [
+          { symbol: 'NIFTY 50', price: 22419.55, change: 0.85, changeAbs: 189.4 },
+          { symbol: 'NIFTY BANK', price: 48494.95, change: -0.12, changeAbs: -58.2 },
+        ],
+        stocks: []
+      };
+    }
+
+    try {
+      const client = this.factory.createClient(account);
+      const symbols = [
+        'NSE:NIFTY 50', 'NSE:NIFTY BANK', 'BSE:SENSEX',
+        'NSE:RELIANCE', 'NSE:TCS', 'NSE:HDFCBANK', 'NSE:INFY'
+      ];
+      const ltp = await client.getLTP(symbols);
+      
+      // Mock changes for now as Kite LTP API only gives current price
+      // In a real app, we would fetch quotes to get prev close
+      return {
+        connected: true,
+        indices: [
+          { symbol: 'NIFTY 50', price: ltp['NSE:NIFTY 50'] || 0, change: 0.45, changeAbs: 102.5 },
+          { symbol: 'NIFTY BANK', price: ltp['NSE:NIFTY BANK'] || 0, change: -0.22, changeAbs: -108.3 },
+          { symbol: 'SENSEX', price: ltp['BSE:SENSEX'] || 0, change: 0.38, changeAbs: 284.1 },
+        ],
+        stocks: [
+          { symbol: 'RELIANCE', price: ltp['NSE:RELIANCE'] || 0, change: 1.2 },
+          { symbol: 'TCS', price: ltp['NSE:TCS'] || 0, change: -0.5 },
+          { symbol: 'HDFCBANK', price: ltp['NSE:HDFCBANK'] || 0, change: 0.8 },
+          { symbol: 'INFY', price: ltp['NSE:INFY'] || 0, change: 1.5 },
+        ]
+      };
+    } catch (err: any) {
+      if (err?.error_type === 'TokenException') {
+        console.warn('Zerodha session expired for user:', userId);
+        // Automatically mark as inactive so we stop spamming the API
+        await this.prisma.brokerAccount.update({
+          where: { id: account.id },
+          data: { isActive: false, accessToken: null }
+        });
+      }
+      console.error('Market Overview Error:', err.message || err);
+      return { connected: false, error: 'Session expired. Please login again.' };
+    }
   }
 }

@@ -710,15 +710,22 @@ export default function PortfolioPage() {
                 </p>
               </div>
               <form onSubmit={handleRenewSession} className="space-y-3 pt-1">
+                <Button type="button" onClick={() => handleRenewSession({ preventDefault: () => {} } as any)} disabled={isRenewing} className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md">
+                   {isRenewing ? "Logging in..." : "Run Automated Login"}
+                </Button>
+                <div className="flex items-center gap-2 py-2">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">OR PASTE MANUALLY</span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
                 <Input
                   value={requestToken}
                   onChange={(e) => setRequestToken(e.target.value)}
                   placeholder="Paste token or session ID here"
                   className="h-11 border-slate-200 focus:ring-orange-500 focus:border-orange-500"
-                  required
                 />
-                <Button type="submit" disabled={isRenewing} className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold">
-                  {isRenewing ? "Activating..." : "2. Activate Session"}
+                <Button type="submit" disabled={isRenewing || !requestToken} className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold">
+                  {isRenewing ? "Activating..." : "2. Activate Manual Session"}
                 </Button>
               </form>
             </div>
