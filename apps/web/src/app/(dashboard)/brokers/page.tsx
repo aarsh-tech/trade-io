@@ -6,9 +6,10 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plug, Plus, X, CheckCircle2, ExternalLink } from "lucide-react";
+import { Plug, Plus, X, CheckCircle2, RefreshCcw, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import Link from "next/link";
 
 import { useBrokers } from "@/hooks/useBrokers";
 
@@ -113,23 +114,25 @@ export default function BrokersPage() {
                         <span className="text-amber-600 font-semibold italic">Not logged in today</span>
                       )}
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                       <Button
                         variant="outline"
                         size="sm"
-                        className="flex-1 gap-1 text-slate-700 bg-white border-slate-200 hover:bg-slate-50"
+                        className="flex-1 h-9 gap-2 text-slate-700 bg-white border-slate-200 hover:bg-slate-50 hover:border-blue-200 transition-all rounded-lg"
+                        asChild
                       >
-                        <a href="/portfolio">
-                          <ExternalLink className="h-3 w-3" /> Renew Token
-                        </a>
+                        <Link href="/portfolio" className="flex items-center gap-2">
+                          <RefreshCcw className="h-3.5 w-3.5 text-blue-500" />
+                          <span className="font-semibold text-xs">Renew Token</span>
+                        </Link>
                       </Button>
                       <Button
-                        variant="outline"
-                        size="icon-sm"
-                        className="text-red-500 bg-white border-slate-200 hover:bg-red-50 hover:border-red-200 h-8 w-8"
+                        variant="ghost"
+                        size="icon"
+                        className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 h-9 w-9 rounded-lg transition-colors"
                         onClick={() => handleDisconnect(acc.id)}
                       >
-                        <X className="h-3.5 w-3.5" />
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </CardContent>
