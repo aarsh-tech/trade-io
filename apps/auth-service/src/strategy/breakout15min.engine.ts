@@ -65,8 +65,25 @@ export class Breakout15MinEngine {
       include: { brokerAccount: true },
     });
 
-    if (!strategy || !strategy.brokerAccount) {
-      throw new Error('Strategy or broker account not found');
+    if (!strategy) {
+      throw new Error('Strategy not found');
+    }
+
+    let brokerAccount = strategy.brokerAccount;
+    if (!brokerAccount) {
+      // Fallback: Find any active broker account for the user
+      brokerAccount = await this.prisma.brokerAccount.findFirst({
+        where: { userId: strategy.userId, isActive: true },
+      });
+      if (!brokerAccount) {
+        throw new Error('No active broker account found to fetch market data. Please connect a broker.');
+      }
+      
+      // Auto-link it to the strategy for future
+      await this.prisma.strategy.update({
+        where: { id: strategyId },
+        data: { brokerAccountId: brokerAccount.id },
+      });
     }
 
     const config: Breakout15MinConfig = JSON.parse(strategy.config);

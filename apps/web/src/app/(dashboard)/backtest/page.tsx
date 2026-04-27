@@ -5,13 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { FlaskConical, Play, Clock, TrendingUp, Percent, ChevronsDown, History } from "lucide-react";
+import { FlaskConical, Play, Clock, TrendingUp, Percent, ChevronsDown, History, Loader2, Search } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell
 } from "recharts";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
-import { backtestApi, strategyApi } from "@/lib/api";
+import { backtestApi, strategyApi, marketApi } from "@/lib/api";
 import { toast } from "sonner";
 
 export default function BacktestPage() {
@@ -19,7 +19,7 @@ export default function BacktestPage() {
   const [history, setHistory] = useState<any[]>([]);
   const [form, setForm] = useState({
     strategyId: "",
-    symbol: "NIFTY50",
+    symbol: "NIFTY 50",
     exchange: "NSE",
     fromDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     toDate: new Date().toISOString().split('T')[0],
@@ -27,6 +27,11 @@ export default function BacktestPage() {
   });
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     loadStrategies();
@@ -39,7 +44,7 @@ export default function BacktestPage() {
       setStrategies(data.data);
       if (data.data.length > 0) {
         const s = data.data[0];
-        const config = s.config;
+        const config = typeof s.config === 'string' ? JSON.parse(s.config) : s.config;
         setForm(f => ({ 
           ...f, 
           strategyId: s.id,
@@ -61,11 +66,43 @@ export default function BacktestPage() {
     }
   }
 
+  // Debounced search logic
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (searchQuery.length < 2) {
+        setSearchResults([]);
+        return;
+      }
+      setIsSearching(true);
+      try {
+        const res = await marketApi.search(searchQuery);
+        setSearchResults(res.data?.data ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  function selectInstrument(item: any) {
+    setForm(f => ({
+      ...f,
+      symbol: item.symbol,
+      exchange: item.exchange,
+    }));
+    setSearchQuery("");
+    setSearchResults([]);
+  }
+
   async function runBacktest(e: React.FormEvent) {
     e.preventDefault();
     if (!form.strategyId) return toast.error("Please select a strategy");
     
     setLoading(true);
+    setResult(null);
     try {
       const { data } = await backtestApi.run({
         ...form,
@@ -81,14 +118,15 @@ export default function BacktestPage() {
         const { data: historyData } = await backtestApi.history();
         const latest = historyData.find((h: any) => h.id === data.id);
         if (latest?.status === 'DONE') {
-          setResult(JSON.parse(latest.result));
+          const res = typeof latest.result === 'string' ? JSON.parse(latest.result) : latest.result;
+          setResult(res);
           setLoading(false);
           setHistory(historyData);
           toast.success("Backtest completed!");
         } else if (latest?.status === 'FAILED') {
           setLoading(false);
           toast.error("Backtest failed");
-        } else if (attempts < 15) {
+        } else if (attempts < 20) {
           attempts++;
           setTimeout(checkStatus, 3000);
         } else {
@@ -143,7 +181,7 @@ export default function BacktestPage() {
             <CardContent>
               <form onSubmit={runBacktest} className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium mb-1.5 block">Strategy</label>
+                  <label className="text-sm font-medium mb-1.5 block">1. Select Strategy</label>
                   <select
                     className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
                     value={form.strategyId}
@@ -151,7 +189,7 @@ export default function BacktestPage() {
                       const id = e.target.value;
                       const s = strategies.find(strat => strat.id === id);
                       if (s) {
-                        const config = s.config;
+                        const config = typeof s.config === 'string' ? JSON.parse(s.config) : s.config;
                         setForm(f => ({ 
                           ...f, 
                           strategyId: id,
@@ -163,40 +201,71 @@ export default function BacktestPage() {
                   >
                     <option value="" disabled>Select a strategy</option>
                     {strategies.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
+                      <option key={s.id} value={s.id}>{s.name} ({s.type})</option>
                     ))}
                   </select>
                 </div>
+
+                <div className="space-y-1.5 relative">
+                  <label className="text-sm font-medium block">2. Select Instrument for Backtest</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input 
+                      placeholder="Search stock or index..." 
+                      className="pl-9"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {isSearching && <Loader2 className="absolute right-3 top-2.5 h-4 w-4 animate-spin" />}
+                  </div>
+
+                  {/* Search Results */}
+                  {searchResults.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      {searchResults.map((item) => (
+                        <button
+                          key={`${item.exchange}:${item.symbol}`}
+                          onClick={() => selectInstrument(item)}
+                          className="w-full flex items-center justify-between p-2 hover:bg-[hsl(var(--secondary)/0.5)] transition-colors border-b last:border-0"
+                        >
+                          <div className="text-left">
+                            <p className="text-sm font-bold">{item.symbol}</p>
+                            <p className="text-[10px] text-muted-foreground">{item.name}</p>
+                          </div>
+                          <Badge  className="text-[10px]">{item.exchange}</Badge>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 p-2 rounded-lg bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))] mt-2">
+                    <Badge>{form.exchange}</Badge>
+                    <span className="text-sm font-bold">{form.symbol}</span>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium mb-1.5 block">Symbol</label>
-                    <Input value={form.symbol} readOnly className="bg-[hsl(var(--secondary)/0.3)] cursor-not-allowed opacity-80" />
+                    <label className="text-sm font-medium mb-1.5 block">From Date</label>
+                    <Input
+                      type="date"
+                      value={form.fromDate}
+                      onChange={(e) => setForm({ ...form, fromDate: e.target.value })}
+                      className="[color-scheme:dark]"
+                    />
                   </div>
                   <div>
-                    <label className="text-sm font-medium mb-1.5 block">Exchange</label>
-                    <Input value={form.exchange} readOnly className="bg-[hsl(var(--secondary)/0.3)] cursor-not-allowed opacity-80" />
+                    <label className="text-sm font-medium mb-1.5 block">To Date</label>
+                    <Input
+                      type="date"
+                      value={form.toDate}
+                      onChange={(e) => setForm({ ...form, toDate: e.target.value })}
+                      className="[color-scheme:dark]"
+                    />
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1.5 block">From Date</label>
-                  <Input
-                    type="date"
-                    value={form.fromDate}
-                    onChange={(e) => setForm({ ...form, fromDate: e.target.value })}
-                    className="[color-scheme:dark]"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">To Date</label>
-                  <Input
-                    type="date"
-                    value={form.toDate}
-                    onChange={(e) => setForm({ ...form, toDate: e.target.value })}
-                    className="[color-scheme:dark]"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">Capital (₹)</label>
+                  <label className="text-sm font-medium mb-1.5 block">Initial Capital (₹)</label>
                   <Input
                     type="number"
                     value={form.capital}
@@ -206,8 +275,8 @@ export default function BacktestPage() {
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? (
                     <div className="flex items-center gap-2">
-                      <div className="h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Running...
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Running Simulation...
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
@@ -233,7 +302,12 @@ export default function BacktestPage() {
                 {history.slice(0, 5).map((h) => (
                   <button
                     key={h.id}
-                    onClick={() => h.result && setResult(JSON.parse(h.result))}
+                    onClick={() => {
+                      if (h.result) {
+                        const res = typeof h.result === 'string' ? JSON.parse(h.result) : h.result;
+                        setResult(res);
+                      }
+                    }}
                     className="w-full px-4 py-3 text-left hover:bg-[hsl(var(--accent)/0.05)] transition-colors flex flex-col gap-1"
                   >
                     <div className="flex items-center justify-between">
@@ -245,8 +319,8 @@ export default function BacktestPage() {
                     <div className="flex items-center justify-between text-[10px] text-[hsl(var(--muted-foreground))]">
                       <span>{new Date(h.createdAt).toLocaleDateString()}</span>
                       {h.status === 'DONE' && (
-                        <span className={cn(JSON.parse(h.result).netPnl >= 0 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--red)) ]")}>
-                          {formatCurrency(JSON.parse(h.result).netPnl)}
+                        <span className={cn((typeof h.result === 'string' ? JSON.parse(h.result) : h.result).netPnl >= 0 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--red))]")}>
+                          {formatCurrency((typeof h.result === 'string' ? JSON.parse(h.result) : h.result).netPnl)}
                         </span>
                       )}
                     </div>
@@ -344,6 +418,7 @@ export default function BacktestPage() {
                   <div>
                     <p className="text-lg font-medium">Running Simulation</p>
                     <p className="text-sm text-[hsl(var(--muted-foreground))]">Processing historical data for {form.symbol}...</p>
+                    <p className="text-[10px] text-muted-foreground mt-2">This may take 30-60 seconds depending on date range</p>
                   </div>
                 </>
               ) : (

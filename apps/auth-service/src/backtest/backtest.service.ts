@@ -11,7 +11,7 @@ export class BacktestService {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
-  ) {}
+  ) { }
 
   async runBacktest(userId: string, dto: RunBacktestDto) {
     const { strategyId, symbol, exchange, fromDate, toDate, capital } = dto;
@@ -42,7 +42,7 @@ export class BacktestService {
       this.prisma.backtest.update({
         where: { id: backtest.id },
         data: { status: 'FAILED' },
-      }).catch(() => {});
+      }).catch(() => { });
     });
 
     return backtest;
@@ -50,16 +50,15 @@ export class BacktestService {
 
   private async executeSimulation(backtestId: string, dto: RunBacktestDto, strategy: any) {
     try {
-      // For now, only BREAKOUT_15MIN is supported
-      if (strategy.type !== StrategyType.BREAKOUT_15MIN) {
-        throw new Error('Only 15-Min Breakout strategy is supported for backtesting currently.');
+      if (strategy.type !== ('BREAKOUT_15MIN' as any) && strategy.type !== ('EMA_VWAP_CROSSOVER' as any)) {
+        throw new Error('This strategy is not supported for backtesting currently.');
       }
 
       const config = JSON.parse(strategy.config);
-      const symbol = config.symbol;
-      const exchange = config.exchange;
-      
-      // Need an active broker account to fetch historical data
+      // Use symbol from DTO if provided (as requested by user to allow selecting any stock)
+      const symbol = dto.symbol || config.symbol;
+      const exchange = dto.exchange || config.exchange;
+
       const userAccount = await this.prisma.brokerAccount.findFirst({
         where: { userId: strategy.userId, isActive: true },
       });
@@ -69,8 +68,7 @@ export class BacktestService {
       }
 
       const client = this.factory.createClient(userAccount);
-      
-      // 1. Fetch candles
+
       this.logger.log(`Fetching historical data for ${symbol}...`);
       const candles = await client.getHistoricalData(
         symbol,
@@ -84,10 +82,13 @@ export class BacktestService {
         throw new Error('No historical data found for the selected period');
       }
 
-      // 2. Run simulation logic
-      const result = this.simulateBreakout15Min(candles, config, dto.capital);
+      let result;
+      if (strategy.type === StrategyType.BREAKOUT_15MIN) {
+        result = this.simulateBreakout15Min(candles, config, dto.capital);
+      } else {
+        result = this.simulateEmaVwapCrossover(candles, config, dto.capital);
+      }
 
-      // 3. Update DB
       await this.prisma.backtest.update({
         where: { id: backtestId },
         data: {
@@ -106,10 +107,146 @@ export class BacktestService {
     }
   }
 
+  private simulateEmaVwapCrossover(candles: any[], config: any, initialCapital: number) {
+    const trades: any[] = [];
+    let currentCapital = initialCapital;
+
+    // Calculate indicators
+    const emas = this.calculateEMA(candles, config.emaPeriod || 15);
+    const vwaps = this.calculateVWAP(candles);
+
+    let position: 'LONG' | 'SHORT' | null = null;
+    let entryPrice = 0;
+    let stopLoss = 0;
+    let target = 0;
+    let waitingForConfirmation: 'LONG' | 'SHORT' | null = null;
+    let confirmationLevel = 0;
+
+    for (let i = 1; i < candles.length; i++) {
+      const candle = candles[i];
+      const prevEma = emas[i - 1];
+      const currEma = emas[i];
+      const prevVwap = vwaps[i - 1];
+      const currVwap = vwaps[i];
+
+      if (prevEma === null || currEma === null || prevVwap === null || currVwap === null) continue;
+
+      const date = new Date(candle.date).toISOString().split('T')[0];
+
+      if (!position) {
+        // Confirmation check
+        if (waitingForConfirmation) {
+          if (waitingForConfirmation === 'LONG' && candle.high > confirmationLevel) {
+            position = 'LONG';
+            entryPrice = Math.max(candle.open, confirmationLevel);
+            stopLoss = entryPrice - (config.stopLossRs / config.qty);
+            target = entryPrice + (config.targetRs / config.qty);
+            waitingForConfirmation = null;
+          } else if (waitingForConfirmation === 'SHORT' && candle.low < confirmationLevel) {
+            if (!config.isOptionBuyingOnly || (config.isOptionBuyingOnly && true)) { // Allow all for backtest or handle specifically
+              position = 'SHORT';
+              entryPrice = Math.min(candle.open, confirmationLevel);
+              stopLoss = entryPrice + (config.stopLossRs / config.qty);
+              target = entryPrice - (config.targetRs / config.qty);
+              waitingForConfirmation = null;
+            }
+          }
+          // Reset waiting if too much time passes or opposite signal (simplified: reset if new crossover)
+        }
+
+        // Crossover check
+        if (prevEma <= prevVwap && currEma > currVwap) {
+          waitingForConfirmation = 'LONG';
+          confirmationLevel = candle.high;
+        } else if (prevEma >= prevVwap && currEma < currVwap) {
+          waitingForConfirmation = 'SHORT';
+          confirmationLevel = candle.low;
+        }
+      } else {
+        // Check for exit
+        if (position === 'LONG') {
+          if (candle.low <= stopLoss) {
+            const pnl = (stopLoss - entryPrice) * config.qty;
+            trades.push({ date, type: 'LONG', entry: entryPrice, exit: stopLoss, pnl, result: 'SL' });
+            currentCapital += pnl;
+            position = null;
+          } else if (candle.high >= target) {
+            const pnl = (target - entryPrice) * config.qty;
+            trades.push({ date, type: 'LONG', entry: entryPrice, exit: target, pnl, result: 'TARGET' });
+            currentCapital += pnl;
+            position = null;
+          }
+        } else if (position === 'SHORT') {
+          if (candle.high >= stopLoss) {
+            const pnl = (entryPrice - stopLoss) * config.qty;
+            trades.push({ date, type: 'SHORT', entry: entryPrice, exit: stopLoss, pnl, result: 'SL' });
+            currentCapital += pnl;
+            position = null;
+          } else if (candle.low <= target) {
+            const pnl = (entryPrice - target) * config.qty;
+            trades.push({ date, type: 'SHORT', entry: entryPrice, exit: target, pnl, result: 'TARGET' });
+            currentCapital += pnl;
+            position = null;
+          }
+        }
+      }
+    }
+
+    const netPnl = currentCapital - initialCapital;
+    const winRate = (trades.filter(t => t.pnl > 0).length / trades.length) * 100 || 0;
+
+    return {
+      initialCapital,
+      finalCapital: currentCapital,
+      netPnl,
+      netPnlPercent: (netPnl / initialCapital) * 100,
+      winRate,
+      totalTrades: trades.length,
+      trades
+    };
+  }
+
+  private calculateEMA(candles: any[], period: number) {
+    const emas: (number | null)[] = new Array(candles.length).fill(null);
+    if (candles.length < period) return emas;
+    let sum = 0;
+    for (let i = 0; i < period; i++) sum += candles[i].close;
+    let prevEma = sum / period;
+    emas[period - 1] = prevEma;
+    const multiplier = 2 / (period + 1);
+    for (let i = period; i < candles.length; i++) {
+      const ema = (candles[i].close - prevEma) * multiplier + prevEma;
+      emas[i] = ema;
+      prevEma = ema;
+    }
+    return emas;
+  }
+
+  private calculateVWAP(candles: any[]) {
+    const vwaps: (number | null)[] = new Array(candles.length).fill(null);
+    let cumulativePV = 0;
+    let cumulativeV = 0;
+    let lastDate = '';
+    for (let i = 0; i < candles.length; i++) {
+      const date = new Date(candles[i].date).toISOString().split('T')[0];
+      if (date !== lastDate) {
+        cumulativePV = 0;
+        cumulativeV = 0;
+        lastDate = date;
+      }
+      const typicalPrice = (candles[i].high + candles[i].low + candles[i].close) / 3;
+      cumulativePV += typicalPrice * candles[i].volume;
+      cumulativeV += candles[i].volume;
+      vwaps[i] = cumulativePV / cumulativeV;
+    }
+    return vwaps;
+  }
+
+
   private simulateBreakout15Min(candles: any[], config: any, initialCapital: number) {
     const trades: any[] = [];
     let currentCapital = initialCapital;
-    
+
     // Group candles by date
     const days = new Map<string, any[]>();
     candles.forEach(c => {
@@ -133,7 +270,7 @@ export class BacktestService {
 
       for (let i = 3; i < dayCandles.length; i++) {
         const candle = dayCandles[i];
-        
+
         if (!position) {
           // Check for entry
           if (candle.close > high) {
@@ -174,7 +311,7 @@ export class BacktestService {
               break;
             }
           }
-          
+
           // EOD Exit
           if (i === dayCandles.length - 1) {
             const pnl = position === 'LONG' ? (candle.close - entryPrice) * config.qty : (entryPrice - candle.close) * config.qty;

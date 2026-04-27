@@ -6,7 +6,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { StrategyService } from './strategy.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
-import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
+import { EmaVwapCrossoverEngine } from './emavwap.engine';
+import { CreateStrategyDto, UpdateStrategyDto, StrategyTypeEnum } from './dto/strategy.dto';
+import { StrategyType } from '@prisma/client';
 
 @ApiTags('Strategies')
 @Controller('strategies')
@@ -15,7 +17,8 @@ import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 export class StrategyController {
   constructor(
     private readonly strategyService: StrategyService,
-    private readonly engine: Breakout15MinEngine,
+    private readonly breakoutEngine: Breakout15MinEngine,
+    private readonly emaVwapEngine: EmaVwapCrossoverEngine,
   ) {}
 
   @Get()
@@ -60,31 +63,39 @@ export class StrategyController {
   @Post(':id/start')
   @ApiOperation({ summary: 'Start executing a strategy' })
   async start(@Request() req, @Param('id') id: string) {
-    // Guard: must own the strategy
-    await this.strategyService.get(req.user.id, id);
-    const result = await this.engine.start(id);
+    const strategy = await this.strategyService.get(req.user.id, id);
+    const engine = this.getEngine(strategy.type);
+    const result = await engine.start(id);
     return { success: true, data: result };
   }
 
   @Post(':id/stop')
   @ApiOperation({ summary: 'Stop a running strategy' })
   async stop(@Request() req, @Param('id') id: string) {
-    await this.strategyService.get(req.user.id, id);
-    await this.engine.stop(id);
+    const strategy = await this.strategyService.get(req.user.id, id);
+    const engine = this.getEngine(strategy.type);
+    await engine.stop(id);
     return { success: true };
   }
 
   @Get(':id/status')
   @ApiOperation({ summary: 'Get live strategy status & logs' })
   async status(@Request() req, @Param('id') id: string) {
-    await this.strategyService.get(req.user.id, id);
+    const strategy = await this.strategyService.get(req.user.id, id);
+    const engine = this.getEngine(strategy.type);
     return {
       success: true,
       data: {
-        running: this.engine.isRunning(id),
-        logs: this.engine.getLogs(id),
+        running: engine.isRunning(id),
+        logs: engine.getLogs(id),
       },
     };
+  }
+
+  private getEngine(type: any) {
+    if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
+    if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
+    throw new Error('No engine found for this strategy type');
   }
 
   @Get(':id/executions')

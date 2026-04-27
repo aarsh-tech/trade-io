@@ -21,4 +21,14 @@ export class ConnectBrokerDto {
   @IsString()
   @IsNotEmpty()
   apiSecret: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  password?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  totpSecret?: string;
 }

@@ -64,7 +64,7 @@ export default function NewStrategyPage() {
   // ── Form state ──────────────────────────────────────────────────────────────
   const [form, setForm] = useState({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_CROSSOVER" | "",
+    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "",
     // Common
     symbol: "NIFTY 50",
     exchange: "NSE",
@@ -76,9 +76,9 @@ export default function NewStrategyPage() {
     maxTradesPerDay: "1",
     minPremium: "100",
     maxPremium: "300",
-    // EMA crossover
-    fastPeriod: "9",
-    slowPeriod: "15",
+    // EMA-VWAP crossover
+    emaPeriod: "15",
+    isOptionBuyingOnly: true,
     // Broker
     brokerAccountId: "",
     isPaperTrade: true,
@@ -142,7 +142,7 @@ export default function NewStrategyPage() {
     if (step === 0) return !!form.name && !!form.type;
     if (step === 1) return !!form.symbol && Number(form.lots) > 0;
     if (step === 2) {
-      if (form.type === "BREAKOUT_15MIN")
+      if (form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER")
         return Number(form.stopLossRs) > 0 && Number(form.targetRs) > 0;
       return true;
     }
@@ -174,19 +174,15 @@ export default function NewStrategyPage() {
           : {
             symbol: form.symbol.trim(),
             exchange: form.exchange,
-            fastPeriod: Number(form.fastPeriod),
-            slowPeriod: Number(form.slowPeriod),
+            emaPeriod: Number(form.emaPeriod),
+            isOptionBuyingOnly: form.isOptionBuyingOnly,
             qty: qty,
             lots: Number(form.lots),
             product: form.product,
-            minPremium: Number(form.minPremium),
-            maxPremium: Number(form.maxPremium),
+            stopLossRs: Number(form.stopLossRs),
+            targetRs: Number(form.targetRs),
+            maxTradesPerDay: Number(form.maxTradesPerDay),
           };
-
-      const finalConfig = {
-        ...config,
-        isPaperTrade: form.isPaperTrade,
-      };
 
       await strategyApi.create({
         name: form.name,
@@ -290,11 +286,11 @@ export default function NewStrategyPage() {
                       badge: "Recommended",
                     },
                     {
-                      type: "EMA_CROSSOVER",
-                      label: "EMA Crossover",
-                      desc: "Trade when fast EMA crosses slow EMA on candle close.",
+                      type: "EMA_VWAP_CROSSOVER",
+                      label: "15-EMA & VWAP",
+                      desc: "Trade when 15-period EMA crosses VWAP. Includes confirmation candle logic. Optimized for Options & Stocks.",
                       icon: TrendingUp,
-                      badge: null,
+                      badge: "New",
                     },
                   ].map(({ type, label, desc, icon: Icon, badge }) => (
                     <button
@@ -437,15 +433,21 @@ export default function NewStrategyPage() {
                 </div>
               </div>
 
-              {form.type === "EMA_CROSSOVER" && (
+              {form.type === "EMA_VWAP_CROSSOVER" && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium mb-2 block">Fast EMA Period</label>
-                    <Input type="number" value={form.fastPeriod} onChange={(e) => set("fastPeriod", e.target.value)} />
+                    <label className="text-sm font-medium mb-2 block">EMA Period</label>
+                    <Input type="number" value={form.emaPeriod} onChange={(e) => set("emaPeriod", e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Slow EMA Period</label>
-                    <Input type="number" value={form.slowPeriod} onChange={(e) => set("slowPeriod", e.target.value)} />
+                  <div className="flex items-center gap-3 pt-6">
+                    <input 
+                      type="checkbox" 
+                      id="optBuy" 
+                      checked={form.isOptionBuyingOnly} 
+                      onChange={(e) => set("isOptionBuyingOnly", e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <label htmlFor="optBuy" className="text-sm font-medium">Option Buying Only</label>
                   </div>
                 </div>
               )}
@@ -455,7 +457,7 @@ export default function NewStrategyPage() {
           {/* ── Step 2: Risk Management ── */}
           {step === 2 && (
             <div className="space-y-5">
-              {form.type === "BREAKOUT_15MIN" && (
+              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER") && (
                 <>
                   {/* Info box */}
                   <div className="flex gap-3 p-3 rounded-xl bg-[hsl(var(--primary)/0.06)] border border-[hsl(var(--primary)/0.15)]">
@@ -466,37 +468,39 @@ export default function NewStrategyPage() {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <TrendingUp className="h-4 w-4 text-blue-500" />
-                        Min Premium (₹)
-                      </label>
-                      <Input
-                        type="number"
-                        value={form.minPremium}
-                        onChange={(e) => set("minPremium", e.target.value)}
-                        className="focus:ring-blue-300"
-                      />
+                  {form.type === "BREAKOUT_15MIN" && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                          <TrendingUp className="h-4 w-4 text-blue-500" />
+                          Min Premium (₹)
+                        </label>
+                        <Input
+                          type="number"
+                          value={form.minPremium}
+                          onChange={(e) => set("minPremium", e.target.value)}
+                          className="focus:ring-blue-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                          <TrendingUp className="h-4 w-4 text-blue-600" />
+                          Max Premium (₹)
+                        </label>
+                        <Input
+                          type="number"
+                          value={form.maxPremium}
+                          onChange={(e) => set("maxPremium", e.target.value)}
+                          className="focus:ring-blue-300"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-[10px] text-[hsl(var(--muted-foreground))] italic px-1">
+                          When breakout occurs, the bot will pick an Option contract with premium between ₹{form.minPremium} and ₹{form.maxPremium}.
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <TrendingUp className="h-4 w-4 text-blue-600" />
-                        Max Premium (₹)
-                      </label>
-                      <Input
-                        type="number"
-                        value={form.maxPremium}
-                        onChange={(e) => set("maxPremium", e.target.value)}
-                        className="focus:ring-blue-300"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] italic px-1">
-                        When breakout occurs, the bot will pick an Option contract with premium between ₹{form.minPremium} and ₹{form.maxPremium}.
-                      </p>
-                    </div>
-                  </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -580,14 +584,6 @@ export default function NewStrategyPage() {
                     </div>
                   </div>
                 </>
-              )}
-
-              {form.type === "EMA_CROSSOVER" && (
-                <div className="p-4 rounded-xl bg-[hsl(var(--secondary)/0.5)] border border-[hsl(var(--border))]">
-                  <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                    EMA Crossover uses percentage-based risk management. Configure stop-loss % after creation.
-                  </p>
-                </div>
               )}
             </div>
           )}
@@ -676,19 +672,18 @@ export default function NewStrategyPage() {
                   </p>
                   {[
                     ["Name", form.name],
-                    ["Type", form.type === "BREAKOUT_15MIN" ? "15-Min High/Low Breakout" : "EMA Crossover"],
+                    ["Type", form.type === "BREAKOUT_15MIN" ? "15-Min High/Low Breakout" : "EMA-VWAP Crossover"],
                     ["Symbol", `${form.symbol} · ${form.exchange}`],
                     ["Order Size", `${form.lots} Lots (${Number(form.lots) * getLotSize(form.symbol)} Shares)`],
                     ["Product", form.product],
+                    ["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`],
+                    ["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`],
+                    ["Max Trades", `${form.maxTradesPerDay} / day`],
                     ...(form.type === "BREAKOUT_15MIN" ? [
                       ["Premium Range", `₹${form.minPremium} — ₹${form.maxPremium}`],
-                      ["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`],
-                      ["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`],
-                      ["Max Trades", `${form.maxTradesPerDay} / day`],
-                      ["Order Type", "LIMIT (Entry + SL-Limit + Target)"],
                     ] : [
-                      ["Fast EMA", form.fastPeriod],
-                      ["Slow EMA", form.slowPeriod],
+                      ["EMA Period", form.emaPeriod],
+                      ["Option Only", form.isOptionBuyingOnly ? "Yes" : "No"],
                     ]),
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between py-2 border-b border-[hsl(var(--border))] last:border-0 px-1">

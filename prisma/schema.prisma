@@ -91,7 +91,7 @@ model Strategy {
   updatedAt       DateTime     @updatedAt
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  brokerAccount BrokerAccount? @relation(fields: [brokerAccountId], references: [id])
+  brokerAccount BrokerAccount? @relation(fields: [brokerAccountId], references: [id], onDelete: SetNull)
   executions    StrategyExecution[]
   backtests     Backtest[]
 
@@ -100,7 +100,7 @@ model Strategy {
 
 enum StrategyType {
   BREAKOUT_15MIN
-  EMA_CROSSOVER
+  EMA_VWAP_CROSSOVER
   CUSTOM
 }
 
@@ -131,7 +131,7 @@ enum ExecStatus {
 model Order {
   id              String      @id @default(cuid())
   userId          String
-  brokerAccountId String
+  brokerAccountId String?
   strategyId      String?
   executionId     String?
   symbol          String
@@ -151,7 +151,7 @@ model Order {
   updatedAt       DateTime    @updatedAt
 
   user          User              @relation(fields: [userId], references: [id])
-  brokerAccount BrokerAccount     @relation(fields: [brokerAccountId], references: [id])
+  brokerAccount BrokerAccount?    @relation(fields: [brokerAccountId], references: [id], onDelete: SetNull)
   execution     StrategyExecution? @relation(fields: [executionId], references: [id])
 
   @@map("orders")

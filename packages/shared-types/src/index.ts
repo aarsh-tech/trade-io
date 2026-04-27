@@ -9,7 +9,7 @@ export enum BrokerType {
 
 export enum StrategyType {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
-  EMA_CROSSOVER = 'EMA_CROSSOVER',
+  EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
   CUSTOM = 'CUSTOM',
 }
 
@@ -125,36 +125,39 @@ export interface Position {
 
 // ─── Strategy ─────────────────────────────────────────────────────────────────
 
+
 export interface Breakout15MinConfig {
   symbol: string;
   exchange: string;
   qty: number;
-  stopLossPercent: number;
-  targetPercent: number;
+  stopLossRs: number;
+  targetRs: number;
   startTime: string; // "09:15"
 }
 
-export interface EmaCrossoverConfig {
+export interface EmaVwapCrossoverConfig {
   symbol: string;
   exchange: string;
   qty: number;
-  fastPeriod: number;  // default 9
-  slowPeriod: number;  // default 15
+  emaPeriod: number;  // default 15
   interval: '1min' | '5min' | '15min';
+  stopLossRs: number;
+  targetRs: number;
+  isOptionBuyingOnly?: boolean;
 }
 
 export interface CreateStrategyDto {
   name: string;
   type: StrategyType;
   brokerAccountId: string;
-  config: Breakout15MinConfig | EmaCrossoverConfig;
+  config: Breakout15MinConfig | EmaVwapCrossoverConfig;
 }
 
 export interface StrategyDto {
   id: string;
   name: string;
   type: StrategyType;
-  config: Breakout15MinConfig | EmaCrossoverConfig;
+  config: Breakout15MinConfig | EmaVwapCrossoverConfig;
   isActive: boolean;
   brokerAccountId?: string;
   createdAt: string;

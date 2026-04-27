@@ -3,7 +3,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum StrategyTypeEnum {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
-  EMA_CROSSOVER = 'EMA_CROSSOVER',
+  EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
   CUSTOM = 'CUSTOM',
 }
 
