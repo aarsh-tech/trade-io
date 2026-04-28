@@ -13,6 +13,7 @@ import {
   Zap,
   LogOut,
   Wallet,
+  ScanSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -21,13 +22,14 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
 const navItems = [
-  { href: "/dashboard",   label: "Dashboard",   icon: LayoutDashboard },
-  { href: "/portfolio",   label: "Portfolio",   icon: Wallet },
-  { href: "/strategies",  label: "Strategies",  icon: TrendingUp },
-  { href: "/backtest",    label: "Backtest",    icon: FlaskConical },
-  { href: "/brokers",     label: "Brokers",     icon: Plug },
-  { href: "/orders",      label: "Orders",      icon: ClipboardList },
-  { href: "/settings",    label: "Settings",    icon: Settings },
+  { href: "/dashboard",      label: "Dashboard",    icon: LayoutDashboard },
+  { href: "/portfolio",      label: "Portfolio",    icon: Wallet },
+  { href: "/strategies",     label: "Strategies",   icon: TrendingUp },
+  { href: "/swing-scanner",  label: "Swing Scan",   icon: ScanSearch },
+  { href: "/backtest",       label: "Backtest",     icon: FlaskConical },
+  { href: "/brokers",        label: "Brokers",      icon: Plug },
+  { href: "/orders",         label: "Orders",       icon: ClipboardList },
+  { href: "/settings",       label: "Settings",     icon: Settings },
 ];
 
 export function Sidebar() {

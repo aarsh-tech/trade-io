@@ -102,6 +102,14 @@ export class StrategyService {
     });
   }
 
+  async setAutoStart(userId: string, id: string, autoStart: boolean) {
+    await this.assertOwner(userId, id);
+    return this.prisma.strategy.update({
+      where: { id },
+      data: { autoStart } as any,
+    });
+  }
+
   async getExecutions(userId: string, strategyId: string) {
     await this.assertOwner(userId, strategyId);
     return this.prisma.strategyExecution.findMany({

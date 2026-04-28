@@ -22,6 +22,8 @@ interface StrategyState {
   isPaperTrade: boolean;
   // Future symbol being watched (e.g. NIFTY24APRFUT)
   futureSymbol: string | null;
+  // Exchange for the resolved future (NFO for NSE, BFO for BSE/SENSEX)
+  futureExchange: string;
   // 15-min reference candle (9:15–9:30) of the FUTURE
   refHigh: number | null;
   refLow: number | null;
@@ -103,6 +105,7 @@ export class Breakout15MinEngine {
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: (strategy as any).isPaperTrade,
       futureSymbol: null,
+      futureExchange: 'NFO', // Default; overridden during symbol resolution
       refHigh: null,
       refLow: null,
       refCandleSet: false,
@@ -135,23 +138,28 @@ export class Breakout15MinEngine {
 
   async stop(strategyId: string): Promise<void> {
     const state = this.running.get(strategyId);
-    if (!state) return;
 
-    clearInterval(this.timers.get(strategyId));
-    this.timers.delete(strategyId);
-    this.running.delete(strategyId);
+    // Clean up in-memory state if the engine was actually running
+    if (state) {
+      clearInterval(this.timers.get(strategyId));
+      this.timers.delete(strategyId);
+      this.running.delete(strategyId);
 
-    this.log(state, '⏹ Strategy stopped by user');
+      this.log(state, '⏹ Strategy stopped by user');
 
-    await this.prisma.strategyExecution.update({
-      where: { id: state.executionId },
-      data: {
-        status: 'STOPPED',
-        stoppedAt: new Date(),
-        logs: JSON.stringify(state.logs),
-      },
-    });
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: {
+          status: 'STOPPED',
+          stoppedAt: new Date(),
+          logs: JSON.stringify(state.logs),
+        },
+      });
+    }
 
+    // Always update isActive in DB — handles the case where the server
+    // restarted after auto-start (running map is cleared but DB still
+    // has isActive=true, so the Stop button would silently do nothing).
     await this.prisma.strategy.update({
       where: { id: strategyId },
       data: { isActive: false },
@@ -200,8 +208,10 @@ export class Breakout15MinEngine {
     // ── Step 0: Resolve Future Symbol if not set ─────────────────────────────
     if (!state.futureSymbol) {
       try {
-        state.futureSymbol = await this.findFutureSymbol(kite, config.symbol);
-        this.log(state, `🔎 Resolved Future Symbol: ${state.futureSymbol}`);
+        const resolved = await this.findFutureSymbol(kite, config.symbol);
+        state.futureSymbol = resolved.symbol;
+        state.futureExchange = resolved.exchange;
+        this.log(state, `🔎 Resolved Future: ${state.futureExchange}:${state.futureSymbol}`);
       } catch (err) {
         this.log(state, `❌ Failed to resolve Future: ${err.message}`);
         return;
@@ -216,7 +226,7 @@ export class Breakout15MinEngine {
       }
 
       try {
-        const candles15 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '15minute', ist);
+        const candles15 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '15minute', ist, state.futureExchange);
         if (candles15.length === 0) {
           this.log(state, '⚠ No Future 15-min candles received');
           return;
@@ -239,8 +249,9 @@ export class Breakout15MinEngine {
 
     // ── Step 3: Check for Signal / Confirmation ───────────────────────────────
     try {
-      const ltpData = await kite.getLTP([`NFO:${state.futureSymbol}`]);
-      const currentFuturePrice = ltpData[`NFO:${state.futureSymbol}`]?.last_price;
+      const futureKey = `${state.futureExchange}:${state.futureSymbol}`;
+      const ltpData = await kite.getLTP([futureKey]);
+      const currentFuturePrice = ltpData[futureKey]?.last_price;
       
       if (!currentFuturePrice) return;
 
@@ -260,7 +271,7 @@ export class Breakout15MinEngine {
       }
 
       // CASE B: Waiting for a 5-min candle to CLOSE above/below the 15-min range
-      const candles5 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '5minute', ist);
+      const candles5 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '5minute', ist, state.futureExchange);
       if (candles5.length < 2) return;
 
       const lastClosed = candles5[candles5.length - 2];
@@ -286,28 +297,51 @@ export class Breakout15MinEngine {
     await this.persistLogs(state);
   }
 
-  private async findFutureSymbol(kite: any, baseSymbol: string): Promise<string> {
-    const instruments = await kite.getInstruments('NFO');
-    const underlying = baseSymbol.includes('NIFTY 50') ? 'NIFTY' : baseSymbol.includes('BANK') ? 'BANKNIFTY' : baseSymbol.toUpperCase();
-    
-    const futures = instruments.filter(i => 
-      i.name === underlying && i.instrument_type === 'FUT' && i.segment === 'NFO-FUT'
+  private async findFutureSymbol(kite: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
+    const upperSymbol = baseSymbol.toUpperCase().trim();
+
+    // ── SENSEX futures trade on BSE's BFO exchange ──
+    const isSensex = upperSymbol === 'SENSEX' || upperSymbol === 'BSE SENSEX';
+    const exchange = isSensex ? 'BFO' : 'NFO';
+    const segment  = isSensex ? 'BFO-FUT' : 'NFO-FUT';
+
+    // Normalise to the underlying name used in the instruments dump
+    let underlying: string;
+    if (isSensex) {
+      underlying = 'SENSEX';
+    } else if (upperSymbol.includes('NIFTY BANK') || upperSymbol.includes('BANKNIFTY')) {
+      underlying = 'BANKNIFTY';
+    } else if (upperSymbol.includes('NIFTY 50') || upperSymbol === 'NIFTY50' || upperSymbol === 'NIFTY') {
+      underlying = 'NIFTY';
+    } else if (upperSymbol.includes('NIFTY MIDCAP') || upperSymbol.includes('MIDCAP')) {
+      underlying = 'MIDCPNIFTY';
+    } else if (upperSymbol.includes('FINNIFTY') || upperSymbol.includes('FIN NIFTY')) {
+      underlying = 'FINNIFTY';
+    } else {
+      underlying = upperSymbol; // stock futures
+    }
+
+    const instruments = await kite.getInstruments(exchange);
+    const futures = instruments.filter((i: any) =>
+      i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment
     );
 
-    if (futures.length === 0) throw new Error(`No future found for ${baseSymbol}`);
-    
-    // Sort by expiry and pick the first (Current Month)
+    if (futures.length === 0) {
+      throw new Error(`No ${exchange} future found for '${baseSymbol}' (searched as '${underlying}')`);
+    }
+
+    // Sort by expiry ascending → pick nearest (current-month)
     const sorted = futures.sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
-    return sorted[0].tradingsymbol;
+    return { symbol: sorted[0].tradingsymbol, exchange };
   }
 
-  private async fetchCandlesForSymbol(kite: any, symbol: string, interval: string, ist: Date): Promise<Candle[]> {
+  private async fetchCandlesForSymbol(kite: any, symbol: string, interval: string, ist: Date, exchange = 'NFO'): Promise<Candle[]> {
     const from = new Date(ist); from.setHours(9, 15, 0, 0);
     const to = new Date(ist);
-    
-    const instruments = await kite.getInstruments('NFO');
-    const found = instruments.find(i => i.tradingsymbol === symbol);
-    if (!found) throw new Error(`Token not found for ${symbol}`);
+
+    const instruments = await kite.getInstruments(exchange);
+    const found = instruments.find((i: any) => i.tradingsymbol === symbol);
+    if (!found) throw new Error(`Token not found for ${symbol} on ${exchange}`);
 
     const data = await kite.getHistoricalData(found.instrument_token, interval, from, to, false);
     return (data || []).map((c: any) => ({

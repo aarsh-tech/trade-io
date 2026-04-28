@@ -4,19 +4,37 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export enum StrategyTypeEnum {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
+  EMA_RSI_OPTIONS = 'EMA_RSI_OPTIONS',
   CUSTOM = 'CUSTOM',
 }
 
 // ─── Breakout 15-Min Config ────────────────────────────────────────────────────
 export interface Breakout15MinConfig {
-  symbol: string;           // e.g. NIFTY 50, BANKNIFTY, RELIANCE
-  exchange: string;         // NSE | BSE | NFO
+  symbol: string;
+  exchange: string;
   instrumentType: 'INDEX' | 'STOCK';
-  qty: number;              // Quantity / lots
-  product: 'MIS' | 'NRML'; // Intraday or overnight
-  stopLossRs: number;       // Fixed ₹ stop loss
-  targetRs: number;         // Fixed ₹ target
-  maxTradesPerDay: number;  // Safety cap
+  qty: number;
+  product: 'MIS' | 'NRML';
+  stopLossRs: number;
+  targetRs: number;
+  maxTradesPerDay: number;
+}
+
+// ─── EMA-RSI Options Config ────────────────────────────────────────────────────
+export interface EmaRsiOptionsConfig {
+  symbol: string;          // 'NIFTY 50' | 'BANKNIFTY' | 'SENSEX'
+  exchange: string;        // 'NSE' | 'BSE'
+  emaFast: number;         // 9
+  emaSlow: number;         // 21
+  rsiPeriod: number;       // 14
+  rsiEntryMin: number;     // 45
+  rsiEntryMax: number;     // 65
+  optionLots: number;      // 1
+  targetPct: number;       // 45
+  slPct: number;           // 25
+  maxTradesPerDay: number; // 2
+  product: string;         // MIS
+  startAfterMin: number;   // 25
 }
 
 export class CreateStrategyDto {

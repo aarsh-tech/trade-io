@@ -8,6 +8,7 @@ import { BrokersModule } from './brokers/brokers.module';
 import { MarketModule } from './market/market.module';
 import { StrategyModule } from './strategy/strategy.module';
 import { BacktestModule } from './backtest/backtest.module';
+import { SwingScannerModule } from './swing-scanner/swing-scanner.module';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { BacktestModule } from './backtest/backtest.module';
     MarketModule,
     StrategyModule,
     BacktestModule,
+    SwingScannerModule,
   ],
 })
-
 export class AppModule {}

@@ -22,6 +22,7 @@ const PRESET_INSTRUMENTS = [
   { label: "NIFTY 50", symbol: "NIFTY 50", exchange: "NSE", type: "INDEX" },
   { label: "BANK NIFTY", symbol: "BANKNIFTY", exchange: "NSE", type: "INDEX" },
   { label: "SENSEX", symbol: "SENSEX", exchange: "BSE", type: "INDEX" },
+  { label: "Auto (Swing Scanner)", symbol: "AUTO", exchange: "NSE", type: "STOCK" },
 ] as const;
 
 const LOT_SIZES: Record<string, number> = {
@@ -64,7 +65,7 @@ export default function NewStrategyPage() {
   // ── Form state ──────────────────────────────────────────────────────────────
   const [form, setForm] = useState({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "",
+    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "",
     // Common
     symbol: "NIFTY 50",
     exchange: "NSE",
@@ -73,12 +74,22 @@ export default function NewStrategyPage() {
     product: "MIS" as "MIS" | "NRML",
     stopLossRs: "500",
     targetRs: "500",
-    maxTradesPerDay: "1",
+    maxTradesPerDay: "2",
     minPremium: "100",
     maxPremium: "300",
     // EMA-VWAP crossover
     emaPeriod: "15",
     isOptionBuyingOnly: true,
+    // EMA-RSI Options
+    emaFast: "9",
+    emaSlow: "21",
+    rsiPeriod: "14",
+    rsiEntryMin: "45",
+    rsiEntryMax: "65",
+    optionLots: "1",
+    targetPct: "45",
+    slPct: "25",
+    startAfterMin: "25",
     // Broker
     brokerAccountId: "",
     isPaperTrade: true,
@@ -142,7 +153,7 @@ export default function NewStrategyPage() {
     if (step === 0) return !!form.name && !!form.type;
     if (step === 1) return !!form.symbol && Number(form.lots) > 0;
     if (step === 2) {
-      if (form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER")
+      if (form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS")
         return Number(form.stopLossRs) > 0 && Number(form.targetRs) > 0;
       return true;
     }
@@ -159,30 +170,32 @@ export default function NewStrategyPage() {
       const config =
         form.type === "BREAKOUT_15MIN"
           ? {
-            symbol: form.symbol.trim(),
-            exchange: form.exchange,
-            instrumentType: form.instrumentType,
-            qty: qty,
-            lots: Number(form.lots),
-            product: form.product,
-            stopLossRs: Number(form.stopLossRs),
-            targetRs: Number(form.targetRs),
+            symbol: form.symbol.trim(), exchange: form.exchange,
+            instrumentType: form.instrumentType, qty,
+            lots: Number(form.lots), product: form.product,
+            stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
             maxTradesPerDay: Number(form.maxTradesPerDay),
-            minPremium: Number(form.minPremium),
-            maxPremium: Number(form.maxPremium),
+            minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
           }
-          : {
-            symbol: form.symbol.trim(),
-            exchange: form.exchange,
-            emaPeriod: Number(form.emaPeriod),
-            isOptionBuyingOnly: form.isOptionBuyingOnly,
-            qty: qty,
-            lots: Number(form.lots),
-            product: form.product,
-            stopLossRs: Number(form.stopLossRs),
-            targetRs: Number(form.targetRs),
-            maxTradesPerDay: Number(form.maxTradesPerDay),
-          };
+          : form.type === "EMA_RSI_OPTIONS"
+            ? {
+              symbol: form.symbol.trim(), exchange: form.exchange,
+              instrumentType: form.instrumentType,
+              emaFast: Number(form.emaFast), emaSlow: Number(form.emaSlow),
+              rsiPeriod: Number(form.rsiPeriod),
+              rsiEntryMin: Number(form.rsiEntryMin), rsiEntryMax: Number(form.rsiEntryMax),
+              lots: Number(form.lots), qty,
+              stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+              maxTradesPerDay: Number(form.maxTradesPerDay),
+              product: form.product, startAfterMin: Number(form.startAfterMin),
+            }
+            : {
+              symbol: form.symbol.trim(), exchange: form.exchange,
+              emaPeriod: Number(form.emaPeriod), isOptionBuyingOnly: form.isOptionBuyingOnly,
+              qty, lots: Number(form.lots), product: form.product,
+              stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+              maxTradesPerDay: Number(form.maxTradesPerDay),
+            };
 
       await strategyApi.create({
         name: form.name,
@@ -281,18 +294,28 @@ export default function NewStrategyPage() {
                     {
                       type: "BREAKOUT_15MIN",
                       label: "15-Min Breakout",
-                      desc: "Enters after 5-min candle closes above/below the first 15-min candle's high/low. Uses fixed ₹ SL & Target.",
+                      desc: "Enters after 5-min candle closes above/below the first 15-min range. Fixed ₹ SL & Target.",
                       icon: BarChart2,
-                      badge: "Recommended",
+                      badge: null,
+                      badgeColor: "",
+                    },
+                    {
+                      type: "EMA_RSI_OPTIONS",
+                      label: "EMA + RSI + VWAP",
+                      desc: "Best for ₹500–700 daily. Fires ONLY when EMA cross + RSI in safe zone + price on right side of VWAP. Supports Equity & Options.",
+                      icon: Zap,
+                      badge: "🏆 Best",
+                      badgeColor: "bg-indigo-100 text-indigo-700",
                     },
                     {
                       type: "EMA_VWAP_CROSSOVER",
                       label: "15-EMA & VWAP",
-                      desc: "Trade when 15-period EMA crosses VWAP. Includes confirmation candle logic. Optimized for Options & Stocks.",
+                      desc: "Trade when 15-period EMA crosses VWAP. Confirmation candle logic. Optimized for Options & Stocks.",
                       icon: TrendingUp,
-                      badge: "New",
+                      badge: null,
+                      badgeColor: "",
                     },
-                  ].map(({ type, label, desc, icon: Icon, badge }) => (
+                  ].map(({ type, label, desc, icon: Icon, badge, badgeColor }) => (
                     <button
                       key={type}
                       id={`type-${type}`}
@@ -314,7 +337,7 @@ export default function NewStrategyPage() {
                         <div>
                           <p className="font-bold text-sm">{label}</p>
                           {badge && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[hsl(var(--green)/0.15)] text-green-600 font-semibold">
+                            <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full font-semibold", badgeColor || "bg-[hsl(var(--green)/0.15)] text-green-600")}>
                               {badge}
                             </span>
                           )}
@@ -332,7 +355,7 @@ export default function NewStrategyPage() {
           {step === 1 && (
             <div className="space-y-5">
               {/* Preset quick-select */}
-              {form.type === "BREAKOUT_15MIN" && (
+              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_RSI_OPTIONS" || form.type === "EMA_VWAP_CROSSOVER") && (
                 <div>
                   <label className="text-sm font-semibold mb-2 block">Quick Select Instrument</label>
                   <div className="flex flex-wrap gap-2">
@@ -417,7 +440,9 @@ export default function NewStrategyPage() {
                     onChange={(e) => set("lots", e.target.value)}
                   />
                   <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                    Total Quantity: {Number(form.lots) * getLotSize(form.symbol)} shares
+                    {form.symbol === 'AUTO'
+                      ? 'Quantity will be dynamically calculated to achieve target'
+                      : `Total Quantity: ${Number(form.lots) * getLotSize(form.symbol)} shares`}
                   </p>
                 </div>
                 <div>
@@ -440,14 +465,46 @@ export default function NewStrategyPage() {
                     <Input type="number" value={form.emaPeriod} onChange={(e) => set("emaPeriod", e.target.value)} />
                   </div>
                   <div className="flex items-center gap-3 pt-6">
-                    <input 
-                      type="checkbox" 
-                      id="optBuy" 
-                      checked={form.isOptionBuyingOnly} 
+                    <input type="checkbox" id="optBuy" checked={form.isOptionBuyingOnly}
                       onChange={(e) => set("isOptionBuyingOnly", e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      className="h-4 w-4 rounded border-gray-300"
                     />
                     <label htmlFor="optBuy" className="text-sm font-medium">Option Buying Only</label>
+                  </div>
+                </div>
+              )}
+
+              {form.type === "EMA_RSI_OPTIONS" && (
+                <div className="space-y-4">
+                  <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-100">
+                    <p className="text-xs font-semibold text-indigo-700">🏆 EMA + RSI + VWAP — Triple Confirmation</p>
+                    <p className="text-[11px] text-indigo-600 mt-1">Enters ONLY when EMA crossover + RSI in range + price is on right side of VWAP.</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold mb-1 block">EMA Fast</label>
+                      <Input type="number" value={form.emaFast} onChange={e => set("emaFast", e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold mb-1 block">EMA Slow</label>
+                      <Input type="number" value={form.emaSlow} onChange={e => set("emaSlow", e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold mb-1 block">RSI Period</label>
+                      <Input type="number" value={form.rsiPeriod} onChange={e => set("rsiPeriod", e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold mb-1 block">RSI Min (Long)</label>
+                      <Input type="number" value={form.rsiEntryMin} onChange={e => set("rsiEntryMin", e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold mb-1 block">RSI Max (Long)</label>
+                      <Input type="number" value={form.rsiEntryMax} onChange={e => set("rsiEntryMax", e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold mb-1 block">Skip first (min)</label>
+                      <Input type="number" value={form.startAfterMin} onChange={e => set("startAfterMin", e.target.value)} />
+                    </div>
                   </div>
                 </div>
               )}
@@ -457,7 +514,7 @@ export default function NewStrategyPage() {
           {/* ── Step 2: Risk Management ── */}
           {step === 2 && (
             <div className="space-y-5">
-              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER") && (
+              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
                 <>
                   {/* Info box */}
                   <div className="flex gap-3 p-3 rounded-xl bg-[hsl(var(--primary)/0.06)] border border-[hsl(var(--primary)/0.15)]">
@@ -468,7 +525,7 @@ export default function NewStrategyPage() {
                     </p>
                   </div>
 
-                  {form.type === "BREAKOUT_15MIN" && (
+                  {form.type === "BREAKOUT_15MIN" && (form.instrumentType === "INDEX" || form.instrumentType === "OPTION") && (
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
@@ -704,8 +761,8 @@ export default function NewStrategyPage() {
             </div>
           )}
 
-          </CardContent>
-        </Card>
+        </CardContent>
+      </Card>
 
       {/* Navigation */}
       <div className="flex justify-between">

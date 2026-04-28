@@ -110,23 +110,28 @@ export class EmaVwapCrossoverEngine {
 
   async stop(strategyId: string): Promise<void> {
     const state = this.running.get(strategyId);
-    if (!state) return;
 
-    clearInterval(this.timers.get(strategyId));
-    this.timers.delete(strategyId);
-    this.running.delete(strategyId);
+    // Clean up in-memory state if the engine was actually running
+    if (state) {
+      clearInterval(this.timers.get(strategyId));
+      this.timers.delete(strategyId);
+      this.running.delete(strategyId);
 
-    this.log(state, '⏹ Strategy stopped by user');
+      this.log(state, '⏹ Strategy stopped by user');
 
-    await this.prisma.strategyExecution.update({
-      where: { id: state.executionId },
-      data: {
-        status: 'STOPPED',
-        stoppedAt: new Date(),
-        logs: JSON.stringify(state.logs),
-      },
-    });
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: {
+          status: 'STOPPED',
+          stoppedAt: new Date(),
+          logs: JSON.stringify(state.logs),
+        },
+      });
+    }
 
+    // Always update isActive in DB — handles the case where the server
+    // restarted after auto-start (running map is cleared but DB still
+    // has isActive=true, so the Stop button would silently do nothing).
     await this.prisma.strategy.update({
       where: { id: strategyId },
       data: { isActive: false },

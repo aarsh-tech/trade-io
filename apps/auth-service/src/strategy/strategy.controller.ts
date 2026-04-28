@@ -7,8 +7,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { StrategyService } from './strategy.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
-import { CreateStrategyDto, UpdateStrategyDto, StrategyTypeEnum } from './dto/strategy.dto';
-import { StrategyType } from '@prisma/client';
+import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
+import { MarketSchedulerService } from './market-scheduler.service';
+import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 
 @ApiTags('Strategies')
 @Controller('strategies')
@@ -19,6 +20,8 @@ export class StrategyController {
     private readonly strategyService: StrategyService,
     private readonly breakoutEngine: Breakout15MinEngine,
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
+    private readonly emaRsiEngine: EmaRsiOptionsEngine,
+    private readonly scheduler: MarketSchedulerService,
   ) {}
 
   @Get()
@@ -75,7 +78,20 @@ export class StrategyController {
     const strategy = await this.strategyService.get(req.user.id, id);
     const engine = this.getEngine(strategy.type);
     await engine.stop(id);
+    // Tell the scheduler not to auto-restart this strategy today
+    this.scheduler.notifyManualStop(id);
     return { success: true };
+  }
+
+  @Patch(':id/auto-start')
+  @ApiOperation({ summary: 'Toggle auto-start at market open (09:15 IST)' })
+  async setAutoStart(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('autoStart') autoStart: boolean,
+  ) {
+    const data = await this.strategyService.setAutoStart(req.user.id, id, autoStart);
+    return { success: true, data };
   }
 
   @Get(':id/status')
@@ -87,15 +103,10 @@ export class StrategyController {
       success: true,
       data: {
         running: engine.isRunning(id),
+        autoStart: (strategy as any).autoStart ?? false,
         logs: engine.getLogs(id),
       },
     };
-  }
-
-  private getEngine(type: any) {
-    if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
-    if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
-    throw new Error('No engine found for this strategy type');
   }
 
   @Get(':id/executions')
@@ -103,5 +114,12 @@ export class StrategyController {
   async executions(@Request() req, @Param('id') id: string) {
     const data = await this.strategyService.getExecutions(req.user.id, id);
     return { success: true, data };
+  }
+
+  private getEngine(type: any) {
+    if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
+    if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
+    if (type === 'EMA_RSI_OPTIONS') return this.emaRsiEngine;
+    throw new Error('No engine found for this strategy type');
   }
 }

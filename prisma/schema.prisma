@@ -29,6 +29,7 @@ model User {
   orders            Order[]
   backtests         Backtest[]
   refreshTokens     RefreshToken[]
+  swingScans        SwingScan[]
 
   @@map("users")
 }
@@ -87,6 +88,7 @@ model Strategy {
   config          String
   isActive        Boolean      @default(false)
   isPaperTrade    Boolean      @default(true)
+  autoStart       Boolean      @default(false)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -101,6 +103,7 @@ model Strategy {
 enum StrategyType {
   BREAKOUT_15MIN
   EMA_VWAP_CROSSOVER
+  EMA_RSI_OPTIONS
   CUSTOM
 }
 
@@ -210,4 +213,36 @@ enum BacktestStatus {
   RUNNING
   DONE
   FAILED
+}
+
+// ─── Swing Scanner Results ────────────────────────────────────────────────────
+
+model SwingScan {
+  id            String   @id @default(cuid())
+  userId        String
+  scannedAt     DateTime @default(now())
+  symbol        String
+  exchange      String   @default("NSE")
+  pattern       String
+  score         Float
+  confidence    String
+  trendStrength String
+  volumeSignal  String
+  currentPrice  Float
+  pivotPrice    Float
+  entryPrice    Float
+  stopLoss      Float
+  target1       Float
+  target2       Float
+  target3       Float
+  riskReward    Float
+  riskPct       Float
+  contractions  Int      @default(0)
+  suggestedQty  Int      @default(0)
+  notes         String   @default("[]")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, scannedAt])
+  @@map("swing_scans")
 }

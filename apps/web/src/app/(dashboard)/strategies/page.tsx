@@ -4,9 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Play, Square, Trash2, Plus, TrendingUp,
-  Activity, BarChart2, Settings2, RefreshCw, Loader2,
+import { Play, Square, Trash2, Plus, TrendingUp,
+  Activity, BarChart2, Settings2, RefreshCw, Loader2, AlarmClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -32,6 +31,7 @@ interface Strategy {
   name: string;
   type: "BREAKOUT_15MIN" | "EMA_CROSSOVER" | "CUSTOM";
   isActive: boolean;
+  autoStart: boolean;
   brokerAccountId?: string | null;
   config: Breakout15MinConfig | Record<string, unknown>;
   brokerAccount?: { broker: string; clientId: string } | null;
@@ -100,6 +100,23 @@ export default function StrategiesPage() {
     }
   }
 
+  async function toggleAutoStart(s: Strategy) {
+    setActionId(s.id + '_as');
+    try {
+      await strategyApi.setAutoStart(s.id, !s.autoStart);
+      toast.success(
+        !s.autoStart
+          ? `✅ "${s.name}" will auto-start at 09:15 IST`
+          : `"${s.name}" auto-start disabled`
+      );
+      await load();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message ?? "Failed to update auto-start");
+    } finally {
+      setActionId(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -141,6 +158,7 @@ export default function StrategiesPage() {
             busy={actionId === s.id}
             onToggle={toggleStrategy}
             onDelete={askDelete}
+            onToggleAutoStart={toggleAutoStart}
           />
         ))}
 
@@ -185,11 +203,13 @@ function StrategyCard({
   busy,
   onToggle,
   onDelete,
+  onToggleAutoStart,
 }: {
   strategy: Strategy;
   busy: boolean;
   onToggle: (s: Strategy) => void;
   onDelete: (s: Strategy) => void;
+  onToggleAutoStart: (s: Strategy) => void;
 }) {
   const cfg = s.config as Breakout15MinConfig;
   const is15Min = s.type === "BREAKOUT_15MIN";
@@ -290,6 +310,24 @@ function StrategyCard({
               <><Play className="h-3.5 w-3.5" /> Start</>
             )}
           </Button>
+
+          {/* Auto-start toggle */}
+          <Button
+            variant="outline"
+            size="icon-sm"
+            title={s.autoStart ? "Auto-start ON — click to disable" : "Auto-start OFF — click to enable (starts at 09:15 IST)"}
+            className={cn(
+              "transition-colors",
+              s.autoStart
+                ? "text-emerald-600 border-emerald-300 bg-emerald-50 hover:bg-emerald-100"
+                : "text-slate-400 hover:text-emerald-600 hover:border-emerald-300"
+            )}
+            disabled={busy}
+            onClick={() => onToggleAutoStart(s)}
+          >
+            <AlarmClock className="h-3.5 w-3.5" />
+          </Button>
+
           <Link href={`/strategies/${s.id}`}>
             <Button variant="outline" size="icon-sm">
               <Activity className="h-3.5 w-3.5" />

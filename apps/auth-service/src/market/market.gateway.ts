@@ -40,6 +40,10 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  getSubscribedSymbols(): string[] {
+    return Array.from(this.subscriptions.keys());
+  }
+
   @SubscribeMessage('subscribe')
   handleSubscribe(
     @ConnectedSocket() client: Socket,

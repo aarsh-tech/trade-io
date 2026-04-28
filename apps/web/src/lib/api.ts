@@ -65,15 +65,17 @@ export const userApi = {
 
 // ─── Strategies ───────────────────────────────────────────────────────────────
 export const strategyApi = {
-  list:       () => api.get("/strategies"),
-  get:        (id: string) => api.get(`/strategies/${id}`),
-  create:     (data: unknown) => api.post("/strategies", data),
-  update:     (id: string, data: unknown) => api.patch(`/strategies/${id}`, data),
-  delete:     (id: string) => api.delete(`/strategies/${id}`),
-  start:      (id: string) => api.post(`/strategies/${id}/start`),
-  stop:       (id: string) => api.post(`/strategies/${id}/stop`),
-  status:     (id: string) => api.get(`/strategies/${id}/status`),
-  executions: (id: string) => api.get(`/strategies/${id}/executions`),
+  list:         () => api.get("/strategies"),
+  get:          (id: string) => api.get(`/strategies/${id}`),
+  create:       (data: unknown) => api.post("/strategies", data),
+  update:       (id: string, data: unknown) => api.patch(`/strategies/${id}`, data),
+  delete:       (id: string) => api.delete(`/strategies/${id}`),
+  start:        (id: string) => api.post(`/strategies/${id}/start`),
+  stop:         (id: string) => api.post(`/strategies/${id}/stop`),
+  status:       (id: string) => api.get(`/strategies/${id}/status`),
+  executions:   (id: string) => api.get(`/strategies/${id}/executions`),
+  setAutoStart: (id: string, autoStart: boolean) =>
+    api.patch(`/strategies/${id}/auto-start`, { autoStart }),
 };
 
 // ─── Brokers ──────────────────────────────────────────────────────────────────
@@ -92,7 +94,8 @@ export const brokerApi = {
 
 // ─── Market Data ──────────────────────────────────────────────────────────────
 export const marketApi = {
-  marketOverview: () => api.get("/brokers/market-overview"),
+  marketOverview: () => api.get("/market/overview"),
+  livePrices:     () => api.get("/market/live-prices"),
   candles: (params: {
     symbol: string; exchange: string; interval: string; from: string; to: string;
   }) => api.get("/market/candles", { params }),
@@ -111,4 +114,10 @@ export const backtestApi = {
 export const orderApi = {
   list: (params?: { limit?: number; page?: number }) =>
     api.get("/orders", { params }),
+};
+
+// ─── Swing Scanner ────────────────────────────────────────────────────────────
+export const swingApi = {
+  run:  () => api.post("/swing-scanner/run"),
+  last: () => api.get("/swing-scanner/last"),
 };

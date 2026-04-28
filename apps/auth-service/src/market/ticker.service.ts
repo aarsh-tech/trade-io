@@ -20,7 +20,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('Initializing Ticker Service...');
     await this.syncTickers();
 
-    this.refreshInterval = setInterval(() => this.syncTickers(), 60000);
+    this.refreshInterval = setInterval(() => this.syncTickers(), 10000);
   }
 
   onModuleDestroy() {
@@ -55,10 +55,28 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           if (config.symbol) {
             symbolsByAccount.get(s.brokerAccountId).add(config.symbol);
           }
+          if (config.futureSymbol) { // Also subscribe to resolved futures if present
+             symbolsByAccount.get(s.brokerAccountId).add(config.futureSymbol);
+          }
         } catch (e) {
           this.logger.error(`Error parsing strategy config for ticker: ${e.message}`);
         }
       });
+
+      // Add symbols subscribed by dashboard clients
+      const dashboardSymbols = this.marketGateway.getSubscribedSymbols();
+      
+      // If no active strategies, we still want to provide dashboard ticks for the first available account
+      let defaultAccount = activeStrategies[0]?.brokerAccountId;
+      if (!defaultAccount && dashboardSymbols.length > 0) {
+        const firstActive = await this.prisma.brokerAccount.findFirst({ where: { isActive: true, accessToken: { not: null } }});
+        if (firstActive) defaultAccount = firstActive.id;
+      }
+
+      if (defaultAccount && dashboardSymbols.length > 0) {
+        if (!symbolsByAccount.has(defaultAccount)) symbolsByAccount.set(defaultAccount, new Set());
+        dashboardSymbols.forEach(sym => symbolsByAccount.get(defaultAccount).add(sym));
+      }
 
       // For each account, ensure a ticker is running and subscribed
       for (const [accountId, symbols] of symbolsByAccount.entries()) {
@@ -85,10 +103,38 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     // Add other brokers here...
   }
 
-  private setupZerodhaTicker(account: any, symbols: string[]) {
+  private async setupZerodhaTicker(account: any, symbols: string[]) {
     try {
       const { KiteTicker } = require('kiteconnect');
       const apiKey = require('../common/utils/crypto').decrypt(account.apiKeyEnc);
+
+      const client = this.brokerFactory.createClient(account);
+      const kite = (client as any)['kite'];
+      
+      // Fetch instruments to map symbol <-> token
+      const instruments = await kite.getInstruments('NSE').catch(() => []);
+      const bseInstruments = await kite.getInstruments('BSE').catch(() => []);
+      const nfoInstruments = await kite.getInstruments('NFO').catch(() => []);
+      
+      const allInst = [...instruments, ...bseInstruments, ...nfoInstruments];
+      const tokenToSymbol = new Map<number, string>();
+      const symbolToToken = new Map<string, number>();
+      
+      // Add standard index tokens manually since they might be missing in some listings
+      const indexMap: Record<string, number> = { 'NIFTY 50': 256265, 'BANKNIFTY': 260105, 'SENSEX': 265 };
+      Object.entries(indexMap).forEach(([sym, tok]) => {
+         tokenToSymbol.set(tok, sym);
+         symbolToToken.set(sym, tok);
+      });
+
+      allInst.forEach((i: any) => {
+        tokenToSymbol.set(i.instrument_token, i.tradingsymbol);
+        symbolToToken.set(i.tradingsymbol, i.instrument_token);
+      });
+
+      const tokensToSubscribe = symbols.map(s => symbolToToken.get(s)).filter(Boolean) as number[];
+
+      if (tokensToSubscribe.length === 0) return;
 
       const ticker = new KiteTicker({
         api_key: apiKey,
@@ -98,22 +144,28 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       ticker.on('ticks', (ticks: any[]) => {
         const mappedTicks: Record<string, number> = {};
         ticks.forEach((tick) => {
-          // Zerodha uses instrument_token, we might need a mapping to tradingsymbol
-          // For simplicity in this demo, we assume the gateway handles tokens or symbols
-          // In production, we'd maintain a token -> symbol map
-          mappedTicks[tick.instrument_token.toString()] = tick.last_price;
+          const sym = tokenToSymbol.get(tick.instrument_token);
+          if (sym && tick.last_price) {
+            mappedTicks[sym] = tick.last_price;
+          }
         });
-        this.marketGateway.broadcastTicks(mappedTicks);
+        if (Object.keys(mappedTicks).length > 0) {
+           this.marketGateway.broadcastTicks(mappedTicks);
+        }
       });
 
       ticker.on('connect', () => {
         this.logger.log(`Zerodha Ticker connected for account ${account.clientId}`);
-        // Subscribe to instruments (need tokens)
-        // ticker.subscribe([tokens]);
+        ticker.subscribe(tokensToSubscribe);
+        ticker.setMode(ticker.modeFull, tokensToSubscribe);
       });
 
       ticker.connect();
-      this.tickers.set(account.id, ticker);
+      this.tickers.set(account.id, {
+        disconnect: () => ticker.disconnect(),
+        instance: ticker,
+        tokens: tokensToSubscribe,
+      });
     } catch (err) {
       this.logger.error(`Failed to setup Zerodha Ticker for ${account.id}: ${err.message}`);
     }
