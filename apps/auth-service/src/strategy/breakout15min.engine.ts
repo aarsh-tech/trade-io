@@ -24,6 +24,7 @@ interface StrategyState {
   refLow: number | null;
   refCandleSet: boolean;
   entryTriggered: 'LONG' | 'SHORT' | null;
+  optionSymbol: string | null;
   entryOrderId: string | null;
   slOrderId: string | null;
   targetOrderId: string | null;
@@ -77,6 +78,7 @@ export class Breakout15MinEngine {
       refLow: null,
       refCandleSet: false,
       entryTriggered: null,
+      optionSymbol: null,
       entryOrderId: null,
       slOrderId: null,
       targetOrderId: null,
@@ -191,6 +193,19 @@ export class Breakout15MinEngine {
     return this.running.get(strategyId)?.logs || [];
   }
 
+  getState(strategyId: string) {
+    const s = this.running.get(strategyId);
+    if (!s) return null;
+    return {
+      refHigh: s.refHigh,
+      refLow: s.refLow,
+      entryTriggered: s.entryTriggered,
+      optionSymbol: s.optionSymbol,
+      futureSymbol: s.futureSymbol,
+      tradesToday: s.tradesPlacedToday,
+    };
+  }
+
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
@@ -250,7 +265,7 @@ export class Breakout15MinEngine {
 
       const lastCandle = breakoutCandidates[breakoutCandidates.length - 1];
       const isClosed = (now.getTime() - new Date(lastCandle.date).getTime()) >= 5 * 60 * 1000;
-      const target = isClosed ? lastCandle : breakoutCandidates[breakoutCandidates.length - 2];
+      const target = isClosed ? lastCandle : (breakoutCandidates.length > 1 ? breakoutCandidates[breakoutCandidates.length - 2] : null);
       if (!target) return;
 
       if (hhmm % 5 === 0 && !state.logs.some(l => l.includes(`Scanning for breakout`) && l.includes(`LTP: ₹${currentPrice}`))) {
@@ -266,7 +281,59 @@ export class Breakout15MinEngine {
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
 
+    // ─── Paper Trade Monitoring ─────────────────────────────────────────────
+    if (state.isPaperTrade && state.entryTriggered) {
+      await this.monitorPaperTrade(state, kite);
+    }
+
     await this.persistLogs(state);
+  }
+
+  private async monitorPaperTrade(state: StrategyState, kite: any) {
+    // If we have an entry but haven't hit SL/Target yet
+    if (!state.entryTriggered) return;
+
+    try {
+      const orders = await this.prisma.order.findMany({
+        where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' }
+      });
+      if (orders.length === 0) return;
+
+      const symbol = orders[0].symbol;
+      const exchange = orders[0].exchange;
+      const quotes = await kite.getLTP([`${exchange}:${symbol}`]);
+      const ltp = quotes[`${exchange}:${symbol}`]?.last_price;
+      if (!ltp) return;
+
+      for (const order of orders) {
+        if (order.orderType === 'SL') {
+          const hit = order.side === 'SELL' ? (ltp <= order.triggerPrice!) : (ltp >= order.triggerPrice!);
+          if (hit) {
+            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp}`);
+            await this.closePaperTrade(state, 'SL_HIT', ltp);
+            break;
+          }
+        } else if (order.orderType === 'LIMIT' && order.brokerOrderId.includes('TARGET')) {
+          const hit = order.side === 'SELL' ? (ltp >= order.price!) : (ltp <= order.price!);
+          if (hit) {
+            this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp}`);
+            await this.closePaperTrade(state, 'TARGET_HIT', ltp);
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Paper monitor error: ${err.message}`);
+    }
+  }
+
+  private async closePaperTrade(state: StrategyState, reason: string, price: number) {
+    await this.prisma.order.updateMany({
+      where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
+      data: { status: 'COMPLETE', price }
+    });
+    this.log(state, `🏁 Paper trade closed (${reason})`);
+    state.entryTriggered = null; // Allow more trades if maxTradesPerDay not reached
   }
 
   private async findFutureSymbol(kite: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
@@ -340,13 +407,14 @@ export class Breakout15MinEngine {
     await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry }, entryId, strategyId);
 
     const exitSide = side === 'BUY' ? 'SELL' : 'BUY';
-    const slId = state.isPaperTrade ? 'PAPER_SL' : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(e => 'FAILED');
+    const slId = state.isPaperTrade ? `PAPER_SL_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(e => 'FAILED');
     await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, strategyId);
 
-    const tgtId = state.isPaperTrade ? 'PAPER_TARGET' : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(e => 'FAILED');
+    const tgtId = state.isPaperTrade ? `PAPER_TARGET_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(e => 'FAILED');
     await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, strategyId);
 
     state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
+    state.optionSymbol = symbol;
     state.tradesPlacedToday += 1;
   }
 
@@ -394,7 +462,7 @@ export class Breakout15MinEngine {
     }
 
     // ─── Option 2: Default ATM Strike ────────────────────────────────────────
-    const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : 100;
+    const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : (underlying === 'MIDCPNIFTY') ? 25 : 100;
     const atmStrike = Math.round(spotPrice / step) * step;
     const match = filteredOptions.find(i => Number(i.strike) === atmStrike);
 
@@ -410,7 +478,27 @@ export class Breakout15MinEngine {
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
   private async trackOrder(state: StrategyState, account: any, executionId: string, params: any, brokerOrderId: string, strategyId: string) {
-    try { await this.prisma.order.create({ data: { userId: account.userId, brokerAccountId: account.id, executionId, symbol: params.symbol, exchange: params.exchange, side: params.side, orderType: params.orderType, productType: params.product, qty: params.qty, price: params.price ?? null, triggerPrice: params.triggerPrice ?? null, brokerOrderId, status: state.isPaperTrade ? 'COMPLETE' : 'OPEN', isPaperTrade: state.isPaperTrade } as any }); } catch (err) { this.log(state, `⚠ DB track failed: ${err.message}`); }
+    try {
+      const isEntry = !brokerOrderId.includes('SL') && !brokerOrderId.includes('TARGET');
+      await this.prisma.order.create({
+        data: {
+          userId: account.userId,
+          brokerAccountId: account.id,
+          executionId,
+          symbol: params.symbol,
+          exchange: params.exchange,
+          side: params.side,
+          orderType: params.orderType,
+          productType: params.product,
+          qty: params.qty,
+          price: params.price ?? null,
+          triggerPrice: params.triggerPrice ?? null,
+          brokerOrderId,
+          status: state.isPaperTrade ? (isEntry ? 'COMPLETE' : 'OPEN') : 'OPEN',
+          isPaperTrade: state.isPaperTrade
+        } as any
+      });
+    } catch (err) { this.log(state, `⚠ DB track failed: ${err.message}`); }
   }
-  private resetDailyState(state: StrategyState) { state.refHigh = null; state.refLow = null; state.refCandleSet = false; state.entryTriggered = null; state.tradesPlacedToday = 0; }
+  private resetDailyState(state: StrategyState) { state.refHigh = null; state.refLow = null; state.refCandleSet = false; state.entryTriggered = null; state.optionSymbol = null; state.tradesPlacedToday = 0; }
 }

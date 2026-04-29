@@ -33,6 +33,16 @@ export class BrokersService {
     return client.getPositions();
   }
 
+  async getMargins(userId: string, accountId: string) {
+    const acc = await this.prisma.brokerAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+
+    const client = this.factory.createClient(acc);
+    return client.getMargins();
+  }
+
   async getLoginUrl(userId: string, accountId: string) {
     const acc = await this.prisma.brokerAccount.findUnique({
       where: { id: accountId },

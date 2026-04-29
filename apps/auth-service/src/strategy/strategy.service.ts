@@ -115,7 +115,22 @@ export class StrategyService {
     return this.prisma.strategyExecution.findMany({
       where: { strategyId },
       orderBy: { startedAt: 'desc' },
+      include: { orders: true },
       take: 20,
+    });
+  }
+
+  async getLatestExecution(strategyId: string) {
+    return this.prisma.strategyExecution.findFirst({
+      where: { strategyId },
+      orderBy: { startedAt: 'desc' },
+    });
+  }
+
+  async getExecutionOrders(executionId: string) {
+    return this.prisma.order.findMany({
+      where: { executionId },
+      orderBy: { createdAt: 'desc' },
     });
   }
 

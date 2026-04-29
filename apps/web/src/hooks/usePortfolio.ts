@@ -7,6 +7,7 @@ export const PORTFOLIO_KEYS = {
   all: ["portfolio"] as const,
   holdings: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "holdings", brokerId].filter(Boolean),
   positions: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "positions", brokerId].filter(Boolean),
+  margins: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "margins", brokerId].filter(Boolean),
 };
 
 export function usePortfolio(brokerId?: string | null) {
@@ -33,6 +34,16 @@ export function usePortfolio(brokerId?: string | null) {
     enabled: !!brokerId,
   });
 
+  const marginsQuery = useQuery({
+    queryKey: PORTFOLIO_KEYS.margins(brokerId || undefined),
+    queryFn: async () => {
+      if (!brokerId) return null;
+      const res = await brokerApi.margins(brokerId);
+      return res.data.data;
+    },
+    enabled: !!brokerId,
+  });
+
   const renewSessionMutation = useMutation({
     mutationFn: (requestToken: string) => {
       if (!brokerId) throw new Error("No broker selected");
@@ -52,10 +63,12 @@ export function usePortfolio(brokerId?: string | null) {
   return {
     holdings: holdingsQuery.data || [],
     positions: positionsQuery.data || [],
-    isLoading: holdingsQuery.isLoading || positionsQuery.isLoading,
+    margins: marginsQuery.data || null,
+    isLoading: holdingsQuery.isLoading || positionsQuery.isLoading || marginsQuery.isLoading,
     isHoldingsLoading: holdingsQuery.isLoading,
     isPositionsLoading: positionsQuery.isLoading,
-    error: holdingsQuery.error || positionsQuery.error,
+    isMarginsLoading: marginsQuery.isLoading,
+    error: holdingsQuery.error || positionsQuery.error || marginsQuery.error,
     refreshHoldings: () => holdingsQuery.refetch(),
     getLoginUrl: async () => {
       if (!brokerId) return null;

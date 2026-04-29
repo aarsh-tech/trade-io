@@ -160,6 +160,27 @@ export class MarketService {
       return { symbol, exchange, price: 0, change: 0 };
     });
 
+    // Fetch initial LTP for stocks if possible
+    if (account?.accessToken && stocks.length > 0) {
+      try {
+        const client = this.factory.createClient(account);
+        const kite = (client as any)['kite'];
+        const quotes = await kite.getLTP(watchSymbols).catch(() => ({}));
+        
+        stocks.forEach(stock => {
+          const key = `${stock.exchange}:${stock.symbol}`;
+          const q = quotes[key];
+          if (q) {
+            stock.price = q.last_price;
+            const prev = q.close_price || q.last_price;
+            stock.change = prev ? ((q.last_price - prev) / prev) * 100 : 0;
+          }
+        });
+      } catch (e) {
+        this.logger.warn(`Failed to fetch initial stock prices: ${e.message}`);
+      }
+    }
+
     return {
       indices,
       stocks,

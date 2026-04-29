@@ -99,13 +99,24 @@ export class StrategyController {
   async status(@Request() req, @Param('id') id: string) {
     const strategy = await this.strategyService.get(req.user.id, id);
     const engine = this.getEngine(strategy.type);
+    const statusData: any = {
+      running: engine.isRunning(id),
+      autoStart: (strategy as any).autoStart ?? false,
+      logs: engine.getLogs(id),
+      state: (engine as any).getState ? (engine as any).getState(id) : null,
+    };
+
+    if (statusData.running) {
+      // Find current execution
+      const currentExec = await this.strategyService.getLatestExecution(id);
+      if (currentExec) {
+        statusData.orders = await this.strategyService.getExecutionOrders(currentExec.id);
+      }
+    }
+
     return {
       success: true,
-      data: {
-        running: engine.isRunning(id),
-        autoStart: (strategy as any).autoStart ?? false,
-        logs: engine.getLogs(id),
-      },
+      data: statusData,
     };
   }
 

@@ -170,6 +170,18 @@ export class EmaRsiOptionsEngine {
   isRunning(strategyId: string) { return this.running.has(strategyId); }
   getLogs(strategyId: string): string[] { return this.running.get(strategyId)?.logs ?? []; }
 
+  getState(strategyId: string) {
+    const s = this.running.get(strategyId);
+    if (!s) return null;
+    return {
+      futureSymbol: s.futureSymbol,
+      optionSymbol: s.optionSymbol,
+      entryPrice: s.entryOptionPrice,
+      side: s.positionSide,
+      tradesToday: s.tradesPlacedToday,
+    };
+  }
+
   // ── Main tick ────────────────────────────────────────────────────────────────
 
   private async tick(strategyId: string) {

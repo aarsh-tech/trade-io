@@ -87,6 +87,7 @@ export const brokerApi = {
   loginUrl:   (id: string) => api.get(`/brokers/${id}/login-url`),
   positions:  (id: string) => api.get(`/brokers/${id}/positions`),
   holdings:   (id: string) => api.get(`/brokers/${id}/holdings`),
+  margins:    (id: string) => api.get(`/brokers/${id}/margins`),
   orders:     (id: string) => api.get(`/brokers/${id}/orders`),
   placeOrder: (id: string, data: unknown) => api.post(`/brokers/${id}/orders`, data),
   cancelOrder:(id: string, orderId: string) => api.delete(`/brokers/${id}/orders/${orderId}`),

@@ -25,6 +25,7 @@ interface StrategyState {
   confirmationHigh: number | null;
   confirmationLow: number | null;
   entryTriggered: 'LONG' | 'SHORT' | null;
+  optionSymbol: string | null;
   tradesPlacedToday: number;
   logs: string[];
 }
@@ -65,6 +66,7 @@ export class EmaVwapCrossoverEngine {
       confirmationHigh: null,
       confirmationLow: null,
       entryTriggered: null,
+      optionSymbol: null,
       tradesPlacedToday: 0,
       logs: [],
     };
@@ -104,6 +106,16 @@ export class EmaVwapCrossoverEngine {
 
   getLogs(strategyId: string): string[] {
     return this.running.get(strategyId)?.logs || [];
+  }
+
+  getState(strategyId: string) {
+    const s = this.running.get(strategyId);
+    if (!s) return null;
+    return {
+      entryTriggered: s.entryTriggered,
+      tradesToday: s.tradesPlacedToday,
+      optionSymbol: s.optionSymbol,
+    };
   }
 
   private async initialCatchup(strategyId: string) {
@@ -238,6 +250,7 @@ export class EmaVwapCrossoverEngine {
       await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: exitSide, orderType: 'SL', price: sl, triggerPrice: sl }).catch(e => this.log(state, `❌ SL Failed: ${e.message}`));
       await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt }).catch(e => this.log(state, `❌ Target Failed: ${e.message}`));
       state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
+      state.optionSymbol = symbol;
       state.tradesPlacedToday++;
     } catch (err) { this.log(state, `❌ Placement failed: ${err.message}`); }
   }
@@ -346,5 +359,5 @@ export class EmaVwapCrossoverEngine {
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
-  private resetDailyState(state: StrategyState) { state.entryTriggered = null; state.tradesPlacedToday = 0; state.waitingForConfirmation = null; }
+  private resetDailyState(state: StrategyState) { state.entryTriggered = null; state.optionSymbol = null; state.tradesPlacedToday = 0; state.waitingForConfirmation = null; }
 }

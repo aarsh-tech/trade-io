@@ -48,6 +48,13 @@ export class BrokersController {
     return { success: true, data: result };
   }
 
+  @Get(':id/margins')
+  @ApiOperation({ summary: 'Get margins/funds for a specific broker account' })
+  async margins(@Request() req, @Param('id') id: string) {
+    const result = await this.brokersService.getMargins(req.user.id, id);
+    return { success: true, data: result };
+  }
+
   @Get(':id/login-url')
   @ApiOperation({ summary: 'Get broker login URL' })
   async loginUrl(@Request() req, @Param('id') id: string) {

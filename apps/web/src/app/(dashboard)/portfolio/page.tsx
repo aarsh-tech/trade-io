@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { marketApi } from "@/lib/api";
 import { toast } from "sonner";
+import { OrderWindow } from "@/components/dashboard/OrderWindow";
 
 export default function PortfolioPage() {
   const { brokers = [], isLoading: brokersLoading } = useBrokers();
@@ -37,9 +38,23 @@ export default function PortfolioPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [selectedExchange, setSelectedExchange] = useState<"NSE" | "BSE">("NSE");
 
+  // Order Window State
+  const [orderState, setOrderState] = useState<{
+    isOpen: boolean;
+    type: 'BUY' | 'SELL';
+    symbol: string;
+    ltp: number;
+  }>({
+    isOpen: false,
+    type: 'BUY',
+    symbol: '',
+    ltp: 0
+  });
+
   const {
     holdings = [],
     positions = [],
+    margins,
     isLoading: holdingsLoading,
     isPositionsLoading,
     refreshHoldings,
@@ -77,14 +92,18 @@ export default function PortfolioPage() {
       return;
     }
     if (item) {
-      setSelectedSymbol(item);
-      setTradeSearch(item.symbol);
+      setOrderState({
+        isOpen: true,
+        type: side,
+        symbol: item.symbol,
+        ltp: item.ltpNSE || item.ltpBSE || item.ltp || item.avgPrice || 0
+      });
     } else {
       setSelectedSymbol(null);
       setTradeSearch("");
+      setOrderSide(side);
+      setShowTradeModal(true);
     }
-    setOrderSide(side);
-    setShowTradeModal(true);
   };
 
   const handlePlaceOrder = async () => {
@@ -421,9 +440,13 @@ export default function PortfolioPage() {
                                 key={item.symbol + item.exchange}
                                 className="w-full px-5 py-3.5 text-left hover:bg-blue-50/50 flex items-center group border-b border-slate-50 last:border-0 transition-colors"
                                 onClick={() => {
-                                  setSelectedSymbol(item);
-                                  setTradeSearch(item.symbol);
-                                  setSearchResults([]);
+                                  setShowTradeModal(false);
+                                  setOrderState({
+                                    isOpen: true,
+                                    type: orderSide,
+                                    symbol: item.symbol,
+                                    ltp: item.price || item.ltpNSE || item.ltpBSE || 0
+                                  });
                                 }}
                               >
                                 <div className="w-24 font-bold text-slate-900 group-hover:text-blue-700 text-xs">
@@ -736,6 +759,18 @@ export default function PortfolioPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Kite Order Window */}
+      <OrderWindow
+        isOpen={orderState.isOpen}
+        onClose={() => setOrderState(prev => ({ ...prev, isOpen: false }))}
+        symbol={orderState.symbol}
+        type={orderState.type}
+        ltp={orderState.ltp}
+        availableMargin={margins?.equity?.available?.live_balance ?? margins?.equity?.available?.cash ?? 0}
+        brokerId={selectedBroker || undefined}
+        onTypeChange={(newType) => setOrderState(prev => ({ ...prev, type: newType }))}
+      />
     </div>
   );
 }

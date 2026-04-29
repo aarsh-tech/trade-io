@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, Activity } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,8 @@ import {
   ChevronDown, ChevronUp, Pencil, Check, X, Send, AlertTriangle,
   TrendingUp,
   Info,
+  ActivityIcon,
+  ShoppingCart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -83,6 +85,8 @@ export default function StrategyDetailPage() {
   const router = useRouter();
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
+  const [liveState, setLiveState] = useState<any>(null);
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -127,6 +131,8 @@ export default function StrategyDetailPage() {
       ]);
       setStrategy(stRes.data?.data ?? null);
       setLiveLogs(statusRes.data?.data?.logs ?? []);
+      setLiveState(statusRes.data?.data?.state ?? null);
+      setActiveOrders(statusRes.data?.data?.orders ?? []);
     } catch {
       toast.error("Failed to load strategy");
     } finally {
@@ -144,6 +150,8 @@ export default function StrategyDetailPage() {
         try {
           const r = await strategyApi.status(id);
           setLiveLogs(r.data?.data?.logs ?? []);
+          setLiveState(r.data?.data?.state ?? null);
+          setActiveOrders(r.data?.data?.orders ?? []);
         } catch { }
       }, 30_000);
     }
@@ -486,6 +494,90 @@ export default function StrategyDetailPage() {
           </Button>
         </div>
       </div>
+
+      {/* ── Live Strategy Status & Active Orders ── */}
+      {strategy.isActive && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="border-blue-100 bg-blue-50/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
+                <ActivityIcon className="h-3.5 w-3.5" />
+                Live Engine Tracking
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {liveState ? (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                    <span className="text-xs text-slate-500">Target Instrument</span>
+                    <span className="text-xs font-bold text-slate-900">{liveState.futureSymbol || "Resolving..."}</span>
+                  </div>
+                  {is15Min && (
+                    <>
+                      <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                        <span className="text-xs text-slate-500">15-Min Range</span>
+                        <span className="text-xs font-bold text-slate-900">
+                          {liveState.refLow ? `₹${liveState.refLow} — ₹${liveState.refHigh}` : "Waiting for 9:30 AM"}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                  <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                    <span className="text-xs text-slate-500">Trade Status</span>
+                    <Badge variant={liveState.entryTriggered ? "success" : "secondary"} className="text-[10px]">
+                      {liveState.entryTriggered ? `Position Open (${liveState.entryTriggered})` : "Scanning for Breakout"}
+                    </Badge>
+                  </div>
+                  {liveState.optionSymbol && (
+                    <div className="flex justify-between items-center py-1.5">
+                      <span className="text-xs text-slate-500">Selected Strike</span>
+                      <span className="text-xs font-black text-blue-700">{liveState.optionSymbol}</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 italic py-4">Initializing engine state...</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-100">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                <ShoppingCart className="h-3.5 w-3.5" />
+                Active Run Orders
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                {activeOrders.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-4 text-center">No orders placed in this run yet.</p>
+                ) : (
+                  activeOrders.map((order) => (
+                    <div key={order.id} className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-50 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Badge className={cn("text-[8px] px-1 py-0", order.side === 'BUY' ? "bg-blue-500" : "bg-orange-500")}>
+                          {order.side}
+                        </Badge>
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-800 leading-tight">{order.symbol}</p>
+                          <p className="text-[8px] text-slate-400 uppercase font-medium">{order.orderType} · {order.qty} Qty</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-bold text-slate-900">₹{order.price || order.triggerPrice || "Market"}</p>
+                        <Badge variant={order.status === 'COMPLETE' ? 'success' : 'secondary'} className="text-[8px] px-1 py-0">
+                          {order.status}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[

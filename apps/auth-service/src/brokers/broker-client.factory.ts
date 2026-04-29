@@ -152,6 +152,15 @@ class ZerodhaClient implements IBrokerClient {
     }
   }
 
+  async getMargins(): Promise<any> {
+    try {
+      return await this.kite.getMargins();
+    } catch (err) {
+      console.error('Zerodha getMargins Error:', err);
+      return null;
+    }
+  }
+
   async searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]> {
     try {
       const upperQuery = query.toUpperCase().trim();

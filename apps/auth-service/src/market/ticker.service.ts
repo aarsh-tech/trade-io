@@ -89,8 +89,17 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
   private async ensureTickerRunning(accountId: string, symbols: string[]) {
     if (this.tickers.has(accountId)) {
-      // Already running, just update subscriptions if needed
-      // Note: Real implementation would handle incremental subscription changes
+      const tickerData = this.tickers.get(accountId);
+      const currentTokens = new Set(tickerData.tokens);
+      const newTokens = symbols.map(s => tickerData.symbolToToken.get(s)).filter(Boolean) as number[];
+      
+      const tokensToSubscribe = newTokens.filter(t => !currentTokens.has(t));
+      if (tokensToSubscribe.length > 0) {
+        this.logger.log(`Subscribing to ${tokensToSubscribe.length} new tokens for account ${accountId}`);
+        tickerData.instance.subscribe(tokensToSubscribe);
+        tickerData.instance.setMode(tickerData.instance.modeFull, tokensToSubscribe);
+        tickerData.tokens = newTokens;
+      }
       return;
     }
 
@@ -165,6 +174,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         disconnect: () => ticker.disconnect(),
         instance: ticker,
         tokens: tokensToSubscribe,
+        symbolToToken,
+        tokenToSymbol,
       });
     } catch (err) {
       this.logger.error(`Failed to setup Zerodha Ticker for ${account.id}: ${err.message}`);
