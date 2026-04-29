@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Play, Square, Trash2, Plus, TrendingUp,
+import {
+  Play, Square, Trash2, Plus, TrendingUp,
   Activity, BarChart2, Settings2, RefreshCw, Loader2, AlarmClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -164,7 +165,7 @@ export default function StrategiesPage() {
 
         {/* Add new */}
         <Link href="/strategies/new">
-          <div className="h-full min-h-[200px] glass rounded-xl border-2 border-dashed border-[hsl(var(--border))] flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--primary)/0.03)] transition-all group">
+          <div className="h-full min-h-[200px]  rounded-xl border-2 border-dashed border-[hsl(var(--border))] flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--primary)/0.03)] transition-all group">
             <div className="h-12 w-12 rounded-full bg-[hsl(var(--secondary))] flex items-center justify-center group-hover:bg-[hsl(var(--primary)/0.1)] transition-colors">
               <Plus className="h-6 w-6 text-[hsl(var(--muted-foreground))] group-hover:text-[hsl(var(--primary))] transition-colors" />
             </div>

@@ -2,20 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
+import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
 
-export interface EmaVwapCrossoverConfig {
-  symbol: string;
-  exchange: string;
-  emaPeriod: number;
-  isOptionBuyingOnly: boolean;
-  qty: number;
-  lots: number;
-  product: 'MIS' | 'NRML';
-  maxTradesPerDay: number;
-  stopLossRs: number;
-  targetRs: number;
-  isPaperTrade?: boolean;
-}
 
 interface Candle {
   date: Date;
@@ -31,13 +19,11 @@ interface StrategyState {
   config: EmaVwapCrossoverConfig;
   brokerAccountId: string;
   isPaperTrade: boolean;
-  // State for crossover
   lastEma: number | null;
   lastVwap: number | null;
   waitingForConfirmation: 'LONG' | 'SHORT' | null;
   confirmationHigh: number | null;
   confirmationLow: number | null;
-  // Entry tracking
   entryTriggered: 'LONG' | 'SHORT' | null;
   tradesPlacedToday: number;
   logs: string[];
@@ -52,32 +38,21 @@ export class EmaVwapCrossoverEngine {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
-  ) {}
+  ) { }
 
   async start(strategyId: string): Promise<{ executionId: string }> {
-    if (this.running.has(strategyId)) {
-      return { executionId: this.running.get(strategyId)!.executionId };
-    }
+    if (this.running.has(strategyId)) return { executionId: this.running.get(strategyId)!.executionId };
 
     const strategy = await this.prisma.strategy.findUnique({
       where: { id: strategyId },
       include: { brokerAccount: true },
     });
-
-    if (!strategy || !strategy.brokerAccount) {
-      throw new Error('Strategy or broker account not found');
-    }
+    if (!strategy) throw new Error('Strategy not found');
 
     const config: EmaVwapCrossoverConfig = JSON.parse(strategy.config);
+    const execution = await this.prisma.strategyExecution.create({ data: { strategyId, status: 'RUNNING' } });
 
-    const execution = await this.prisma.strategyExecution.create({
-      data: { strategyId, status: 'RUNNING' },
-    });
-
-    await this.prisma.strategy.update({
-      where: { id: strategyId },
-      data: { isActive: true },
-    });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
     const state: StrategyState = {
       executionId: execution.id,
@@ -95,47 +70,32 @@ export class EmaVwapCrossoverEngine {
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ EMA-VWAP Strategy started — ${config.symbol}:${config.exchange}`);
+    this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange}`);
+    await this.persistLogs(state); // Persist immediately so UI shows "Started"
 
-    const timer = setInterval(
-      () => this.tick(strategyId).catch((err) => this.logger.error(err)),
-      60_000,
-    );
+    const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
     this.timers.set(strategyId, timer);
 
-    this.tick(strategyId).catch((err) => this.logger.error(err));
+    this.initialCatchup(strategyId).then(() => {
+      this.tick(strategyId).catch(e => this.logger.error(e));
+    }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
 
     return { executionId: execution.id };
   }
 
   async stop(strategyId: string): Promise<void> {
     const state = this.running.get(strategyId);
-
-    // Clean up in-memory state if the engine was actually running
     if (state) {
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
-
       this.log(state, '⏹ Strategy stopped by user');
-
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: {
-          status: 'STOPPED',
-          stoppedAt: new Date(),
-          logs: JSON.stringify(state.logs),
-        },
+        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
       });
     }
-
-    // Always update isActive in DB — handles the case where the server
-    // restarted after auto-start (running map is cleared but DB still
-    // has isActive=true, so the Stop button would silently do nothing).
-    await this.prisma.strategy.update({
-      where: { id: strategyId },
-      data: { isActive: false },
-    });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
   }
 
   isRunning(strategyId: string): boolean {
@@ -146,210 +106,169 @@ export class EmaVwapCrossoverEngine {
     return this.running.get(strategyId)?.logs || [];
   }
 
+  private async initialCatchup(strategyId: string) {
+    const state = this.running.get(strategyId);
+    if (!state) return;
+    const now = new Date();
+    if (this.getIstHhmm(now) < 9 * 60 + 20) return;
+
+    this.log(state, `🔍 Running catch-up for today's data...`);
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+    if (!account || !account.accessToken) return;
+
+    const client = this.factory.createClient(account);
+    const kite = client['kite'];
+
+    try {
+      const candles = await this.fetchCandles(kite, state.config, '5minute', now);
+      if (candles.length < state.config.emaPeriod + 2) return;
+
+      const emas = this.calculateEMA(candles, state.config.emaPeriod);
+      const vwaps = this.calculateVWAP(candles);
+
+      for (let i = state.config.emaPeriod; i < candles.length; i++) {
+        if (state.entryTriggered) break;
+
+        const currEma = emas[i], prevEma = emas[i - 1];
+        const currVwap = vwaps[i], prevVwap = vwaps[i - 1];
+        if (!currEma || !prevEma || !currVwap || !prevVwap) continue;
+
+        const crossoverLong = prevEma <= prevVwap && currEma > currVwap;
+        const crossoverShort = prevEma >= prevVwap && currEma < currVwap;
+
+        if (crossoverLong) {
+          this.log(state, `🚀 (Catch-up) Found past LONG Crossover at ${this.formatTime(new Date(candles[i].date))}!`);
+          await this.placeTrade(state, client, account, 'BUY', candles[i].close);
+        } else if (crossoverShort) {
+          this.log(state, `🚀 (Catch-up) Found past SHORT Crossover at ${this.formatTime(new Date(candles[i].date))}!`);
+          await this.placeTrade(state, client, account, 'SELL', candles[i].close);
+        }
+      }
+      if (!state.entryTriggered) this.log(state, `✅ Catch-up complete. No past signals found.`);
+      await this.persistLogs(state);
+    } catch (err) { 
+      this.log(state, `⚠ Catch-up failed: ${err.message}`);
+      await this.persistLogs(state);
+    }
+  }
+
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
-
     const now = new Date();
-    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-    const hhmm = ist.getHours() * 60 + ist.getMinutes();
+    const hhmm = this.getIstHhmm(now);
+    if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) return;
 
-    // Market closed — skip
-    if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) {
-      if (hhmm < 9 * 60 + 15) this.resetDailyState(state);
-      return;
-    }
-
-    const account = await this.prisma.brokerAccount.findUnique({
-      where: { id: state.brokerAccountId },
-    });
-    if (!account || !account.accessToken) {
-      this.log(state, '⚠ No active broker session');
-      return;
-    }
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+    if (!account || !account.accessToken) return;
 
     const client = this.factory.createClient(account);
     const { config } = state;
     const kite = client['kite'];
 
     try {
-      // 1. Fetch 5-min candles for today
-      const candles = await this.fetchCandles(kite, config, '5minute', ist);
+      const candles = await this.fetchCandles(kite, config, '5minute', now);
       if (candles.length < 2) return;
 
-      // Calculate indicators
-      const emaPeriod = config.emaPeriod || 15;
-      const emas = this.calculateEMA(candles, emaPeriod);
+      const emas = this.calculateEMA(candles, config.emaPeriod || 15);
       const vwaps = this.calculateVWAP(candles);
 
-      const lastIdx = candles.length - 1;
-      const prevIdx = candles.length - 2;
+      const lastIdx = candles.length - 1, prevIdx = candles.length - 2;
+      const currEma = emas[lastIdx], prevEma = emas[prevIdx];
+      const currVwap = vwaps[lastIdx], prevVwap = vwaps[prevIdx];
 
-      const currentEma = emas[lastIdx];
-      const prevEma = emas[prevIdx];
-      const currentVwap = vwaps[lastIdx];
-      const prevVwap = vwaps[prevIdx];
+      if (currEma === null || prevEma === null || currVwap === null || prevVwap === null) return;
 
-      if (currentEma === null || prevEma === null || currentVwap === null || prevVwap === null) return;
-
-      // 2. Check for entry trigger (if already in confirmation phase)
       if (state.waitingForConfirmation) {
         const ltpData = await kite.getLTP([`${config.exchange}:${config.symbol}`]);
         const ltp = ltpData[`${config.exchange}:${config.symbol}`]?.last_price;
-
         if (ltp) {
           if (state.waitingForConfirmation === 'LONG' && ltp > state.confirmationHigh!) {
-            this.log(state, `🚀 LONG Confirmation! LTP ₹${ltp} broke high ₹${state.confirmationHigh}`);
+            this.log(state, `🚀 LONG Trigger! LTP ₹${ltp} > ₹${state.confirmationHigh}`);
             await this.placeTrade(state, client, account, 'BUY', ltp);
             state.waitingForConfirmation = null;
           } else if (state.waitingForConfirmation === 'SHORT' && ltp < state.confirmationLow!) {
-            this.log(state, `🚀 SHORT Confirmation! LTP ₹${ltp} broke low ₹${state.confirmationLow}`);
+            this.log(state, `🚀 SHORT Trigger! LTP ₹${ltp} < ₹${state.confirmationLow}`);
             await this.placeTrade(state, client, account, 'SELL', ltp);
             state.waitingForConfirmation = null;
           }
         }
       }
 
-      // 3. Check for Crossover on CLOSED candle (prevIdx)
-      // Actually we check crossover on the candle that just closed (lastIdx is forming, so we use candles up to lastIdx-1 for indicators if we want confirmed crossover)
-      // But typically we check the most recent completed indicators.
-      
-      const crossoverLong = prevEma <= prevVwap && currentEma > currentVwap;
-      const crossoverShort = prevEma >= prevVwap && currentEma < currentVwap;
+      const crossoverLong = prevEma <= prevVwap && currEma > currVwap;
+      const crossoverShort = prevEma >= prevVwap && currEma < currVwap;
 
       if (crossoverLong && !state.entryTriggered) {
         state.waitingForConfirmation = 'LONG';
         state.confirmationHigh = candles[lastIdx].high;
-        this.log(state, `🔔 BULLISH Crossover (EMA > VWAP). Waiting for break of high ₹${state.confirmationHigh}`);
+        this.log(state, `🔔 Signal: BULLISH crossover. Waiting for break of ₹${state.confirmationHigh}`);
       } else if (crossoverShort && !state.entryTriggered) {
-        // Only if not option buying only, or if we handle PE buying later
         state.waitingForConfirmation = 'SHORT';
         state.confirmationLow = candles[lastIdx].low;
-        this.log(state, `🔔 BEARISH Crossover (EMA < VWAP). Waiting for break of low ₹${state.confirmationLow}`);
+        this.log(state, `🔔 Signal: BEARISH crossover. Waiting for break of ₹${state.confirmationLow}`);
       }
-
-    } catch (err) {
-      this.log(state, `❌ Tick error: ${err.message}`);
-    }
-
+    } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
     await this.persistLogs(state);
   }
 
-  private async placeTrade(
-    state: StrategyState,
-    client: any,
-    account: any,
-    side: 'BUY' | 'SELL',
-    triggerPrice: number,
-  ) {
+  private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number) {
     const { config } = state;
     const kite = client['kite'];
+    let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
 
-    let tradingSymbol = config.symbol;
-    let tradingExchange = config.exchange;
-    let finalSide: 'BUY' | 'SELL' = side;
-
-    // Handle Option Buying Only
     if (config.isOptionBuyingOnly) {
-      this.log(state, `🔍 Selecting option for ${side === 'BUY' ? 'Bullish' : 'Bearish'} move...`);
-      const optionType = side === 'BUY' ? 'CE' : 'PE';
-      const optionSymbol = await this.findOptionSymbol(kite, config.symbol, triggerPrice, optionType);
-      
-      if (optionSymbol) {
-        tradingSymbol = optionSymbol;
-        tradingExchange = 'NFO';
-        finalSide = 'BUY'; // Always buy for option buying
-        this.log(state, `🎯 Selected Option: ${tradingSymbol}`);
-        
-        const quotes = await kite.getLTP([`NFO:${tradingSymbol}`]);
-        const ltp = quotes[`NFO:${tradingSymbol}`]?.last_price;
-        if (ltp) {
-          triggerPrice = ltp;
-        }
-      } else {
-        this.log(state, `❌ No option found. Skipping trade.`);
-        return;
-      }
+      const type = side === 'BUY' ? 'CE' : 'PE';
+      const optSym = await this.findOptionSymbol(kite, state, triggerPrice, type);
+      if (optSym) {
+        symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
+        const q = await kite.getLTP([`NFO:${symbol}`]);
+        if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
+      } else return;
     }
 
-    const entryPrice = this.roundTick(triggerPrice);
-    const slPrice = finalSide === 'BUY' 
-      ? this.roundTick(entryPrice - (config.stopLossRs / config.qty))
-      : this.roundTick(entryPrice + (config.stopLossRs / config.qty));
-    const targetPrice = finalSide === 'BUY'
-      ? this.roundTick(entryPrice + (config.targetRs / config.qty))
-      : this.roundTick(entryPrice - (config.targetRs / config.qty));
+    const entry = this.roundTick(triggerPrice);
+    const sl = finalSide === 'BUY' ? this.roundTick(entry - (config.stopLossRs / config.qty)) : this.roundTick(entry + (config.stopLossRs / config.qty));
+    const tgt = finalSide === 'BUY' ? this.roundTick(entry + (config.targetRs / config.qty)) : this.roundTick(entry - (config.targetRs / config.qty));
 
-    this.log(state, `📋 Placing orders: Entry ₹${entryPrice} | SL ₹${slPrice} | Target ₹${targetPrice}`);
-
-    const common = {
-      symbol: tradingSymbol,
-      exchange: tradingExchange,
-      product: 'MIS' as any,
-      qty: config.qty,
-    };
-
+    this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}`);
     try {
-      const entryId = state.isPaperTrade 
-        ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ ...common, side: finalSide, orderType: 'LIMIT', price: entryPrice });
-      
-      this.log(state, `✅ Entry placed: ${entryId}`);
-
+      const entryId = state.isPaperTrade ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: finalSide, orderType: 'LIMIT', price: entry });
+      this.log(state, `✅ Entry: ${entryId}`);
       const exitSide = finalSide === 'BUY' ? 'SELL' : 'BUY';
-      
-      // SL
-      await client.placeOrder({ ...common, side: exitSide, orderType: 'SL', price: slPrice, triggerPrice: slPrice })
-        .catch(e => this.log(state, `❌ SL Failed: ${e.message}`));
-      
-      // Target
-      await client.placeOrder({ ...common, side: exitSide, orderType: 'LIMIT', price: targetPrice })
-        .catch(e => this.log(state, `❌ Target Failed: ${e.message}`));
-
+      await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: exitSide, orderType: 'SL', price: sl, triggerPrice: sl }).catch(e => this.log(state, `❌ SL Failed: ${e.message}`));
+      await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt }).catch(e => this.log(state, `❌ Target Failed: ${e.message}`));
       state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
       state.tradesPlacedToday++;
-    } catch (err) {
-      this.log(state, `❌ Trade placement failed: ${err.message}`);
-    }
+    } catch (err) { this.log(state, `❌ Placement failed: ${err.message}`); }
   }
 
-  private calculateEMA(candles: Candle[], period: number): (number | null)[] {
+  private calculateEMA(candles: Candle[], period: number) {
     const emas: (number | null)[] = new Array(candles.length).fill(null);
     if (candles.length < period) return emas;
-
     let sum = 0;
     for (let i = 0; i < period; i++) sum += candles[i].close;
-    let prevEma = sum / period;
-    emas[period - 1] = prevEma;
-
-    const multiplier = 2 / (period + 1);
+    let prev = sum / period; emas[period - 1] = prev;
+    const mult = 2 / (period + 1);
     for (let i = period; i < candles.length; i++) {
-      const ema = (candles[i].close - prevEma) * multiplier + prevEma;
-      emas[i] = ema;
-      prevEma = ema;
+      const ema = (candles[i].close - prev) * mult + prev;
+      emas[i] = ema; prev = ema;
     }
     return emas;
   }
 
-  private calculateVWAP(candles: Candle[]): (number | null)[] {
+  private calculateVWAP(candles: Candle[]) {
     const vwaps: (number | null)[] = new Array(candles.length).fill(null);
-    let cumulativePV = 0;
-    let cumulativeV = 0;
-
+    let cpv = 0, cv = 0;
     for (let i = 0; i < candles.length; i++) {
-      const typicalPrice = (candles[i].high + candles[i].low + candles[i].close) / 3;
-      cumulativePV += typicalPrice * candles[i].volume;
-      cumulativeV += candles[i].volume;
-      vwaps[i] = cumulativePV / cumulativeV;
+      cpv += ((candles[i].high + candles[i].low + candles[i].close) / 3) * candles[i].volume;
+      cv += candles[i].volume; vwaps[i] = cpv / cv;
     }
     return vwaps;
   }
 
-  private async fetchCandles(kite: any, config: any, interval: string, ist: Date): Promise<Candle[]> {
-    const from = new Date(ist); from.setHours(9, 15, 0, 0);
-    const to = new Date(ist);
-    
-    // Resolve token
+  private async fetchCandles(kite: any, config: any, interval: string, now: Date): Promise<Candle[]> {
+    const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+    const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
     let token = 0;
     const indexTokens: Record<string, number> = { 'NIFTY 50': 256265, 'BANKNIFTY': 260105, 'SENSEX': 265 };
     if (indexTokens[config.symbol.toUpperCase()]) {
@@ -360,43 +279,72 @@ export class EmaVwapCrossoverEngine {
       if (!found) throw new Error(`Instrument ${config.symbol} not found`);
       token = found.instrument_token;
     }
-
-    const data = await kite.getHistoricalData(token, interval, from, to, false);
-    return (data || []).map((c: any) => ({
-      date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume
-    }));
+    const data = await kite.getHistoricalData(token, interval, from, now, false);
+    return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
 
-  private async findOptionSymbol(kite: any, baseSymbol: string, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
+  private async findOptionSymbol(kite: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
+    const { config } = state;
+    const upper = config.symbol.toUpperCase();
+    const underlying = upper.includes('BANK') ? 'BANKNIFTY' : (upper.includes('NIFTY 50') || upper === 'NIFTY') ? 'NIFTY' : upper.includes('FIN') ? 'FINNIFTY' : upper.includes('MID') ? 'MIDCPNIFTY' : upper;
+
     const instruments = await kite.getInstruments('NFO');
-    const underlying = baseSymbol.includes('NIFTY 50') ? 'NIFTY' : baseSymbol.includes('BANK') ? 'BANKNIFTY' : baseSymbol.toUpperCase();
     const options = instruments.filter(i => i.name === underlying && i.instrument_type === type && i.segment === 'NFO-OPT');
+    
     if (options.length === 0) return null;
+
     const nearestExpiry = Array.from(new Set(options.map(i => i.expiry))).sort()[0];
-    const step = underlying === 'NIFTY' ? 50 : 100;
+    const filteredOptions = options.filter(i => i.expiry === nearestExpiry);
+
+    // ─── Option 1: Premium Range Selection ──────────────────────────────────
+    if (config.minPremium && config.maxPremium) {
+      this.log(state, `🔍 Searching for ${type} in premium range ₹${config.minPremium} - ₹${config.maxPremium}...`);
+      const symbols = filteredOptions.map(i => `NFO:${i.tradingsymbol}`);
+      const quotes = await kite.getLTP(symbols);
+      
+      let bestMatch: string | null = null;
+      let minDiff = Infinity;
+      const targetPremium = (config.minPremium + config.maxPremium) / 2;
+
+      for (const opt of filteredOptions) {
+        const ltp = quotes[`NFO:${opt.tradingsymbol}`]?.last_price;
+        if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
+          const diff = Math.abs(ltp - targetPremium);
+          if (diff < minDiff) {
+            minDiff = diff;
+            bestMatch = opt.tradingsymbol;
+          }
+        }
+      }
+
+      if (bestMatch) {
+        this.log(state, `🎯 Found ${bestMatch} within premium range.`);
+        return bestMatch;
+      }
+      this.log(state, `⚠ No option found in range ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ATM.`);
+    }
+
+    // ─── Option 2: Default ATM Strike ────────────────────────────────────────
+    const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : 100;
     const atmStrike = Math.round(spotPrice / step) * step;
-    const match = options.find(i => i.expiry === nearestExpiry && Number(i.strike) === atmStrike);
-    return match ? match.tradingsymbol : null;
+    const match = filteredOptions.find(i => Number(i.strike) === atmStrike);
+    
+    if (match) {
+        this.log(state, `🎯 Selected ATM Strike: ${match.tradingsymbol} (Strike: ${match.strike})`);
+        return match.tradingsymbol;
+    }
+    return null;
   }
 
-  private roundTick(price: number): number { return Math.round(price / 0.05) * 0.05; }
-
-  private log(state: StrategyState, msg: string) {
-    const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    state.logs.push(`[${ts}] ${msg}`);
-    this.logger.log(`[${state.executionId}] ${msg}`);
+  private getIstHhmm(date: Date): number {
+    const istStr = date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: false });
+    const parts = istStr.split(':').map(Number);
+    return parts[0] * 60 + (parts[1] || 0);
   }
 
-  private async persistLogs(state: StrategyState) {
-    await this.prisma.strategyExecution.update({
-      where: { id: state.executionId },
-      data: { logs: JSON.stringify(state.logs.slice(-200)) },
-    });
-  }
-
-  private resetDailyState(state: StrategyState) {
-    state.entryTriggered = null;
-    state.tradesPlacedToday = 0;
-    state.waitingForConfirmation = null;
-  }
+  private roundTick(p: number) { return Math.round(p / 0.05) * 0.05; }
+  private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+  private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
+  private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
+  private resetDailyState(state: StrategyState) { state.entryTriggered = null; state.tradesPlacedToday = 0; state.waitingForConfirmation = null; }
 }

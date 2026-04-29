@@ -101,6 +101,8 @@ export const marketApi = {
   }) => api.get("/market/candles", { params }),
   quote:  (symbol: string) => api.get(`/market/quote/${symbol}`),
   search: (q: string, accountId?: string | null) => api.get("/market/search", { params: { q, accountId } }),
+  addToWatchlist: (symbol: string, exchange: string = 'NSE') => api.post("/market/watchlist", { symbol, exchange }),
+  removeFromWatchlist: (symbol: string, exchange: string = 'NSE') => api.delete("/market/watchlist", { params: { symbol, exchange } }),
 };
 
 

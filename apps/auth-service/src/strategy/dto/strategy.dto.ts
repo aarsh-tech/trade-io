@@ -18,6 +18,23 @@ export interface Breakout15MinConfig {
   stopLossRs: number;
   targetRs: number;
   maxTradesPerDay: number;
+  minPremium?: number;
+  maxPremium?: number;
+}
+
+export interface EmaVwapCrossoverConfig {
+  symbol: string;
+  exchange: string;
+  emaPeriod: number;
+  isOptionBuyingOnly: boolean;
+  qty: number;
+  lots: number;
+  product: 'MIS' | 'NRML';
+  maxTradesPerDay: number;
+  stopLossRs: number;
+  targetRs: number;
+  minPremium?: number;
+  maxPremium?: number;
 }
 
 // ─── EMA-RSI Options Config ────────────────────────────────────────────────────

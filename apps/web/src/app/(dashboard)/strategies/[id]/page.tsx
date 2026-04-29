@@ -711,37 +711,7 @@ export default function StrategyDetailPage() {
             ) : (
               <div className="space-y-2">
                 {strategy.executions.map((ex) => (
-                  <div
-                    key={ex.id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-[hsl(var(--secondary)/0.5)] border border-[hsl(var(--border))]"
-                  >
-                    <div>
-                      <p className="text-xs font-mono text-[hsl(var(--muted-foreground))]">
-                        {ex.id.slice(0, 12)}…
-                      </p>
-                      <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                        {new Date(ex.startedAt).toLocaleString("en-IN")}
-                        {ex.stoppedAt &&
-                          ` → ${new Date(ex.stoppedAt).toLocaleString("en-IN")}`}
-                      </p>
-                      {ex.errorMsg && (
-                        <p className="text-xs text-red-500 mt-0.5">{ex.errorMsg}</p>
-                      )}
-                    </div>
-                    <Badge
-                      variant={
-                        ex.status === "RUNNING"
-                          ? "running"
-                          : ex.status === "STOPPED"
-                            ? "stopped"
-                            : ex.status === "ERROR"
-                              ? "stopped"
-                              : "default"
-                      }
-                    >
-                      {ex.status}
-                    </Badge>
-                  </div>
+                  <ExecutionRow key={ex.id} execution={ex} />
                 ))}
               </div>
             )}
@@ -769,6 +739,89 @@ function Field({
       ) : (
         <p className="text-sm font-semibold">{value}</p>
       )}
+    </div>
+  );
+}
+
+function ExecutionRow({ execution: ex }: { execution: Execution }) {
+  const [open, setOpen] = useState(false);
+  let parsedLogs: string[] = [];
+  try {
+    parsedLogs = JSON.parse(ex.logs || "[]");
+  } catch {
+    parsedLogs = [];
+  }
+
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg bg-[hsl(var(--secondary)/0.5)] border border-[hsl(var(--border))]">
+      <div>
+        <p className="text-xs font-mono text-[hsl(var(--muted-foreground))]">
+          {ex.id.slice(0, 12)}…
+        </p>
+        <p className="text-xs text-[hsl(var(--muted-foreground))]">
+          {new Date(ex.startedAt).toLocaleString("en-IN")}
+          {ex.stoppedAt && ` → ${new Date(ex.stoppedAt).toLocaleString("en-IN")}`}
+        </p>
+        {ex.errorMsg && (
+          <p className="text-xs text-red-500 mt-0.5">{ex.errorMsg}</p>
+        )}
+      </div>
+      <div className="flex items-center gap-3">
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm" className="h-7 text-xs">
+              <Terminal className="h-3 w-3 mr-1" />
+              Logs
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-4xl border-[hsl(var(--border))] p-6">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 font-mono">
+                <Terminal className="h-5 w-5" />
+                Execution Logs
+              </DialogTitle>
+              <DialogDescription>
+                Started at {new Date(ex.startedAt).toLocaleString("en-IN")}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="h-[500px] overflow-y-auto bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg p-4 font-mono text-[13px] text-green-400 space-y-1 shadow-inner">
+              {parsedLogs.length === 0 ? (
+                <p className="text-[hsl(var(--muted-foreground))]">No logs recorded for this run.</p>
+              ) : (
+                parsedLogs.map((line, i) => (
+                  <div
+                    key={i}
+                    className={cn(
+                      "leading-relaxed break-words",
+                      line.includes("❌") && "text-red-400",
+                      line.includes("⚠") && "text-amber-400",
+                      line.includes("🟢") && "text-green-300 font-bold",
+                      line.includes("🔴") && "text-red-300 font-bold",
+                      line.includes("✅") && "text-emerald-400"
+                    )}
+                  >
+                    {line}
+                  </div>
+                ))
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Badge
+          variant={
+            ex.status === "RUNNING"
+              ? "running"
+              : ex.status === "STOPPED"
+                ? "stopped"
+                : ex.status === "ERROR"
+                  ? "stopped"
+                  : "default"
+          }
+        >
+          {ex.status}
+        </Badge>
+      </div>
     </div>
   );
 }

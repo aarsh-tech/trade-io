@@ -34,24 +34,26 @@ export default function DashboardPage() {
   const { market, stats, isLoading } = useDashboard();
 
   if (isLoading) {
-    return <div className="h-full flex items-center justify-center">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-    </div>;
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col h-full -m-6 bg-[#fbfcfd]">
+    <div className="flex flex-col h-full bg-[#fbfcfd] rounded-xl overflow-hidden border border-slate-100 shadow-sm">
       {/* Top Real-time Ticker */}
       <MarketTicker indices={market.indices} />
 
       <div className="flex flex-1 overflow-hidden p-6 gap-6">
-        
-        {/* Left Side - Market Watchlist (Zerodha Style) */}
+
+        {/* Left Side - Market Watchlist */}
         <div className="w-80 flex flex-col gap-4 hidden lg:flex">
           <div className="relative group">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 group-focus-within:text-blue-500" />
-            <Input 
-              placeholder="Search eg: infy bse, nifty fut, gold mcx" 
+            <Input
+              placeholder="Search eg: infy bse, nifty fut, gold mcx"
               className="pl-10 h-10 border-slate-100 bg-white shadow-sm rounded-lg focus-visible:ring-1 focus-visible:ring-blue-500"
             />
           </div>
@@ -66,12 +68,12 @@ export default function DashboardPage() {
                 <div key={stock.symbol} className="p-4 hover:bg-slate-50 cursor-pointer group transition-colors flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-slate-800">{stock.symbol}</p>
-                    <p className="text-[10px] text-slate-400 font-medium uppercase">NSE</p>
+                    <p className="text-[10px] text-slate-400 font-medium uppercase">{stock.exchange}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-bold text-slate-900">₹{stock.price.toLocaleString('en-IN')}</p>
                     <p className={cn("text-[11px] font-bold", stock.change >= 0 ? "text-emerald-500" : "text-rose-500")}>
-                      {stock.change >= 0 ? "+" : ""}{stock.change}%
+                      {stock.change >= 0 ? "+" : ""}{stock.change.toFixed(2)}%
                     </p>
                   </div>
                 </div>
@@ -81,8 +83,8 @@ export default function DashboardPage() {
         </div>
 
         {/* Right Side - Dashboard Content */}
-        <div className="flex-1 space-y-6 overflow-y-auto pr-2">
-          
+        <div className="flex-1 space-y-6 overflow-y-auto pr-2 custom-scrollbar">
+
           {/* Header & Quick Stats */}
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-slate-900">Hi, Trader 👋</h2>
@@ -105,7 +107,7 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-tight">Equity Balance</p>
-                  <p className="text-xl font-black text-slate-900">{formatCurrency(stats.portfolioValue)}</p>
+                  <p className="text-xl font-black text-slate-900">{formatCurrency(stats?.portfolioValue || 0)}</p>
                 </div>
               </CardContent>
             </Card>
@@ -118,9 +120,9 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-tight">Realized P&L</p>
                   <div className="flex items-center gap-2">
-                    <p className="text-xl font-black text-slate-900">{formatCurrency(stats.todayPnl)}</p>
+                    <p className="text-xl font-black text-slate-900">{formatCurrency(stats?.todayPnl || 0)}</p>
                     <Badge className="bg-emerald-500/10 text-emerald-600 border-0 text-[10px] font-bold">
-                      +{stats.pnlChange}%
+                      +{stats?.pnlChange || 0}%
                     </Badge>
                   </div>
                 </div>
@@ -142,14 +144,14 @@ export default function DashboardPage() {
 
           {/* Performance Chart & Recent Activity */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            
+
             <Card className="xl:col-span-2 shadow-sm border-slate-100 bg-white">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-2">
                   <LineChart className="h-4 w-4 text-blue-500" /> Daily Equity Curve
                 </CardTitle>
                 <div className="flex gap-2">
-                   <Badge variant="outline" className="rounded-md border-slate-100 text-[10px] text-slate-400 uppercase">Live Tracking</Badge>
+                  <Badge className="rounded-md border-slate-100 text-[10px] text-slate-400 uppercase">Live Tracking</Badge>
                 </div>
               </CardHeader>
               <CardContent>
@@ -164,7 +166,7 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="time" tick={{ fill: "#94a3b8", fontSize: 10 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${v}`} />
-                    <Tooltip 
+                    <Tooltip
                       contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                       labelStyle={{ fontWeight: 'bold', marginBottom: '4px' }}
                     />
@@ -187,22 +189,22 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4 pt-2">
-                   {[
-                     { name: "Financials", val: 42, color: "#387ED1" },
-                     { name: "IT Services", val: 28, color: "#10b981" },
-                     { name: "Energy", val: 18, color: "#f59e0b" },
-                     { name: "Others", val: 12, color: "#94a3b8" }
-                   ].map((item) => (
-                     <div key={item.name} className="space-y-1.5">
-                       <div className="flex justify-between text-xs font-bold text-slate-600">
-                         <span>{item.name}</span>
-                         <span>{item.val}%</span>
-                       </div>
-                       <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden">
-                         <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${item.val}%`, backgroundColor: item.color }} />
-                       </div>
-                     </div>
-                   ))}
+                  {[
+                    { name: "Financials", val: 42, color: "#387ED1" },
+                    { name: "IT Services", val: 28, color: "#10b981" },
+                    { name: "Energy", val: 18, color: "#f59e0b" },
+                    { name: "Others", val: 12, color: "#94a3b8" }
+                  ].map((item) => (
+                    <div key={item.name} className="space-y-1.5">
+                      <div className="flex justify-between text-xs font-bold text-slate-600">
+                        <span>{item.name}</span>
+                        <span>{item.val}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${item.val}%`, backgroundColor: item.color }} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 <Button variant="ghost" className="w-full mt-6 text-xs text-blue-600 font-bold hover:bg-blue-50 gap-2">
                   <Briefcase className="h-3 w-3" /> Full Portfolio Breakdown

@@ -95,7 +95,7 @@ export function useDashboard() {
 
   return {
     market: marketOverviewQuery.data || { indices: [], stocks: [] },
-    stats: statsQuery.data,
+    stats: statsQuery.data || { portfolioValue: 0, todayPnl: 0, pnlChange: 0, winRate: 0 },
     isLoading: marketOverviewQuery.isLoading || statsQuery.isLoading,
     refresh: () => {
       marketOverviewQuery.refetch();

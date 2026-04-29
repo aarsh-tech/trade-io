@@ -35,7 +35,9 @@
     --chart-4: 45 93% 58%;
     --chart-5: 0 84.2% 60.2%;
   }
+
 }
+
 
 @layer base {
   * {
@@ -53,116 +55,186 @@
   }
 
   /* Custom scrollbar */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: hsl(var(--background)); }
-  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
 }
 
 @layer components {
+
   /* Glass card */
   .glass {
-    background: hsl(var(--card) / 0.6);
+    background: hsl(var(--card) / 0.7);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid hsl(var(--border) / 0.5);
+    border: 1px solid hsl(var(--border) / 0.4);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
   }
 
-  /* Glow effects */
-  .glow-blue {
-    box-shadow: 0 0 20px hsl(var(--primary) / 0.3), 0 0 40px hsl(var(--primary) / 0.1);
+}
+
+/* Glow effects */
+.glow-blue {
+  box-shadow: 0 0 20px hsl(var(--primary) / 0.3), 0 0 40px hsl(var(--primary) / 0.1);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px hsl(var(--green) / 0.3), 0 0 40px hsl(var(--green) / 0.1);
+}
+
+.glow-red {
+  box-shadow: 0 0 20px hsl(var(--red) / 0.3), 0 0 40px hsl(var(--red) / 0.1);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Status badge */
+.badge-running {
+  background: hsl(var(--green-muted));
+  color: hsl(var(--green));
+  border: 1px solid hsl(var(--green) / 0.3);
+}
+
+.badge-stopped {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+.badge-error {
+  background: hsl(var(--red-muted));
+  color: hsl(var(--red));
+  border: 1px solid hsl(var(--red) / 0.3);
+}
+
+  /* Custom scrollbar utility */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #eee;
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #ddd;
   }
 
-  .glow-green {
-    box-shadow: 0 0 20px hsl(var(--green) / 0.3), 0 0 40px hsl(var(--green) / 0.1);
-  }
+/* PnL colors */
+.pnl-positive {
+  color: hsl(var(--green));
+}
 
-  .glow-red {
-    box-shadow: 0 0 20px hsl(var(--red) / 0.3), 0 0 40px hsl(var(--red) / 0.1);
-  }
+.pnl-negative {
+  color: hsl(var(--red));
+}
 
-  /* Gradient text */
-  .gradient-text {
-    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  /* Status badge */
-  .badge-running {
-    background: hsl(var(--green-muted));
-    color: hsl(var(--green));
-    border: 1px solid hsl(var(--green) / 0.3);
-  }
-
-  .badge-stopped {
-    background: hsl(var(--muted));
-    color: hsl(var(--muted-foreground));
-    border: 1px solid hsl(var(--border));
-  }
-
-  .badge-error {
-    background: hsl(var(--red-muted));
-    color: hsl(var(--red));
-    border: 1px solid hsl(var(--red) / 0.3);
-  }
-
-  /* PnL colors */
-  .pnl-positive { color: hsl(var(--green)); }
-  .pnl-negative { color: hsl(var(--red)); }
-
-  /* Animated gradient background */
-  .animated-gradient {
-    background: linear-gradient(
-      -45deg,
+/* Animated gradient background */
+.animated-gradient {
+  background: linear-gradient(-45deg,
       hsl(222 47% 5%),
       hsl(222 47% 7%),
       hsl(230 50% 8%),
-      hsl(240 45% 6%)
-    );
-    background-size: 400% 400%;
-    animation: gradient-shift 15s ease infinite;
-  }
-
-  /* Ticker tape animation */
-  .ticker-wrap {
-    overflow: hidden;
-    white-space: nowrap;
-  }
-
-  .ticker-content {
-    display: inline-block;
-    animation: ticker-scroll 40s linear infinite;
-  }
-
-  .ticker-content:hover { animation-play-state: paused; }
+      hsl(240 45% 6%));
+  background-size: 400% 400%;
+  animation: gradient-shift 15s ease infinite;
 }
 
+/* Ticker tape animation */
+.ticker-wrap {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ticker-content {
+  display: inline-block;
+  animation: ticker-scroll 40s linear infinite;
+}
+
+.ticker-content:hover {
+  animation-play-state: paused;
+}
+
+
 @keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 @keyframes ticker-scroll {
-  0%   { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 @keyframes pulse-green {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.5; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
 }
 
 @keyframes slide-in-right {
-  from { transform: translateX(100%); opacity: 0; }
-  to   { transform: translateX(0);   opacity: 1; }
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 @keyframes marquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 .animate-marquee {
@@ -171,14 +243,28 @@
 }
 
 @keyframes fade-up {
-  from { transform: translateY(16px); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* Ticker banner — used by TopBar */
 @keyframes ticker {
-  0%   { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
-.ticker-banner:hover > div { animation-play-state: paused; }
+.ticker-banner:hover>div {
+  animation-play-state: paused;
+}

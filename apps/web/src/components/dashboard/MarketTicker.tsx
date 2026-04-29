@@ -12,22 +12,25 @@ interface IndexData {
 
 export function MarketTicker({ indices }: { indices: IndexData[] }) {
   return (
-    <div className="w-full bg-white border-b border-slate-100 px-6 py-2 overflow-hidden">
-      <div className="flex items-center gap-8 animate-[marquee_30s_linear_infinite] whitespace-nowrap">
-        {indices.map((idx) => (
-          <div key={idx.symbol} className="flex items-center gap-2">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">{idx.symbol}</span>
-            <span className="text-sm font-mono font-bold text-slate-900">{idx.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+    <div className="h-10 bg-white border-b border-slate-100 flex items-center overflow-hidden whitespace-nowrap">
+      <div className="flex animate-marquee hover:pause gap-12 px-6">
+        {[...indices, ...indices].map((item, idx) => (
+          <div key={`${item.symbol}-${idx}`} className="flex items-center gap-2 group cursor-pointer">
+            <span className="text-[11px] font-bold text-slate-500 group-hover:text-blue-600 transition-colors uppercase">
+              {item.symbol}
+            </span>
+            <span className="text-[11px] font-black text-slate-800 tabular-nums">
+              {item.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </span>
             <div className={cn(
-              "flex items-center gap-0.5 text-[11px] font-bold",
-              idx.change >= 0 ? "text-emerald-500" : "text-rose-500"
+              "flex items-center text-[10px] font-black px-1.5 py-0.5 rounded",
+              item.change >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
             )}>
-              {idx.change >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-              <span>{Math.abs(idx.changeAbs).toFixed(2)} ({Math.abs(idx.change).toFixed(2)}%)</span>
+              {item.change >= 0 ? <TrendingUp className="h-3 w-3 mr-1" /> : <TrendingDown className="h-3 w-3 mr-1" />}
+              {item.change >= 0 ? "+" : ""}{item.change.toFixed(2)}%
             </div>
           </div>
         ))}
-        {/* Duplicate for seamless loop if needed, but flex gap is enough for now */}
       </div>
     </div>
   );

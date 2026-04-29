@@ -30,6 +30,7 @@ model User {
   backtests         Backtest[]
   refreshTokens     RefreshToken[]
   swingScans        SwingScan[]
+  watchlists        Watchlist[]
 
   @@map("users")
 }
@@ -245,4 +246,18 @@ model SwingScan {
 
   @@index([userId, scannedAt])
   @@map("swing_scans")
+}
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String   @default("Default")
+  symbols   String[] @default([]) // Array of symbols like ["NSE:RELIANCE", "BSE:SENSEX"]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("watchlists")
 }

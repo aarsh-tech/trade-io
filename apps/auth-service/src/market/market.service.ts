@@ -102,7 +102,7 @@ export class MarketService {
     }
   }
 
-  // ── Dashboard Overview (Indices + Watchlist from Holdings) ──────────────────
+  // ── Dashboard Overview (Indices + Persistent Watchlist) ─────────────────────
 
   async getOverview(userId: string) {
     const account = await this.prisma.brokerAccount.findFirst({
@@ -115,59 +115,92 @@ export class MarketService {
       { symbol: 'BANKNIFTY', change: 0, changeAbs: 0, price: 0 },
     ];
 
-    if (!account?.accessToken) {
-      return { indices: defaultIndices, stocks: [] };
-    }
+    let indices = defaultIndices;
+    if (account?.accessToken) {
+      try {
+        const client = this.factory.createClient(account);
+        const kite = (client as any)['kite'];
+        const indexKeys = ['NSE:NIFTY 50', 'BSE:SENSEX', 'NSE:BANKNIFTY'];
+        const quotes = await kite.getLTP(indexKeys).catch(() => ({}));
 
-    try {
-      const client = this.factory.createClient(account);
-      const kite   = (client as any)['kite'];
-
-      // Fetch indices
-      const indexKeys = ['NSE:NIFTY 50', 'BSE:SENSEX', 'NSE:BANKNIFTY'];
-      const quotes = await kite.getLTP(indexKeys).catch(() => ({}));
-      
-      const indices = indexKeys.map(key => {
-        const symbol = key.split(':')[1];
-        const q = quotes[key];
-        const price = q?.last_price ?? 0;
-        const prev = q?.close_price ?? price;
-        const changeAbs = price - prev;
-        const change = prev ? (changeAbs / prev) * 100 : 0;
-        return { symbol, price, change, changeAbs };
-      });
-
-      // Fetch holdings for watchlist
-      const holdingsData = await kite.getHoldings().catch(() => []);
-      
-      // Also get positions if holdings are empty or to supplement
-      const positionsData = await kite.getPositions().catch(() => ({ net: [] }));
-      const allInstruments = new Set([
-        ...holdingsData.map((h: any) => h.tradingsymbol),
-        ...(positionsData.net || []).map((p: any) => p.tradingsymbol),
-      ]);
-
-      // If user has no holdings/positions, fallback to Nifty 50 top stocks
-      let watchSymbols = Array.from(allInstruments).slice(0, 15);
-      if (watchSymbols.length === 0) {
-        watchSymbols = ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'ITC', 'SBIN'];
+        indices = indexKeys.map(key => {
+          const symbol = key.split(':')[1];
+          const q = quotes[key];
+          const price = q?.last_price ?? 0;
+          const prev = q?.close_price ?? price;
+          const changeAbs = price - prev;
+          const change = prev ? (changeAbs / prev) * 100 : 0;
+          return { symbol, price, change, changeAbs };
+        });
+      } catch (e) {
+        this.logger.warn(`Failed to fetch indices: ${e.message}`);
       }
-
-      // We don't fetch LTP here, the frontend will connect via WebSocket to get live prices
-      const stocks = watchSymbols.map(symbol => ({
-        symbol,
-        exchange: 'NSE', // Assuming NSE for watchlist
-        price: 0,
-        change: 0,
-      }));
-
-      return {
-        indices: indices.length ? indices : defaultIndices,
-        stocks,
-      };
-    } catch (e) {
-      this.logger.warn(`getOverview failed: ${e.message}`);
-      return { indices: defaultIndices, stocks: [] };
     }
+
+    // Fetch user's persistent watchlist
+    const watchlist = await this.prisma.watchlist.findFirst({
+      where: { userId, name: 'Default' },
+    });
+
+    let watchSymbols = watchlist?.symbols || [];
+
+    // Fallback if empty
+    if (watchSymbols.length === 0) {
+      watchSymbols = ['NSE:RELIANCE', 'NSE:TCS', 'NSE:HDFCBANK', 'NSE:INFY', 'NSE:ICICIBANK'];
+      // Initialize if doesn't exist
+      if (!watchlist) {
+        await this.prisma.watchlist.create({
+          data: { userId, name: 'Default', symbols: watchSymbols },
+        });
+      }
+    }
+
+    const stocks = watchSymbols.map(s => {
+      const [exchange, symbol] = s.includes(':') ? s.split(':') : ['NSE', s];
+      return { symbol, exchange, price: 0, change: 0 };
+    });
+
+    return {
+      indices,
+      stocks,
+    };
+  }
+
+  async addToWatchlist(userId: string, symbol: string, exchange: string = 'NSE') {
+    const key = `${exchange}:${symbol}`;
+    let watchlist = await this.prisma.watchlist.findFirst({
+      where: { userId, name: 'Default' },
+    });
+
+    if (!watchlist) {
+      return this.prisma.watchlist.create({
+        data: { userId, name: 'Default', symbols: [key] },
+      });
+    }
+
+    if (watchlist.symbols.includes(key)) return watchlist;
+
+    return this.prisma.watchlist.update({
+      where: { id: watchlist.id },
+      data: { symbols: { push: key } },
+    });
+  }
+
+  async removeFromWatchlist(userId: string, symbol: string, exchange: string = 'NSE') {
+    const key = `${exchange}:${symbol}`;
+    const watchlist = await this.prisma.watchlist.findFirst({
+      where: { userId, name: 'Default' },
+    });
+
+    if (!watchlist) return null;
+
+    return this.prisma.watchlist.update({
+      where: { id: watchlist.id },
+      data: {
+        symbols: {
+          set: watchlist.symbols.filter(s => s !== key),
+        },
+      },
+    });
   }
 }
