@@ -76,7 +76,7 @@ function calcVWAP(candles: Candle[]): number {
 
 // ─── Engine ───────────────────────────────────────────────────────────────────
 
-import { SwingScannerService } from '../swing-scanner/swing-scanner.service';
+import { autoSelectStock } from './smart-stock-picker';
 
 @Injectable()
 export class EmaRsiOptionsEngine {
@@ -87,7 +87,6 @@ export class EmaRsiOptionsEngine {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
-    private scanner: SwingScannerService,
   ) { }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -228,18 +227,10 @@ export class EmaRsiOptionsEngine {
         // STOCK — Trade directly
         if (state.config.symbol === 'AUTO') {
           try {
-            // Find best stock from swing scanner cache, fallback to RELIANCE
-            const scanRun = await this.scanner.getLastScan(account.userId);
-            let chosenStock = 'RELIANCE'; // Safe highly liquid fallback
-            if (scanRun && scanRun.results.length > 0) {
-              // Pick the top stock with highest score and minimum 1% target capacity
-              const best = scanRun.results.find(r => (r.target1 - r.entryPrice) / r.entryPrice > 0.01);
-              if (best) chosenStock = best.symbol;
-              else chosenStock = scanRun.results[0].symbol;
-            }
-            state.futureSymbol = chosenStock;
-            state.futureExchange = 'NSE';
-            this.log(state, `Auto-Selected Stock: ${chosenStock} (from Swing Scanner)`);
+            const pick = await autoSelectStock(kite, state.config.targetRs, state.config.stopLossRs, this.logger);
+            state.futureSymbol = pick.symbol;
+            state.futureExchange = pick.exchange;
+            this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick)`);
           } catch (e) {
             state.futureSymbol = 'RELIANCE';
             state.futureExchange = 'NSE';
@@ -388,11 +379,9 @@ export class EmaRsiOptionsEngine {
       
       // Dynamic Quantity Calculation for Auto-Selected Stocks
       if (state.config.symbol === 'AUTO' && !isIndex) {
-         // Assume an expected intraday move of 1% to hit the target.
-         // E.g. If target is ₹500, and stock price is ₹1000 (1% move = ₹10). Qty = 500 / 10 = 50.
-         const expectedMove = entryPx * 0.01;
+         const expectedMove = entryPx * 0.015;
          qty = Math.ceil(state.config.targetRs / expectedMove);
-         this.log(state, `🧮 Auto Qty Calculated: ${qty} shares (to earn ₹${state.config.targetRs} on a 1% move)`);
+         this.log(state, `🧮 Auto Qty Calculated: ${qty} shares (to earn ₹${state.config.targetRs} on a 1.5% move)`);
       }
 
       entryPx = this.roundTick(entryPx);

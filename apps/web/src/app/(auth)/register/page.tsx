@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -26,7 +26,7 @@ export default function RegisterPage() {
     try {
       const { data } = await register(form);
       setAuth(data.data.user, data.data.accessToken, data.data.refreshToken);
-      toast.success("Account created!", { description: "Welcome to AlgoTrade." });
+      toast.success("Account created!", { description: "Welcome to TradeIO." });
       router.replace("/dashboard");
     } catch (err: any) {
       toast.error(err?.response?.data?.message || err?.response?.data?.error || "Registration failed");
@@ -41,7 +41,7 @@ export default function RegisterPage() {
           <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-md">
             <Zap className="h-5 w-5 text-white" strokeWidth={2.5} />
           </div>
-          <span className="text-2xl font-extrabold text-slate-900">AlgoTrade</span>
+          <span className="text-2xl font-extrabold text-slate-900">TradeIO</span>
         </div>
 
         <div className="mb-8 text-center">
@@ -117,3 +117,4 @@ export default function RegisterPage() {
     </div>
   );
 }
+

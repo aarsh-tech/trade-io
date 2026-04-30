@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -14,7 +14,6 @@ import { toast } from "sonner";
 import { strategyApi, brokerApi, marketApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const STEPS = ["Strategy Type", "Instrument & Config", "Risk Management", "Broker & Review"];
 
@@ -22,7 +21,7 @@ const PRESET_INSTRUMENTS = [
   { label: "NIFTY 50", symbol: "NIFTY 50", exchange: "NSE", type: "INDEX" },
   { label: "BANK NIFTY", symbol: "BANKNIFTY", exchange: "NSE", type: "INDEX" },
   { label: "SENSEX", symbol: "SENSEX", exchange: "BSE", type: "INDEX" },
-  { label: "Auto (Swing Scanner)", symbol: "AUTO", exchange: "NSE", type: "STOCK" },
+  { label: "Auto (Smart Pick)", symbol: "AUTO", exchange: "NSE", type: "STOCK" },
 ] as const;
 
 const LOT_SIZES: Record<string, number> = {
@@ -44,8 +43,6 @@ function getLotSize(symbol: string) {
   return 1; // Default for stocks
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface BrokerAccount {
   id: string;
   broker: string;
@@ -54,7 +51,6 @@ interface BrokerAccount {
   tokenExpiry: string | null;
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewStrategyPage() {
   const router = useRouter();
@@ -62,7 +58,6 @@ export default function NewStrategyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
 
-  // ── Form state ──────────────────────────────────────────────────────────────
   const [form, setForm] = useState({
     name: "",
     type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "",
@@ -125,11 +120,17 @@ export default function NewStrategyPage() {
   }, [searchQuery, form.brokerAccountId]);
 
   function selectInstrument(item: any) {
+    const sym = (item.symbol || '').toUpperCase();
+    const isIndex = sym.includes('NIFTY') || sym.includes('SENSEX');
+    const instrType: "INDEX" | "STOCK" | "OPTION" | "FUTURE" =
+      item.exchange === 'NFO' || item.exchange === 'BFO' ? 'OPTION'
+        : isIndex ? 'INDEX'
+          : 'STOCK';
     setForm(f => ({
       ...f,
       symbol: item.symbol,
       exchange: item.exchange,
-      instrumentType: item.exchange === 'NFO' ? 'OPTION' : (item.symbol.includes('NIFTY') || item.symbol.includes('SENSEX') ? 'INDEX' : 'STOCK'),
+      instrumentType: instrType,
     }));
     setSearchQuery("");
     setSearchResults([]);
@@ -148,7 +149,6 @@ export default function NewStrategyPage() {
     }).catch(() => { });
   }, []);
 
-  // ── Validation ──────────────────────────────────────────────────────────────
   const canNext = () => {
     if (step === 0) return !!form.name && !!form.type;
     if (step === 1) return !!form.symbol && Number(form.lots) > 0;
@@ -160,7 +160,6 @@ export default function NewStrategyPage() {
     return !!form.brokerAccountId;
   };
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
   async function handleSubmit() {
     setSubmitting(true);
     try {
@@ -175,7 +174,10 @@ export default function NewStrategyPage() {
             lots: Number(form.lots), product: form.product,
             stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
             maxTradesPerDay: Number(form.maxTradesPerDay),
-            minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
+            // Include premium range for INDEX or OPTION
+            ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
+              minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
+            }),
           }
           : form.type === "EMA_RSI_OPTIONS"
             ? {
@@ -191,10 +193,15 @@ export default function NewStrategyPage() {
             }
             : {
               symbol: form.symbol.trim(), exchange: form.exchange,
+              instrumentType: form.instrumentType,
               emaPeriod: Number(form.emaPeriod), isOptionBuyingOnly: form.isOptionBuyingOnly,
               qty, lots: Number(form.lots), product: form.product,
               stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
               maxTradesPerDay: Number(form.maxTradesPerDay),
+              // Include premium range when option buying is enabled
+              ...(form.isOptionBuyingOnly && {
+                minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
+              }),
             };
 
       await strategyApi.create({
@@ -275,7 +282,6 @@ export default function NewStrategyPage() {
         </CardHeader>
         <CardContent className="space-y-5">
 
-          {/* ── Step 0: Type ── */}
           {step === 0 && (
             <div className="space-y-5">
               <div>
@@ -294,7 +300,7 @@ export default function NewStrategyPage() {
                     {
                       type: "BREAKOUT_15MIN",
                       label: "15-Min Breakout",
-                      desc: "Enters after 5-min candle closes above/below the first 15-min range. Fixed ₹ SL & Target.",
+                      desc: "Enters after 5-min candle closes above/below the first 15-min range. Fixed SL & Target.",
                       icon: BarChart2,
                       badge: null,
                       badgeColor: "",
@@ -302,9 +308,8 @@ export default function NewStrategyPage() {
                     {
                       type: "EMA_RSI_OPTIONS",
                       label: "EMA + RSI + VWAP",
-                      desc: "Best for ₹500–700 daily. Fires ONLY when EMA cross + RSI in safe zone + price on right side of VWAP. Supports Equity & Options.",
+                      desc: "Best for 500-700 daily. Fires ONLY when EMA cross + RSI in safe zone + price on right side of VWAP. Supports Equity & Options.",
                       icon: Zap,
-                      badge: "🏆 Best",
                       badgeColor: "bg-indigo-100 text-indigo-700",
                     },
                     {
@@ -351,7 +356,6 @@ export default function NewStrategyPage() {
             </div>
           )}
 
-          {/* ── Step 1: Instrument ── */}
           {step === 1 && (
             <div className="space-y-5">
               {/* Preset quick-select */}
@@ -459,17 +463,44 @@ export default function NewStrategyPage() {
               </div>
 
               {form.type === "EMA_VWAP_CROSSOVER" && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-4">
                   <div>
                     <label className="text-sm font-medium mb-2 block">EMA Period</label>
                     <Input type="number" value={form.emaPeriod} onChange={(e) => set("emaPeriod", e.target.value)} />
                   </div>
-                  <div className="flex items-center gap-3 pt-6">
-                    <input type="checkbox" id="optBuy" checked={form.isOptionBuyingOnly}
-                      onChange={(e) => set("isOptionBuyingOnly", e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300"
-                    />
-                    <label htmlFor="optBuy" className="text-sm font-medium">Option Buying Only</label>
+                  {/* Trading Mode: Equity vs Options */}
+                  <div>
+                    <label className="text-sm font-semibold mb-2 block">Trading Instrument</label>
+                    <div className="p-1 rounded-xl bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))] grid grid-cols-2 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => set("isOptionBuyingOnly", false)}
+                        className={cn(
+                          "flex flex-col items-center gap-1 py-3 rounded-lg text-xs font-semibold transition-all",
+                          !form.isOptionBuyingOnly
+                            ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
+                            : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                        )}
+                      >
+                        <span className="text-base">ðŸ“ˆ</span>
+                        <span>Equity / Stock</span>
+                        <span className="text-[10px] font-normal opacity-70">Trade NSE/BSE directly</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => set("isOptionBuyingOnly", true)}
+                        className={cn(
+                          "flex flex-col items-center gap-1 py-3 rounded-lg text-xs font-semibold transition-all",
+                          form.isOptionBuyingOnly
+                            ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
+                            : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                        )}
+                      >
+                        <span className="text-base">ðŸŽ¯</span>
+                        <span>Options (CE/PE)</span>
+                        <span className="text-[10px] font-normal opacity-70">Buy ATM options on NFO</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -477,7 +508,7 @@ export default function NewStrategyPage() {
               {form.type === "EMA_RSI_OPTIONS" && (
                 <div className="space-y-4">
                   <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-100">
-                    <p className="text-xs font-semibold text-indigo-700">🏆 EMA + RSI + VWAP — Triple Confirmation</p>
+                    <p className="text-xs font-semibold text-indigo-700">EMA + RSI + VWAP Triple Confirmation</p>
                     <p className="text-[11px] text-indigo-600 mt-1">Enters ONLY when EMA crossover + RSI in range + price is on right side of VWAP.</p>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
@@ -508,10 +539,10 @@ export default function NewStrategyPage() {
                   </div>
                 </div>
               )}
+
             </div>
           )}
 
-          {/* ── Step 2: Risk Management ── */}
           {step === 2 && (
             <div className="space-y-5">
               {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
@@ -520,17 +551,18 @@ export default function NewStrategyPage() {
                   <div className="flex gap-3 p-3 rounded-xl bg-[hsl(var(--primary)/0.06)] border border-[hsl(var(--primary)/0.15)]">
                     <Info className="h-4 w-4 text-[hsl(var(--primary))] mt-0.5 shrink-0" />
                     <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
-                      Orders are placed as <strong>Limit</strong> orders — Entry, Stop-Loss (SL-Limit), and Target.
-                      Fixed ₹ amounts are per trade (not per lot). SL price = Entry ± (₹SL ÷ Qty).
+                      Orders are placed as <strong>Limit</strong> orders Entry, Stop-Loss (SL-Limit), and Target.
+                      Fixed amounts are per trade (not per lot). SL price = Entry Qty).
                     </p>
                   </div>
 
-                  {form.type === "BREAKOUT_15MIN" && (form.instrumentType === "INDEX" || form.instrumentType === "OPTION") && (
+                  {((form.type === "BREAKOUT_15MIN" && (form.instrumentType === "INDEX" || form.instrumentType === "OPTION")) || (form.type === "EMA_VWAP_CROSSOVER" && form.isOptionBuyingOnly)) && (
+
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                           <TrendingUp className="h-4 w-4 text-blue-500" />
-                          Min Premium (₹)
+                          Min Premium
                         </label>
                         <Input
                           type="number"
@@ -542,7 +574,7 @@ export default function NewStrategyPage() {
                       <div>
                         <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                           <TrendingUp className="h-4 w-4 text-blue-600" />
-                          Max Premium (₹)
+                          Max Premium
                         </label>
                         <Input
                           type="number"
@@ -553,7 +585,7 @@ export default function NewStrategyPage() {
                       </div>
                       <div className="col-span-2">
                         <p className="text-[10px] text-[hsl(var(--muted-foreground))] italic px-1">
-                          When breakout occurs, the bot will pick an Option contract with premium between ₹{form.minPremium} and ₹{form.maxPremium}.
+                          When breakout occurs, the bot will pick an Option contract with premium between {form.minPremium} and {form.maxPremium}.
                         </p>
                       </div>
                     </div>
@@ -563,7 +595,7 @@ export default function NewStrategyPage() {
                     <div>
                       <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                         <Shield className="h-4 w-4 text-red-500" />
-                        Stop Loss (₹)
+                        Stop Loss
                       </label>
                       <Input
                         id="stopLossRs"
@@ -574,13 +606,13 @@ export default function NewStrategyPage() {
                         className="border-red-200 focus:ring-red-300"
                       />
                       <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Fixed loss limit per trade in ₹
+                        Fixed loss limit per trade in
                       </p>
                     </div>
                     <div>
                       <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                         <Target className="h-4 w-4 text-green-500" />
-                        Target (₹)
+                        Target
                       </label>
                       <Input
                         id="targetRs"
@@ -591,7 +623,7 @@ export default function NewStrategyPage() {
                         className="border-green-200 focus:ring-green-300"
                       />
                       <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Fixed target profit per trade in ₹
+                        Fixed target profit per trade in
                       </p>
                     </div>
                   </div>
@@ -610,7 +642,7 @@ export default function NewStrategyPage() {
                       onChange={(e) => set("maxTradesPerDay", e.target.value)}
                     />
                     <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                      Safety cap — strategy stops placing new trades after this limit
+                      Safety cap strategy stops placing new trades after this limit
                     </p>
                   </div>
 
@@ -623,13 +655,13 @@ export default function NewStrategyPage() {
                       <div>
                         <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Max Loss / Trade</p>
                         <p className="text-base font-bold text-red-500">
-                          −₹{Number(form.stopLossRs).toLocaleString("en-IN")}
+                          {Number(form.stopLossRs).toLocaleString("en-IN")}
                         </p>
                       </div>
                       <div>
                         <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Max Profit / Trade</p>
                         <p className="text-base font-bold text-green-600">
-                          +₹{Number(form.targetRs).toLocaleString("en-IN")}
+                          + {Number(form.targetRs).toLocaleString("en-IN")}
                         </p>
                       </div>
                       <div>
@@ -645,7 +677,6 @@ export default function NewStrategyPage() {
             </div>
           )}
 
-          {/* ── Step 3: Broker & Review ── */}
           {step === 3 && (
             <div className="space-y-6">
               {/* Trading Mode Card */}
@@ -714,8 +745,8 @@ export default function NewStrategyPage() {
                       <option value="">Select broker account</option>
                       {brokers.map((b) => (
                         <option key={b.id} value={b.id}>
-                          {b.broker} — {b.clientId ?? b.id.slice(0, 8)}
-                          {!b.tokenExpiry || new Date(b.tokenExpiry) < new Date() ? " ⚠ Session expired" : ""}
+                          {b.broker} - {b.clientId ?? b.id.slice(0, 8)}
+                          {!b.tokenExpiry || new Date(b.tokenExpiry) < new Date() ? " Session expired" : ""}
                         </option>
                       ))}
                     </select>
@@ -730,14 +761,14 @@ export default function NewStrategyPage() {
                   {[
                     ["Name", form.name],
                     ["Type", form.type === "BREAKOUT_15MIN" ? "15-Min High/Low Breakout" : "EMA-VWAP Crossover"],
-                    ["Symbol", `${form.symbol} · ${form.exchange}`],
+                    ["Symbol", `${form.symbol}  ${form.exchange}`],
                     ["Order Size", `${form.lots} Lots (${Number(form.lots) * getLotSize(form.symbol)} Shares)`],
                     ["Product", form.product],
-                    ["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`],
-                    ["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`],
+                    ["Stop Loss", `${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`],
+                    ["Target", `${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`],
                     ["Max Trades", `${form.maxTradesPerDay} / day`],
                     ...(form.type === "BREAKOUT_15MIN" ? [
-                      ["Premium Range", `₹${form.minPremium} — ₹${form.maxPremium}`],
+                      ["Premium Range", `${form.minPremium}‚ - ${form.maxPremium}`],
                     ] : [
                       ["EMA Period", form.emaPeriod],
                       ["Option Only", form.isOptionBuyingOnly ? "Yes" : "No"],
@@ -751,7 +782,7 @@ export default function NewStrategyPage() {
                 </div>
 
                 <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900">
-                  <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1">⚠ Risk Reminder</p>
+                  <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1"> Risk Reminder</p>
                   <p className="text-xs text-amber-600 dark:text-amber-500">
                     Ensure your Zerodha API has order placement permissions and your IP is whitelisted.
                     Always test during off-hours or with minimal quantities first.
@@ -790,7 +821,7 @@ export default function NewStrategyPage() {
             disabled={submitting || !form.brokerAccountId}
           >
             {submitting ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /> Creating…</>
+              <><Loader2 className="h-4 w-4 animate-spin" /> Creating</>
             ) : (
               <><Check className="h-4 w-4" /> Create Strategy</>
             )}
@@ -800,3 +831,10 @@ export default function NewStrategyPage() {
     </div>
   );
 }
+
+
+
+
+
+
+

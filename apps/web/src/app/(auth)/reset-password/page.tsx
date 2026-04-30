@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
@@ -107,7 +107,7 @@ export default function ResetPasswordPage() {
           <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-md">
             <Zap className="h-5 w-5 text-white" strokeWidth={2.5} />
           </div>
-          <span className="text-2xl font-extrabold text-slate-900">AlgoTrade</span>
+          <span className="text-2xl font-extrabold text-slate-900">TradeIO</span>
         </div>
 
         <Suspense fallback={<div className="text-center py-8 text-slate-500">Loading form...</div>}>
@@ -117,3 +117,4 @@ export default function ResetPasswordPage() {
     </div>
   );
 }
+

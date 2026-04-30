@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -25,7 +25,6 @@ const navItems = [
   { href: "/dashboard",      label: "Dashboard",    icon: LayoutDashboard },
   { href: "/portfolio",      label: "Portfolio",    icon: Wallet },
   { href: "/strategies",     label: "Strategies",   icon: TrendingUp },
-  { href: "/swing-scanner",  label: "Swing Scan",   icon: ScanSearch },
   { href: "/backtest",       label: "Backtest",     icon: FlaskConical },
   { href: "/brokers",        label: "Brokers",      icon: Plug },
   { href: "/orders",         label: "Orders",       icon: ClipboardList },
@@ -71,7 +70,7 @@ export function Sidebar() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
               <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
             </div>
-            <span className="font-bold text-lg bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-indigo-400">AlgoTrade</span>
+            <span className="font-bold text-lg bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-indigo-400">TradeIO</span>
           </Link>
         )}
         {sidebarCollapsed && (
@@ -145,3 +144,4 @@ export function Sidebar() {
     </>
   );
 }
+

@@ -10,7 +10,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { SwingScannerModule } from '../swing-scanner/swing-scanner.module';
 
 @Module({
-  imports: [PrismaModule, BrokersModule, SwingScannerModule],
+  imports: [PrismaModule, BrokersModule],
   controllers: [StrategyController],
   providers: [StrategyService, Breakout15MinEngine, EmaVwapCrossoverEngine, EmaRsiOptionsEngine, MarketSchedulerService],
   exports: [StrategyService, Breakout15MinEngine, EmaVwapCrossoverEngine, EmaRsiOptionsEngine],

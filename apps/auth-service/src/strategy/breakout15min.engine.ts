@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { Breakout15MinConfig } from './dto/strategy.dto';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
+import { autoSelectStock } from './smart-stock-picker';
 
 interface Candle {
   date: Date;
@@ -72,8 +73,9 @@ export class Breakout15MinEngine {
       config,
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: (strategy as any).isPaperTrade,
-      futureSymbol: null,
-      futureExchange: 'NFO',
+      // For STOCK type, we trade the equity directly — no future needed
+      futureSymbol: config.instrumentType === 'STOCK' ? config.symbol : null,
+      futureExchange: config.instrumentType === 'STOCK' ? config.exchange : 'NFO',
       refHigh: null,
       refLow: null,
       refCandleSet: false,
@@ -123,11 +125,21 @@ export class Breakout15MinEngine {
     const kite = client['kite'];
 
     try {
-      // 1. Resolve Future
+      // 1. Resolve Tradable Asset (Index Future or Equity Stock)
       if (!state.futureSymbol) {
-        const res = await this.findFutureSymbol(kite, state.config.symbol);
-        state.futureSymbol = res.symbol;
-        state.futureExchange = res.exchange;
+        if (state.config.instrumentType === 'INDEX' || state.config.symbol.toUpperCase().includes('NIFTY')) {
+          const res = await this.findFutureSymbol(kite, state.config.symbol);
+          state.futureSymbol = res.symbol;
+          state.futureExchange = res.exchange;
+        } else if (state.config.symbol === 'AUTO') {
+          const pick = await autoSelectStock(kite, state.config.targetRs, state.config.stopLossRs, this.logger);
+          state.futureSymbol = pick.symbol;
+          state.futureExchange = pick.exchange;
+          this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick)`);
+        } else {
+          state.futureSymbol = state.config.symbol;
+          state.futureExchange = state.config.exchange;
+        }
       }
 
       // 2. Set Reference Range
@@ -226,12 +238,25 @@ export class Breakout15MinEngine {
     const { config } = state;
 
     if (!state.futureSymbol) {
-      try {
-        const res = await this.findFutureSymbol(kite, config.symbol);
-        state.futureSymbol = res.symbol;
-        state.futureExchange = res.exchange;
-        this.log(state, `🔎 Resolved Future: ${state.futureExchange}:${state.futureSymbol}`);
-      } catch (err) { this.log(state, `❌ Resolve Error: ${err.message}`); return; }
+      if (state.config.instrumentType === 'INDEX' || state.config.symbol.toUpperCase().includes('NIFTY')) {
+        try {
+          const res = await this.findFutureSymbol(kite, config.symbol);
+          state.futureSymbol = res.symbol;
+          state.futureExchange = res.exchange;
+          this.log(state, `🔎 Resolved Future: ${state.futureExchange}:${state.futureSymbol}`);
+        } catch (err) { this.log(state, `❌ Resolve Error: ${err.message}`); return; }
+      } else if (config.symbol === 'AUTO') {
+        try {
+          const pick = await autoSelectStock(kite, config.targetRs, config.stopLossRs, this.logger);
+          state.futureSymbol = pick.symbol;
+          state.futureExchange = pick.exchange;
+          this.log(state, `🎯 Auto-Selected Stock: ${state.futureExchange}:${state.futureSymbol}`);
+        } catch (err) { this.log(state, `❌ Auto-Select Error: ${err.message}`); return; }
+      } else {
+        state.futureSymbol = config.symbol;
+        state.futureExchange = config.exchange;
+        this.log(state, `📈 Equity Stock: ${config.exchange}:${config.symbol}`);
+      }
     }
 
     if (!state.refCandleSet) {
@@ -371,7 +396,10 @@ export class Breakout15MinEngine {
     const kite = client['kite'];
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
 
-    if (config.instrumentType === 'INDEX' || config.symbol.includes('NIFTY')) {
+    // Try to find an option ONLY for INDEX or NIFTY symbols (User wants equity for stocks)
+    const isIndex = config.instrumentType === 'INDEX' || config.symbol.toUpperCase().includes('NIFTY') || config.symbol.toUpperCase().includes('SENSEX');
+
+    if (isIndex) {
       try {
         const optionType = side === 'BUY' ? 'CE' : 'PE';
         const optSym = await this.findOptionSymbol(kite, state, triggerPrice, optionType);
@@ -390,11 +418,14 @@ export class Breakout15MinEngine {
       } catch (err) { this.log(state, `❌ Option error: ${err.message}`); }
     }
 
+    // Fallback: trade the spot/future directly
     const entry = this.roundTick(triggerPrice);
     const sl = side === 'BUY' ? this.roundTick(entry - config.stopLossRs / config.qty) : this.roundTick(entry + config.stopLossRs / config.qty);
     const tgt = side === 'BUY' ? this.roundTick(entry + config.targetRs / config.qty) : this.roundTick(entry - config.targetRs / config.qty);
 
-    this.log(state, `⚠ Falling back to ${symbol} (Spot/Future) as no suitable option was found.`);
+    if (isIndex) {
+      this.log(state, `⚠ Falling back to ${symbol} (Spot/Future) as no suitable option was found.`);
+    }
     await this.executeOrders(strategyId, state, client, account, symbol, exchange, side, entry, sl, tgt);
   }
 
@@ -420,31 +451,57 @@ export class Breakout15MinEngine {
 
   private async findOptionSymbol(kite: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
     const { config } = state;
-    const upper = config.symbol.toUpperCase();
-    const underlying = upper.includes('BANK') ? 'BANKNIFTY' : (upper.includes('NIFTY 50') || upper === 'NIFTY') ? 'NIFTY' : upper.includes('FIN') ? 'FINNIFTY' : upper.includes('MID') ? 'MIDCPNIFTY' : upper;
+    const upper = config.symbol.toUpperCase().trim();
 
-    const instruments = await kite.getInstruments('NFO');
-    const options = instruments.filter(i => i.name === underlying && i.instrument_type === type && i.segment === 'NFO-OPT');
+    // ─── Resolve the canonical underlying name for NFO instruments ───────────
+    let underlying: string;
+    if (upper.includes('BANKNIFTY') || upper === 'BANKNIFTY') underlying = 'BANKNIFTY';
+    else if (upper === 'NIFTY 50' || upper === 'NIFTY') underlying = 'NIFTY';
+    else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
+    else if (upper.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
+    else if (upper.includes('SENSEX')) underlying = 'SENSEX';
+    else underlying = upper; // For stocks, use the symbol directly (e.g. RELIANCE, TCS)
 
-    if (options.length === 0) return null;
+    const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
+    const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
 
-    const nearestExpiry = Array.from(new Set(options.map(i => i.expiry))).sort()[0];
-    const filteredOptions = options.filter(i => i.expiry === nearestExpiry);
+    const instruments = await kite.getInstruments(exchange);
+    const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && i.segment === segment);
 
-    // ─── Option 1: Premium Range Selection ──────────────────────────────────
+    if (options.length === 0) {
+      this.log(state, `⚠ No ${type} options found for ${underlying} on ${exchange}. Check if stock options are available.`);
+      return null;
+    }
+
+    const nearestExpiry = Array.from(new Set(options.map((i: any) => i.expiry))).sort()[0];
+    const filteredOptions = options.filter((i: any) => i.expiry === nearestExpiry);
+    this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiry})`);
+
+    // ─── Option 1: Premium Range Selection (batched LTP calls) ───────────────
     if (config.minPremium && config.maxPremium) {
       this.log(state, `🔍 Searching for ${type} option in premium range ₹${config.minPremium} - ₹${config.maxPremium}...`);
 
-      const symbols = filteredOptions.map(i => `NFO:${i.tradingsymbol}`);
-      // Zerodha LTP can handle 500 symbols. Filtered options for one expiry is usually < 100.
-      const quotes = await kite.getLTP(symbols);
+      // ── Batch in chunks of 200 to avoid Zerodha's 500-symbol silent limit ──
+      const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
+      const CHUNK = 200;
+      const quotes: Record<string, any> = {};
+      for (let i = 0; i < allSymbols.length; i += CHUNK) {
+        const chunk = allSymbols.slice(i, i + CHUNK);
+        try {
+          const res = await kite.getLTP(chunk);
+          Object.assign(quotes, res);
+        } catch (e) {
+          this.log(state, `⚠ LTP batch ${Math.floor(i / CHUNK) + 1} failed: ${e.message}`);
+        }
+      }
 
       let bestMatch: string | null = null;
       let minDiff = Infinity;
       const targetPremium = (config.minPremium + config.maxPremium) / 2;
 
       for (const opt of filteredOptions) {
-        const ltp = quotes[`NFO:${opt.tradingsymbol}`]?.last_price;
+        const key = `${exchange}:${opt.tradingsymbol}`;
+        const ltp = quotes[key]?.last_price;
         if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
           const diff = Math.abs(ltp - targetPremium);
           if (diff < minDiff) {
@@ -462,14 +519,30 @@ export class Breakout15MinEngine {
     }
 
     // ─── Option 2: Default ATM Strike ────────────────────────────────────────
-    const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : (underlying === 'MIDCPNIFTY') ? 25 : 100;
+    // Strike step: NIFTY/FINNIFTY=50, MIDCPNIFTY=25, BANKNIFTY/stocks=100 (stocks vary — round to nearest)
+    const isIndex = ['NIFTY', 'FINNIFTY'].includes(underlying);
+    const isMid = underlying === 'MIDCPNIFTY';
+    const step = isIndex ? 50 : isMid ? 25 : 100;
     const atmStrike = Math.round(spotPrice / step) * step;
-    const match = filteredOptions.find(i => Number(i.strike) === atmStrike);
+    const match = filteredOptions.find((i: any) => Number(i.strike) === atmStrike);
 
     if (match) {
       this.log(state, `🎯 Selected ATM Strike: ${match.tradingsymbol} (Strike: ${match.strike})`);
       return match.tradingsymbol;
     }
+
+    // ─── Option 3: Closest available strike (handles stock options with odd steps) ─
+    let closestOpt: any = null;
+    let closestDiff = Infinity;
+    for (const opt of filteredOptions) {
+      const diff = Math.abs(Number(opt.strike) - spotPrice);
+      if (diff < closestDiff) { closestDiff = diff; closestOpt = opt; }
+    }
+    if (closestOpt) {
+      this.log(state, `🎯 Using closest strike: ${closestOpt.tradingsymbol} (Strike: ${closestOpt.strike}, diff: ₹${closestDiff.toFixed(0)})`);
+      return closestOpt.tradingsymbol;
+    }
+
     return null;
   }
 

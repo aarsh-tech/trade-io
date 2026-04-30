@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -33,7 +33,7 @@ export default function ForgotPasswordPage() {
           <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-md">
             <Zap className="h-5 w-5 text-white" strokeWidth={2.5} />
           </div>
-          <span className="text-2xl font-extrabold text-slate-900">AlgoTrade</span>
+          <span className="text-2xl font-extrabold text-slate-900">TradeIO</span>
         </div>
 
         {!sent ? (
@@ -98,3 +98,4 @@ export default function ForgotPasswordPage() {
     </div>
   );
 }
+

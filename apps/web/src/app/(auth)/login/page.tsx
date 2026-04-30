@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -51,7 +51,7 @@ export default function LoginPage() {
           <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-md">
             <Zap className="h-5 w-5 text-white" strokeWidth={2.5} />
           </div>
-          <span className="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600">AlgoTrade</span>
+          <span className="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600">TradeIO</span>
         </div>
 
         <div className="relative z-10 space-y-8">
@@ -82,7 +82,7 @@ export default function LoginPage() {
         </div>
 
         <div className="relative z-10 text-sm text-slate-400 font-medium">
-          © {new Date().getFullYear()} AlgoTrade · SEBI-compliant
+          Â© {new Date().getFullYear()} TradeIO Â· SEBI-compliant
         </div>
       </div>
 
@@ -94,7 +94,7 @@ export default function LoginPage() {
             <div className="h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center shadow-sm">
               <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
             </div>
-            <span className="text-xl font-bold text-slate-900">AlgoTrade</span>
+            <span className="text-xl font-bold text-slate-900">TradeIO</span>
           </div>
 
           <div className="text-center lg:text-left">
@@ -131,7 +131,7 @@ export default function LoginPage() {
                     <input
                       id="password"
                       type={showPass ? "text" : "password"}
-                      placeholder="••••••••"
+                      placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                       autoComplete="current-password"
                       value={form.password}
                       onChange={(e) => setForm({ ...form, password: e.target.value })}
@@ -180,3 +180,4 @@ export default function LoginPage() {
     </div>
   );
 }
+

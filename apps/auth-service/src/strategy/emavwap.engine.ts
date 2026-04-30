@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
+import { autoSelectStock } from './smart-stock-picker';
 
 
 interface Candle {
@@ -132,6 +133,12 @@ export class EmaVwapCrossoverEngine {
     const kite = client['kite'];
 
     try {
+      if (state.config.symbol === 'AUTO') {
+        const pick = await autoSelectStock(kite, state.config.targetRs, state.config.stopLossRs, this.logger);
+        state.config.symbol = pick.symbol;
+        state.config.exchange = pick.exchange;
+        this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol} (Catch-up)`);
+      }
       const candles = await this.fetchCandles(kite, state.config, '5minute', now);
       if (candles.length < state.config.emaPeriod + 2) return;
 
@@ -158,7 +165,7 @@ export class EmaVwapCrossoverEngine {
       }
       if (!state.entryTriggered) this.log(state, `✅ Catch-up complete. No past signals found.`);
       await this.persistLogs(state);
-    } catch (err) { 
+    } catch (err) {
       this.log(state, `⚠ Catch-up failed: ${err.message}`);
       await this.persistLogs(state);
     }
@@ -179,6 +186,12 @@ export class EmaVwapCrossoverEngine {
     const kite = client['kite'];
 
     try {
+      if (config.symbol === 'AUTO') {
+        const pick = await autoSelectStock(kite, config.targetRs, config.stopLossRs, this.logger);
+        config.symbol = pick.symbol;
+        config.exchange = pick.exchange;
+        this.log(state, `🎯 Auto-Selected Stock: ${config.exchange}:${config.symbol}`);
+      }
       const candles = await this.fetchCandles(kite, config, '5minute', now);
       if (candles.length < 2) return;
 
@@ -227,6 +240,7 @@ export class EmaVwapCrossoverEngine {
     const { config } = state;
     const kite = client['kite'];
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
+    const product = (config as any).product ?? 'MIS';
 
     if (config.isOptionBuyingOnly) {
       const type = side === 'BUY' ? 'CE' : 'PE';
@@ -235,7 +249,11 @@ export class EmaVwapCrossoverEngine {
         symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
         const q = await kite.getLTP([`NFO:${symbol}`]);
         if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
-      } else return;
+      } else {
+        this.log(state, `⚠ No option found. Trading equity directly.`);
+      }
+    } else {
+      this.log(state, `📈 Equity mode — trading ${exchange}:${symbol} directly`);
     }
 
     const entry = this.roundTick(triggerPrice);
@@ -244,11 +262,15 @@ export class EmaVwapCrossoverEngine {
 
     this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}`);
     try {
-      const entryId = state.isPaperTrade ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: finalSide, orderType: 'LIMIT', price: entry });
+      const entryId = state.isPaperTrade
+        ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
+        : await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: finalSide, orderType: 'LIMIT', price: entry });
       this.log(state, `✅ Entry: ${entryId}`);
       const exitSide = finalSide === 'BUY' ? 'SELL' : 'BUY';
-      await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: exitSide, orderType: 'SL', price: sl, triggerPrice: sl }).catch(e => this.log(state, `❌ SL Failed: ${e.message}`));
-      await client.placeOrder({ symbol, exchange, product: 'MIS', qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt }).catch(e => this.log(state, `❌ Target Failed: ${e.message}`));
+      if (!state.isPaperTrade) {
+        await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'SL', price: sl, triggerPrice: sl }).catch(e => this.log(state, `❌ SL Failed: ${e.message}`));
+        await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt }).catch(e => this.log(state, `❌ Target Failed: ${e.message}`));
+      }
       state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
       state.optionSymbol = symbol;
       state.tradesPlacedToday++;
@@ -298,54 +320,67 @@ export class EmaVwapCrossoverEngine {
 
   private async findOptionSymbol(kite: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
     const { config } = state;
-    const upper = config.symbol.toUpperCase();
-    const underlying = upper.includes('BANK') ? 'BANKNIFTY' : (upper.includes('NIFTY 50') || upper === 'NIFTY') ? 'NIFTY' : upper.includes('FIN') ? 'FINNIFTY' : upper.includes('MID') ? 'MIDCPNIFTY' : upper;
-
-    const instruments = await kite.getInstruments('NFO');
-    const options = instruments.filter(i => i.name === underlying && i.instrument_type === type && i.segment === 'NFO-OPT');
+    const upper = config.symbol.toUpperCase().trim();
+    const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
     
-    if (options.length === 0) return null;
+    if (!isIndex) return null; // No options for stocks in EMA-VWAP
 
-    const nearestExpiry = Array.from(new Set(options.map(i => i.expiry))).sort()[0];
-    const filteredOptions = options.filter(i => i.expiry === nearestExpiry);
+    let underlying: string;
+    if (upper.includes('BANKNIFTY') || upper === 'BANKNIFTY') underlying = 'BANKNIFTY';
+    else if (upper === 'NIFTY 50' || upper === 'NIFTY') underlying = 'NIFTY';
+    else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
+    else if (upper.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
+    else if (upper.includes('SENSEX')) underlying = 'SENSEX';
+    else underlying = upper;
 
-    // ─── Option 1: Premium Range Selection ──────────────────────────────────
+    const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
+    const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
+
+    const instruments = await kite.getInstruments(exchange);
+    const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && i.segment === segment);
+    if (options.length === 0) {
+      this.log(state, `⚠ No ${type} options found for ${underlying}`);
+      return null;
+    }
+
+    const nearestExpiry = Array.from(new Set(options.map((i: any) => i.expiry))).sort()[0];
+    const filteredOptions = options.filter((i: any) => i.expiry === nearestExpiry);
+
+    // ── Option 1: Premium range (batched LTP in chunks of 200) ────────────────────
     if (config.minPremium && config.maxPremium) {
-      this.log(state, `🔍 Searching for ${type} in premium range ₹${config.minPremium} - ₹${config.maxPremium}...`);
-      const symbols = filteredOptions.map(i => `NFO:${i.tradingsymbol}`);
-      const quotes = await kite.getLTP(symbols);
-      
-      let bestMatch: string | null = null;
-      let minDiff = Infinity;
-      const targetPremium = (config.minPremium + config.maxPremium) / 2;
-
+      this.log(state, `🔍 Searching ${type} in premium range ₹${config.minPremium}-₹${config.maxPremium}...`);
+      const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
+      const quotes: Record<string, any> = {};
+      for (let i = 0; i < allSymbols.length; i += 200) {
+        try { Object.assign(quotes, await kite.getLTP(allSymbols.slice(i, i + 200))); }
+        catch (e) { this.log(state, `⚠ LTP batch failed: ${e.message}`); }
+      }
+      const mid = (config.minPremium + config.maxPremium) / 2;
+      let best: string | null = null, bestDiff = Infinity;
       for (const opt of filteredOptions) {
-        const ltp = quotes[`NFO:${opt.tradingsymbol}`]?.last_price;
+        const ltp = quotes[`${exchange}:${opt.tradingsymbol}`]?.last_price;
         if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
-          const diff = Math.abs(ltp - targetPremium);
-          if (diff < minDiff) {
-            minDiff = diff;
-            bestMatch = opt.tradingsymbol;
-          }
+          const d = Math.abs(ltp - mid);
+          if (d < bestDiff) { bestDiff = d; best = opt.tradingsymbol; }
         }
       }
-
-      if (bestMatch) {
-        this.log(state, `🎯 Found ${bestMatch} within premium range.`);
-        return bestMatch;
-      }
-      this.log(state, `⚠ No option found in range ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ATM.`);
+      if (best) { this.log(state, `🎯 Found ${best} in premium range`); return best; }
+      this.log(state, `⚠ No option in range. Falling back to ATM.`);
     }
 
-    // ─── Option 2: Default ATM Strike ────────────────────────────────────────
-    const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : 100;
-    const atmStrike = Math.round(spotPrice / step) * step;
-    const match = filteredOptions.find(i => Number(i.strike) === atmStrike);
-    
-    if (match) {
-        this.log(state, `🎯 Selected ATM Strike: ${match.tradingsymbol} (Strike: ${match.strike})`);
-        return match.tradingsymbol;
+    // ── Option 2: ATM strike ─────────────────────────────────────────
+    const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : underlying === 'MIDCPNIFTY' ? 25 : 100;
+    const atm = Math.round(spotPrice / step) * step;
+    const match = filteredOptions.find((i: any) => Number(i.strike) === atm);
+    if (match) { this.log(state, `🎯 ATM Strike: ${match.tradingsymbol}`); return match.tradingsymbol; }
+
+    // ── Option 3: Closest available strike (handles stocks & odd steps) ──────
+    let closest: any = null, closestD = Infinity;
+    for (const opt of filteredOptions) {
+      const d = Math.abs(Number(opt.strike) - spotPrice);
+      if (d < closestD) { closestD = d; closest = opt; }
     }
+    if (closest) { this.log(state, `🎯 Closest strike: ${closest.tradingsymbol}`); return closest.tradingsymbol; }
     return null;
   }
 

@@ -1,4 +1,4 @@
-import { NestFactory } from '@nestjs/core';
+﻿import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -26,7 +26,7 @@ async function bootstrap() {
 
   // Swagger docs
   const config = new DocumentBuilder()
-    .setTitle('AlgoTrade Auth Service')
+    .setTitle('TradeIO Auth Service')
     .setDescription('Authentication and user management API')
     .setVersion('1.0')
     .addBearerAuth()
@@ -37,8 +37,9 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3002;
   await app.listen(port, '0.0.0.0');
-  console.log(`🔐 Auth Service running on http://localhost:${port}`);
-  console.log(`📚 Swagger: http://localhost:${port}/docs`);
+  console.log(`ðŸ” Auth Service running on http://localhost:${port}`);
+  console.log(`ðŸ“š Swagger: http://localhost:${port}/docs`);
 }
 
 bootstrap();
+

@@ -12,13 +12,13 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "AlgoTrade — Algorithmic Trading Platform",
-    template: "%s | AlgoTrade",
+    default: "TradeIO” Algorithmic Trading Platform",
+    template: "%s | TradeIO",
   },
   description:
     "Professional algorithmic trading platform. Build, backtest, and deploy trading strategies across multiple brokers.",
   keywords: ["algo trading", "zerodha", "backtesting", "EMA crossover", "breakout strategy"],
-  metadataBase: new URL("https://algotrade.io"),
+  metadataBase: new URL("https://tradeio.io"),
 };
 
 export default function RootLayout({
@@ -48,3 +48,4 @@ export default function RootLayout({
     </html>
   );
 }
+
