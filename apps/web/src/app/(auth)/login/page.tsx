@@ -82,7 +82,7 @@ export default function LoginPage() {
         </div>
 
         <div className="relative z-10 text-sm text-slate-400 font-medium">
-          Â© {new Date().getFullYear()} TradeIO Â· SEBI-compliant
+          © {new Date().getFullYear()} TradeIO · SEBI-compliant
         </div>
       </div>
 
@@ -131,7 +131,7 @@ export default function LoginPage() {
                     <input
                       id="password"
                       type={showPass ? "text" : "password"}
-                      placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                      placeholder="••••••••"
                       autoComplete="current-password"
                       value={form.password}
                       onChange={(e) => setForm({ ...form, password: e.target.value })}

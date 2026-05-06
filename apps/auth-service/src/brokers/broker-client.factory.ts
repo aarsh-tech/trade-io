@@ -161,6 +161,29 @@ class ZerodhaClient implements IBrokerClient {
     }
   }
 
+  async getOrder(orderId: string): Promise<IOrder> {
+    const orders = await this.kite.getOrders();
+    const o = orders.find((ord: any) => ord.order_id === orderId);
+    if (!o) throw new Error(`Order ${orderId} not found`);
+    return {
+      orderId: o.order_id,
+      symbol: o.tradingsymbol,
+      type: o.order_type,
+      side: o.transaction_type,
+      status: o.status,
+      qty: o.quantity,
+      filledQty: o.filled_quantity,
+      price: o.price,
+      avgPrice: o.average_price,
+      orderTime: o.order_timestamp,
+      statusMessage: o.status_message,
+    };
+  }
+
+  async cancelOrder(orderId: string): Promise<void> {
+    await this.kite.cancelOrder("regular", orderId);
+  }
+
   async searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]> {
     try {
       const upperQuery = query.toUpperCase().trim();

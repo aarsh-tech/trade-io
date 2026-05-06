@@ -343,7 +343,23 @@ export class EmaVwapCrossoverEngine {
       return null;
     }
 
-    const nearestExpiry = Array.from(new Set(options.map((i: any) => i.expiry))).sort()[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const uniqueExpiries = Array.from(new Set(options.map((i: any) => i.expiry)));
+    const sortedExpiries = uniqueExpiries
+      .map(e => new Date(e as any))
+      .filter(e => e >= today)
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    if (sortedExpiries.length === 0) {
+      this.log(state, `❌ No future expiries found for ${underlying}.`);
+      return null;
+    }
+
+    const nearestExpiryDate = sortedExpiries[0];
+    const nearestExpiry = options.find((i: any) => new Date(i.expiry as any).getTime() === nearestExpiryDate.getTime())?.expiry;
+
     const filteredOptions = options.filter((i: any) => i.expiry === nearestExpiry);
 
     // ── Option 1: Premium range (batched LTP in chunks of 200) ────────────────────

@@ -306,16 +306,19 @@ export class Breakout15MinEngine {
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
 
-    // ─── Paper Trade Monitoring ─────────────────────────────────────────────
-    if (state.isPaperTrade && state.entryTriggered) {
-      await this.monitorPaperTrade(state, kite);
+    // ─── Paper/Real Trade Monitoring ─────────────────────────────────────────────
+    if (state.entryTriggered) {
+      if (state.isPaperTrade) {
+        await this.monitorPaperTrade(state, kite);
+      } else {
+        await this.monitorRealTrade(state, client);
+      }
     }
 
     await this.persistLogs(state);
   }
 
   private async monitorPaperTrade(state: StrategyState, kite: any) {
-    // If we have an entry but haven't hit SL/Target yet
     if (!state.entryTriggered) return;
 
     try {
@@ -334,14 +337,14 @@ export class Breakout15MinEngine {
         if (order.orderType === 'SL') {
           const hit = order.side === 'SELL' ? (ltp <= order.triggerPrice!) : (ltp >= order.triggerPrice!);
           if (hit) {
-            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp}`);
+            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp} (Trigger: ₹${order.triggerPrice})`);
             await this.closePaperTrade(state, 'SL_HIT', ltp);
             break;
           }
         } else if (order.orderType === 'LIMIT' && order.brokerOrderId.includes('TARGET')) {
           const hit = order.side === 'SELL' ? (ltp >= order.price!) : (ltp <= order.price!);
           if (hit) {
-            this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp}`);
+            this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp} (Target: ₹${order.price})`);
             await this.closePaperTrade(state, 'TARGET_HIT', ltp);
             break;
           }
@@ -352,12 +355,58 @@ export class Breakout15MinEngine {
     }
   }
 
+  private async monitorRealTrade(state: StrategyState, client: any) {
+    if (!state.entryTriggered) return;
+
+    try {
+      const orders = await this.prisma.order.findMany({
+        where: { executionId: state.executionId, isPaperTrade: false, status: 'OPEN' }
+      });
+      if (orders.length === 0) return;
+
+      for (const order of orders) {
+        if (order.brokerOrderId.includes('PAPER')) continue;
+        
+        const brokerOrder = await client.getOrder(order.brokerOrderId);
+        if (brokerOrder.status === 'COMPLETE') {
+          const reason = order.orderType === 'SL' ? 'SL HIT' : 'TARGET HIT';
+          const sideEmoji = order.orderType === 'SL' ? '🔴' : '🟢';
+          const fillPrice = brokerOrder.average_price || brokerOrder.price;
+          
+          this.log(state, `${sideEmoji} REAL TRADE EXIT: ${reason} at ₹${fillPrice}`);
+          
+          // Update order in DB
+          await this.prisma.order.update({
+            where: { id: order.id },
+            data: { status: 'COMPLETE', price: fillPrice }
+          });
+
+          // Cancel other pending orders (SL or Target)
+          const otherOrders = orders.filter(o => o.id !== order.id);
+          for (const other of otherOrders) {
+            await client.cancelOrder(other.brokerOrderId).catch(() => {});
+            await this.prisma.order.update({ where: { id: other.id }, data: { status: 'CANCELLED' } });
+          }
+
+          state.entryTriggered = null;
+          this.log(state, `🏁 Trade cycle complete.`);
+          break;
+        } else if (brokerOrder.status === 'REJECTED' || brokerOrder.status === 'CANCELLED') {
+          this.log(state, `⚠ Order ${order.brokerOrderId} was ${brokerOrder.status}`);
+          await this.prisma.order.update({ where: { id: order.id }, data: { status: brokerOrder.status } });
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Real trade monitor error: ${err.message}`);
+    }
+  }
+
   private async closePaperTrade(state: StrategyState, reason: string, price: number) {
     await this.prisma.order.updateMany({
       where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
       data: { status: 'COMPLETE', price }
     });
-    this.log(state, `🏁 Paper trade closed (${reason})`);
+    this.log(state, `🏁 Paper trade closed (${reason}) at ₹${price}`);
     state.entryTriggered = null; // Allow more trades if maxTradesPerDay not reached
   }
 
@@ -408,6 +457,7 @@ export class Breakout15MinEngine {
           const quotes = await kite.getLTP([`NFO:${symbol}`]);
           const ltp = quotes[`NFO:${symbol}`]?.last_price;
           if (ltp) {
+            this.log(state, `💡 Selected Option LTP: ₹${ltp} (Underlying: ₹${triggerPrice.toFixed(2)})`);
             const entry = this.roundTick(ltp);
             const sl = this.roundTick(entry - (config.stopLossRs / config.qty));
             const tgt = this.roundTick(entry + (config.targetRs / config.qty));
@@ -473,9 +523,26 @@ export class Breakout15MinEngine {
       return null;
     }
 
-    const nearestExpiry = Array.from(new Set(options.map((i: any) => i.expiry))).sort()[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const allExpiries = Array.from(new Set(options.map((i: any) => i.expiry)));
+    const sortedExpiries = allExpiries
+      .map(e => new Date(e as any))
+      .filter(e => e >= today)
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    if (sortedExpiries.length === 0) {
+      this.log(state, `❌ No future expiries found for ${underlying}.`);
+      return null;
+    }
+
+    const nearestExpiryDate = sortedExpiries[0];
+    // Re-match the string/date to filter options
+    const nearestExpiry = options.find((i: any) => new Date(i.expiry as any).getTime() === nearestExpiryDate.getTime())?.expiry;
+
     const filteredOptions = options.filter((i: any) => i.expiry === nearestExpiry);
-    this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiry})`);
+    this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiryDate.toDateString()})`);
 
     // ─── Option 1: Premium Range Selection (batched LTP calls) ───────────────
     if (config.minPremium && config.maxPremium) {

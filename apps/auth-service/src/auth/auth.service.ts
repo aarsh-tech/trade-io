@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
@@ -20,16 +20,14 @@ export class AuthService {
     private jwt: JwtService,
     private config: ConfigService,
     private prisma: PrismaService,
-  ) {}
+  ) { }
 
-  // â”€â”€â”€ Register â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async register(dto: RegisterDto) {
     const user = await this.users.create(dto);
     const tokens = await this.generateTokens(user.id, user.email);
     return { user, ...tokens };
   }
 
-  // â”€â”€â”€ Login â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async login(dto: LoginDto) {
     const user = await this.users.findByEmail(dto.email);
     if (!user) throw new UnauthorizedException('Invalid credentials');
@@ -63,7 +61,6 @@ export class AuthService {
     };
   }
 
-  // â”€â”€â”€ Refresh Token â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async refresh(token: string) {
     const stored = await this.prisma.refreshToken.findUnique({
       where: { token },
@@ -81,15 +78,13 @@ export class AuthService {
     return { user, ...tokens };
   }
 
-  // â”€â”€â”€ Logout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async logout(refreshToken: string) {
     await this.prisma.refreshToken
       .delete({ where: { token: refreshToken } })
-      .catch(() => {}); // ignore if not found
+      .catch(() => { }); // ignore if not found
     return { message: 'Logged out' };
   }
 
-  // â”€â”€â”€ 2FA Setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async setup2fa(userId: string) {
     const secret = speakeasy.generateSecret({
       name: `TradeIO (${userId})`,
@@ -102,7 +97,6 @@ export class AuthService {
     return { secret: secret.base32, qrCode: qrCodeUrl };
   }
 
-  // â”€â”€â”€ Verify 2FA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async verify2fa(userId: string, code: string) {
     const user = await this.users.findById(userId);
     if (!user.totpSecret) throw new BadRequestException('2FA not set up');
@@ -119,7 +113,6 @@ export class AuthService {
     return { message: '2FA enabled successfully' };
   }
 
-  // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   private async generateTokens(userId: string, email: string) {
     const payload = { sub: userId, email };
 
@@ -129,7 +122,9 @@ export class AuthService {
 
     const rawRefresh = randomBytes(40).toString('hex');
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // 30 days
+    const refreshExpiry = this.config.get('JWT_REFRESH_EXPIRY', '7d');
+    const days = parseInt(refreshExpiry);
+    expiresAt.setDate(expiresAt.getDate() + (isNaN(days) ? 7 : days));
 
     await this.prisma.refreshToken.create({
       data: { userId, token: rawRefresh, expiresAt },
@@ -142,7 +137,6 @@ export class AuthService {
     return this.users.findById(payload.sub);
   }
 
-  // â”€â”€â”€ Forgot Password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async forgotPassword(email: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) return { success: true }; // Don't leak user existence
@@ -156,12 +150,12 @@ export class AuthService {
     });
 
     // In production, send email here. For now, log it.
-    console.log(`ðŸ“§ Password reset link: http://localhost:3000/reset-password?token=${token}`);
-    
+    console.log(` Password reset link: http://localhost:3000/reset-password?token=${token}`);
+
     return { success: true, message: 'If an account exists, a reset link has been sent' };
   }
 
-  // â”€â”€â”€ Reset Password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Reset Password
   async resetPassword(token: string, newPass: string) {
     const user = await this.prisma.user.findUnique({
       where: { resetToken: token },

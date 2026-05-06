@@ -372,16 +372,17 @@ export class EmaRsiOptionsEngine {
         tradingExchange = optExchange;
         entryPx = optLTP;
         tradeSide = 'BUY'; // Always buy options
+        this.log(state, `💡 Selected Option LTP: ₹${optLTP} (Underlying: ₹${indexPrice.toFixed(2)})`);
       }
 
       const lotSize = isIndex ? this.getLotSize(state.config.symbol) : 1;
       let qty = (state.config.lots ?? 1) * lotSize;
-      
+
       // Dynamic Quantity Calculation for Auto-Selected Stocks
       if (state.config.symbol === 'AUTO' && !isIndex) {
-         const expectedMove = entryPx * 0.015;
-         qty = Math.ceil(state.config.targetRs / expectedMove);
-         this.log(state, `🧮 Auto Qty Calculated: ${qty} shares (to earn ₹${state.config.targetRs} on a 1.5% move)`);
+        const expectedMove = entryPx * 0.015;
+        qty = Math.ceil(state.config.targetRs / expectedMove);
+        this.log(state, `🧮 Auto Qty Calculated: ${qty} shares (to earn ₹${state.config.targetRs} on a 1.5% move)`);
       }
 
       entryPx = this.roundTick(entryPx);
@@ -454,8 +455,19 @@ export class EmaRsiOptionsEngine {
     );
     if (options.length === 0) return null;
 
-    const expiries = Array.from(new Set(options.map((i: any) => i.expiry))).sort() as string[];
-    const nearExpiry = expiries[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const uniqueExpiries = Array.from(new Set(options.map((i: any) => i.expiry)));
+    const sortedExpiries = uniqueExpiries
+      .map(e => new Date(e as any))
+      .filter(e => e >= today)
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    if (sortedExpiries.length === 0) return null;
+
+    const nearExpiryDate = sortedExpiries[0];
+    const nearExpiry = options.find((i: any) => new Date(i.expiry as any).getTime() === nearExpiryDate.getTime())?.expiry;
     const atmStrike = Math.round(spotPrice / step) * step;
 
     // Try ATM, then ±1 step
