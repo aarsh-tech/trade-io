@@ -361,58 +361,65 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
   const n = candles.length - 1;
   const currentPrice = candles[n].close;
 
-  // We want price above 20 EMA and 50 SMA for strong momentum
+  // 1. Trend Filter: Price above 20 EMA and 50 SMA
   const sma50 = sma(candles, 50)[n];
-  const sma20 = sma(candles, 20)[n]; // approx with SMA for simplicity
+  const sma20 = sma(candles, 20)[n];
   if (currentPrice < sma50 || currentPrice < sma20) return null;
 
-  // Volume must be expanding
-  const recentVol = avgVolume(candles, 3, n);
+  // 2. Volume Explosion: Volume must be at least 1.5x of 20-day average
+  const recentVol = candles[n].volume;
   const baseVol   = avgVolume(candles, 20, n);
   const volRatio  = recentVol / baseVol;
-  
-  // We need decent momentum volume (at least average or higher)
-  if (volRatio < 0.9) return null;
+  // Relaxed from 1.5 to 1.1 — capture early volume surges
+  if (volRatio < 1.1) return null;
 
-  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' =
-    volRatio > 1.2 ? 'EXPANDING' : 'AVERAGE';
+  // 3. Price Action: Close near high (upper 25% of day's range)
+  const dayRange = candles[n].high - candles[n].low;
+  const closeRelativePos = (currentPrice - candles[n].low) / dayRange;
+  if (closeRelativePos < 0.75) return null;
 
-  // Range expansion (today's range should be decent for intraday)
-  const range = (candles[n].high - candles[n].low) / candles[n].low;
-  const avgRange = candles.slice(n-20, n).reduce((s, c) => s + ((c.high - c.low) / c.low), 0) / 20;
+  // 4. Volatility: Today's range should be expanding vs average
+  const rangePct = dayRange / candles[n].low;
+  const avgRange = candles.slice(n-10, n).reduce((s, c) => s + ((c.high - c.low) / c.low), 0) / 10;
+  // Relaxed from 1.2 to 1.0 — capture normal range expansion
+  if (rangePct < avgRange * 1.0) return null;
 
-  // Must have volatility for intraday
-  if (range < 0.015) return null; // Need at least 1.5% intraday range
+  // 5. Momentum: Today's return should be at least 2%
+  const todayReturn = (candles[n].close - candles[n].open) / candles[n].open;
+  // Relaxed from 0.02 to 0.01 — 1% move is enough to start monitoring
+  if (todayReturn < 0.01) return null;
 
-  const entryPrice = parseFloat((candles[n].high * 1.002).toFixed(2)); // Buy slightly above today's high
-  const stopLoss   = parseFloat((candles[n].low * 0.995).toFixed(2));
+  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' = 'EXPANDING';
+
+  const entryPrice = parseFloat((candles[n].high * 1.001).toFixed(2));
+  const stopLoss   = parseFloat((candles[n].close * 0.985).toFixed(2)); // 1.5% fixed SL or day low
   const riskPts    = Math.max(0.01, entryPrice - stopLoss);
   const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
   
-  if (riskPct > 10) return null; // Stop shouldn't be too huge
+  if (riskPct > 5) return null; // We want tight setups for intraday
 
-  const target1 = parseFloat((entryPrice + riskPts * 1.5).toFixed(2));
-  const target2 = parseFloat((entryPrice + riskPts * 2.5).toFixed(2));
-  const target3 = parseFloat((entryPrice + riskPts * 4.0).toFixed(2));
+  // Targets for 3-10% moves
+  const target1 = parseFloat((entryPrice * 1.03).toFixed(2)); // 3%
+  const target2 = parseFloat((entryPrice * 1.05).toFixed(2)); // 5%
+  const target3 = parseFloat((entryPrice * 1.10).toFixed(2)); // 10%
 
-  // Score based on volume explosion and range
   const score = Math.min(100, Math.round(
     50 + 
-    (volRatio > 1.5 ? 30 : volRatio > 1.1 ? 15 : 5) + 
-    (range > avgRange * 1.5 ? 20 : 10)
+    (volRatio > 3 ? 30 : volRatio > 2 ? 20 : 10) + 
+    (todayReturn > 0.05 ? 20 : 10)
   ));
 
   return {
     pattern: 'INTRADAY_MOMENTUM', score,
-    confidence: score >= 75 ? 'HIGH' : score >= 60 ? 'MEDIUM' : 'LOW',
+    confidence: score >= 80 ? 'HIGH' : score >= 65 ? 'MEDIUM' : 'LOW',
     currentPrice, pivotPrice: parseFloat(candles[n].high.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward: 1.5, riskPct,
+    entryPrice, stopLoss, target1, target2, target3, riskReward: 2.0, riskPct,
     trendStrength: 'STRONG', volumeSignal, contractions: 0,
     notes: [
-      `Strong Intraday Momentum Candidate`,
-      `Volume ${volRatio.toFixed(1)}x above 20-day average`,
-      `Today's range: ${(range * 100).toFixed(1)}% (Avg: ${(avgRange * 100).toFixed(1)}%)`,
-      `Breakout above today's high: ₹${candles[n].high.toFixed(2)}`,
+      `🔥 Strong Momentum: +${(todayReturn * 100).toFixed(1)}% today`,
+      `📊 Volume Explosion: ${(volRatio).toFixed(1)}x average`,
+      `✨ Bullish Close: Finished in top 25% of day range`,
+      `🚀 Breakout Level: Buy above ₹${candles[n].high.toFixed(2)}`,
     ],
   };
 }

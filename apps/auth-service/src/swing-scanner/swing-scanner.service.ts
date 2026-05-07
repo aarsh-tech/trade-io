@@ -107,9 +107,23 @@ export class SwingScannerService {
 
     // Build token map
     const tokenMap = new Map<string, number>();
+    const instrumentToSymbol = new Map<number, string>();
     instruments.forEach((i: any) => {
-      if (i.instrument_type === 'EQ') tokenMap.set(i.tradingsymbol, i.instrument_token);
+      if (i.instrument_type === 'EQ') {
+        tokenMap.set(i.tradingsymbol, i.instrument_token);
+        instrumentToSymbol.set(i.instrument_token, i.tradingsymbol);
+      }
     });
+
+    // ── Get Live Quotes (LTP) for the entire universe ────────────────────────
+    const ltpSymbols = SCAN_UNIVERSE.map(s => `NSE:${s}`);
+    let liveQuotes: Record<string, { last_price: number }> = {};
+    try {
+      // Kite LTP can handle up to 500 symbols
+      liveQuotes = await kite.getLTP(ltpSymbols);
+    } catch (err) {
+      this.logger.warn(`Live quotes fetch failed: ${err.message}`);
+    }
 
     const results: ScanResult[] = [];
     let scanned = 0;
@@ -123,8 +137,34 @@ export class SwingScannerService {
             const token = tokenMap.get(symbol);
             if (!token) return;
 
-            const candles = await this.fetchDailyCandles(kite, token, 260); // ~1 year
+            let candles = await this.fetchDailyCandles(kite, token, 260); // ~1 year
             if (!candles || candles.length < 200) return;
+
+            // ── Update with Live Data ────────────────────────────────────────
+            const liveLtp = liveQuotes[`NSE:${symbol}`]?.last_price;
+            if (liveLtp) {
+              const lastCandle = candles[candles.length - 1];
+              const now = new Date();
+              const isToday = lastCandle.date.toDateString() === now.toDateString();
+
+              if (isToday) {
+                // Update today's candle with latest price
+                lastCandle.close = liveLtp;
+                lastCandle.high = Math.max(lastCandle.high, liveLtp);
+                lastCandle.low = Math.min(lastCandle.low, liveLtp);
+              } else if (now.getHours() >= 9) {
+                // Pre-market or early market where today's candle isn't in history yet
+                // Create a synthetic today's candle
+                candles.push({
+                  date: now,
+                  open: liveLtp, // Assume open is LTP for now
+                  high: liveLtp,
+                  low: liveLtp,
+                  close: liveLtp,
+                  volume: lastCandle.volume, // dummy volume for now
+                });
+              }
+            }
 
             scanned++;
             const result = analyzeStock(symbol, candles);

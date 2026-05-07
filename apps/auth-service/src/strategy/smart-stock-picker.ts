@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
+import { analyzeStock, DailyCandle } from '../swing-scanner/vcp.analyzer';
 
-// ─── Top liquid NSE stocks (Nifty 50 / Nifty 100 F&O eligible) ────────────────
-// Ordered roughly by liquidity / trading activity
+// ─── Top liquid NSE stocks (Nifty 50 + Momentum leaders) ─────────────────────
 const TOP_LIQUID_STOCKS = [
   'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS',
   'AXISBANK', 'KOTAKBANK', 'SBIN', 'BAJFINANCE', 'HINDUNILVR',
@@ -9,18 +9,14 @@ const TOP_LIQUID_STOCKS = [
   'BHARTIARTL', 'ADANIENT', 'NTPC', 'POWERGRID', 'LT',
   'HCLTECH', 'TECHM', 'ULTRACEMCO', 'ONGC', 'COALINDIA',
   'BPCL', 'IOC', 'GRASIM', 'NESTLEIND', 'DIVISLAB',
+  'ADANIPORTS', 'JSWSTEEL', 'TATASTEEL', 'HINDALCO', 'M&M',
+  'HAL', 'BEL', 'RVNL', 'IRFC', 'BHEL', 'PFC', 'RECLTD',
+  'ZOMATO', 'TRENT', 'DMART', 'KALYANKJIL', 'MAZDOCK'
 ];
 
 /**
  * Automatically picks the best NSE equity stock for intraday trading
- * based on the strategy's target and stop-loss amounts.
- *
- * Selection criteria:
- *  - Fetch live LTP for all top liquid stocks (single batched call)
- *  - Assume expected intraday move = 1.5% of LTP (conservative estimate)
- *  - Required qty = ceil(targetRs / expectedMove)
- *  - Prefer stocks where qty is in a reasonable range (10–300 shares)
- *  - Pick the stock that requires the qty closest to an "ideal" of 50 shares
+ * based on current momentum and potential for a 3-10% move.
  */
 export async function autoSelectStock(
   kite: any,
@@ -28,42 +24,101 @@ export async function autoSelectStock(
   stopLossRs: number,
   logger?: Logger,
 ): Promise<{ symbol: string; exchange: string; ltp: number; qty: number }> {
-  const symbols = TOP_LIQUID_STOCKS.map(s => `NSE:${s}`);
-  let quotes: Record<string, any> = {};
+  logger?.log(`🎯 Auto-selecting best stock from ${TOP_LIQUID_STOCKS.length} candidates...`);
 
+  // 1. Fetch NSE instruments to get tokens
+  const instruments = await kite.getInstruments('NSE');
+  const tokenMap = new Map<string, number>();
+  instruments.forEach((i: any) => {
+    if (i.instrument_type === 'EQ') tokenMap.set(i.tradingsymbol, i.instrument_token);
+  });
+
+  // ── Get Live Quotes (LTP) ────────────────────────────────────────────────
+  const ltpSymbols = TOP_LIQUID_STOCKS.map(s => `NSE:${s}`);
+  let liveQuotes: Record<string, { last_price: number }> = {};
   try {
-    // Batch: all 30 symbols fit in one LTP call
-    quotes = await kite.getLTP(symbols);
-  } catch (e) {
-    logger?.warn(`autoSelectStock: LTP fetch failed — ${e.message}. Falling back to RELIANCE.`);
+    liveQuotes = await kite.getLTP(ltpSymbols);
+  } catch (err) {
+    logger?.warn(`Live quotes fetch failed in auto-picker: ${err.message}`);
   }
 
-  const riskPerShare = Math.min(targetRs, stopLossRs); // use smaller for conservative qty
-  let bestSymbol = 'RELIANCE';
-  let bestLtp = 1400;
-  let bestQty = Math.ceil(riskPerShare / (bestLtp * 0.015));
-  let bestScore = Infinity;
+  const candidates: Array<{ symbol: string; score: number; ltp: number; qty: number }> = [];
 
-  for (const stock of TOP_LIQUID_STOCKS) {
-    const ltp = quotes[`NSE:${stock}`]?.last_price;
-    if (!ltp || ltp <= 0) continue;
+  // 2. Scan each stock for momentum (using historical daily data)
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - 100);
 
-    // Expected intraday move: 1.5% of LTP
-    const expectedMove = ltp * 0.015;
-    const reqQty = Math.ceil(riskPerShare / expectedMove);
+  // Use a smaller batch to avoid Zerodha timeouts/rate limits
+  for (let i = 0; i < TOP_LIQUID_STOCKS.length; i += 5) {
+    const batch = TOP_LIQUID_STOCKS.slice(i, i + 5);
+    await Promise.allSettled(batch.map(async (symbol) => {
+      try {
+        const token = tokenMap.get(symbol);
+        if (!token) return;
 
-    // Accept qty between 5 and 500 (avoids penny stocks & too-heavy positions)
-    if (reqQty < 5 || reqQty > 500) continue;
+        const data = await kite.getHistoricalData(token, 'day', from, to, false);
+        if (!data || data.length < 50) return;
 
-    // Score: prefer qty close to 50 (sweet spot for liquidity + capital)
-    const score = Math.abs(reqQty - 50);
-    if (score < bestScore) {
-      bestScore = score;
-      bestSymbol = stock;
-      bestLtp = ltp;
-      bestQty = reqQty;
-    }
+        const candles: DailyCandle[] = data.map((c: any) => ({
+          date: new Date(c.date),
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume
+        }));
+
+        // ── Inject Live Data ────────────────────────────────────────────────
+        const liveLtp = liveQuotes[`NSE:${symbol}`]?.last_price;
+        if (liveLtp) {
+          const lastCandle = candles[candles.length - 1];
+          const now = new Date();
+          const isToday = lastCandle.date.toDateString() === now.toDateString();
+
+          if (isToday) {
+            lastCandle.close = liveLtp;
+            lastCandle.high = Math.max(lastCandle.high, liveLtp);
+            lastCandle.low = Math.min(lastCandle.low, liveLtp);
+          } else if (now.getHours() >= 9) {
+            candles.push({
+              date: now, open: liveLtp, high: liveLtp, low: liveLtp, close: liveLtp,
+              volume: lastCandle.volume,
+            });
+          }
+        }
+
+        const result = analyzeStock(symbol, candles);
+        if (result && result.pattern === 'INTRADAY_MOMENTUM') {
+          const ltp = result.currentPrice;
+          const riskPerShare = result.entryPrice - result.stopLoss;
+          const qty = riskPerShare > 0 ? Math.ceil(stopLossRs / riskPerShare) : 1;
+
+          candidates.push({ symbol, score: result.score, ltp, qty });
+        }
+      } catch (e) {
+        // Skip on error
+      }
+    }));
+    // Small pause
+    await new Promise(r => setTimeout(r, 200));
   }
 
-  return { symbol: bestSymbol, exchange: 'NSE', ltp: bestLtp, qty: bestQty };
+  if (candidates.length > 0) {
+    // Pick the one with the highest score
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+    logger?.log(`✅ Picked ${best.symbol} with score ${best.score}. Qty: ${best.qty}`);
+    return { symbol: best.symbol, exchange: 'NSE', ltp: best.ltp, qty: best.qty };
+  }
+
+  logger?.warn(`⚠ No momentum candidates found. Falling back to RELIANCE.`);
+
+  // Fallback to RELIANCE with basic sizing
+  const relToken = tokenMap.get('RELIANCE') || 738561;
+  const relQuotes = await kite.getLTP([`NSE:RELIANCE`]);
+  const ltp = relQuotes['NSE:RELIANCE']?.last_price || 2500;
+  const qty = Math.ceil(stopLossRs / (ltp * 0.01)); // assume 1% SL
+
+  return { symbol: 'RELIANCE', exchange: 'NSE', ltp, qty };
 }

@@ -135,7 +135,8 @@ export class Breakout15MinEngine {
           const pick = await autoSelectStock(kite, state.config.targetRs, state.config.stopLossRs, this.logger);
           state.futureSymbol = pick.symbol;
           state.futureExchange = pick.exchange;
-          this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick)`);
+          state.config.qty = pick.qty; // Update quantity
+          this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick) - Qty: ${state.config.qty}`);
         } else {
           state.futureSymbol = state.config.symbol;
           state.futureExchange = state.config.exchange;
@@ -250,7 +251,8 @@ export class Breakout15MinEngine {
           const pick = await autoSelectStock(kite, config.targetRs, config.stopLossRs, this.logger);
           state.futureSymbol = pick.symbol;
           state.futureExchange = pick.exchange;
-          this.log(state, `🎯 Auto-Selected Stock: ${state.futureExchange}:${state.futureSymbol}`);
+          state.config.qty = pick.qty; // Update quantity
+          this.log(state, `🎯 Auto-Selected Stock: ${state.futureExchange}:${state.futureSymbol} - Qty: ${state.config.qty}`);
         } catch (err) { this.log(state, `❌ Auto-Select Error: ${err.message}`); return; }
       } else {
         state.futureSymbol = config.symbol;

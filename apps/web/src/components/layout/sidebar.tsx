@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -22,13 +22,15 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
 const navItems = [
-  { href: "/dashboard",      label: "Dashboard",    icon: LayoutDashboard },
-  { href: "/portfolio",      label: "Portfolio",    icon: Wallet },
-  { href: "/strategies",     label: "Strategies",   icon: TrendingUp },
-  { href: "/backtest",       label: "Backtest",     icon: FlaskConical },
-  { href: "/brokers",        label: "Brokers",      icon: Plug },
-  { href: "/orders",         label: "Orders",       icon: ClipboardList },
-  { href: "/settings",       label: "Settings",     icon: Settings },
+  { href: "/dashboard",      label: "Dashboard",      icon: LayoutDashboard },
+  { href: "/portfolio",      label: "Portfolio",      icon: Wallet },
+  { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
+  { href: "/swing-scanner",  label: "Scanner",        icon: ScanSearch },
+  { href: "/strategies",     label: "Strategies",     icon: TrendingUp },
+  { href: "/backtest",       label: "Backtest",       icon: FlaskConical },
+  { href: "/brokers",        label: "Brokers",        icon: Plug },
+  { href: "/orders",         label: "Orders",         icon: ClipboardList },
+  { href: "/settings",       label: "Settings",       icon: Settings },
 ];
 
 export function Sidebar() {

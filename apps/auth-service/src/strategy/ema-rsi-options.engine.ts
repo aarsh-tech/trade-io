@@ -230,6 +230,8 @@ export class EmaRsiOptionsEngine {
             const pick = await autoSelectStock(kite, state.config.targetRs, state.config.stopLossRs, this.logger);
             state.futureSymbol = pick.symbol;
             state.futureExchange = pick.exchange;
+            // Update config with dynamic quantity
+            state.config.lots = 1; // reset lots to 1 to signify base unit
             this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick)`);
           } catch (e) {
             state.futureSymbol = 'RELIANCE';

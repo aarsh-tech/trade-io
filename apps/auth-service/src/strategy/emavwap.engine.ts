@@ -137,7 +137,8 @@ export class EmaVwapCrossoverEngine {
         const pick = await autoSelectStock(kite, state.config.targetRs, state.config.stopLossRs, this.logger);
         state.config.symbol = pick.symbol;
         state.config.exchange = pick.exchange;
-        this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol} (Catch-up)`);
+        state.config.qty = pick.qty; // Update quantity
+        this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol} (Catch-up) - Qty: ${state.config.qty}`);
       }
       const candles = await this.fetchCandles(kite, state.config, '5minute', now);
       if (candles.length < state.config.emaPeriod + 2) return;
@@ -190,7 +191,8 @@ export class EmaVwapCrossoverEngine {
         const pick = await autoSelectStock(kite, config.targetRs, config.stopLossRs, this.logger);
         config.symbol = pick.symbol;
         config.exchange = pick.exchange;
-        this.log(state, `🎯 Auto-Selected Stock: ${config.exchange}:${config.symbol}`);
+        config.qty = pick.qty; // Update quantity
+        this.log(state, `🎯 Auto-Selected Stock: ${config.exchange}:${config.symbol} - Qty: ${config.qty}`);
       }
       const candles = await this.fetchCandles(kite, config, '5minute', now);
       if (candles.length < 2) return;
