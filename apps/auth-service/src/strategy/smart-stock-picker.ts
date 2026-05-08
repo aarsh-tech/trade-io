@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { analyzeStock, DailyCandle } from '../swing-scanner/vcp.analyzer';
+import { detectIntradayMomentum, DailyCandle } from '../swing-scanner/vcp.analyzer';
 
 // ─── Top liquid NSE stocks (Nifty 50 + Momentum leaders) ─────────────────────
 const TOP_LIQUID_STOCKS = [
@@ -88,13 +88,16 @@ export async function autoSelectStock(
           }
         }
 
-        const result = analyzeStock(symbol, candles);
-        if (result && result.pattern === 'INTRADAY_MOMENTUM') {
+        // Use detectIntradayMomentum directly — analyzeStock() returns the
+        // best-scored pattern which may NOT be INTRADAY_MOMENTUM even when one exists.
+        const result = detectIntradayMomentum(candles);
+        if (result) {
           const ltp = result.currentPrice;
           const riskPerShare = result.entryPrice - result.stopLoss;
           const qty = riskPerShare > 0 ? Math.ceil(stopLossRs / riskPerShare) : 1;
 
           candidates.push({ symbol, score: result.score, ltp, qty });
+          logger?.log(`  📈 Momentum candidate: ${symbol} | Score:${result.score} | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
         }
       } catch (e) {
         // Skip on error
@@ -108,17 +111,31 @@ export async function autoSelectStock(
     // Pick the one with the highest score
     candidates.sort((a, b) => b.score - a.score);
     const best = candidates[0];
-    logger?.log(`✅ Picked ${best.symbol} with score ${best.score}. Qty: ${best.qty}`);
+    logger?.log(`✅ Auto-picked: ${best.symbol} (score:${best.score}, qty:${best.qty})`);
+    logger?.log(`📋 All momentum candidates: ${candidates.map(c => `${c.symbol}(${c.score})`).join(', ')}`);
     return { symbol: best.symbol, exchange: 'NSE', ltp: best.ltp, qty: best.qty };
   }
 
-  logger?.warn(`⚠ No momentum candidates found. Falling back to RELIANCE.`);
+  // ── Smarter fallback: pick highest-liquid stock that has live price data ──
+  logger?.warn(`⚠ No intraday momentum candidates found from ${TOP_LIQUID_STOCKS.length} stocks. Using liquid fallback.`);
 
-  // Fallback to RELIANCE with basic sizing
-  const relToken = tokenMap.get('RELIANCE') || 738561;
+  // Pick the first liquid stock that has a live quote (avoid random hardcoded stock)
+  const fallbackSymbols = ['HDFCBANK', 'ICICIBANK', 'AXISBANK', 'SBIN', 'TCS', 'INFY', 'RELIANCE'];
+  for (const sym of fallbackSymbols) {
+    const key = `NSE:${sym}`;
+    const quote = liveQuotes[key];
+    if (quote?.last_price && quote.last_price > 0) {
+      const ltp = quote.last_price;
+      const qty = Math.ceil(stopLossRs / (ltp * 0.01)); // assume 1% SL
+      logger?.warn(`↩ Fallback to ${sym} @ ₹${ltp.toFixed(2)} (first liquid stock with live data)`);
+      return { symbol: sym, exchange: 'NSE', ltp, qty };
+    }
+  }
+
+  // Absolute last resort
   const relQuotes = await kite.getLTP([`NSE:RELIANCE`]);
   const ltp = relQuotes['NSE:RELIANCE']?.last_price || 2500;
-  const qty = Math.ceil(stopLossRs / (ltp * 0.01)); // assume 1% SL
-
+  const qty = Math.ceil(stopLossRs / (ltp * 0.01));
+  logger?.warn(`↩ Absolute fallback to RELIANCE @ ₹${ltp.toFixed(2)}`);
   return { symbol: 'RELIANCE', exchange: 'NSE', ltp, qty };
 }

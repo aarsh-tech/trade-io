@@ -72,6 +72,16 @@ export class AuthController {
     return { success: true, data: result };
   }
 
+  @Post('2fa/disable')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Disable 2FA' })
+  async disable2fa(@Request() req) {
+    const result = await this.authService.disable2fa(req.user.id);
+    return { success: true, data: result };
+  }
+
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send password reset link' })

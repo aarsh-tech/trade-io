@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store";
+import { useTokenRefresh } from "@/hooks/useTokenRefresh";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
   const router = useRouter();
-  const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
+
+  // ── Proactive token refresh — keeps session alive across the full trading day
+  useTokenRefresh();
 
   useEffect(() => {
     setMounted(true);
@@ -34,3 +37,4 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
+

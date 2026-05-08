@@ -137,8 +137,10 @@ export class SwingScannerService {
             const token = tokenMap.get(symbol);
             if (!token) return;
 
-            let candles = await this.fetchDailyCandles(kite, token, 260); // ~1 year
-            if (!candles || candles.length < 200) return;
+            let candles = await this.fetchDailyCandles(kite, token, 365); // ~1.5 years for VCP patterns
+            // INTRADAY_MOMENTUM needs only 50 candles; VCP needs ~200.
+            // Accept any stock with at least 50 candles so intraday picks aren't dropped.
+            if (!candles || candles.length < 50) return;
 
             // ── Update with Live Data ────────────────────────────────────────
             const liveLtp = liveQuotes[`NSE:${symbol}`]?.last_price;

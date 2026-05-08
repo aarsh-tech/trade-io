@@ -80,12 +80,25 @@ export function use2FA() {
     },
   });
 
+  const disableMutation = useMutation({
+    mutationFn: authApi.disable2fa,
+    onSuccess: () => {
+      toast.success("2FA disabled successfully!");
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || "Failed to disable 2FA");
+    },
+  });
+
   return {
     setup2FA: setupMutation.mutateAsync,
     isSettingUp: setupMutation.isPending,
 
     verify2FA: verifyMutation.mutateAsync,
     isVerifying: verifyMutation.isPending,
+
+    disable2FA: disableMutation.mutateAsync,
+    isDisabling: disableMutation.isPending,
   };
 }
 

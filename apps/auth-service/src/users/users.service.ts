@@ -45,6 +45,14 @@ export class UsersService {
     });
   }
 
+  async disableTwoFa(userId: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFaEnabled: false, totpSecret: null },
+      select: { id: true, email: true, name: true, twoFaEnabled: true },
+    });
+  }
+
   async update(id: string, data: { email?: string; name?: string }) {
     if (data.email) {
       const exists = await this.prisma.user.findUnique({ where: { email: data.email } });

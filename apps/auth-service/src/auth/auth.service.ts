@@ -113,11 +113,16 @@ export class AuthService {
     return { message: '2FA enabled successfully' };
   }
 
+  async disable2fa(userId: string) {
+    await this.users.disableTwoFa(userId);
+    return { message: '2FA disabled successfully' };
+  }
+
   private async generateTokens(userId: string, email: string) {
     const payload = { sub: userId, email };
 
     const accessToken = this.jwt.sign(payload, {
-      expiresIn: this.config.get('JWT_ACCESS_EXPIRY', '15m'),
+      expiresIn: this.config.get('JWT_ACCESS_EXPIRY', '8h'),
     });
 
     const rawRefresh = randomBytes(40).toString('hex');

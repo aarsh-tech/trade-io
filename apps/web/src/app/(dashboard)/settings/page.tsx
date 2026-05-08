@@ -12,7 +12,7 @@ import { useUser, use2FA } from "@/hooks/useAuth";
 export default function SettingsPage() {
   const { user, updateUser } = useAuthStore();
   const { updateProfile, isUpdatingProfile, changePassword, isChangingPassword } = useUser();
-  const { setup2FA, isSettingUp, verify2FA, isVerifying } = use2FA();
+  const { setup2FA, isSettingUp, verify2FA, isVerifying, disable2FA, isDisabling } = use2FA();
 
   const [profileForm, setProfileForm] = useState({ name: user?.name || "", email: user?.email || "" });
   const [passwordForm, setPasswordForm] = useState({ current: "", newPassword: "", confirm: "" });
@@ -173,6 +173,19 @@ export default function SettingsPage() {
                       <p className="text-xs opacity-80">Your account is well protected.</p>
                     </div>
                   </div>
+                  <Button
+                    variant="outline"
+                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                    onClick={async () => {
+                      if (confirm("Are you sure you want to disable Two-Factor Authentication? This will make your account less secure.")) {
+                        await disable2FA();
+                        updateUser({ twoFaEnabled: false });
+                      }
+                    }}
+                    disabled={isDisabling}
+                  >
+                    {isDisabling ? "Disabling..." : "Disable 2FA"}
+                  </Button>
                 </div>
               ) : (
                 <div className="space-y-4">

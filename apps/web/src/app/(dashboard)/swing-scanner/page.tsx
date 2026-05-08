@@ -27,16 +27,16 @@ interface ScanRun {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const PATTERN_META: Record<string, { label: string; color: string; bg: string }> = {
-  VCP:         { label: "VCP",         color: "text-purple-700", bg: "bg-purple-50 border-purple-200" },
+  VCP: { label: "VCP", color: "text-purple-700", bg: "bg-purple-50 border-purple-200" },
   ROCKET_BASE: { label: "Rocket Base", color: "text-orange-700", bg: "bg-orange-50 border-orange-200" },
-  TIGHT_AREA:  { label: "Tight Area",  color: "text-blue-700",   bg: "bg-blue-50 border-blue-200" },
-  CUP_HANDLE:  { label: "Cup & Handle",color: "text-emerald-700",bg: "bg-emerald-50 border-emerald-200" },
+  TIGHT_AREA: { label: "Tight Area", color: "text-blue-700", bg: "bg-blue-50 border-blue-200" },
+  CUP_HANDLE: { label: "Cup & Handle", color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
 };
 
 const CONFIDENCE_COLOR: Record<string, string> = {
-  HIGH:   "text-emerald-600 bg-emerald-50 border-emerald-200",
+  HIGH: "text-emerald-600 bg-emerald-50 border-emerald-200",
   MEDIUM: "text-amber-600 bg-amber-50 border-amber-200",
-  LOW:    "text-slate-500 bg-slate-50 border-slate-200",
+  LOW: "text-slate-500 bg-slate-50 border-slate-200",
 };
 
 function fmt(n: number) {
@@ -61,8 +61,8 @@ function ScoreBar({ score }: { score: number }) {
 function ResultCard({ r, targetRs }: { r: ScanResult; targetRs: number }) {
   const [expanded, setExpanded] = useState(false);
   const pm = PATTERN_META[r.pattern] ?? { label: r.pattern, color: "text-slate-700", bg: "bg-slate-50 border-slate-200" };
-  const risk  = r.entryPrice - r.stopLoss;
-  const qty   = risk > 0 ? Math.ceil(targetRs / risk) : r.suggestedQty;
+  const risk = r.entryPrice - r.stopLoss;
+  const qty = risk > 0 ? Math.ceil(targetRs / risk) : r.suggestedQty;
   const invest = qty * r.entryPrice;
   const profit = qty * (r.target1 - r.entryPrice);
 
@@ -195,11 +195,11 @@ function ResultCard({ r, targetRs }: { r: ScanResult; targetRs: number }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function SwingScannerPage() {
-  const [scan, setScan]       = useState<ScanRun | null>(null);
+  const [scan, setScan] = useState<ScanRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
-  const [filter, setFilter]   = useState<"ALL" | "VCP" | "ROCKET_BASE" | "TIGHT_AREA">("ALL");
-  const [sortBy, setSortBy]   = useState<"score" | "riskPct" | "riskReward">("score");
+  const [filter, setFilter] = useState<"ALL" | "VCP" | "ROCKET_BASE" | "TIGHT_AREA">("ALL");
+  const [sortBy, setSortBy] = useState<"score" | "riskPct" | "riskReward">("score");
   const [targetRs, setTargetRs] = useState(500);
 
   const loadLast = useCallback(async () => {
@@ -229,9 +229,9 @@ export default function SwingScannerPage() {
   const filtered = (scan?.results ?? [])
     .filter(r => filter === "ALL" || r.pattern === filter)
     .sort((a, b) =>
-      sortBy === "score"      ? b.score - a.score :
-      sortBy === "riskPct"    ? a.riskPct - b.riskPct :
-      b.riskReward - a.riskReward
+      sortBy === "score" ? b.score - a.score :
+        sortBy === "riskPct" ? a.riskPct - b.riskPct :
+          b.riskReward - a.riskReward
     );
 
   const highConf = filtered.filter(r => r.confidence === "HIGH").length;
@@ -276,9 +276,9 @@ export default function SwingScannerPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Stocks Scanned", value: scan.totalScanned, icon: BarChart2, color: "text-indigo-600" },
-            { label: "Setups Found",   value: scan.results.length, icon: TrendingUp, color: "text-emerald-600" },
+            { label: "Setups Found", value: scan.results.length, icon: TrendingUp, color: "text-emerald-600" },
             { label: "High Confidence", value: highConf, icon: Star, color: "text-amber-500" },
-            { label: "VCP Patterns",   value: scan.results.filter(r => r.pattern === "VCP").length, icon: Zap, color: "text-purple-600" },
+            { label: "VCP Patterns", value: scan.results.filter(r => r.pattern === "VCP").length, icon: Zap, color: "text-purple-600" },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="bg-white rounded-xl border border-slate-200 p-3 flex items-center gap-3">
               <div className={cn("p-2 rounded-lg bg-slate-50", color)}>
@@ -310,9 +310,9 @@ export default function SwingScannerPage() {
                 )}
               >
                 {f === "ALL" ? `All (${scan.results.length})` :
-                 f === "VCP" ? `VCP (${scan.results.filter(r => r.pattern === "VCP").length})` :
-                 f === "ROCKET_BASE" ? `Rocket (${scan.results.filter(r => r.pattern === "ROCKET_BASE").length})` :
-                 `Tight (${scan.results.filter(r => r.pattern === "TIGHT_AREA").length})`}
+                  f === "VCP" ? `VCP (${scan.results.filter(r => r.pattern === "VCP").length})` :
+                    f === "ROCKET_BASE" ? `Rocket (${scan.results.filter(r => r.pattern === "ROCKET_BASE").length})` :
+                      `Tight (${scan.results.filter(r => r.pattern === "TIGHT_AREA").length})`}
               </button>
             ))}
           </div>

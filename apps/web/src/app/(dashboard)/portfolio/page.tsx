@@ -721,7 +721,7 @@ export default function PortfolioPage() {
                 <p className="text-[12.5px] text-slate-600 font-medium">Click the button below to open the broker login page.</p>
               </div>
               <Button onClick={handleOpenLogin} className="w-full h-11 bg-orange-500 hover:bg-orange-600 text-white font-bold shadow-sm">
-                1. Open Broker Login Page
+                Open Broker Login Page
               </Button>
             </div>
 
@@ -733,8 +733,8 @@ export default function PortfolioPage() {
                 </p>
               </div>
               <form onSubmit={handleRenewSession} className="space-y-3 pt-1">
-                <Button type="button" onClick={() => handleRenewSession({ preventDefault: () => {} } as any)} disabled={isRenewing} className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md">
-                   {isRenewing ? "Logging in..." : "Run Automated Login"}
+                <Button type="button" onClick={() => handleRenewSession({ preventDefault: () => { } } as any)} disabled={isRenewing} className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md">
+                  {isRenewing ? "Logging in..." : "Run Automated Login"}
                 </Button>
                 <div className="flex items-center gap-2 py-2">
                   <div className="h-px flex-1 bg-slate-200" />

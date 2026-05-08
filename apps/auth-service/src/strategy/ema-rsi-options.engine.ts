@@ -234,9 +234,8 @@ export class EmaRsiOptionsEngine {
             state.config.lots = 1; // reset lots to 1 to signify base unit
             this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick)`);
           } catch (e) {
-            state.futureSymbol = 'RELIANCE';
-            state.futureExchange = 'NSE';
-            this.log(state, `Auto-Select fallback: ${state.futureSymbol}`);
+            this.log(state, `❌ Auto-Select failed: ${e.message}. Skipping tick — will retry next bar.`);
+            return; // don't trade on a failed auto-select
           }
         } else {
           state.futureSymbol = state.config.symbol;
