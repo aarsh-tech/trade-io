@@ -507,8 +507,9 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
   const currentPrice = candles[n].close;
 
   // Strict Mathematical Check: Current candle must be STRICTLY inside the Mother High/Low
-  // This removes any stocks that have already broken or even touched the breakout points.
+  // We check both the high/low of the day AND the current price to be absolutely safe.
   if (candles[n].high >= mother.high || candles[n].low <= mother.low) return null;
+  if (currentPrice >= mother.high || currentPrice <= mother.low) return null;
 
   const entryPrice = parseFloat((mother.high * 1.002).toFixed(2));
   let stopLoss = parseFloat((mother.low * 0.998).toFixed(2));

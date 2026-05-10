@@ -368,7 +368,7 @@ export default function IntradayPicksPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {scan.results.map((pick) => (
-            <PickCard key={pick.symbol} r={pick} targetRs={targetRs} />
+            <PickCard key={`${pick.symbol}-${pick.pattern}`} r={pick} targetRs={targetRs} />
           ))}
         </div>
       )}

@@ -73,18 +73,23 @@ export class SwingScannerService {
       throw new BadRequestException(`Failed to fetch NSE instruments: ${err.message}`);
     }
 
-    // Build token map
+    // ── Build dynamic universe from NSE instruments ─────────────────────────────
     const tokenMap = new Map<string, number>();
     const instrumentToSymbol = new Map<number, string>();
+    const dynamicUniverse: string[] = [];
     instruments.forEach((i: any) => {
-      if (i.instrument_type === 'EQ') {
+      if (i.instrument_type === 'EQ' && i.exchange === 'NSE') {
         tokenMap.set(i.tradingsymbol, i.instrument_token);
         instrumentToSymbol.set(i.instrument_token, i.tradingsymbol);
+        dynamicUniverse.push(i.tradingsymbol);
       }
     });
 
     // ── Get Live Quotes (LTP) for the entire universe ────────────────────────
-    const ltpSymbols = SCAN_UNIVERSE.map(s => `NSE:${s}`);
+    // We filter for liquid stocks to avoid scanning thousands of illiquid ones
+    // For now, let's use the top 750 most liquid or simply those in dynamicUniverse
+    const ltpBatch = dynamicUniverse.slice(0, 1000); // Limit to top 1000 for efficiency
+    const ltpSymbols = ltpBatch.map(s => `NSE:${s}`);
     let liveQuotes: Record<string, { last_price: number }> = {};
     try {
       // Kite LTP can handle up to 500 symbols
@@ -96,9 +101,9 @@ export class SwingScannerService {
     const results: ScanResult[] = [];
     let scanned = 0;
 
-    // Scan in batches of 5 to avoid rate limiting
-    for (let i = 0; i < SCAN_UNIVERSE.length; i += 5) {
-      const batch = SCAN_UNIVERSE.slice(i, i + 5);
+    const scanList = dynamicUniverse.slice(0, 1000);
+    for (let i = 0; i < scanList.length; i += 5) {
+      const batch = scanList.slice(i, i + 5);
       await Promise.allSettled(
         batch.map(async (symbol) => {
           try {
