@@ -5,39 +5,7 @@ import { analyzeStock, DailyCandle } from './vcp.analyzer';
 
 // ─── Nifty 500 scan universe (liquid NSE stocks) ──────────────────────────────
 const SCAN_UNIVERSE = [
-  // Nifty 50 core
-  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR', 'ITC',
-  'SBIN', 'BAJFINANCE', 'BHARTIARTL', 'KOTAKBANK', 'LT', 'HCLTECH',
-  'ASIANPAINT', 'AXISBANK', 'MARUTI', 'SUNPHARMA', 'TITAN', 'NESTLEIND',
-  'ULTRACEMCO', 'WIPRO', 'POWERGRID', 'NTPC', 'ONGC', 'ADANIPORTS',
-  'TECHM', 'INDUSINDBK', 'DIVISLAB', 'DRREDDY', 'BPCL', 'CIPLA',
-  'EICHERMOT', 'BAJAJFINSV', 'HINDALCO', 'GRASIM', 'TATASTEEL', 'JSWSTEEL',
-  'COALINDIA', 'BRITANNIA', 'APOLLOHOSP', 'TATACONSUM', 'TRENT',
-  // Mid/Small caps with momentum
-  'DMART', 'NAUKRI', 'PERSISTENT', 'LTIM', 'COFORGE', 'MPHASIS', 'OFSS',
-  'HAL', 'BEL', 'SIEMENS', 'ABB', 'CUMMINSIND', 'THERMAX', 'BHEL',
-  'HAVELLS', 'PIDILITIND', 'BERGEPAINT', 'VOLTAS', 'WHIRLPOOL', 'SYMPHONY',
-  'DABUR', 'MARICO', 'GODREJCP', 'COLPAL', 'EMAMILTD', 'VBL',
-  'JUBLFOOD', 'DEVYANI', 'SAPPHIRE',
-  'MUTHOOTFIN', 'BAJAJHLDNG', 'CHOLAFIN', 'LICHSGFIN', 'M&MFIN',
-  'IDFCFIRSTB', 'FEDERALBNK', 'AUBANK', 'BANDHANBNK', 'RBLBANK',
-  'BANKBARODA', 'PNB', 'CANBK', 'UNIONBANK',
-  'PAGEIND', 'TRENT', 'KALYANKJIL', 'SENCO',
-  'INDUSTOWER', 'CDSL', 'MCX', 'BSE', 'CAMS', 'ANGELONE', 'MOTILALOFS',
-  'BALKRISIND', 'APOLLOTYRE', 'MRF', 'CEATLTD', 'BOSCHLTD', 'TATAMOTORS', 'M&M', 'ASHOKLEY',
-  'SAIL', 'NMDC', 'VEDL', 'HINDCOPPER', 'NATIONALUM', 'TATAMETALI',
-  'ADANIENT', 'ADANIGREEN', 'ATGL', 'NYKAA', 'ZOMATO', 'PAYTM',
-  'TORNTPHARM', 'AUROPHARMA', 'ALKEM', 'BIOCON', 'LUPIN', 'GLENMARK', 'IPCALAB', 'LAURUSLABS',
-  'PIIND', 'COROMANDEL', 'UPL', 'DHANUKA', 'RALLIS',
-  'SWARAJENG', 'ESCORTS', 'MAHINDCIE', 'EXIDEIND',
-  'POLYCAB', 'KEI', 'FINOLEX', 'RCF', 'DEEPAKFERT', 'FACT', 'GNFC', 'CHAMBLFERT',
-  'ATUL', 'CLEAN', 'GALAXYSURF', 'NAVINFLUOR', 'SRF', 'TATACHEM',
-  'IRCTC', 'CONCOR', 'GMRINFRA', 'IRB', 'GPPL', 'IRFC', 'RVNL', 'BEML', 'RITES',
-  'OBEROIRLTY', 'DLF', 'GODREJPROP', 'PRESTIGE', 'PHOENIXLTD', 'BRIGADE',
-  'HDFCAMC', 'NIPPONLIFE', 'UTIAMC',
-  'LINDEINDIA', 'SOLARINDS', 'HFCL', 'STLTECH', 'TEJASNET', 'DIXON', 'AMBER',
-  'TATAELXSI', 'LTTS', 'CYIENT', 'TATACOMM', 'JUBLFOOD', 'IRCTC', 'HINDZINC',
-  'ICICIGI', 'ICICIPRULI', 'HDFCLIFE', 'SBILIFE', 'RECLTD', 'PFC'
+  '3MINDIA', 'AAVAS', 'ABB', 'ABCAPITAL', 'ABFRL', 'ACC', 'ADANIGREEN', 'ADANIPORTS', 'ADANIPOWER', 'ADANITRANS', 'ADVENZYMES', 'AEGISCHEM', 'AIAENG', 'AJANTPHARM', 'AKZOINDIA', 'ALBK', 'ALKEM', 'ALLCARGO', 'AMARAJABAT', 'AMBUJACEM', 'ANDHRABANK', 'APLAPOLLO', 'APLLTD', 'APOLLOHOSP', 'APOLLOTYRE', 'ASHOKA', 'ASHOKLEY', 'ASIANPAINT', 'ASTERDM', 'ASTRAL', 'ASTRAZEN', 'ATUL', 'AUBANK', 'AUROPHARMA', 'AVANTIFEED', 'AXISBANK', 'BAJAJ-AUTO', 'BAJAJCON', 'BAJAJELEC', 'BAJAJFINSV', 'BAJAJHLDNG', 'BAJFINANCE', 'BALKRISIND', 'BALMLAWRIE', 'BALRAMCHIN', 'BANDHANBNK', 'BANKBARODA', 'BANKINDIA', 'BASF', 'BATAINDIA', 'BBTC', 'BDL', 'BEL', 'BEML', 'BERGEPAINT', 'BHARATFORG', 'BHARTIARTL', 'BHEL', 'BIOCON', 'BIRLACORPN', 'BLISSGVS', 'BLUEDART', 'BLUESTARCO', 'BOMDYEING', 'BOSCHLTD', 'BPCL', 'BRIGADE', 'BRITANNIA', 'BSE', 'CADILAHC', 'CANBK', 'CANFINHOME', 'CAPLIPOINT', 'CARBORUNIV', 'CARERATING', 'CASTROLIND', 'CCL', 'CDSL', 'CEATLTD', 'CENTRALBK', 'CENTURYPLY', 'CERA', 'CESC', 'CGPOWER', 'CHAMBLFERT', 'CHENNPETRO', 'CHOLAFIN', 'CHOLAHLDNG', 'CIPLA', 'COALINDIA', 'COCHINSHIP', 'COFFEEDAY', 'COLPAL', 'CONCOR', 'COROMANDEL', 'CORPBANK', 'COX&KINGS', 'CREDITACC', 'CRISIL', 'CROMPTON', 'CUB', 'CUMMINSIND', 'CYIENT', 'DABUR', 'DBCORP', 'DBL', 'DCAL', 'DCBBANK', 'DCMSHRIRAM', 'DEEPAKFERT', 'DEEPAKNTR', 'DELTACORP', 'DHFL', 'DISHTV', 'DIVISLAB', 'DIXON', 'DLF', 'DMART', 'DRREDDY', 'ECLERX', 'EDELWEISS', 'EICHERMOT', 'EIDPARRY', 'EIHOTEL', 'ELGIEQUIP', 'EMAMILTD', 'ENDURANCE', 'ENGINERSIN', 'EQUITAS', 'ERIS', 'ESCORTS', 'ESSELPACK', 'EXIDEIND', 'FCONSUMER', 'FDC', 'FEDERALBNK', 'FINCABLES', 'FINEORG', 'FINPIPE', 'FLFL', 'FORTIS', 'FRETAIL', 'FSL', 'GAIL', 'GALAXYSURF', 'GAYAPROJ', 'GDL', 'GEPIL', 'GESHIP', 'GET&D', 'GHCL', 'GICRE', 'GILLETTE', 'GLAXO', 'GLENMARK', 'GMDCLTD', 'GMRINFRA', 'GNFC', 'GODFRYPHLP', 'GODREJAGRO', 'GODREJCP', 'GODREJIND', 'GODREJPROP', 'GPPL', 'GRANULES', 'GRAPHITE', 'GRASIM', 'GREAVESCOT', 'GRINDWELL', 'GRUH', 'GSFC', 'GSKCONS', 'GSPL', 'GUJALKALI', 'GUJFLUORO', 'GUJGASLTD', 'GULFOILLUB', 'HAL', 'HATHWAY', 'HATSUN', 'HAVELLS', 'HCLTECH', 'HDFC', 'HDFCAMC', 'HDFCBANK', 'HDFCLIFE', 'HEG', 'HEIDELBERG', 'HERITGFOOD', 'HEROMOTOCO', 'HEXAWARE', 'HFCL', 'HIMATSEIDE', 'HINDALCO', 'HINDCOPPER', 'HINDPETRO', 'HINDUNILVR', 'HINDZINC', 'HONAUT', 'HSCL', 'HUDCO', 'IBREALEST', 'IBULHSGFIN', 'IBULISL', 'IBVENTURES', 'ICICIBANK', 'ICICIGI', 'ICICIPRULI', 'ICRA', 'IDBI', 'IDEA', 'IDFC', 'IDFCFIRSTB', 'IEX', 'IFBIND', 'IFCI', 'IGL', 'INDHOTEL', 'INDIACEM', 'INDIANB', 'INDIGO', 'INDOCO', 'INDOSTAR', 'INDUSINDBK', 'INFIBEAM', 'INFRATEL', 'INFY', 'INOXLEISUR', 'INOXWIND', 'INTELLECT', 'IOB', 'IOC', 'IPCALAB', 'IRB', 'IRCON', 'ISEC', 'ITC', 'ITDC', 'ITDCEM', 'ITI', 'J&KBANK', 'JAGRAN', 'JAICORPLTD', 'JAMNAAUTO', 'JBCHEPHARM', 'JETAIRWAYS', 'JINDALSAW', 'JINDALSTEL', 'JISLJALEQS', 'JKCEMENT', 'JKLAKSHMI', 'JKPAPER', 'JKTYRE', 'JMFINANCIL', 'JPASSOCIAT', 'JSL', 'JSLHISAR', 'JSWENERGY', 'JSWSTEEL', 'JUBILANT', 'JUBLFOOD', 'JUSTDIAL', 'JYOTHYLAB', 'KAJARIACER', 'KALPATPOWR', 'KANSAINER', 'KARURVYSYA', 'KEC', 'KEI', 'KIOCL', 'KIRLOSENG', 'KNRCON', 'KOLTEPATIL', 'KOTAKBANK', 'KPRMILL', 'KRBL', 'KSCL', 'KTKBANK', 'L&TFH', 'LAKSHVILAS', 'LALPATHLAB', 'LAURUSLABS', 'LAXMIMACH', 'LEMONTREE', 'LICHSGFIN', 'LINDEINDIA', 'LT', 'LTI', 'LTTS', 'LUPIN', 'LUXIND', 'M&M', 'M&MFIN', 'MAGMA', 'MAHABANK', 'MAHINDCIE', 'MAHLOG', 'MAHSCOOTER', 'MAHSEAMLES', 'MANAPPURAM', 'MARICO', 'MARUTI', 'MASFIN', 'MAXINDIA', 'MCDOWELL-N', 'MFSL', 'MGL', 'MHRIL', 'MINDACORP', 'MINDAIND', 'MINDTREE', 'MMTC', 'MOIL', 'MONSANTO', 'MOTHERSUMI', 'MOTILALOFS', 'MPHASIS', 'MRF', 'MRPL', 'MUTHOOTFIN', 'NATCOPHARM', 'NATIONALUM', 'NAUKRI', 'NAVINFLUOR', 'NBCC', 'NBVENTURES', 'NCC', 'NESCO', 'NETWORK18', 'NFL', 'NH', 'NHPC', 'NIACL', 'NIITTECH', 'NILKAMAL', 'NLCINDIA', 'NMDC', 'NTPC', 'OBEROIRLTY', 'OFSS', 'OIL', 'OMAXE', 'ONGC', 'ORIENTBANK', 'ORIENTCEM', 'ORIENTELEC', 'PAGEIND', 'PARAGMILK', 'PCJEWELLER', 'PEL', 'PERSISTENT', 'PETRONET', 'PFC', 'PFIZER', 'PGHH', 'PGHL', 'PHILIPCARB', 'PHOENIXLTD', 'PIDILITIND', 'PIIND', 'PNB', 'PNBHOUSING', 'PNCINFRA', 'POWERGRID', 'PRAJIND', 'PRESTIGE', 'PRSMJOHNSN', 'PTC', 'PVR', 'QUESS', 'RADICO', 'RAIN', 'RAJESHEXPO', 'RALLIS', 'RAMCOCEM', 'RAYMOND', 'RBLBANK', 'RCF', 'RCOM', 'RECLTD', 'REDINGTON', 'RELAXO', 'RELCAPITAL', 'RELIANCE', 'RELINFRA', 'RENUKA', 'REPCOHOME', 'RHFL', 'RITES', 'RKFORGE', 'RNAM', 'RPOWER', 'RUPA', 'SADBHAV', 'SAIL', 'SANOFI', 'SBILIFE', 'SBIN', 'SCHAEFFLER', 'SCI', 'SFL', 'SHANKARA', 'SHARDACROP', 'SHILPAMED', 'SHK', 'SHOPERSTOP', 'SHREECEM', 'SHRIRAMCIT', 'SIEMENS', 'SIS', 'SJVN', 'SKFINDIA', 'SOBHA', 'SOLARINDS', 'SONATSOFTW', 'SOUTHBANK', 'SPARC', 'SPTL', 'SREINFRA', 'SRF', 'SRTRANSFIN', 'STAR', 'STARCEMENT', 'STRTECH', 'SUDARSCHEM', 'SUNCLAYLTD', 'SUNDARMFIN', 'SUNDRMFAST', 'SUNPHARMA', 'SUNTECK', 'SUNTV', 'SUPRAJIT', 'SUPREMEIND', 'SUVEN', 'SUZLON', 'SWANENERGY', 'SYMPHONY', 'SYNDIBANK', 'SYNGENE', 'TAKE', 'TATACHEM', 'TATACOFFEE', 'TATAELXSI', 'TATAGLOBAL', 'TATAINVEST', 'TATAMOTORS', 'TATAMTRDVR', 'TATAPOWER', 'TATASTEEL', 'TCNSBRANDS', 'TCS', 'TEAMLEASE', 'TECHM', 'THERMAX', 'THOMASCOOK', 'THYROCARE', 'TIINDIA', 'TIMETECHNO', 'TIMKEN', 'TITAN', 'TNPL', 'TORNTPHARM', 'TORNTPOWER', 'TRENT', 'TRIDENT', 'TRITURBINE', 'TTKPRESTIG', 'TV18BRDCST', 'TVSMOTOR', 'TVTODAY', 'UBL', 'UCOBANK', 'UFLEX', 'UJJIVAN', 'ULTRACEMCO', 'UNIONBANK', 'UPL', 'VAKRANGEE', 'VARROC', 'VBL', 'VEDL', 'VENKEYS', 'VGUARD', 'VINATIORGA', 'VIPIND', 'VMART', 'VOLTAS', 'VRLLOG', 'VSTIND', 'VTL', 'WABAG', 'WABCOINDIA', 'WELCORP', 'WELSPUNIND', 'WHIRLPOOL', 'WIPRO', 'WOCKPHARMA', 'YESBANK', 'ZEEL', 'ZENSARTECH', 'ZYDUSWELL'
 ];
 
 export interface ScanResult {
@@ -154,51 +122,42 @@ export class SwingScannerService {
                 lastCandle.close = liveLtp;
                 lastCandle.high = Math.max(lastCandle.high, liveLtp);
                 lastCandle.low = Math.min(lastCandle.low, liveLtp);
-              } else if (now.getHours() >= 9) {
-                // Pre-market or early market where today's candle isn't in history yet
-                // Create a synthetic today's candle
-                candles.push({
-                  date: now,
-                  open: liveLtp, // Assume open is LTP for now
-                  high: liveLtp,
-                  low: liveLtp,
-                  close: liveLtp,
-                  volume: lastCandle.volume, // dummy volume for now
-                });
               }
             }
 
             scanned++;
-            const result = analyzeStock(symbol, candles);
-            if (!result || result.score < 20) return; // Lowered to 20 for more setups
+            const patterns = analyzeStock(symbol, candles);
+            if (!patterns || patterns.length === 0) return;
 
-            // Calculate suggested qty to earn ₹500 at T1
-            const profitPerShare = result.target1 - result.entryPrice;
-            const suggestedQty = profitPerShare > 0
-              ? Math.ceil(500 / profitPerShare)
-              : 0;
+            patterns.forEach(p => {
+              // Calculate suggested qty to earn ₹500 at T1
+              const profitPerShare = p.target1 - p.entryPrice;
+              const suggestedQty = profitPerShare > 0
+                ? Math.ceil(500 / profitPerShare)
+                : 0;
 
-            results.push({
-              rank: 0,
-              symbol,
-              exchange: 'NSE',
-              pattern: result.pattern,
-              score: result.score,
-              confidence: result.confidence,
-              trendStrength: result.trendStrength,
-              volumeSignal: result.volumeSignal,
-              currentPrice: result.currentPrice,
-              pivotPrice: result.pivotPrice,
-              entryPrice: result.entryPrice,
-              stopLoss: result.stopLoss,
-              target1: result.target1,
-              target2: result.target2,
-              target3: result.target3,
-              riskReward: result.riskReward,
-              riskPct: result.riskPct,
-              contractions: result.contractions,
-              suggestedQty,
-              notes: result.notes,
+              results.push({
+                rank: 0,
+                symbol,
+                exchange: 'NSE',
+                pattern: p.pattern,
+                score: p.score,
+                confidence: p.confidence,
+                trendStrength: p.trendStrength,
+                volumeSignal: p.volumeSignal,
+                currentPrice: p.currentPrice,
+                pivotPrice: p.pivotPrice,
+                entryPrice: p.entryPrice,
+                stopLoss: p.stopLoss,
+                target1: p.target1,
+                target2: p.target2,
+                target3: p.target3,
+                riskReward: p.riskReward,
+                riskPct: p.riskPct,
+                contractions: p.contractions,
+                suggestedQty,
+                notes: p.notes,
+              });
             });
           } catch (err) {
             // Silently skip failed stocks
@@ -217,7 +176,7 @@ export class SwingScannerService {
       id: `scan_${Date.now()}`,
       scannedAt: new Date().toISOString(),
       totalScanned: scanned,
-      results: results.slice(0, 50), // top 50 instead of 30
+      results: results.slice(0, 150), // increased from 50 to 150
     };
 
     this.cache.set(userId, run);
@@ -231,26 +190,56 @@ export class SwingScannerService {
     return run;
   }
 
-  async getLastScan(userId: string): Promise<ScanRun | null> {
-    // Return in-memory cache first
-    if (this.cache.has(userId)) return this.cache.get(userId)!;
+  async getLastScan(userId: string, query: { page?: number; pageSize?: number; pattern?: string; sortBy?: string } = {}): Promise<any> {
+    const { page = 1, pageSize = 30, pattern, sortBy = 'score' } = query;
+    const skip = (page - 1) * pageSize;
 
-    // Fallback: load from DB
-    const rows = await (this.prisma as any).swingScan.findMany({
+    // 1. Find the latest scan timestamp for this user
+    const lastResult = await (this.prisma as any).swingScan.findFirst({
       where: { userId },
       orderBy: { scannedAt: 'desc' },
-      take: 30,
-    }).catch(() => []);
+      select: { scannedAt: true },
+    }).catch(() => null);
 
-    if (!rows || rows.length === 0) return null;
+    if (!lastResult) return null;
+    const scanDate = lastResult.scannedAt;
 
-    const scanDate = rows[0].scannedAt;
+    // 2. Build where clause
+    const where: any = { 
+      userId, 
+      scannedAt: scanDate 
+    };
+    if (pattern && pattern !== 'ALL') {
+      where.pattern = pattern;
+    }
+
+    // 3. Build sorting
+    const orderBy: any = {};
+    if (sortBy === 'riskPct') orderBy.riskPct = 'asc';
+    else if (sortBy === 'riskReward') orderBy.riskReward = 'desc';
+    else orderBy.score = 'desc';
+
+    // 4. Fetch results and total count
+    const [rows, totalCount] = await Promise.all([
+      (this.prisma as any).swingScan.findMany({
+        where,
+        orderBy,
+        skip,
+        take: pageSize,
+      }),
+      (this.prisma as any).swingScan.count({ where }),
+    ]).catch(() => [[], 0]);
+
     return {
       id: `scan_${new Date(scanDate).getTime()}`,
       scannedAt: scanDate.toISOString(),
-      totalScanned: rows.length,
+      totalScanned: 500, // Approximate total stocks checked
+      totalResults: totalCount,
+      page,
+      pageSize,
+      totalPages: Math.ceil(totalCount / pageSize),
       results: rows.map((r: any, i: number) => ({
-        rank: i + 1,
+        rank: skip + i + 1,
         symbol: r.symbol,
         exchange: r.exchange,
         pattern: r.pattern,

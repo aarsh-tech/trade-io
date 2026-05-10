@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -13,9 +13,9 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const features = [
-  { icon: TrendingUp, title: "Live Strategy Execution", desc: "Fire orders in real-time across multiple brokers" },
-  { icon: BarChart2, title: "Advanced Backtesting", desc: "Simulate 3-month historical data with detailed analytics" },
-  { icon: Shield, title: "Secure & Encrypted", desc: "AES-256 encryption for all broker credentials" },
+  { icon: TrendingUp, title: "Intraday Momentum Scanner", desc: "Real-time scanning for high-probability momentum setups across the market." },
+  { icon: BarChart2, title: "Autonomous Strategy Engine", desc: "Execute 15-Min Breakout, EMA-VWAP, and RSI strategies automatically." },
+  { icon: Shield, title: "Professional Order Management", desc: "Precision order window with real-time margin tracking and Kite integration." },
 ];
 
 export default function LoginPage() {
@@ -57,12 +57,12 @@ export default function LoginPage() {
         <div className="relative z-10 space-y-8">
           <div>
             <h2 className="text-4xl font-bold leading-tight mb-4 text-slate-900">
-              Institutional-grade <br />
-              <span className="text-blue-600">algo trading</span> <br />
+              Smart & Autonomous <br />
+              <span className="text-blue-600">intraday trading</span> <br />
               for everyone.
             </h2>
             <p className="text-slate-500 text-lg max-w-md">
-              Build, backtest, and deploy your strategies across major brokers from one unified professional interface.
+              Scan, analyze, and execute high-momentum strategies across your favorite brokers from one professional interface.
             </p>
           </div>
 

@@ -139,8 +139,8 @@ export const orderApi = {
     api.get("/orders", { params }),
 };
 
-// ─── Swing Scanner ────────────────────────────────────────────────────────────
 export const swingApi = {
   run: () => api.post("/swing-scanner/run"),
-  last: () => api.get("/swing-scanner/last"),
+  last: (params?: { page?: number; pageSize?: number; pattern?: string; sortBy?: string }) => 
+    api.get("/swing-scanner/last", { params }),
 };

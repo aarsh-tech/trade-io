@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import {
   Zap, RefreshCw, Loader2, TrendingUp, TrendingDown,
   ShieldAlert, Target, ArrowUpRight, ChevronDown, ChevronUp,
-  BarChart2, Volume2, Star, Rocket, Info,
+  BarChart2, Volume2, Star, Rocket, Info, Share2
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -38,6 +38,31 @@ function PickCard({ r, targetRs }: { r: ScanResult; targetRs: number }) {
   const qty = profitPerShare > 0 ? Math.ceil(targetRs / profitPerShare) : 0;
   const capital = qty * r.entryPrice;
   const stopLossAmount = qty * (r.entryPrice - r.stopLoss);
+
+  const handleShare = () => {
+    const text = `🚀 *Intraday Momentum Pick*
+Stock: *${r.symbol}* (${r.exchange})
+Current Price: ₹${fmt(r.currentPrice)}
+
+✅ *Levels:*
+Entry: Above ₹${fmt(r.entryPrice)}
+Stop Loss: ₹${fmt(r.stopLoss)} (${r.riskPct.toFixed(1)}% Risk)
+
+🎯 *Targets:*
+Target 1 (3%): ₹${fmt(r.target1)}
+Target 2 (5%): ₹${fmt(r.target2)}
+Target 3 (10%): ₹${fmt(r.target3)}
+
+📊 *Plan (Goal ₹${targetRs.toLocaleString()}):*
+Qty: ${qty} shares
+Capital: ₹${Math.round(capital).toLocaleString("en-IN")}
+Risk Reward: 2:1
+
+_Powered by TradeIO Intelligence_`;
+
+    navigator.clipboard.writeText(text);
+    toast.success("✅ Momentum setup copied to clipboard!");
+  };
 
   return (
     <div className={cn(
@@ -72,7 +97,16 @@ function PickCard({ r, targetRs }: { r: ScanResult; targetRs: number }) {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Momentum Score</div>
+            <div className="flex items-center justify-end gap-2 mb-1">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Score</span>
+              <button
+                onClick={handleShare}
+                className="p-1 rounded bg-slate-50 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 transition-colors border border-slate-100"
+                title="Copy for WhatsApp"
+              >
+                <Share2 className="h-3 w-3" />
+              </button>
+            </div>
             <div className={cn(
               "text-3xl font-black italic tracking-tighter leading-none",
               r.score >= 85 ? "text-indigo-600" : r.score >= 75 ? "text-emerald-500" : "text-slate-400"
@@ -192,12 +226,13 @@ export default function IntradayPicksPage() {
 
   const loadLast = useCallback(async () => {
     try {
-      const res = await swingApi.last();
+      // Use server-side filtering for INTRADAY_MOMENTUM
+      const res = await swingApi.last({
+        pattern: "INTRADAY_MOMENTUM",
+        pageSize: 100 // Get a larger set for momentum picks
+      });
       if (res.data?.data) {
-        // Filter only Intraday Momentum picks
-        const data = res.data.data;
-        data.results = data.results.filter((r: any) => r.pattern === "INTRADAY_MOMENTUM");
-        setScan(data);
+        setScan(res.data.data);
       }
     } catch { /* ignore */ }
     finally { setInitialLoad(false); }
@@ -209,16 +244,22 @@ export default function IntradayPicksPage() {
     setLoading(true);
     toast.info("Analyzing market momentum for 3-10% breakout candidates...");
     try {
-      const res = await swingApi.run();
-      const data = res.data?.data;
-      if (data) {
-        data.results = data.results.filter((r: any) => r.pattern === "INTRADAY_MOMENTUM");
-        setScan(data);
-      }
-      toast.success(`Analysis complete! Found ${data?.results?.length ?? 0} high-probability picks.`);
+      await swingApi.run();
+      toast.success("✅ Market analysis initiated! Refreshing results...");
+      
+      // Wait a bit for background scan to finish/update
+      setTimeout(async () => {
+        const res = await swingApi.last({
+          pattern: "INTRADAY_MOMENTUM",
+          pageSize: 100
+        });
+        if (res.data?.data) {
+          setScan(res.data.data);
+        }
+        setLoading(false);
+      }, 3000);
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? "Analysis failed. Connect Zerodha first.");
-    } finally {
       setLoading(false);
     }
   };
