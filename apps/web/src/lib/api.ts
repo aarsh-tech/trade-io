@@ -67,7 +67,10 @@ export const authApi = {
     api.post("/auth/register", data),
   refresh: (refreshToken: string) =>
     api.post("/auth/refresh", { refreshToken }),
-  logout: () => api.post("/auth/logout"),
+  logout: () => {
+    const refreshToken = typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
+    return api.post("/auth/logout", { refreshToken });
+  },
   setup2fa: () => api.post("/auth/2fa/setup"),
   verify2fa: (code: string) => api.post("/auth/2fa/verify", { code }),
   disable2fa: () => api.post("/auth/2fa/disable"),
