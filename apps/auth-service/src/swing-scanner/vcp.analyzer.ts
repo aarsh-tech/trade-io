@@ -9,7 +9,7 @@ export interface DailyCandle {
   volume: number;
 }
 
-export type PatternType = 'VCP' | 'ROCKET_BASE' | 'TIGHT_AREA' | 'INTRADAY_MOMENTUM';
+export type PatternType = 'VCP' | 'ROCKET_BASE' | 'TIGHT_AREA' | 'INTRADAY_MOMENTUM' | 'DAILY_INSIDE';
 
 export interface PatternResult {
   pattern: PatternType;
@@ -170,12 +170,15 @@ export function detectVCP(candles: DailyCandle[]): PatternResult | null {
 
   const baseLow    = Math.min(...lows.map(l => l.price));
   const entryPrice = parseFloat((pivot * 1.005).toFixed(2));
-  const stopLoss   = parseFloat((baseLow * 0.985).toFixed(2));
+  let stopLoss   = parseFloat((baseLow * 0.985).toFixed(2));
+  if (entryPrice - stopLoss > entryPrice * 0.05) {
+    stopLoss = parseFloat((entryPrice * 0.95).toFixed(2));
+  }
   const riskPts    = Math.max(0.01, entryPrice - stopLoss);
   const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
 
   // Relaxed from 15 to 20
-  if (riskPct > 20) return null;
+  if (riskPct > 5.1) return null;
 
   const target1    = parseFloat((entryPrice + riskPts).toFixed(2));
   const target2    = parseFloat((entryPrice + riskPts * 2).toFixed(2));
@@ -254,11 +257,14 @@ export function detectRocketBase(candles: DailyCandle[]): PatternResult | null {
   if (currentPrice < baseHigh * 0.94) return null;
 
   const entryPrice = parseFloat((baseHigh * 1.003).toFixed(2));
-  const stopLoss   = parseFloat((baseLow * 0.985).toFixed(2));
+  let stopLoss   = parseFloat((baseLow * 0.985).toFixed(2));
+  if (entryPrice - stopLoss > entryPrice * 0.05) {
+    stopLoss = parseFloat((entryPrice * 0.95).toFixed(2));
+  }
   const riskPts    = Math.max(0.01, entryPrice - stopLoss);
   const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
   // Relaxed from 15 to 20
-  if (riskPct > 20) return null;
+  if (riskPct > 5.1) return null;
 
   const target1 = parseFloat((entryPrice + riskPts).toFixed(2));
   const target2 = parseFloat((entryPrice + riskPts * 2).toFixed(2));
@@ -323,11 +329,14 @@ export function detectTightArea(candles: DailyCandle[]): PatternResult | null {
     volRatio < 0.75 ? 'DRYING' : volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
 
   const entryPrice = parseFloat((baseHigh * 1.003).toFixed(2));
-  const stopLoss   = parseFloat((baseLow * 0.985).toFixed(2));
+  let stopLoss   = parseFloat((baseLow * 0.985).toFixed(2));
+  if (entryPrice - stopLoss > entryPrice * 0.05) {
+    stopLoss = parseFloat((entryPrice * 0.95).toFixed(2));
+  }
   const riskPts    = Math.max(0.01, entryPrice - stopLoss);
   const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
   // Relaxed from 12 to 18
-  if (riskPct > 18) return null;
+  if (riskPct > 5.1) return null;
 
   const target1 = parseFloat((entryPrice + riskPts).toFixed(2));
   const target2 = parseFloat((entryPrice + riskPts * 2).toFixed(2));
@@ -424,6 +433,60 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
   };
 }
 
+export function detectDailyInsideCandle(candles: DailyCandle[]): PatternResult | null {
+  if (candles.length < 3) return null;
+  const n = candles.length - 1;
+
+  let insideIdx = -1;
+  let motherIdx = -1;
+
+  // Require high > low to avoid 0-range synthetic weekend/holiday candles
+  if (candles[n].high > candles[n].low && candles[n].high <= candles[n - 1].high && candles[n].low >= candles[n - 1].low) {
+    insideIdx = n;
+    motherIdx = n - 1;
+  } else if (candles[n - 1].high > candles[n - 1].low && candles[n - 1].high <= candles[n - 2].high && candles[n - 1].low >= candles[n - 2].low) {
+    // Check previous day (useful for weekends or when a live synthetic candle is appended)
+    insideIdx = n - 1;
+    motherIdx = n - 2;
+  }
+
+  if (insideIdx === -1) return null;
+
+  const mother = candles[motherIdx];
+
+  const entryPrice = parseFloat((mother.high * 1.002).toFixed(2));
+  let stopLoss = parseFloat((mother.low * 0.998).toFixed(2));
+  if (entryPrice - stopLoss > entryPrice * 0.05) {
+    stopLoss = parseFloat((entryPrice * 0.95).toFixed(2));
+  }
+  const riskPts = Math.max(0.01, entryPrice - stopLoss);
+  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
+
+  if (riskPct > 5.1) return null;
+
+  const target1 = parseFloat((entryPrice + riskPts * 1.5).toFixed(2));
+  const target2 = parseFloat((entryPrice + riskPts * 2.5).toFixed(2));
+  const target3 = parseFloat((entryPrice + riskPts * 3.5).toFixed(2));
+
+  return {
+    pattern: 'DAILY_INSIDE',
+    score: 80, // boosted score so it's prioritized over some weaker setups
+    confidence: 'HIGH', // increased confidence since it's a tight setup
+    currentPrice: candles[n].close,
+    pivotPrice: mother.high,
+    entryPrice, stopLoss, target1, target2, target3,
+    riskReward: 1.5, riskPct,
+    trendStrength: 'MODERATE',
+    volumeSignal: 'AVERAGE',
+    contractions: 0,
+    notes: [
+      `1-Day Inside Candle Setup`,
+      `Mother Candle Breakout Pivot: ₹${mother.high.toFixed(2)}`,
+      `Risk: ${riskPct.toFixed(1)}%`
+    ]
+  };
+}
+
 // ─── Run all patterns, return best ───────────────────────────────────────────
 
 export function analyzeStock(_symbol: string, candles: DailyCandle[]): PatternResult | null {
@@ -433,11 +496,13 @@ export function analyzeStock(_symbol: string, candles: DailyCandle[]): PatternRe
   const rocket = detectRocketBase(candles);
   const tight  = detectTightArea(candles);
   const momentum = detectIntradayMomentum(candles);
+  const dailyInside = detectDailyInsideCandle(candles);
 
   if (vcp)    results.push(vcp);
   if (rocket) results.push(rocket);
   if (tight)  results.push(tight);
   if (momentum) results.push(momentum);
+  if (dailyInside) results.push(dailyInside);
 
   if (results.length === 0) return null;
 

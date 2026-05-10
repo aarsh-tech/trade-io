@@ -31,6 +31,7 @@ const PATTERN_META: Record<string, { label: string; color: string; bg: string }>
   ROCKET_BASE: { label: "Rocket Base", color: "text-orange-700", bg: "bg-orange-50 border-orange-200" },
   TIGHT_AREA: { label: "Tight Area", color: "text-blue-700", bg: "bg-blue-50 border-blue-200" },
   CUP_HANDLE: { label: "Cup & Handle", color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
+  DAILY_INSIDE: { label: "1D Inside", color: "text-rose-700", bg: "bg-rose-50 border-rose-200" },
 };
 
 const CONFIDENCE_COLOR: Record<string, string> = {
@@ -68,12 +69,12 @@ function ResultCard({ r, targetRs }: { r: ScanResult; targetRs: number }) {
 
   return (
     <div className={cn(
-      "bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all duration-200",
+      "bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden relative",
       r.confidence === "HIGH" ? "border-emerald-200" : "border-slate-200",
     )}>
       {/* Top accent */}
       {r.confidence === "HIGH" && (
-        <div className="h-0.5 rounded-t-2xl bg-gradient-to-r from-emerald-400 to-teal-400" />
+        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-400 to-teal-400" />
       )}
 
       <div className="p-4 space-y-3">
@@ -198,7 +199,7 @@ export default function SwingScannerPage() {
   const [scan, setScan] = useState<ScanRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
-  const [filter, setFilter] = useState<"ALL" | "VCP" | "ROCKET_BASE" | "TIGHT_AREA">("ALL");
+  const [filter, setFilter] = useState<"ALL" | "VCP" | "ROCKET_BASE" | "TIGHT_AREA" | "DAILY_INSIDE">("ALL");
   const [sortBy, setSortBy] = useState<"score" | "riskPct" | "riskReward">("score");
   const [targetRs, setTargetRs] = useState(500);
 
@@ -246,7 +247,7 @@ export default function SwingScannerPage() {
             Swing Scanner
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            VCP · Rocket Base · Tight Area — 2-3 day setups with ₹500 target
+            VCP · Rocket Base · Tight Area · 1D Inside — 2-3 day setups with ₹500 target
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -298,7 +299,7 @@ export default function SwingScannerPage() {
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
           {/* Pattern filter */}
           <div className="flex gap-2 flex-wrap">
-            {(["ALL", "VCP", "ROCKET_BASE", "TIGHT_AREA"] as const).map(f => (
+            {(["ALL", "VCP", "ROCKET_BASE", "TIGHT_AREA", "DAILY_INSIDE"] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -312,7 +313,8 @@ export default function SwingScannerPage() {
                 {f === "ALL" ? `All (${scan.results.length})` :
                   f === "VCP" ? `VCP (${scan.results.filter(r => r.pattern === "VCP").length})` :
                     f === "ROCKET_BASE" ? `Rocket (${scan.results.filter(r => r.pattern === "ROCKET_BASE").length})` :
-                      `Tight (${scan.results.filter(r => r.pattern === "TIGHT_AREA").length})`}
+                      f === "TIGHT_AREA" ? `Tight (${scan.results.filter(r => r.pattern === "TIGHT_AREA").length})` :
+                        `1D Inside (${scan.results.filter(r => r.pattern === "DAILY_INSIDE").length})`}
               </button>
             ))}
           </div>
@@ -390,6 +392,7 @@ export default function SwingScannerPage() {
           <p>• <strong>VCP</strong> — Volatility Contraction Pattern (Minervini). Multiple tightening swings → explosive breakout</p>
           <p>• <strong>Rocket Base</strong> — Tight 8-25 day base after a strong prior move</p>
           <p>• <strong>Tight Area</strong> — 15-day close consolidation with shrinking volume</p>
+          <p>• <strong>1D Inside</strong> — A single Daily inside candle. Good for quick 1-2 day breakouts</p>
           <p className="text-amber-600 font-medium mt-2">⚠ Always verify with your own analysis. Past patterns do not guarantee future results.</p>
         </div>
       )}

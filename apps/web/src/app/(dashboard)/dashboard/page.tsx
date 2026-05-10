@@ -1,14 +1,18 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   LayoutGrid,
   History,
   Activity,
   ArrowUpCircle,
   PieChart as PieChartIcon,
-  Loader2
+  Loader2,
+  Zap
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import { useDashboard } from "@/hooks/useDashboard";
 import { usePortfolio } from "@/hooks/usePortfolio";
@@ -54,9 +58,52 @@ interface Broker {
   isActive: boolean;
 }
 
+function useMarketStatus() {
+  const [status, setStatus] = React.useState<"OPEN" | "CLOSED" | "PRE-OPEN">("CLOSED");
+
+  React.useEffect(() => {
+    const checkStatus = () => {
+      const now = new Date();
+      const str = now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+      const istDate = new Date(str);
+      const day = istDate.getDay();
+      const hours = istDate.getHours();
+      const minutes = istDate.getMinutes();
+
+      if (day === 0 || day === 6) {
+        setStatus("CLOSED");
+        return;
+      }
+
+      const timeInMinutes = hours * 60 + minutes;
+      const marketOpen = 9 * 60 + 15;
+      const preOpen = 9 * 60;
+      const marketClose = 15 * 60 + 30;
+
+      if (timeInMinutes >= marketOpen && timeInMinutes < marketClose) {
+        setStatus("OPEN");
+      } else if (timeInMinutes >= preOpen && timeInMinutes < marketOpen) {
+        setStatus("PRE-OPEN");
+      } else {
+        setStatus("CLOSED");
+      }
+    };
+
+    checkStatus();
+    const interval = setInterval(checkStatus, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return status;
+}
+
 export default function DashboardPage() {
   const { isLoading: isDashboardLoading } = useDashboard();
   const { brokers } = useBrokers();
+  const marketStatus = useMarketStatus();
+
+  const [showRenewModal, setShowRenewModal] = useState(false);
+  const [requestToken, setRequestToken] = useState("");
 
   // Order Window State
   const [orderState, setOrderState] = React.useState<{
@@ -78,7 +125,21 @@ export default function DashboardPage() {
     return brokerList.find(b => b.isActive && b.broker === 'ZERODHA') || brokerList.find(b => b.isActive);
   }, [brokers]);
 
-  const { holdings, margins, isLoading: isPortfolioLoading } = usePortfolio(activeBroker?.id);
+  const { holdings, margins, isLoading: isPortfolioLoading, renewSession, isRenewing, getLoginUrl } = usePortfolio(activeBroker?.id);
+
+  const handleOpenLogin = async () => {
+    const url = await getLoginUrl();
+    if (url) window.open(url, "_blank");
+  };
+
+  const handleRenewSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await renewSession(requestToken);
+      setShowRenewModal(false);
+      setRequestToken("");
+    } catch { }
+  };
 
   // Calculate Real Portfolio Stats
   const stats = useMemo(() => {
@@ -150,11 +211,20 @@ export default function DashboardPage() {
             Hi, Aarsh <span className="wave">👋</span>
           </h1>
           <div className="flex items-center gap-4">
+            {activeBroker && (
+              <Button variant="outline" size="sm" className="gap-2 border-orange-200 text-orange-700 bg-orange-50 hover:bg-orange-100" onClick={() => setShowRenewModal(true)}>
+                <Zap className="h-4 w-4" /> Daily Login
+              </Button>
+            )}
             <div className="text-right">
               <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Market Status</p>
               <div className="flex items-center gap-1.5 justify-end">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-xs font-bold text-slate-700 uppercase">Live</span>
+                <div className={cn(
+                  "h-2 w-2 rounded-full",
+                  marketStatus === "OPEN" ? "bg-emerald-500 animate-pulse" :
+                  marketStatus === "PRE-OPEN" ? "bg-orange-500 animate-pulse" : "bg-slate-300"
+                )} />
+                <span className="text-xs font-bold text-slate-700 uppercase">{marketStatus}</span>
               </div>
             </div>
           </div>
@@ -340,6 +410,65 @@ export default function DashboardPage() {
           100% { transform: rotate( 0.0deg) }
         }
       `}</style>
+
+      {/* Renew Session Modal */}
+      <Dialog open={showRenewModal} onOpenChange={setShowRenewModal}>
+        <DialogContent className="max-w-md p-0 overflow-hidden border-orange-100">
+          <DialogHeader className="px-6 pt-6 pb-2">
+            <div className="h-12 w-12 rounded-full bg-orange-50 flex items-center justify-center mb-3">
+              <Zap className="h-6 w-6 text-orange-500" />
+            </div>
+            <DialogTitle className="text-xl font-bold">Broker Daily Login</DialogTitle>
+            <DialogDescription className="text-xs font-medium text-slate-500 leading-relaxed">
+              Your broker requires a fresh session every day. Follow these steps:
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="px-6 py-4 space-y-4">
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0 mt-0.5">1</div>
+                <p className="text-[12.5px] text-slate-600 font-medium">Click the button below to open the broker login page.</p>
+              </div>
+              <Button onClick={handleOpenLogin} className="w-full h-11 bg-orange-500 hover:bg-orange-600 text-white font-bold shadow-sm">
+                Open Broker Login Page
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0 mt-0.5">2</div>
+                <p className="text-[12.5px] text-slate-600 font-medium leading-relaxed">
+                  After logging in, copy any session token/code provided by the broker and paste it below.
+                </p>
+              </div>
+              <form onSubmit={handleRenewSession} className="space-y-3 pt-1">
+                <Button type="button" onClick={() => handleRenewSession({ preventDefault: () => { } } as any)} disabled={isRenewing} className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md">
+                  {isRenewing ? "Logging in..." : "Run Automated Login"}
+                </Button>
+                <div className="flex items-center gap-2 py-2">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">OR PASTE MANUALLY</span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
+                <Input
+                  value={requestToken}
+                  onChange={(e) => setRequestToken(e.target.value)}
+                  placeholder="Paste token or session ID here"
+                  className="h-11 border-slate-200 focus:ring-orange-500 focus:border-orange-500"
+                />
+                <Button type="submit" disabled={isRenewing || !requestToken} className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold">
+                  {isRenewing ? "Activating..." : "2. Activate Manual Session"}
+                </Button>
+              </form>
+            </div>
+          </div>
+
+          <div className="bg-slate-50 p-6 flex justify-end">
+            <Button type="button" variant="ghost" className="text-slate-500 font-semibold" onClick={() => setShowRenewModal(false)}>Cancel</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Kite Order Window */}
       <OrderWindow
