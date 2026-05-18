@@ -42,7 +42,7 @@ export class StrategyService {
         },
         executions: {
           orderBy: { startedAt: 'desc' },
-          take: 10,
+          take: 50,
           select: {
             id: true,
             status: true,
@@ -116,7 +116,7 @@ export class StrategyService {
       where: { strategyId },
       orderBy: { startedAt: 'desc' },
       include: { orders: true },
-      take: 20,
+      take: 100,
     });
   }
 

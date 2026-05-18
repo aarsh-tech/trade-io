@@ -33,11 +33,11 @@ export async function autoSelectStock(
     if (i.instrument_type === 'EQ') tokenMap.set(i.tradingsymbol, i.instrument_token);
   });
 
-  // ── Get Live Quotes (LTP) ────────────────────────────────────────────────
+  // ── Get Live Quotes (LTP, OHLC, Volume) ────────────────────────────────────────────────
   const ltpSymbols = TOP_LIQUID_STOCKS.map(s => `NSE:${s}`);
-  let liveQuotes: Record<string, { last_price: number }> = {};
+  let liveQuotes: Record<string, any> = {};
   try {
-    liveQuotes = await kite.getLTP(ltpSymbols);
+    liveQuotes = await kite.getQuote(ltpSymbols);
   } catch (err) {
     logger?.warn(`Live quotes fetch failed in auto-picker: ${err.message}`);
   }
@@ -70,20 +70,29 @@ export async function autoSelectStock(
         }));
 
         // ── Inject Live Data ────────────────────────────────────────────────
-        const liveLtp = liveQuotes[`NSE:${symbol}`]?.last_price;
-        if (liveLtp) {
+        const quote = liveQuotes[`NSE:${symbol}`];
+        if (quote && quote.last_price) {
+          const liveLtp = quote.last_price;
+          const liveOhlc = quote.ohlc || {};
+          const liveVol = quote.volume || 0;
+
           const lastCandle = candles[candles.length - 1];
           const now = new Date();
           const isToday = lastCandle.date.toDateString() === now.toDateString();
 
           if (isToday) {
             lastCandle.close = liveLtp;
-            lastCandle.high = Math.max(lastCandle.high, liveLtp);
-            lastCandle.low = Math.min(lastCandle.low, liveLtp);
+            lastCandle.high = Math.max(lastCandle.high, liveLtp, liveOhlc.high || liveLtp);
+            lastCandle.low = Math.min(lastCandle.low, liveLtp, liveOhlc.low || liveLtp);
+            lastCandle.volume = Math.max(lastCandle.volume, liveVol);
           } else if (now.getHours() >= 9) {
             candles.push({
-              date: now, open: liveLtp, high: liveLtp, low: liveLtp, close: liveLtp,
-              volume: lastCandle.volume,
+              date: now,
+              open: liveOhlc.open || liveLtp,
+              high: Math.max(liveOhlc.high || liveLtp, liveLtp),
+              low: Math.min(liveOhlc.low || liveLtp, liveLtp),
+              close: liveLtp,
+              volume: liveVol || lastCandle.volume,
             });
           }
         }
@@ -119,7 +128,6 @@ export async function autoSelectStock(
   // ── Smarter fallback: pick highest-liquid stock that has live price data ──
   logger?.warn(`⚠ No intraday momentum candidates found from ${TOP_LIQUID_STOCKS.length} stocks. Using liquid fallback.`);
 
-  // Pick the first liquid stock that has a live quote (avoid random hardcoded stock)
   const fallbackSymbols = ['HDFCBANK', 'ICICIBANK', 'AXISBANK', 'SBIN', 'TCS', 'INFY', 'RELIANCE'];
   for (const sym of fallbackSymbols) {
     const key = `NSE:${sym}`;

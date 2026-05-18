@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { FlaskConical, Play, Clock, TrendingUp, Percent, ChevronsDown, History, Loader2, Search } from "lucide-react";
+import { FlaskConical, Play, Clock, TrendingUp, Percent, ChevronsDown, History, Loader2, Search, Download } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell
@@ -13,6 +13,10 @@ import {
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import { backtestApi, strategyApi, marketApi } from "@/lib/api";
 import { toast } from "sonner";
+// @ts-ignore
+import jsPDF from "jspdf";
+// @ts-ignore
+import autoTable from "jspdf-autotable";
 
 export default function BacktestPage() {
   const [strategies, setStrategies] = useState<any[]>([]);
@@ -45,8 +49,8 @@ export default function BacktestPage() {
       if (data.data.length > 0) {
         const s = data.data[0];
         const config = typeof s.config === 'string' ? JSON.parse(s.config) : s.config;
-        setForm(f => ({ 
-          ...f, 
+        setForm(f => ({
+          ...f,
           strategyId: s.id,
           symbol: config.symbol,
           exchange: config.exchange
@@ -100,7 +104,7 @@ export default function BacktestPage() {
   async function runBacktest(e: React.FormEvent) {
     e.preventDefault();
     if (!form.strategyId) return toast.error("Please select a strategy");
-    
+
     setLoading(true);
     setResult(null);
     try {
@@ -110,9 +114,9 @@ export default function BacktestPage() {
         fromDate: new Date(form.fromDate).toISOString(),
         toDate: new Date(form.toDate).toISOString(),
       });
-      
+
       toast.success("Backtest started! Checking results...");
-      
+
       let attempts = 0;
       const checkStatus = async () => {
         const { data: historyData } = await backtestApi.history();
@@ -134,7 +138,7 @@ export default function BacktestPage() {
           toast.info("Backtest is taking longer than expected. Check history later.");
         }
       };
-      
+
       setTimeout(checkStatus, 3000);
     } catch (err: any) {
       setLoading(false);
@@ -150,12 +154,70 @@ export default function BacktestPage() {
   }, [{ date: "Start", value: result.initialCapital }]) : [];
 
   const monthlyPnlMap = result ? result.trades.reduce((acc: any, t: any) => {
-    const month = new Date(t.date).toLocaleString('default', { month: 'short' });
-    acc[month] = (acc[month] || 0) + t.pnl;
+    const d = new Date(t.date);
+    const month = d.toLocaleString('default', { month: 'short', year: '2-digit' });
+    const sortKey = d.getFullYear() * 100 + d.getMonth();
+
+    if (!acc[sortKey]) {
+      acc[sortKey] = { month, pnl: 0, sortKey };
+    }
+    acc[sortKey].pnl += t.pnl;
     return acc;
   }, {}) : {};
 
-  const monthlyPnl = Object.entries(monthlyPnlMap).map(([month, pnl]) => ({ month, pnl: pnl as number }));
+  const monthlyPnl = Object.values(monthlyPnlMap)
+    .sort((a: any, b: any) => a.sortKey - b.sortKey)
+    .map((item: any) => ({ month: item.month, pnl: item.pnl }));
+
+  const exportToPDF = () => {
+    if (!result || !result.trades || result.trades.length === 0) {
+      toast.error("No trades to export");
+      return;
+    }
+
+    const doc = new jsPDF();
+
+    // Header
+    doc.setFontSize(20);
+    doc.text(`Backtest Report: ${form.symbol}`, 14, 22);
+
+    doc.setFontSize(11);
+    doc.text(`Strategy: ${strategies.find(s => s.id === form.strategyId)?.name || 'Custom'}`, 14, 32);
+    doc.text(`Period: ${form.fromDate} to ${form.toDate}`, 14, 38);
+    doc.text(`Capital: Rs. ${formatCurrency(result.initialCapital)}`, 14, 44);
+    doc.text(`Net P&L: Rs. ${formatCurrency(result.netPnl)} (${result.netPnlPercent.toFixed(2)}%)`, 14, 50);
+    doc.text(`Win Rate: ${result.winRate.toFixed(2)}%`, 14, 56);
+    doc.text(`Total Trades: ${result.totalTrades}`, 14, 62);
+
+    // Table
+    const tableColumn = ["Date", "Type", "Entry", "Exit", "P&L", "Result"];
+    const tableRows = result.trades.map((t: any) => [
+      t.date,
+      t.type,
+      t.entry.toFixed(2),
+      t.exit.toFixed(2),
+      t.pnl.toFixed(2),
+      t.result
+    ]);
+
+    autoTable(doc, {
+      startY: 70,
+      head: [tableColumn],
+      body: tableRows,
+      theme: 'striped',
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [41, 128, 185] },
+      didParseCell: function (data) {
+        if (data.section === 'body' && data.column.index === 4) {
+          const pnl = parseFloat(data.cell.raw as string);
+          if (pnl > 0) data.cell.styles.textColor = [39, 174, 96];
+          if (pnl < 0) data.cell.styles.textColor = [192, 57, 43];
+        }
+      }
+    });
+
+    doc.save(`Backtest_${form.symbol}_${new Date().getTime()}.pdf`);
+  };
 
   return (
     <div className="space-y-6 animate-[fade-up_0.4s_ease_both]">
@@ -190,8 +252,8 @@ export default function BacktestPage() {
                       const s = strategies.find(strat => strat.id === id);
                       if (s) {
                         const config = typeof s.config === 'string' ? JSON.parse(s.config) : s.config;
-                        setForm(f => ({ 
-                          ...f, 
+                        setForm(f => ({
+                          ...f,
                           strategyId: id,
                           symbol: config.symbol,
                           exchange: config.exchange
@@ -210,8 +272,8 @@ export default function BacktestPage() {
                   <label className="text-sm font-medium block">2. Select Instrument for Backtest</label>
                   <div className="relative">
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input 
-                      placeholder="Search stock or index..." 
+                    <Input
+                      placeholder="Search stock or index..."
                       className="pl-9"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
@@ -232,7 +294,7 @@ export default function BacktestPage() {
                             <p className="text-sm font-bold">{item.symbol}</p>
                             <p className="text-[10px] text-muted-foreground">{item.name}</p>
                           </div>
-                          <Badge  className="text-[10px]">{item.exchange}</Badge>
+                          <Badge className="text-[10px]">{item.exchange}</Badge>
                         </button>
                       ))}
                     </div>
@@ -343,8 +405,8 @@ export default function BacktestPage() {
               {/* KPI row */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 {[
-                  { label: "Net P&L",      value: formatCurrency(result.netPnl), sub: formatPercent(result.netPnlPercent), positive: result.netPnl >= 0, icon: TrendingUp },
-                  { label: "Win Rate",     value: `${result.winRate.toFixed(1)}%`, sub: `${result.totalTrades} Trades`, positive: result.winRate >= 50, icon: Percent },
+                  { label: "Net P&L", value: formatCurrency(result.netPnl), sub: formatPercent(result.netPnlPercent), positive: result.netPnl >= 0, icon: TrendingUp },
+                  { label: "Win Rate", value: `${result.winRate.toFixed(1)}%`, sub: `${result.totalTrades} Trades`, positive: result.winRate >= 50, icon: Percent },
                   { label: "Max Drawdown", value: "---", sub: "coming soon", positive: false, icon: ChevronsDown },
                   { label: "Sharpe Ratio", value: "---", sub: "coming soon", positive: true, icon: Clock },
                 ].map(({ label, value, sub, positive, icon: Icon }) => (
@@ -377,7 +439,7 @@ export default function BacktestPage() {
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="hsl(222 47% 15%)" vertical={false} />
                           <XAxis dataKey="date" tick={{ fill: "hsl(215 20% 55%)", fontSize: 10 }} axisLine={false} tickLine={false} />
-                          <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${(v/1000).toFixed(0)}K`} />
+                          <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
                           <Tooltip formatter={(v: number) => [formatCurrency(v), "Portfolio"]} contentStyle={{ background: "hsl(222 47% 8%)", border: "1px solid hsl(222 47% 15%)", borderRadius: "8px" }} />
                           <Area type="monotone" dataKey="value" stroke="hsl(142 71% 45%)" strokeWidth={2} fill="url(#eq)" />
                         </AreaChart>
@@ -396,7 +458,7 @@ export default function BacktestPage() {
                         <BarChart data={monthlyPnl}>
                           <CartesianGrid strokeDasharray="3 3" stroke="hsl(222 47% 15%)" vertical={false} />
                           <XAxis dataKey="month" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                          <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${(v/1000).toFixed(0)}K`} />
+                          <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
                           <Tooltip formatter={(v: number) => [formatCurrency(v), "P&L"]} contentStyle={{ background: "hsl(222 47% 8%)", border: "1px solid hsl(222 47% 15%)", borderRadius: "8px" }} />
                           <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
                             {monthlyPnl.map((entry, i) => (
@@ -405,6 +467,64 @@ export default function BacktestPage() {
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-base">Trade History</CardTitle>
+                    <Button variant="outline" size="sm" onClick={exportToPDF} className="gap-2 text-xs h-8">
+                      <Download className="h-3.5 w-3.5" />
+                      Export PDF
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="max-h-[400px] overflow-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="text-xs text-[hsl(var(--muted-foreground))] uppercase bg-[hsl(var(--muted)/0.5)] sticky top-0 z-10">
+                          <tr>
+                            <th className="px-4 py-3 font-medium">Date</th>
+                            <th className="px-4 py-3 font-medium">Type</th>
+                            <th className="px-4 py-3 font-medium text-right">Entry</th>
+                            <th className="px-4 py-3 font-medium text-right">Exit</th>
+                            <th className="px-4 py-3 font-medium text-right">P&L</th>
+                            <th className="px-4 py-3 font-medium text-center">Result</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[hsl(var(--border))]">
+                          {result.trades.map((t: any, i: number) => (
+                            <tr key={i} className="hover:bg-[hsl(var(--muted)/0.3)] transition-colors">
+                              <td className="px-4 py-3 whitespace-nowrap">{t.date}</td>
+                              <td className="px-4 py-3">
+                                <Badge variant={t.type === 'LONG' ? 'default' : 'destructive'} className="text-[10px] h-5">
+                                  {t.type}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3 text-right font-medium">{formatCurrency(t.entry)}</td>
+                              <td className="px-4 py-3 text-right font-medium">{formatCurrency(t.exit)}</td>
+                              <td className={cn("px-4 py-3 text-right font-bold", t.pnl >= 0 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--red))]")}>
+                                {t.pnl > 0 ? '+' : ''}{formatCurrency(t.pnl)}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <Badge className={cn("text-[10px] h-5",
+                                  t.result === 'TARGET' ? "border-[hsl(var(--green))] text-[hsl(var(--green))]" :
+                                    t.result === 'SL' ? "border-[hsl(var(--red))] text-[hsl(var(--red))]" :
+                                      "text-[hsl(var(--muted-foreground))]")}>
+                                  {t.result}
+                                </Badge>
+                              </td>
+                            </tr>
+                          ))}
+                          {result.trades.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="px-4 py-8 text-center text-[hsl(var(--muted-foreground))]">
+                                No trades executed in this period
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
                     </div>
                   </CardContent>
                 </Card>
