@@ -291,33 +291,24 @@ class ZerodhaClient implements IBrokerClient {
   async placeGtt(params: import('./interfaces/broker-client.interface').GttParams): Promise<string> {
     try {
       const gttParams = {
+        trigger_type: this.kite.GTT_TYPE_OCO,
         tradingsymbol: params.symbol,
         exchange: params.exchange,
-        transaction_type: params.side,
-        type: this.kite.GTT_TYPE_TWO_LEG || 'two-leg',
-        condition: {
-          exchange: params.exchange,
-          tradingsymbol: params.symbol,
-          trigger_values: [params.slTriggerPrice, params.targetPrice],
-          last_price: params.entryPrice,
-        },
+        trigger_values: [params.slTriggerPrice, params.targetPrice],
+        last_price: params.entryPrice,
         orders: [
           {
-            exchange: params.exchange,
-            tradingsymbol: params.symbol,
             transaction_type: params.side,
-            quantity: Number(params.qty),
             order_type: 'LIMIT',
             product: params.product,
+            quantity: Number(params.qty),
             price: params.slLimitPrice,
           },
           {
-            exchange: params.exchange,
-            tradingsymbol: params.symbol,
             transaction_type: params.side,
-            quantity: Number(params.qty),
             order_type: 'LIMIT',
             product: params.product,
+            quantity: Number(params.qty),
             price: params.targetPrice,
           },
         ],
