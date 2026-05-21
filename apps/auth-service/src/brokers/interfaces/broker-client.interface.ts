@@ -55,6 +55,19 @@ export interface IBrokerClient {
   searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]>;
   getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date): Promise<any[]>;
   getTickSize(symbol: string, exchange: string): Promise<number>;
+  placeGtt(params: GttParams): Promise<string>;
+}
+
+export interface GttParams {
+  symbol: string;
+  exchange: string;
+  side: 'BUY' | 'SELL';
+  product: 'CNC' | 'NRML';
+  qty: number;
+  entryPrice: number;
+  slTriggerPrice: number;
+  slLimitPrice: number;
+  targetPrice: number;
 }
 
 

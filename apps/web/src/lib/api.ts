@@ -113,6 +113,7 @@ export const brokerApi = {
   margins: (id: string) => api.get(`/brokers/${id}/margins`),
   orders: (id: string) => api.get(`/brokers/${id}/orders`),
   placeOrder: (id: string, data: unknown) => api.post(`/brokers/${id}/orders`, data),
+  placeGtt: (id: string, data: unknown) => api.post(`/brokers/${id}/gtt`, data),
   cancelOrder: (id: string, orderId: string) => api.delete(`/brokers/${id}/orders/${orderId}`),
   tickSize: (id: string, symbol: string, exchange: string) =>
     api.get(`/brokers/${id}/tick-size`, { params: { symbol, exchange } }),

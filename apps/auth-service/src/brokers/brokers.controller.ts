@@ -74,6 +74,13 @@ export class BrokersController {
     return { success: true, data: result };
   }
 
+  @Post(':id/gtt')
+  @ApiOperation({ summary: 'Place a GTT order' })
+  async placeGtt(@Request() req, @Param('id') id: string, @Body() gttData: any) {
+    const result = await this.brokersService.placeGtt(req.user.id, id, gttData);
+    return { success: true, data: result };
+  }
+
   @Get(':id/tick-size')
   @ApiOperation({ summary: 'Get tick size for an instrument' })
   async getTickSize(

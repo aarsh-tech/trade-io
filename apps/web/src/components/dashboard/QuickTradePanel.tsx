@@ -248,47 +248,68 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
       setPlacedOrders([...placed]);
       toast.success(`Entry order placed — ${activeStock.symbol}`);
 
-      // Small delay before placing SL & target
+      // Small delay
       await delay(400);
 
-      // ② Stop-Loss order (SL on the opposite side)
-      const slOrder = await brokerApi.placeOrder(selectedBrokerId, {
-        symbol: activeStock.symbol,
-        exchange: activeStock.exchange,
-        side: slSide,
-        product,
-        orderType: "SL",                 // Changed from SL-M
-        variety,
-        qty,
-        price: getSlLimitPrice(slNum, slSide, tickSize),
-        triggerPrice: slNum,
-      });
-      const slId = slOrder.data?.data?.orderId ?? "sl-placed";
-      placed.push(`🛑 Stop-Loss ${slSide} @ ₹${fmt(slNum)} — ${slId}`);
-      setPlacedOrders([...placed]);
-      toast.info(`Stop-loss placed @ ₹${fmt(slNum)}`);
+      if (product === "CNC") {
+        // For Delivery (CNC), Zerodha rejects pending sell orders without holding. We MUST use GTT (OCO).
+        const gttOrder = await brokerApi.placeGtt(selectedBrokerId, {
+          symbol: activeStock.symbol,
+          exchange: activeStock.exchange,
+          side: slSide,
+          product: product,
+          qty,
+          entryPrice: entryNum,
+          slTriggerPrice: slNum,
+          slLimitPrice: getSlLimitPrice(slNum, slSide, tickSize),
+          targetPrice: target1Num,
+        });
+        const gttId = gttOrder.data?.data?.triggerId ?? "gtt-placed";
+        placed.push(`🛑🎯 GTT Stop-Loss & Target Placed — ${gttId}`);
+        setPlacedOrders([...placed]);
+        toast.success(`GTT Target & Stop-loss placed`);
+        setStep("done");
+        toast.success(`🚀 Entry + GTT placed for ${activeStock.symbol}!`);
+      } else {
+        // ② Stop-Loss order (SL on the opposite side)
+        const slOrder = await brokerApi.placeOrder(selectedBrokerId, {
+          symbol: activeStock.symbol,
+          exchange: activeStock.exchange,
+          side: slSide,
+          product,
+          orderType: "SL",                 // Changed from SL-M
+          variety,
+          qty,
+          price: getSlLimitPrice(slNum, slSide, tickSize),
+          triggerPrice: slNum,
+        });
+        const slId = slOrder.data?.data?.orderId ?? "sl-placed";
+        placed.push(`🛑 Stop-Loss ${slSide} @ ₹${fmt(slNum)} — ${slId}`);
+        setPlacedOrders([...placed]);
+        toast.info(`Stop-loss placed @ ₹${fmt(slNum)}`);
 
-      await delay(400);
+        await delay(400);
 
-      // ③ Target 1 order (LIMIT, opposite side)
-      const t1Order = await brokerApi.placeOrder(selectedBrokerId, {
-        symbol: activeStock.symbol,
-        exchange: activeStock.exchange,
-        side: slSide,
-        product,
-        orderType: "LIMIT",
-        variety,
-        qty,
-        price: target1Num,
-        triggerPrice: 0,
-      });
-      const t1Id = t1Order.data?.data?.orderId ?? "t1-placed";
-      placed.push(`🎯 Target 1 ${slSide} @ ₹${fmt(target1Num)} — ${t1Id}`);
-      setPlacedOrders([...placed]);
-      toast.success(`Target order placed @ ₹${fmt(target1Num)}`);
+        // ③ Target 1 order (LIMIT, opposite side)
+        const t1Order = await brokerApi.placeOrder(selectedBrokerId, {
+          symbol: activeStock.symbol,
+          exchange: activeStock.exchange,
+          side: slSide,
+          product,
+          orderType: "LIMIT",
+          variety,
+          qty,
+          price: target1Num,
+          triggerPrice: 0,
+        });
+        const t1Id = t1Order.data?.data?.orderId ?? "t1-placed";
+        placed.push(`🎯 Target 1 ${slSide} @ ₹${fmt(target1Num)} — ${t1Id}`);
+        setPlacedOrders([...placed]);
+        toast.success(`Target order placed @ ₹${fmt(target1Num)}`);
 
-      setStep("done");
-      toast.success(`🚀 All ${3} orders placed for ${activeStock.symbol}!`);
+        setStep("done");
+        toast.success(`🚀 All 3 orders placed for ${activeStock.symbol}!`);
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? "Order placement failed. Check broker session.";
       setErrorMsg(msg);
@@ -520,7 +541,11 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
           <div className="flex items-start gap-2 px-1">
             <Info className="h-3.5 w-3.5 text-slate-300 shrink-0 mt-0.5" />
             <div className="text-[10px] text-slate-400 leading-relaxed">
-              3 orders will be placed: <strong>Entry (SL trigger)</strong> → <strong>Stop-Loss (SL)</strong> → <strong>Target 1 (LIMIT)</strong>. 
+              {activeStock.product === "CNC" ? (
+                <>2 orders will be placed: <strong>Entry (SL trigger)</strong> → <strong>GTT (Stop-Loss & Target)</strong>.</>
+              ) : (
+                <>3 orders will be placed: <strong>Entry (SL trigger)</strong> → <strong>Stop-Loss (SL)</strong> → <strong>Target 1 (LIMIT)</strong>.</>
+              )}
               {getOrderVariety() === "amo" && (
                 <span className="text-amber-500 font-bold ml-1">
                   (Market is closed. Placing as After Market Orders - AMO)

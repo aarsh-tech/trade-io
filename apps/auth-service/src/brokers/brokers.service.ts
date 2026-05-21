@@ -96,6 +96,24 @@ export class BrokersService {
     return { orderId };
   }
 
+  async placeGtt(userId: string, accountId: string, orderData: any) {
+    const acc = await this.prisma.brokerAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+
+    const client = this.factory.createClient(acc);
+    let triggerId: string;
+    
+    try {
+      triggerId = await client.placeGtt(orderData);
+    } catch (err: any) {
+      throw new BadRequestException(err.message || 'Broker failed to place GTT order');
+    }
+
+    return { triggerId };
+  }
+
   async getTickSize(userId: string, accountId: string, symbol: string, exchange: string): Promise<number> {
     const acc = await this.prisma.brokerAccount.findUnique({
       where: { id: accountId },

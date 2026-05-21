@@ -287,6 +287,55 @@ class ZerodhaClient implements IBrokerClient {
       return 0.05;
     }
   }
+
+  async placeGtt(params: import('./interfaces/broker-client.interface').GttParams): Promise<string> {
+    try {
+      const gttParams = {
+        tradingsymbol: params.symbol,
+        exchange: params.exchange,
+        transaction_type: params.side,
+        type: this.kite.GTT_TYPE_TWO_LEG || 'two-leg',
+        condition: {
+          exchange: params.exchange,
+          tradingsymbol: params.symbol,
+          trigger_values: [params.slTriggerPrice, params.targetPrice],
+          last_price: params.entryPrice,
+        },
+        orders: [
+          {
+            exchange: params.exchange,
+            tradingsymbol: params.symbol,
+            transaction_type: params.side,
+            quantity: Number(params.qty),
+            order_type: 'LIMIT',
+            product: params.product,
+            price: params.slLimitPrice,
+          },
+          {
+            exchange: params.exchange,
+            tradingsymbol: params.symbol,
+            transaction_type: params.side,
+            quantity: Number(params.qty),
+            order_type: 'LIMIT',
+            product: params.product,
+            price: params.targetPrice,
+          },
+        ],
+      };
+
+      console.log('Placing Zerodha GTT:', gttParams);
+      const response = await this.kite.placeGTT(gttParams);
+      console.log('Zerodha GTT Success:', response.trigger_id);
+      return response.trigger_id.toString();
+    } catch (err: any) {
+      console.error('Zerodha GTT Error:', {
+        message: err.message,
+        type: err.error_type,
+        data: err.data
+      });
+      throw new Error(err.message || 'Failed to place GTT order');
+    }
+  }
 }
 
 
