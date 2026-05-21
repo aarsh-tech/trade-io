@@ -54,6 +54,7 @@ export interface IBrokerClient {
   cancelOrder(orderId: string): Promise<void>;
   searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]>;
   getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date): Promise<any[]>;
+  getTickSize(symbol: string, exchange: string): Promise<number>;
 }
 
 

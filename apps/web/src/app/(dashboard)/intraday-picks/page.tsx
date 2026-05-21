@@ -10,6 +10,7 @@ import {
   Loader2,
   RefreshCw,
   Rocket,
+  Search,
   Share2,
   ShieldAlert,
   Star,
@@ -243,6 +244,7 @@ export default function IntradayPicksPage() {
   const [initialLoad, setInitialLoad] = useState(true);
   const [targetRs, setTargetRs] = useState(500);
   const [dirFilter, setDirFilter] = useState<"ALL" | "LONG" | "SHORT">("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
   const [tradeStock, setTradeStock] = useState<QuickTradeStock | null>(null);
 
   const loadLast = useCallback(async () => {
@@ -273,10 +275,18 @@ export default function IntradayPicksPage() {
   };
 
   const allResults = scan?.results ?? [];
-  const filtered = dirFilter === "ALL" ? allResults
-    : allResults.filter(r => getDirection(r) === dirFilter);
   const longCount = allResults.filter(r => getDirection(r) === "LONG").length;
   const shortCount = allResults.filter(r => getDirection(r) === "SHORT").length;
+
+  // Client-side: direction filter → symbol/pattern search
+  const afterDir = dirFilter === "ALL" ? allResults
+    : allResults.filter(r => getDirection(r) === dirFilter);
+  const filtered = searchQuery.trim()
+    ? afterDir.filter(r =>
+        r.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        r.pattern.toLowerCase().replace(/_/g, " ").includes(searchQuery.toLowerCase())
+      )
+    : afterDir;
 
   return (
     <div className="max-w-[1400px] mx-auto space-y-8 pb-12 animate-in fade-in duration-700">
@@ -299,26 +309,39 @@ export default function IntradayPicksPage() {
             <p className="text-slate-400 text-lg font-medium">
               Long & Short setups. One click to place Entry + Stop-Loss + Target automatically.
             </p>
-            {/* Direction filter */}
-            <div className="flex items-center gap-2">
-              {(["ALL", "LONG", "SHORT"] as const).map(d => (
-                <button
-                  key={d}
-                  onClick={() => setDirFilter(d)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest border transition-all",
-                    dirFilter === d
-                      ? d === "LONG" ? "bg-emerald-500 border-emerald-500 text-white"
-                        : d === "SHORT" ? "bg-red-500 border-red-500 text-white"
-                          : "bg-white border-white text-slate-900"
-                      : "border-white/20 text-white/60 hover:border-white/40"
-                  )}
-                >
-                  {d === "LONG" ? <><TrendingUp className="h-3 w-3" /> Long ({longCount})</>
-                    : d === "SHORT" ? <><TrendingDown className="h-3 w-3" /> Short ({shortCount})</>
-                      : `All (${allResults.length})`}
-                </button>
-              ))}
+            {/* Direction filter + Search */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <div className="flex items-center gap-2">
+                {(["ALL", "LONG", "SHORT"] as const).map(d => (
+                  <button
+                    key={d}
+                    onClick={() => setDirFilter(d)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest border transition-all",
+                      dirFilter === d
+                        ? d === "LONG" ? "bg-emerald-500 border-emerald-500 text-white"
+                          : d === "SHORT" ? "bg-red-500 border-red-500 text-white"
+                            : "bg-white border-white text-slate-900"
+                        : "border-white/20 text-white/60 hover:border-white/40"
+                    )}
+                  >
+                    {d === "LONG" ? <><TrendingUp className="h-3 w-3" /> Long ({longCount})</>
+                      : d === "SHORT" ? <><TrendingDown className="h-3 w-3" /> Short ({shortCount})</>
+                        : `All (${allResults.length})`}
+                  </button>
+                ))}
+              </div>
+              {/* Symbol / Pattern search */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search symbol..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8 pr-3 py-1.5 text-xs rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-white/50 font-semibold w-44"
+                />
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white/40" />
+              </div>
             </div>
           </div>
 

@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Delete, Body, Param, UseGuards, Request,
+  Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Request,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -72,6 +72,18 @@ export class BrokersController {
   async placeOrder(@Request() req, @Param('id') id: string, @Body() orderData: any) {
     const result = await this.brokersService.placeOrder(req.user.id, id, orderData);
     return { success: true, data: result };
+  }
+
+  @Get(':id/tick-size')
+  @ApiOperation({ summary: 'Get tick size for an instrument' })
+  async getTickSize(
+    @Request() req,
+    @Param('id') id: string,
+    @Query('symbol') symbol: string,
+    @Query('exchange') exchange: string,
+  ) {
+    const tickSize = await this.brokersService.getTickSize(req.user.id, id, symbol, exchange || 'NSE');
+    return { success: true, data: { tickSize } };
   }
 
 

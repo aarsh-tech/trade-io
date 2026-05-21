@@ -114,6 +114,8 @@ export const brokerApi = {
   orders: (id: string) => api.get(`/brokers/${id}/orders`),
   placeOrder: (id: string, data: unknown) => api.post(`/brokers/${id}/orders`, data),
   cancelOrder: (id: string, orderId: string) => api.delete(`/brokers/${id}/orders/${orderId}`),
+  tickSize: (id: string, symbol: string, exchange: string) =>
+    api.get(`/brokers/${id}/tick-size`, { params: { symbol, exchange } }),
 };
 
 // ─── Market Data ──────────────────────────────────────────────────────────────

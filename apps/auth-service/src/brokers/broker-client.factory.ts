@@ -261,6 +261,32 @@ class ZerodhaClient implements IBrokerClient {
       throw err;
     }
   }
+
+  async getTickSize(symbol: string, exchange: string): Promise<number> {
+    try {
+      const upperSymbol = symbol.toUpperCase().trim();
+      const upperExchange = exchange.toUpperCase().trim();
+
+      // Ensure cache is loaded
+      if (!nseInstrumentsCache) {
+        await this.searchInstruments(symbol); // triggers cache load
+      }
+
+      const found = nseInstrumentsCache?.find(
+        (i: any) => i.tradingsymbol === upperSymbol && i.exchange === upperExchange,
+      );
+
+      if (found && found.tick_size) {
+        return parseFloat(found.tick_size);
+      }
+
+      // Default fallback
+      return 0.05;
+    } catch (err) {
+      console.error('Zerodha getTickSize Error:', err);
+      return 0.05;
+    }
+  }
 }
 
 

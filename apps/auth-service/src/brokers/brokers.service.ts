@@ -96,6 +96,16 @@ export class BrokersService {
     return { orderId };
   }
 
+  async getTickSize(userId: string, accountId: string, symbol: string, exchange: string): Promise<number> {
+    const acc = await this.prisma.brokerAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+
+    const client = this.factory.createClient(acc);
+    return client.getTickSize(symbol, exchange);
+  }
+
 
   async setSession(userId: string, accountId: string, requestToken: string) {
     const acc = await this.prisma.brokerAccount.findUnique({
