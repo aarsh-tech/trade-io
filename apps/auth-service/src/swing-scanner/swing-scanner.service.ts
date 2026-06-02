@@ -77,8 +77,23 @@ export class SwingScannerService {
     const tokenMap = new Map<string, number>();
     const instrumentToSymbol = new Map<number, string>();
     const dynamicUniverse: string[] = [];
+
+    // Helper: skip non-tradeable index/ETF instruments
+    const isNonTradeableIndex = (sym: string, name: string): boolean => {
+      // Indices have spaces in their trading symbols (e.g. "NIFTY 500", "INDIA VIX")
+      if (sym.includes(' ')) return true;
+      // Known index-tracking ETF patterns that can't be intraday traded
+      const indexPrefixes = ['NIFTY', 'SENSEX', 'INDIA VIX', 'MIDCAP', 'SMLCAP', 'GROWSECT'];
+      const upperName = (name || '').toUpperCase();
+      // If the *name* field matches broad index names, skip
+      if (indexPrefixes.some(p => upperName.startsWith(p) && sym.includes(p))) return true;
+      return false;
+    };
+
     instruments.forEach((i: any) => {
       if (i.instrument_type === 'EQ' && i.exchange === 'NSE') {
+        // Skip non-tradeable index instruments
+        if (isNonTradeableIndex(i.tradingsymbol, i.name)) return;
         tokenMap.set(i.tradingsymbol, i.instrument_token);
         instrumentToSymbol.set(i.instrument_token, i.tradingsymbol);
         dynamicUniverse.push(i.tradingsymbol);

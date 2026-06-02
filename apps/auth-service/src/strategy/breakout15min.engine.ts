@@ -278,22 +278,39 @@ export class Breakout15MinEngine {
       } catch (err) { this.log(state, `❌ 15-min error: ${err.message}`); return; }
     }
 
-    if (state.entryTriggered || state.tradesPlacedToday >= config.maxTradesPerDay) return;
+    // ─── Paper/Real Trade Monitoring (runs every tick while a trade is open) ────
+    if (state.entryTriggered) {
+      try {
+        if (state.isPaperTrade) {
+          await this.monitorPaperTrade(state, kite);
+        } else {
+          await this.monitorRealTrade(state, client);
+        }
+      } catch (err) { this.log(state, `❌ Monitor error: ${err.message}`); }
+      await this.persistLogs(state);
+      return;
+    }
+
+    // ─── Breakout Scanning (only when no active trade) ────────────────────────
+    if (state.tradesPlacedToday >= config.maxTradesPerDay) {
+      await this.persistLogs(state);
+      return;
+    }
 
     try {
       const futureKey = `${state.futureExchange}:${state.futureSymbol}`;
       const ltpData = await kite.getLTP([futureKey]);
       const currentPrice = ltpData[futureKey]?.last_price;
-      if (!currentPrice) return;
+      if (!currentPrice) { await this.persistLogs(state); return; }
 
       const candles5 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '5minute', now, state.futureExchange);
       const breakoutCandidates = candles5.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
-      if (breakoutCandidates.length === 0) return;
+      if (breakoutCandidates.length === 0) { await this.persistLogs(state); return; }
 
       const lastCandle = breakoutCandidates[breakoutCandidates.length - 1];
       const isClosed = (now.getTime() - new Date(lastCandle.date).getTime()) >= 5 * 60 * 1000;
       const target = isClosed ? lastCandle : (breakoutCandidates.length > 1 ? breakoutCandidates[breakoutCandidates.length - 2] : null);
-      if (!target) return;
+      if (!target) { await this.persistLogs(state); return; }
 
       if (hhmm % 5 === 0 && !state.logs.some(l => l.includes(`Scanning for breakout`) && l.includes(`LTP: ₹${currentPrice}`))) {
         this.log(state, `👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ${state.refLow} to ${state.refHigh}`);
@@ -307,15 +324,6 @@ export class Breakout15MinEngine {
         await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice);
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
-
-    // ─── Paper/Real Trade Monitoring ─────────────────────────────────────────────
-    if (state.entryTriggered) {
-      if (state.isPaperTrade) {
-        await this.monitorPaperTrade(state, kite);
-      } else {
-        await this.monitorRealTrade(state, client);
-      }
-    }
 
     await this.persistLogs(state);
   }

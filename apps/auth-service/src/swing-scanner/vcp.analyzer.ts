@@ -408,6 +408,8 @@ export function detectTightArea(candles: DailyCandle[]): PatternResult | null {
 }
 
 // ─── Intraday Momentum ───────────────────────────────────────────────────────
+// Original working detector: finds stocks with TODAY's volume surge, bullish
+// close (top 30% of day range) and positive return. Simple and effective.
 
 export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | null {
   if (candles.length < 50) return null;
@@ -421,30 +423,34 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
 
   const currentPrice = candles[n].close;
 
+  // Must be above SMA50 (uptrend)
   const sma50v = sma(candles, 50)[n];
   if (currentPrice < sma50v) return null;
 
+  // Volume must be active (at least 95% of 20-day average)
   const recentVol = candles[n].volume;
   const baseVol = avgVolume(candles, 20, n);
   const volRatio = recentVol / baseVol;
-
   if (volRatio < 0.95) return null;
 
+  // Must have a real trading range
   const dayRange = candles[n].high - candles[n].low;
   if (dayRange === 0) return null;
 
+  // Bullish close: price must finish in the top 30% of the day's range
   const closeRelativePos = (currentPrice - candles[n].low) / dayRange;
   if (closeRelativePos < 0.70) return null;
 
+  // Positive return today (at least +0.3%)
   const todayReturn = (candles[n].close - candles[n].open) / candles[n].open;
   if (todayReturn < 0.003) return null;
 
   const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' = volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
 
   const entryPrice = parseFloat((candles[n].high * 1.001).toFixed(2));
-  const stopLoss = parseFloat((candles[n].close * 0.985).toFixed(2));
-  const riskPts = Math.max(0.01, entryPrice - stopLoss);
-  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
+  const stopLoss   = parseFloat((candles[n].close * 0.985).toFixed(2));
+  const riskPts    = Math.max(0.01, entryPrice - stopLoss);
+  const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
 
   if (riskPct > 6.0) return null;
 
@@ -467,8 +473,112 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
     notes: [
       `🔥 Momentum Signal: +${(todayReturn * 100).toFixed(1)}% on ${candles[n].date.toLocaleDateString()}`,
       `📊 Volume: ${(volRatio).toFixed(1)}x average`,
-      `✨ Bullish Close: Finished in top 30% of day range`,
+      `✨ Bullish Close: Finished in top ${Math.round(closeRelativePos * 100)}% of day range`,
       `🚀 Breakout Level: Buy above ₹${candles[n].high.toFixed(2)}`,
+    ],
+  };
+}
+
+// ─── Intraday Momentum (Pre-Breakdown Coil Detector - SHORT) ───────────────
+// Finds stocks ABOUT to drop 5-12% — coiling tight near a support pivot with
+// drying volume in a downtrend.
+
+export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResult | null {
+  if (candles.length < 50) return null;
+
+  let n = candles.length - 1;
+  while (n > 0 && (candles[n].volume === 0 || candles[n].high === candles[n].low)) n--;
+  if (n < 20) return null;
+
+  const currentPrice = candles[n].close;
+
+  // ── 1. Downtrend structure: price below SMA20 AND SMA50 ──────────────────
+  const sma20v = sma(candles, 20)[n];
+  const sma50v = sma(candles, 50)[n];
+  if (currentPrice > sma20v || currentPrice > sma50v) return null;
+
+  // ── 2. Reject stocks that already dropped ≥3.5% yesterday (no chasing) ─────
+  const prevClose = candles[Math.max(0, n - 1)].close;
+  const prevDayReturn = (currentPrice - prevClose) / prevClose;
+  if (prevDayReturn < -0.035) return null;
+
+  // Reject overextended stocks: more than 20% below SMA50
+  const extensionFromSma50 = (sma50v - currentPrice) / sma50v;
+  if (extensionFromSma50 > 0.20) return null;
+
+  // ── 3. Compression: last 3-7 candles must be in a TIGHT range (<6%) ──────
+  let tightestRange = Infinity;
+  let tightestWindow = -1;
+  for (const days of [3, 4, 5, 6, 7]) {
+    if (n < days) continue;
+    const win = candles.slice(n - days + 1, n + 1);
+    const hi = Math.max(...win.map(c => c.high));
+    const lo = Math.min(...win.map(c => c.low));
+    const rng = (hi - lo) / hi;
+    if (rng < 0.06 && rng < tightestRange) { tightestRange = rng; tightestWindow = days; }
+  }
+  if (tightestWindow < 0) return null;
+
+  // ── 4. Volume dry-up during compression (energy building) ─────────────────
+  const compressionVol = avgVolume(candles, tightestWindow, n + 1);
+  const baseVol20 = avgVolume(candles, 20, n - tightestWindow);
+  const volRatio = compressionVol / baseVol20;
+  if (volRatio > 1.3) return null; 
+
+  // ── 5. Proximity to pivot: coiling within 8% above a key support ──────────
+  const lookbackLow = candles.slice(Math.max(0, n - 20), n + 1);
+  const pivotLow = Math.min(...lookbackLow.map(c => c.low));
+  const distFromPivot = (currentPrice - pivotLow) / pivotLow;
+  if (distFromPivot > 0.08 || distFromPivot < 0) return null;
+
+  // ── 6. Prior base move down ≥5% in last 30-60 days ────────────────────────
+  const base30 = candles[Math.max(0, n - 30)].close;
+  const base60 = candles[Math.max(0, n - 60)].close;
+  const priorMove = Math.max((base30 - currentPrice) / base30, (base60 - currentPrice) / base60);
+  if (priorMove < 0.05) return null;
+
+  // ── 7. Today's candle itself is quiet (<4% range) — still coiling ───────
+  const todayRange = (candles[n].high - candles[n].low) / candles[n].close;
+  if (todayRange > 0.04) return null;
+
+  // ── Scoring ───────────────────────────────────────────────────────────────
+  const compressionScore  = Math.round((1 - tightestRange / 0.06) * 35);
+  const volumeDryScore    = Math.round((1 - Math.min(volRatio, 1.3) / 1.3) * 25);
+  const pivotProxScore    = Math.round((1 - distFromPivot / 0.08) * 20);
+  const priorMoveScore    = Math.round(Math.min(priorMove / 0.20, 1) * 20);
+  const score = Math.min(100, compressionScore + volumeDryScore + pivotProxScore + priorMoveScore);
+  if (score < 30) return null;
+
+  // ── Entry, SL & Targets ───────────────────────────────────────────────────
+  const compressionHigh = Math.max(...candles.slice(n - tightestWindow + 1, n + 1).map(c => c.high));
+  const compressionLow  = Math.min(...candles.slice(n - tightestWindow + 1, n + 1).map(c => c.low));
+
+  const entryPrice = parseFloat((compressionLow * 0.997).toFixed(2));
+  let stopLoss     = parseFloat((compressionHigh * 1.010).toFixed(2));
+  const riskPts    = Math.max(0.01, stopLoss - entryPrice);
+  const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
+  if (riskPct > 7.0) return null;
+
+  // Explosive down move targets: -5%, -8%, -12%
+  const target1 = parseFloat((entryPrice * 0.95).toFixed(2));
+  const target2 = parseFloat((entryPrice * 0.92).toFixed(2));
+  const target3 = parseFloat((entryPrice * 0.88).toFixed(2));
+
+  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' =
+    volRatio < 0.75 ? 'DRYING' : volRatio < 1.0 ? 'AVERAGE' : 'EXPANDING';
+
+  return {
+    pattern: 'INTRADAY_MOMENTUM', score,
+    confidence: score >= 70 ? 'HIGH' : score >= 50 ? 'MEDIUM' : 'LOW',
+    currentPrice, pivotPrice: parseFloat(pivotLow.toFixed(2)),
+    entryPrice, stopLoss, target1, target2, target3, riskReward: 3.0, riskPct,
+    trendStrength: 'STRONG', volumeSignal, contractions: 0,
+    notes: [
+      `🔒 Coiling ${tightestWindow}d tight: ${(tightestRange * 100).toFixed(1)}% range — short below ₹${entryPrice.toFixed(2)}`,
+      `📉 Volume drying: ${(volRatio * 100).toFixed(0)}% of 20d avg — energy compressing`,
+      `🎯 Only ${(distFromPivot * 100).toFixed(1)}% above support pivot ₹${pivotLow.toFixed(2)} — ready to breakdown`,
+      `📉 Prior downtrend: -${(priorMove * 100).toFixed(1)}% — momentum to downside`,
+      `🚀 Targets: ₹${target1.toFixed(2)} (-5%) → ₹${target2.toFixed(2)} (-8%) → ₹${target3.toFixed(2)} (-12%)`,
     ],
   };
 }
@@ -567,11 +677,13 @@ export function analyzeStock(_symbol: string, candles: DailyCandle[]): PatternRe
   const rocket = detectRocketBase(candles);
   const tight = detectTightArea(candles);
   const momentum = detectIntradayMomentum(candles);
+  const momentumShort = detectIntradayMomentumShort(candles);
 
   if (vcp) results.push(vcp);
   if (rocket) results.push(rocket);
   if (tight) results.push(tight);
   if (momentum) results.push(momentum);
+  if (momentumShort) results.push(momentumShort);
 
   const dailyInside = detectInsideCandle(candles, 'DAILY');
   if (dailyInside) results.push(dailyInside);
