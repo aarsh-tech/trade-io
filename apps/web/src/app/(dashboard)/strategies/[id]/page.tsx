@@ -258,7 +258,7 @@ export default function StrategyDetailPage() {
         price: testOrderType === "LIMIT" ? Number(testPrice) : undefined,
         variety: testVariety,
       });
-      toast.success(`Test order placed! ID: ${res.data?.data?.orderId}`);
+      // toast.success(`Test order placed! ID: ${res.data?.data?.orderId}`);
       setIsTestModalOpen(false);
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? "Test order failed");

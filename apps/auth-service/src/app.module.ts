@@ -9,6 +9,7 @@ import { MarketModule } from './market/market.module';
 import { StrategyModule } from './strategy/strategy.module';
 import { BacktestModule } from './backtest/backtest.module';
 import { SwingScannerModule } from './swing-scanner/swing-scanner.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { SwingScannerModule } from './swing-scanner/swing-scanner.module';
     StrategyModule,
     BacktestModule,
     SwingScannerModule,
+    OrdersModule,
   ],
 })
 export class AppModule {}

@@ -88,12 +88,13 @@ export const orderKeys = {
   lists: (params?: any) => [...orderKeys.all, "list", params] as const,
 };
 
-export function useOrders(params?: { limit?: number; page?: number }) {
+export function useOrders(params?: { limit?: number; page?: number }, options?: any) {
   return useQuery({
     queryKey: orderKeys.lists(params),
     queryFn: async () => {
       const res = await orderApi.list(params);
       return res.data;
     },
+    ...options,
   });
 }

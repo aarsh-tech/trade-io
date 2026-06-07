@@ -4,18 +4,9 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Filter, Download, Search } from "lucide-react";
+import { Filter, Download, Search, Loader2 } from "lucide-react";
 import { cn, formatDateTime } from "@/lib/utils";
-
-const allOrders = [
-  { id: "o1", symbol: "NIFTY50",   exchange: "NSE", side: "BUY",  orderType: "MARKET", qty: 50,  price: 22440, status: "COMPLETE",  time: "2026-04-11T09:16:00Z", strategy: "Nifty Breakout" },
-  { id: "o2", symbol: "NIFTY50",   exchange: "NSE", side: "SELL", orderType: "SL",     qty: 50,  price: 22330, status: "OPEN",      time: "2026-04-11T09:16:01Z", strategy: "Nifty Breakout" },
-  { id: "o3", symbol: "RELIANCE",  exchange: "NSE", side: "SELL", orderType: "MARKET", qty: 10,  price: 2888,  status: "COMPLETE",  time: "2026-04-11T09:31:00Z", strategy: "Reliance EMA" },
-  { id: "o4", symbol: "BANKNIFTY", exchange: "NSE", side: "BUY",  orderType: "MARKET", qty: 25,  price: 47810, status: "OPEN",      time: "2026-04-11T09:45:00Z", strategy: "BankNifty Breakout" },
-  { id: "o5", symbol: "TCS",       exchange: "NSE", side: "BUY",  orderType: "LIMIT",  qty: 5,   price: 3740,  status: "CANCELLED", time: "2026-04-11T10:02:00Z", strategy: "Manual" },
-  { id: "o6", symbol: "INFY",      exchange: "NSE", side: "BUY",  orderType: "MARKET", qty: 15,  price: 1565,  status: "COMPLETE",  time: "2026-04-10T09:18:00Z", strategy: "Manual" },
-  { id: "o7", symbol: "HDFCBANK",  exchange: "NSE", side: "SELL", orderType: "MARKET", qty: 20,  price: 1678,  status: "REJECTED",  time: "2026-04-10T11:30:00Z", strategy: "Manual" },
-];
+import { useOrders } from "@/hooks/useApi";
 
 const statusVariant: Record<string, any> = {
   COMPLETE:   "success",
@@ -26,12 +17,23 @@ const statusVariant: Record<string, any> = {
 };
 
 export default function OrdersPage() {
+  const { data: response, isLoading } = useOrders() as any;
+  const allOrders = response?.data || [];
+
   const [filter, setFilter] = useState<string>("ALL");
   const [search, setSearch] = useState("");
 
-  const filtered = allOrders.filter((o) => {
+  const getStrategyName = (o: any) => {
+    if (o.execution?.strategy?.name) return o.execution.strategy.name;
+    return o.isPaperTrade ? "Paper Trade" : "Manual";
+  };
+
+  const filtered = allOrders.filter((o: any) => {
     const matchFilter = filter === "ALL" || o.status === filter;
-    const matchSearch = o.symbol.includes(search.toUpperCase()) || o.strategy.toLowerCase().includes(search.toLowerCase());
+    const strategyName = getStrategyName(o);
+    const matchSearch =
+      o.symbol.toUpperCase().includes(search.toUpperCase()) ||
+      strategyName.toLowerCase().includes(search.toLowerCase());
     return matchFilter && matchSearch;
   });
 
@@ -95,46 +97,63 @@ export default function OrdersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[hsl(var(--border)/0.5)]">
-                {filtered.map((o) => (
-                  <tr key={o.id} className="hover:bg-[hsl(var(--secondary)/0.3)] transition-colors">
-                    <td className="py-3 pr-4">
-                      <div>
-                        <p className="font-semibold">{o.symbol}</p>
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">{o.exchange}</p>
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-[hsl(var(--muted-foreground))]">
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--primary))]" />
+                        <span>Loading live orders...</span>
                       </div>
                     </td>
-                    <td className="py-3 pr-4">
-                      <span className={cn("font-bold text-xs px-2 py-0.5 rounded-full",
-                        o.side === "BUY"
-                          ? "bg-[hsl(var(--green)/0.15)] text-[hsl(var(--green))]"
-                          : "bg-[hsl(var(--red)/0.15)] text-[hsl(var(--red))]"
-                      )}>
-                        {o.side}
-                      </span>
-                    </td>
-                    <td className="py-3 pr-4 text-[hsl(var(--muted-foreground))] text-xs">{o.orderType}</td>
-                    <td className="py-3 pr-4 font-mono">{o.qty}</td>
-                    <td className="py-3 pr-4 font-mono">₹{o.price.toLocaleString("en-IN")}</td>
-                    <td className="py-3 pr-4">
-                      <span className="text-xs text-[hsl(var(--muted-foreground))]">{o.strategy}</span>
-                    </td>
-                    <td className="py-3 pr-4">
-                      <Badge variant={statusVariant[o.status] || "default"} className="text-[10px]">
-                        {o.status}
-                      </Badge>
-                    </td>
-                    <td className="py-3 text-[hsl(var(--muted-foreground))] text-xs">
-                      {formatDateTime(o.time)}
+                  </tr>
+                ) : filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-16 text-center text-[hsl(var(--muted-foreground))]">
+                      No orders match your filter
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filtered.map((o: any) => {
+                    const displayPrice = o.avgPrice ?? o.price ?? 0;
+                    return (
+                      <tr key={o.id} className="hover:bg-[hsl(var(--secondary)/0.3)] transition-colors">
+                        <td className="py-3 pr-4">
+                          <div>
+                            <p className="font-semibold">{o.symbol}</p>
+                            <p className="text-[10px] text-[hsl(var(--muted-foreground))]">{o.exchange}</p>
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span className={cn("font-bold text-xs px-2 py-0.5 rounded-full",
+                            o.side === "BUY"
+                              ? "bg-[hsl(var(--green)/0.15)] text-[hsl(var(--green))]"
+                              : "bg-[hsl(var(--red)/0.15)] text-[hsl(var(--red))]"
+                          )}>
+                            {o.side}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-[hsl(var(--muted-foreground))] text-xs">{o.orderType}</td>
+                        <td className="py-3 pr-4 font-mono">{o.qty}</td>
+                        <td className="py-3 pr-4 font-mono">
+                          ₹{displayPrice.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span className="text-xs text-[hsl(var(--muted-foreground))]">{getStrategyName(o)}</span>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Badge variant={statusVariant[o.status] || "default"} className="text-[10px]">
+                            {o.status}
+                          </Badge>
+                        </td>
+                        <td className="py-3 text-[hsl(var(--muted-foreground))] text-xs">
+                          {formatDateTime(o.createdAt)}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
-            {filtered.length === 0 && (
-              <div className="py-16 text-center text-[hsl(var(--muted-foreground))]">
-                No orders match your filter
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>

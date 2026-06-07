@@ -246,7 +246,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
       const entryId = entryOrder.data?.data?.orderId ?? "entry-placed";
       placed.push(`✅ Entry ${entrySide} ${qty}x ${activeStock.symbol} @ ₹${fmt(entryNum)} — ${entryId}`);
       setPlacedOrders([...placed]);
-      toast.success(`Entry order placed — ${activeStock.symbol}`);
+      // toast.success(`Entry order placed — ${activeStock.symbol}`);
 
       // Small delay
       await delay(400);
@@ -267,9 +267,9 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
         const gttId = gttOrder.data?.data?.triggerId ?? "gtt-placed";
         placed.push(`🛑🎯 GTT Stop-Loss & Target Placed — ${gttId}`);
         setPlacedOrders([...placed]);
-        toast.success(`GTT Target & Stop-loss placed`);
+        // toast.success(`GTT Target & Stop-loss placed`);
         setStep("done");
-        toast.success(`🚀 Entry + GTT placed for ${activeStock.symbol}!`);
+        // toast.success(`🚀 Entry + GTT placed for ${activeStock.symbol}!`);
       } else {
         // ② Stop-Loss order (SL on the opposite side)
         const slOrder = await brokerApi.placeOrder(selectedBrokerId, {
@@ -286,7 +286,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
         const slId = slOrder.data?.data?.orderId ?? "sl-placed";
         placed.push(`🛑 Stop-Loss ${slSide} @ ₹${fmt(slNum)} — ${slId}`);
         setPlacedOrders([...placed]);
-        toast.info(`Stop-loss placed @ ₹${fmt(slNum)}`);
+        // toast.info(`Stop-loss placed @ ₹${fmt(slNum)}`);
 
         await delay(400);
 
@@ -305,10 +305,10 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
         const t1Id = t1Order.data?.data?.orderId ?? "t1-placed";
         placed.push(`🎯 Target 1 ${slSide} @ ₹${fmt(target1Num)} — ${t1Id}`);
         setPlacedOrders([...placed]);
-        toast.success(`Target order placed @ ₹${fmt(target1Num)}`);
+        // toast.success(`Target order placed @ ₹${fmt(target1Num)}`);
 
         setStep("done");
-        toast.success(`🚀 All 3 orders placed for ${activeStock.symbol}!`);
+        // toast.success(`🚀 All 3 orders placed for ${activeStock.symbol}!`);
       }
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? "Order placement failed. Check broker session.";

@@ -60,7 +60,7 @@ export function OrderWindow({ isOpen, onClose, symbol, type, ltp, availableMargi
         price: orderType === 'MARKET' ? 0 : price,
         triggerPrice: orderType.startsWith('SL') ? triggerPrice : 0,
       });
-      toast.success(`Order placed for ${qty} ${symbol}`);
+      // toast.success(`Order placed for ${qty} ${symbol}`);
       onClose();
     } catch (error: any) {
       toast.error(error?.response?.data?.message || "Failed to place order");

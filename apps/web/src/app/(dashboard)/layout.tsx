@@ -3,10 +3,12 @@
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/topbar";
 import { AuthGuard } from "@/components/auth-guard";
+import { OrderNotificationListener } from "@/components/layout/OrderNotificationListener";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
+      <OrderNotificationListener />
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
