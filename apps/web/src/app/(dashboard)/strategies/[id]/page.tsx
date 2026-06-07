@@ -72,11 +72,19 @@ interface Strategy {
   name: string;
   type: string;
   isActive: boolean;
+  isPaperTrade: boolean;
   brokerAccountId: string | null;
   config: Breakout15MinConfig;
   brokerAccount?: { broker: string; clientId: string } | null;
   executions: Execution[];
   createdAt: string;
+  performance?: {
+    totalTrades: number;
+    winRate: number;
+    netPnl: number;
+    profitFactor: number;
+    avgProfitPerWin: number;
+  };
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -781,64 +789,104 @@ export default function StrategyDetailPage() {
       </Card>
 
       {/* ── Performance Analytics ── */}
-      <Card className="overflow-hidden border-[hsl(var(--primary)/0.15)] shadow-xl shadow-[hsl(var(--primary)/0.05)]">
-        <CardHeader className="bg-[hsl(var(--primary)/0.03)] border-b border-[hsl(var(--primary)/0.05)] py-4">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <BarChart2 className="h-4 w-4 text-[hsl(var(--primary))]" />
-              Performance Analysis
-            </CardTitle>
-            <Badge className="bg-green-50/50 text-green-700">
-              Last 30 Days
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x border-b border-[hsl(var(--border))]">
-            <div className="p-6 space-y-1">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Win Rate</p>
-              <div className="flex items-end gap-2">
-                <p className="text-3xl font-bold tracking-tight">68.5%</p>
-                <p className="text-xs text-green-600 font-medium mb-1 flex items-center gap-0.5">
-                  <TrendingUp className="h-3 w-3" /> +2.1%
-                </p>
-              </div>
-              <div className="w-full bg-[hsl(var(--secondary)/0.5)] h-1.5 rounded-full mt-3 overflow-hidden">
-                <div className="bg-green-500 h-full rounded-full" style={{ width: "68.5%" }} />
-              </div>
-            </div>
+      {(() => {
+        const perf = strategy.performance;
+        const winRate = perf?.winRate ?? 0;
+        const netPnl = perf?.netPnl ?? 0;
+        const pf = perf?.profitFactor ?? 0;
+        const avgProfitPerWin = perf?.avgProfitPerWin ?? 0;
+        const totalTrades = perf?.totalTrades ?? 0;
 
-            <div className="p-6 space-y-1">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Net P&L (Simulated)</p>
-              <div className="flex items-end gap-2">
-                <p className="text-3xl font-bold tracking-tight text-green-600">₹14,250</p>
-                <p className="text-xs text-green-600 font-medium mb-1">Total</p>
-              </div>
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-2 font-medium">
-                Avg. Profit per Win: <span className="text-[hsl(var(--foreground))]">₹2,400</span>
-              </p>
-            </div>
+        let pfStatus = "No Trades";
+        let pfColor = "text-slate-500";
+        if (totalTrades > 0) {
+          if (pf >= 2.0) {
+            pfStatus = "Excellent";
+            pfColor = "text-green-600";
+          } else if (pf >= 1.5) {
+            pfStatus = "Healthy";
+            pfColor = "text-emerald-600";
+          } else if (pf >= 1.0) {
+            pfStatus = "Moderate";
+            pfColor = "text-amber-600";
+          } else {
+            pfStatus = "Unprofitable";
+            pfColor = "text-red-500";
+          }
+        }
 
-            <div className="p-6 space-y-1">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Profit Factor</p>
-              <div className="flex items-end gap-2">
-                <p className="text-3xl font-bold tracking-tight">1.84</p>
-                <p className="text-xs text-amber-600 font-medium mb-1">Healthy</p>
+        return (
+          <Card className="overflow-hidden border-[hsl(var(--primary)/0.15)] shadow-xl shadow-[hsl(var(--primary)/0.05)]">
+            <CardHeader className="bg-[hsl(var(--primary)/0.03)] border-b border-[hsl(var(--primary)/0.05)] py-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <BarChart2 className="h-4 w-4 text-[hsl(var(--primary))]" />
+                  Performance Analysis
+                </CardTitle>
+                <Badge className="bg-green-50/50 text-green-700">
+                  Last 30 Days
+                </Badge>
               </div>
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-2 font-medium">
-                Gross Profit / Gross Loss ratio
-              </p>
-            </div>
-          </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x border-b border-[hsl(var(--border))]">
+                <div className="p-6 space-y-1">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Win Rate</p>
+                  <div className="flex items-end justify-between">
+                    <p className="text-3xl font-bold tracking-tight">{winRate.toFixed(1)}%</p>
+                    <p className="text-xs text-[hsl(var(--muted-foreground))] font-medium mb-1">
+                      {totalTrades} completed trade{totalTrades === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <div className="w-full bg-[hsl(var(--secondary)/0.5)] h-1.5 rounded-full mt-3 overflow-hidden">
+                    <div className="bg-green-500 h-full rounded-full" style={{ width: `${winRate}%` }} />
+                  </div>
+                </div>
 
-          <div className="p-4 bg-[hsl(var(--secondary)/0.2)]">
-            <div className="flex items-center gap-2 text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
-              <Info className="h-3.5 w-3.5" />
-              This analysis is based on simulated trade executions from your paper trading sessions.
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+                <div className="p-6 space-y-1">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+                    Net P&L ({strategy.isPaperTrade ? "Simulated" : "Real"})
+                  </p>
+                  <div className="flex items-end gap-2">
+                    <p className={cn(
+                      "text-3xl font-bold tracking-tight",
+                      netPnl > 0 ? "text-green-600" : netPnl < 0 ? "text-red-500" : "text-[hsl(var(--foreground))]"
+                    )}>
+                      {netPnl < 0 ? "-" : ""}₹{Math.abs(netPnl).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-xs text-[hsl(var(--muted-foreground))] font-medium mb-1">Total</p>
+                  </div>
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-2 font-medium">
+                    Avg. Profit per Win: <span className="text-[hsl(var(--foreground))]">₹{avgProfitPerWin.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</span>
+                  </p>
+                </div>
+
+                <div className="p-6 space-y-1">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Profit Factor</p>
+                  <div className="flex items-end justify-between">
+                    <p className="text-3xl font-bold tracking-tight">{pf === 99.9 ? "∞" : pf.toFixed(2)}</p>
+                    <p className={cn("text-xs font-medium mb-1", pfColor)}>{pfStatus}</p>
+                  </div>
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-2 font-medium">
+                    Gross Profit / Gross Loss ratio
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-4 bg-[hsl(var(--secondary)/0.2)]">
+                <div className="flex items-center gap-2 text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
+                  <Info className="h-3.5 w-3.5" />
+                  {strategy.isPaperTrade ? (
+                    <span>This analysis is based on simulated trade executions from your paper trading sessions.</span>
+                  ) : (
+                    <span>This analysis is based on real trade executions from your connected broker account.</span>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <Card>
         <CardHeader

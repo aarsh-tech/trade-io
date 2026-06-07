@@ -30,7 +30,7 @@ interface Breakout15MinConfig {
 interface Strategy {
   id: string;
   name: string;
-  type: "BREAKOUT_15MIN" | "EMA_CROSSOVER" | "CUSTOM";
+  type: string;
   isActive: boolean;
   autoStart: boolean;
   brokerAccountId?: string | null;
