@@ -5,6 +5,7 @@ export enum StrategyTypeEnum {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
   EMA_RSI_OPTIONS = 'EMA_RSI_OPTIONS',
+  GAMMA_BLAST = 'GAMMA_BLAST',
   CUSTOM = 'CUSTOM',
 }
 
@@ -52,6 +53,31 @@ export interface EmaRsiOptionsConfig {
   maxTradesPerDay: number; // 2
   product: string;         // MIS
   startAfterMin: number;   // 25
+}
+
+// ─── Gamma Blast Config ────────────────────────────────────────────────────────
+export interface GammaBlastConfig {
+  symbol: string;              // 'NIFTY 50' | 'BANKNIFTY'
+  exchange: string;            // 'NSE'
+  expiryMode: 'weekly' | 'monthly-last';
+  expiryDay: number;           // 0-6 (0=Sun..6=Sat). Default: 2 (Tuesday)
+  lots: number;                // 1, 2, 3...
+  minPremium: number;          // Default: 2
+  maxPremium: number;          // Default: 10
+  strikesOTM: number;          // Default: 5
+  atrMultiplier: number;       // Default: 2.5
+  premiumVelocityX: number;    // Default: 2.0
+  vixSpikeThreshold: number;   // Default: 3.0 (%)
+  vwapDivergence: number;      // Default: 0.3 (%)
+  minSignalScore: number;      // Default: 70
+  trailTier1: number;          // Default: 40 (%) — ₹5–15
+  trailTier2: number;          // Default: 30 (%) — ₹15–50
+  trailTier3: number;          // Default: 25 (%) — ₹50–100
+  trailTier4: number;          // Default: 20 (%) — ₹100+
+  maxTradesPerDay: number;     // Default: 3
+  maxLossPerDay: number;       // Default: 2000 (₹)
+  forceExitMinBefore: number;  // Default: 15
+  product: string;             // 'MIS'
 }
 
 export class CreateStrategyDto {

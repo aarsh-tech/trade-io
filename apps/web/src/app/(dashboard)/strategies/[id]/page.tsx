@@ -15,6 +15,7 @@ import {
   Info,
   ActivityIcon,
   ShoppingCart,
+  Flame,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -534,6 +535,43 @@ export default function StrategyDetailPage() {
                       <span className="text-xs font-black text-blue-700">{liveState.optionSymbol}</span>
                     </div>
                   )}
+                  {/* Gamma Blast specific state */}
+                  {strategy.type === 'GAMMA_BLAST' && liveState.positions && (
+                    <>
+                      <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                        <span className="text-xs text-slate-500">Trades Today</span>
+                        <span className="text-xs font-bold text-slate-900">{liveState.tradesToday ?? 0}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                        <span className="text-xs text-slate-500">Day P&L</span>
+                        <span className={cn("text-xs font-bold", (liveState.pnlToday ?? 0) >= 0 ? "text-green-600" : "text-red-500")}>
+                          {(liveState.pnlToday ?? 0) >= 0 ? '+' : ''}₹{(liveState.pnlToday ?? 0).toFixed(0)}
+                        </span>
+                      </div>
+                      {liveState.positions.length > 0 && liveState.positions.map((pos: any, idx: number) => (
+                        <div key={idx} className="p-2.5 rounded-lg bg-orange-50 border border-orange-100 space-y-1.5 mt-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-bold text-orange-700">⚡ {pos.side} Position</span>
+                            <span className="text-[10px] font-black text-orange-900">{pos.symbol}</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 text-center">
+                            <div>
+                              <p className="text-[9px] text-orange-500">Entry</p>
+                              <p className="text-[11px] font-bold text-orange-800">₹{pos.entry?.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] text-orange-500">HWM</p>
+                              <p className="text-[11px] font-bold text-green-700">₹{pos.hwm?.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] text-orange-500">Trail SL</p>
+                              <p className="text-[11px] font-bold text-red-600">₹{pos.trailSL?.toFixed(2)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-slate-400 italic py-4">Initializing engine state...</p>
@@ -579,22 +617,41 @@ export default function StrategyDetailPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { label: "Symbol", value: cfg.symbol, icon: BarChart2, color: "text-[hsl(var(--primary))]" },
-          { label: "Qty / Lots", value: cfg.qty, icon: Zap, color: "text-amber-500" },
-          { label: "Stop Loss", value: `₹${cfg.stopLossRs}`, icon: Shield, color: "text-red-500" },
-          { label: "Target", value: `₹${cfg.targetRs}`, icon: Target, color: "text-green-600" },
-        ].map(({ label, value, icon: Icon, color }) => (
-          <Card key={label} className="text-center">
-            <CardContent className="pt-4 pb-3">
-              <Icon className={cn("h-5 w-5 mx-auto mb-1", color)} />
-              <p className="text-lg font-bold">{value}</p>
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">{label}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {strategy.type === 'GAMMA_BLAST' ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: "Index", value: cfg.symbol, icon: Flame, color: "text-orange-500" },
+            { label: "Lots", value: `${(cfg as any).lots ?? 1}`, icon: Zap, color: "text-amber-500" },
+            { label: "Premium Range", value: `₹${(cfg as any).minPremium ?? 2}–${(cfg as any).maxPremium ?? 10}`, icon: Target, color: "text-blue-500" },
+            { label: "Max Loss/Day", value: `₹${(cfg as any).maxLossPerDay ?? 2000}`, icon: Shield, color: "text-red-500" },
+          ].map(({ label, value, icon: Icon, color }) => (
+            <Card key={label} className="text-center">
+              <CardContent className="pt-4 pb-3">
+                <Icon className={cn("h-5 w-5 mx-auto mb-1", color)} />
+                <p className="text-lg font-bold">{value}</p>
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">{label}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: "Symbol", value: cfg.symbol, icon: BarChart2, color: "text-[hsl(var(--primary))]" },
+            { label: "Qty / Lots", value: cfg.qty, icon: Zap, color: "text-amber-500" },
+            { label: "Stop Loss", value: `₹${cfg.stopLossRs}`, icon: Shield, color: "text-red-500" },
+            { label: "Target", value: `₹${cfg.targetRs}`, icon: Target, color: "text-green-600" },
+          ].map(({ label, value, icon: Icon, color }) => (
+            <Card key={label} className="text-center">
+              <CardContent className="pt-4 pb-3">
+                <Icon className={cn("h-5 w-5 mx-auto mb-1", color)} />
+                <p className="text-lg font-bold">{value}</p>
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">{label}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       <Card>
         <CardHeader>

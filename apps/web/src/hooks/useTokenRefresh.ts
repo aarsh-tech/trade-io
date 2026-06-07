@@ -15,7 +15,7 @@ import { useEffect, useRef } from "react";
 import axios from "axios";
 import { useAuthStore } from "@/store";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3002/v1";
 
 // Refresh 12 minutes — well before any reasonable access-token expiry
 const REFRESH_INTERVAL_MS = 12 * 60 * 1000;

@@ -454,9 +454,33 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
 
   if (riskPct > 6.0) return null;
 
-  const target1 = parseFloat((entryPrice * 1.03).toFixed(2));
-  const target2 = parseFloat((entryPrice * 1.05).toFixed(2));
-  const target3 = parseFloat((entryPrice * 1.10).toFixed(2));
+  // ── Fibonacci Levels from SWING range (last 10 candles) ──
+  const lookback = Math.min(10, n);
+  const recentSlice = candles.slice(n - lookback, n + 1);
+  const swingHigh = Math.max(...recentSlice.map(c => c.high));
+  const swingLow  = Math.min(...recentSlice.map(c => c.low));
+  const swingRange = Math.max(0.01, swingHigh - swingLow);
+
+  // T1 = 0.382 ext, T2 = 0.618 ext, T3 = 1.0 ext above entry
+  const target1 = parseFloat((entryPrice + swingRange * 0.382).toFixed(2));
+  const target2 = parseFloat((entryPrice + swingRange * 0.618).toFixed(2));
+  const target3 = parseFloat((entryPrice + swingRange * 1.0).toFixed(2));
+
+  // All key Fibonacci price levels for reference
+  const fibLevels = [
+    { level: '0',     price: swingLow },
+    { level: '0.236', price: swingLow + swingRange * 0.236 },
+    { level: '0.382', price: swingLow + swingRange * 0.382 },
+    { level: '0.5',   price: swingLow + swingRange * 0.5   },
+    { level: '0.618', price: swingLow + swingRange * 0.618 },
+    { level: '0.786', price: swingLow + swingRange * 0.786 },
+    { level: '1.0',   price: swingHigh },
+    { level: '1.272', price: swingHigh + swingRange * 0.272 },
+    { level: '1.414', price: swingHigh + swingRange * 0.414 },
+    { level: '1.618', price: swingHigh + swingRange * 0.618 },
+    { level: '2.0',   price: swingHigh + swingRange * 1.0   },
+    { level: '2.618', price: swingHigh + swingRange * 1.618 },
+  ];
 
   const score = Math.min(100, Math.round(
     50 +
@@ -468,125 +492,129 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
     pattern: 'INTRADAY_MOMENTUM', score,
     confidence: score >= 80 ? 'HIGH' : score >= 65 ? 'MEDIUM' : 'LOW',
     currentPrice, pivotPrice: parseFloat(candles[n].high.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward: 2.0, riskPct,
+    entryPrice, stopLoss, target1, target2, target3, riskReward: parseFloat((Math.abs(target1 - entryPrice) / riskPts).toFixed(2)), riskPct,
     trendStrength: 'STRONG', volumeSignal, contractions: 0,
     notes: [
       `🔥 Momentum Signal: +${(todayReturn * 100).toFixed(1)}% on ${candles[n].date.toLocaleDateString()}`,
       `📊 Volume: ${(volRatio).toFixed(1)}x average`,
-      `✨ Bullish Close: Finished in top ${Math.round(closeRelativePos * 100)}% of day range`,
+      `✨ Bullish Close: Top ${Math.round(closeRelativePos * 100)}% of day range`,
       `🚀 Breakout Level: Buy above ₹${candles[n].high.toFixed(2)}`,
+      `📐 Swing Range: ₹${swingLow.toFixed(2)} → ₹${swingHigh.toFixed(2)} (₹${swingRange.toFixed(2)})`,
+      `── Fibonacci Retracement Levels ──`,
+      ...fibLevels.filter(f => parseFloat(f.level) <= 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
+      `── Fibonacci Extension Levels (LONG) ──`,
+      ...fibLevels.filter(f => parseFloat(f.level) > 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
+      `🎯 T1 (Fib 0.382): ₹${target1.toFixed(2)}  |  T2 (Fib 0.618): ₹${target2.toFixed(2)}  |  T3 (Fib 1.0): ₹${target3.toFixed(2)}`,
     ],
   };
 }
 
-// ─── Intraday Momentum (Pre-Breakdown Coil Detector - SHORT) ───────────────
-// Finds stocks ABOUT to drop 5-12% — coiling tight near a support pivot with
-// drying volume in a downtrend.
+// ─── Intraday Momentum (Active Breakdown Detector - SHORT) ───────────────────
+// Finds stocks with TODAY's volume surge, bearish close (bottom 30% of day range)
+// and negative return under SMA50.
 
 export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResult | null {
   if (candles.length < 50) return null;
 
   let n = candles.length - 1;
-  while (n > 0 && (candles[n].volume === 0 || candles[n].high === candles[n].low)) n--;
+  while (n > 0 && (candles[n].volume === 0 || candles[n].high === candles[n].low)) {
+    n--;
+  }
+
   if (n < 20) return null;
 
   const currentPrice = candles[n].close;
 
-  // ── 1. Downtrend structure: price below SMA20 AND SMA50 ──────────────────
-  const sma20v = sma(candles, 20)[n];
+  // Must be below SMA50 (downtrend)
   const sma50v = sma(candles, 50)[n];
-  if (currentPrice > sma20v || currentPrice > sma50v) return null;
+  if (currentPrice > sma50v) return null;
 
-  // ── 2. Reject stocks that already dropped ≥3.5% yesterday (no chasing) ─────
-  const prevClose = candles[Math.max(0, n - 1)].close;
-  const prevDayReturn = (currentPrice - prevClose) / prevClose;
-  if (prevDayReturn < -0.035) return null;
+  // Volume must be active (at least 95% of 20-day average)
+  const recentVol = candles[n].volume;
+  const baseVol = avgVolume(candles, 20, n);
+  const volRatio = recentVol / baseVol;
+  if (volRatio < 0.95) return null;
 
-  // Reject overextended stocks: more than 20% below SMA50
-  const extensionFromSma50 = (sma50v - currentPrice) / sma50v;
-  if (extensionFromSma50 > 0.20) return null;
+  // Must have a real trading range
+  const dayRange = candles[n].high - candles[n].low;
+  if (dayRange === 0) return null;
 
-  // ── 3. Compression: last 3-7 candles must be in a TIGHT range (<6%) ──────
-  let tightestRange = Infinity;
-  let tightestWindow = -1;
-  for (const days of [3, 4, 5, 6, 7]) {
-    if (n < days) continue;
-    const win = candles.slice(n - days + 1, n + 1);
-    const hi = Math.max(...win.map(c => c.high));
-    const lo = Math.min(...win.map(c => c.low));
-    const rng = (hi - lo) / hi;
-    if (rng < 0.06 && rng < tightestRange) { tightestRange = rng; tightestWindow = days; }
-  }
-  if (tightestWindow < 0) return null;
+  // Bearish close: price must finish in the bottom 30% of the day's range
+  const closeRelativePos = (currentPrice - candles[n].low) / dayRange;
+  if (closeRelativePos > 0.30) return null;
 
-  // ── 4. Volume dry-up during compression (energy building) ─────────────────
-  const compressionVol = avgVolume(candles, tightestWindow, n + 1);
-  const baseVol20 = avgVolume(candles, 20, n - tightestWindow);
-  const volRatio = compressionVol / baseVol20;
-  if (volRatio > 1.3) return null; 
+  // Negative return today (at least -0.3%)
+  const todayReturn = (candles[n].close - candles[n].open) / candles[n].open;
+  if (todayReturn > -0.003) return null;
 
-  // ── 5. Proximity to pivot: coiling within 8% above a key support ──────────
-  const lookbackLow = candles.slice(Math.max(0, n - 20), n + 1);
-  const pivotLow = Math.min(...lookbackLow.map(c => c.low));
-  const distFromPivot = (currentPrice - pivotLow) / pivotLow;
-  if (distFromPivot > 0.08 || distFromPivot < 0) return null;
+  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' = volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
 
-  // ── 6. Prior base move down ≥5% in last 30-60 days ────────────────────────
-  const base30 = candles[Math.max(0, n - 30)].close;
-  const base60 = candles[Math.max(0, n - 60)].close;
-  const priorMove = Math.max((base30 - currentPrice) / base30, (base60 - currentPrice) / base60);
-  if (priorMove < 0.05) return null;
-
-  // ── 7. Today's candle itself is quiet (<4% range) — still coiling ───────
-  const todayRange = (candles[n].high - candles[n].low) / candles[n].close;
-  if (todayRange > 0.04) return null;
-
-  // ── Scoring ───────────────────────────────────────────────────────────────
-  const compressionScore  = Math.round((1 - tightestRange / 0.06) * 35);
-  const volumeDryScore    = Math.round((1 - Math.min(volRatio, 1.3) / 1.3) * 25);
-  const pivotProxScore    = Math.round((1 - distFromPivot / 0.08) * 20);
-  const priorMoveScore    = Math.round(Math.min(priorMove / 0.20, 1) * 20);
-  const score = Math.min(100, compressionScore + volumeDryScore + pivotProxScore + priorMoveScore);
-  if (score < 30) return null;
-
-  // ── Entry, SL & Targets ───────────────────────────────────────────────────
-  const compressionHigh = Math.max(...candles.slice(n - tightestWindow + 1, n + 1).map(c => c.high));
-  const compressionLow  = Math.min(...candles.slice(n - tightestWindow + 1, n + 1).map(c => c.low));
-
-  const entryPrice = parseFloat((compressionLow * 0.997).toFixed(2));
-  let stopLoss     = parseFloat((compressionHigh * 1.010).toFixed(2));
+  const entryPrice = parseFloat((candles[n].low * 0.999).toFixed(2));
+  const stopLoss   = parseFloat((candles[n].close * 1.015).toFixed(2));
   const riskPts    = Math.max(0.01, stopLoss - entryPrice);
   const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
-  if (riskPct > 7.0) return null;
 
-  // Explosive down move targets: -5%, -8%, -12%
-  const target1 = parseFloat((entryPrice * 0.95).toFixed(2));
-  const target2 = parseFloat((entryPrice * 0.92).toFixed(2));
-  const target3 = parseFloat((entryPrice * 0.88).toFixed(2));
+  if (riskPct > 6.0) return null;
 
-  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' =
-    volRatio < 0.75 ? 'DRYING' : volRatio < 1.0 ? 'AVERAGE' : 'EXPANDING';
+  // ── Fibonacci Levels from SWING range (last 10 candles) ──
+  const lookback = Math.min(10, n);
+  const recentSlice = candles.slice(n - lookback, n + 1);
+  const swingHigh = Math.max(...recentSlice.map(c => c.high));
+  const swingLow  = Math.min(...recentSlice.map(c => c.low));
+  const swingRange = Math.max(0.01, swingHigh - swingLow);
+
+  // T1 = 0.382 ext, T2 = 0.618 ext, T3 = 1.0 ext below entry
+  const target1 = parseFloat((entryPrice - swingRange * 0.382).toFixed(2));
+  const target2 = parseFloat((entryPrice - swingRange * 0.618).toFixed(2));
+  const target3 = parseFloat((entryPrice - swingRange * 1.0).toFixed(2));
+
+  // All key Fibonacci price levels for reference (SHORT: extensions below)
+  const fibLevels = [
+    { level: '0',     price: swingHigh },
+    { level: '0.236', price: swingHigh - swingRange * 0.236 },
+    { level: '0.382', price: swingHigh - swingRange * 0.382 },
+    { level: '0.5',   price: swingHigh - swingRange * 0.5   },
+    { level: '0.618', price: swingHigh - swingRange * 0.618 },
+    { level: '0.786', price: swingHigh - swingRange * 0.786 },
+    { level: '1.0',   price: swingLow },
+    { level: '1.272', price: swingLow - swingRange * 0.272 },
+    { level: '1.414', price: swingLow - swingRange * 0.414 },
+    { level: '1.618', price: swingLow - swingRange * 0.618 },
+    { level: '2.0',   price: swingLow - swingRange * 1.0   },
+    { level: '2.618', price: swingLow - swingRange * 1.618 },
+  ];
+
+  const score = Math.min(100, Math.round(
+    50 +
+    (volRatio > 2 ? 30 : volRatio > 1.2 ? 20 : 10) +
+    (todayReturn < -0.03 ? 20 : 10)
+  ));
 
   return {
     pattern: 'INTRADAY_MOMENTUM', score,
-    confidence: score >= 70 ? 'HIGH' : score >= 50 ? 'MEDIUM' : 'LOW',
-    currentPrice, pivotPrice: parseFloat(pivotLow.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward: 3.0, riskPct,
+    confidence: score >= 80 ? 'HIGH' : score >= 65 ? 'MEDIUM' : 'LOW',
+    currentPrice, pivotPrice: parseFloat(candles[n].low.toFixed(2)),
+    entryPrice, stopLoss, target1, target2, target3, riskReward: parseFloat((Math.abs(entryPrice - target1) / riskPts).toFixed(2)), riskPct,
     trendStrength: 'STRONG', volumeSignal, contractions: 0,
     notes: [
-      `🔒 Coiling ${tightestWindow}d tight: ${(tightestRange * 100).toFixed(1)}% range — short below ₹${entryPrice.toFixed(2)}`,
-      `📉 Volume drying: ${(volRatio * 100).toFixed(0)}% of 20d avg — energy compressing`,
-      `🎯 Only ${(distFromPivot * 100).toFixed(1)}% above support pivot ₹${pivotLow.toFixed(2)} — ready to breakdown`,
-      `📉 Prior downtrend: -${(priorMove * 100).toFixed(1)}% — momentum to downside`,
-      `🚀 Targets: ₹${target1.toFixed(2)} (-5%) → ₹${target2.toFixed(2)} (-8%) → ₹${target3.toFixed(2)} (-12%)`,
+      `📉 Short Momentum Signal: ${(todayReturn * 100).toFixed(1)}% on ${candles[n].date.toLocaleDateString()}`,
+      `📊 Volume: ${(volRatio).toFixed(1)}x average`,
+      `✨ Bearish Close: Bottom ${Math.round(closeRelativePos * 100)}% of day range`,
+      `🚀 Breakdown Level: Sell below ₹${candles[n].low.toFixed(2)}`,
+      `📐 Swing Range: ₹${swingLow.toFixed(2)} → ₹${swingHigh.toFixed(2)} (₹${swingRange.toFixed(2)})`,
+      `── Fibonacci Retracement Levels ──`,
+      ...fibLevels.filter(f => parseFloat(f.level) <= 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
+      `── Fibonacci Extension Levels (SHORT) ──`,
+      ...fibLevels.filter(f => parseFloat(f.level) > 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
+      `🎯 T1 (Fib 0.382): ₹${target1.toFixed(2)}  |  T2 (Fib 0.618): ₹${target2.toFixed(2)}  |  T3 (Fib 1.0): ₹${target3.toFixed(2)}`,
     ],
   };
 }
 
 // ─── Inside Candle ──────────────────────────────────────────────────────────
 
-export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEKLY' | 'MONTHLY'): PatternResult | null {
-  if (candles.length < 3) return null;
+export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEKLY' | 'MONTHLY'): PatternResult[] {
+  if (candles.length < 3) return [];
   const n = candles.length - 1;
 
   let insideIdx = -1;
@@ -610,7 +638,7 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
     }
   }
 
-  if (insideIdx === -1) return null;
+  if (insideIdx === -1) return [];
 
   const mother = candles[motherIdx];
   const inside = candles[insideIdx];
@@ -618,24 +646,8 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
 
   // Strict Mathematical Check: Current candle must be STRICTLY inside the Mother High/Low
   // We check both the high/low of the day AND the current price to be absolutely safe.
-  if (candles[n].high >= mother.high || candles[n].low <= mother.low) return null;
-  if (currentPrice >= mother.high || currentPrice <= mother.low) return null;
-
-  const entryPrice = parseFloat((mother.high * 1.002).toFixed(2));
-  let stopLoss = parseFloat((mother.low * 0.998).toFixed(2));
-  const motherLowRisk = (entryPrice - stopLoss) / entryPrice;
-  
-  if (motherLowRisk > 0.05) {
-    stopLoss = parseFloat((inside.low * 0.995).toFixed(2));
-  }
-
-  const riskPts = Math.max(0.01, entryPrice - stopLoss);
-  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
-  if (riskPct > 10.0) return null;
-
-  const target1 = parseFloat((entryPrice + riskPts * 1.5).toFixed(2));
-  const target2 = parseFloat((entryPrice + riskPts * 2.5).toFixed(2));
-  const target3 = parseFloat((entryPrice + riskPts * 3.5).toFixed(2));
+  if (candles[n].high >= mother.high || candles[n].low <= mother.low) return [];
+  if (currentPrice >= mother.high || currentPrice <= mother.low) return [];
 
   const patternMap: Record<string, PatternType> = {
     'DAILY': 'DAILY_INSIDE',
@@ -649,23 +661,87 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
     'MONTHLY': 85
   };
 
-  return {
-    pattern: patternMap[type],
-    score: scoreMap[type],
-    confidence: 'HIGH',
-    currentPrice,
-    pivotPrice: mother.high,
-    entryPrice, stopLoss, target1, target2, target3,
-    riskReward: 1.5, riskPct,
-    trendStrength: 'MODERATE',
-    volumeSignal: 'AVERAGE',
-    contractions: 0,
-    notes: [
-      `${type.charAt(0) + type.slice(1).toLowerCase()} Inside Candle Setup`,
-      `Mother Breakout Pivot: ₹${mother.high.toFixed(2)}`,
-      `Risk: ${riskPct.toFixed(1)}%`
-    ]
-  };
+  const results: PatternResult[] = [];
+
+  // ── 1. LONG Setup (Breakout above mother.high) ───────────────────────
+  const entryPriceLong = parseFloat((mother.high * 1.002).toFixed(2));
+  let stopLossLong = parseFloat((mother.low * 0.998).toFixed(2));
+  const motherLowRiskLong = (entryPriceLong - stopLossLong) / entryPriceLong;
+  if (motherLowRiskLong > 0.05) {
+    stopLossLong = parseFloat((inside.low * 0.995).toFixed(2));
+  }
+  const riskPtsLong = Math.max(0.01, entryPriceLong - stopLossLong);
+  const riskPctLong = parseFloat(((riskPtsLong / entryPriceLong) * 100).toFixed(2));
+
+  if (riskPctLong <= 10.0) {
+    const target1Long = parseFloat((entryPriceLong + riskPtsLong * 1.5).toFixed(2));
+    const target2Long = parseFloat((entryPriceLong + riskPtsLong * 2.5).toFixed(2));
+    const target3Long = parseFloat((entryPriceLong + riskPtsLong * 3.5).toFixed(2));
+
+    results.push({
+      pattern: patternMap[type],
+      score: scoreMap[type],
+      confidence: 'HIGH',
+      currentPrice,
+      pivotPrice: mother.high,
+      entryPrice: entryPriceLong,
+      stopLoss: stopLossLong,
+      target1: target1Long,
+      target2: target2Long,
+      target3: target3Long,
+      riskReward: 1.5,
+      riskPct: riskPctLong,
+      trendStrength: 'MODERATE',
+      volumeSignal: 'AVERAGE',
+      contractions: 0,
+      notes: [
+        `${type.charAt(0) + type.slice(1).toLowerCase()} Inside Candle Setup (LONG)`,
+        `Mother Breakout Pivot: ₹${mother.high.toFixed(2)}`,
+        `Risk: ${riskPctLong.toFixed(1)}%`
+      ]
+    });
+  }
+
+  // ── 2. SHORT Setup (Breakdown below mother.low) ───────────────────────
+  const entryPriceShort = parseFloat((mother.low * 0.998).toFixed(2));
+  let stopLossShort = parseFloat((mother.high * 1.002).toFixed(2));
+  const motherLowRiskShort = (stopLossShort - entryPriceShort) / entryPriceShort;
+  if (motherLowRiskShort > 0.05) {
+    stopLossShort = parseFloat((inside.high * 1.005).toFixed(2));
+  }
+  const riskPtsShort = Math.max(0.01, stopLossShort - entryPriceShort);
+  const riskPctShort = parseFloat(((riskPtsShort / entryPriceShort) * 100).toFixed(2));
+
+  if (riskPctShort <= 10.0) {
+    const target1Short = parseFloat((entryPriceShort - riskPtsShort * 1.5).toFixed(2));
+    const target2Short = parseFloat((entryPriceShort - riskPtsShort * 2.5).toFixed(2));
+    const target3Short = parseFloat((entryPriceShort - riskPtsShort * 3.5).toFixed(2));
+
+    results.push({
+      pattern: patternMap[type],
+      score: scoreMap[type],
+      confidence: 'HIGH',
+      currentPrice,
+      pivotPrice: mother.low,
+      entryPrice: entryPriceShort,
+      stopLoss: stopLossShort,
+      target1: target1Short,
+      target2: target2Short,
+      target3: target3Short,
+      riskReward: 1.5,
+      riskPct: riskPctShort,
+      trendStrength: 'MODERATE',
+      volumeSignal: 'AVERAGE',
+      contractions: 0,
+      notes: [
+        `${type.charAt(0) + type.slice(1).toLowerCase()} Inside Candle Setup (SHORT)`,
+        `Mother Breakdown Pivot: ₹${mother.low.toFixed(2)}`,
+        `Risk: ${riskPctShort.toFixed(1)}%`
+      ]
+    });
+  }
+
+  return results;
 }
 
 // ─── Main Logic ──────────────────────────────────────────────────────────────
@@ -686,15 +762,15 @@ export function analyzeStock(_symbol: string, candles: DailyCandle[]): PatternRe
   if (momentumShort) results.push(momentumShort);
 
   const dailyInside = detectInsideCandle(candles, 'DAILY');
-  if (dailyInside) results.push(dailyInside);
+  results.push(...dailyInside);
 
   const weeklyCandles = aggregateWeeklyCandles(candles);
   const weeklyInside = detectInsideCandle(weeklyCandles, 'WEEKLY');
-  if (weeklyInside) results.push(weeklyInside);
+  results.push(...weeklyInside);
 
   const monthlyCandles = aggregateMonthlyCandles(candles);
   const monthlyInside = detectInsideCandle(monthlyCandles, 'MONTHLY');
-  if (monthlyInside) results.push(monthlyInside);
+  results.push(...monthlyInside);
 
   return results;
 }

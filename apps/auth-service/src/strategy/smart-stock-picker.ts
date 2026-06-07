@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { detectIntradayMomentum, DailyCandle } from '../swing-scanner/vcp.analyzer';
+import { detectIntradayMomentum, detectIntradayMomentumShort, DailyCandle } from '../swing-scanner/vcp.analyzer';
 
 // ─── Top liquid NSE stocks (Nifty 50 + Momentum leaders) ─────────────────────
 const TOP_LIQUID_STOCKS = [
@@ -97,16 +97,25 @@ export async function autoSelectStock(
           }
         }
 
-        // Use detectIntradayMomentum directly — analyzeStock() returns the
-        // best-scored pattern which may NOT be INTRADAY_MOMENTUM even when one exists.
-        const result = detectIntradayMomentum(candles);
-        if (result) {
-          const ltp = result.currentPrice;
-          const riskPerShare = result.entryPrice - result.stopLoss;
+        // Use both long and short detectors
+        const resultLong = detectIntradayMomentum(candles);
+        if (resultLong) {
+          const ltp = resultLong.currentPrice;
+          const riskPerShare = Math.abs(resultLong.entryPrice - resultLong.stopLoss);
           const qty = riskPerShare > 0 ? Math.ceil(stopLossRs / riskPerShare) : 1;
 
-          candidates.push({ symbol, score: result.score, ltp, qty });
-          logger?.log(`  📈 Momentum candidate: ${symbol} | Score:${result.score} | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
+          candidates.push({ symbol, score: resultLong.score, ltp, qty });
+          logger?.log(`  📈 Momentum candidate (LONG): ${symbol} | Score:${resultLong.score} | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
+        }
+
+        const resultShort = detectIntradayMomentumShort(candles);
+        if (resultShort) {
+          const ltp = resultShort.currentPrice;
+          const riskPerShare = Math.abs(resultShort.entryPrice - resultShort.stopLoss);
+          const qty = riskPerShare > 0 ? Math.ceil(stopLossRs / riskPerShare) : 1;
+
+          candidates.push({ symbol, score: resultShort.score, ltp, qty });
+          logger?.log(`  📉 Momentum candidate (SHORT): ${symbol} | Score:${resultShort.score} | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
         }
       } catch (e) {
         // Skip on error

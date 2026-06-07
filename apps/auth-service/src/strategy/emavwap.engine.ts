@@ -324,7 +324,7 @@ export class EmaVwapCrossoverEngine {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
     const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
-    
+
     if (!isIndex) return null; // No options for stocks in EMA-VWAP
 
     let underlying: string;

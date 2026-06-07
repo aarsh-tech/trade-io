@@ -541,10 +541,11 @@ export class EmaRsiOptionsEngine {
 
   private getLotSize(symbol: string): number {
     const u = symbol.toUpperCase();
-    if (u.includes('BANK')) return 15;
-    if (u.includes('SENSEX')) return 10;
-    if (u.includes('FIN')) return 40;
-    return 75; // Nifty 50
+    if (u.includes('BANK')) return 30;    // BankNifty: 30 (NSE Jan 2026)
+    if (u.includes('SENSEX')) return 20;  // Sensex: 20 (BSE Jan 2026)
+    if (u.includes('FIN')) return 60;     // FinNifty: 60 (NSE Jan 2026)
+    if (u.includes('MIDCAP') || u.includes('MIDCP')) return 120; // MidcapNifty: 120
+    return 65; // Nifty 50: 65 (NSE Jan 2026)
   }
 
   private roundTick(price: number, tick = 0.05): number {

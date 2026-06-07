@@ -8,6 +8,7 @@ import { StrategyService } from './strategy.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
+import { GammaBlastEngine } from './gamma-blast.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 
@@ -21,6 +22,7 @@ export class StrategyController {
     private readonly breakoutEngine: Breakout15MinEngine,
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly emaRsiEngine: EmaRsiOptionsEngine,
+    private readonly gammaBlastEngine: GammaBlastEngine,
     private readonly scheduler: MarketSchedulerService,
   ) {}
 
@@ -131,6 +133,7 @@ export class StrategyController {
     if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
     if (type === 'EMA_RSI_OPTIONS') return this.emaRsiEngine;
+    if (type === 'GAMMA_BLAST') return this.gammaBlastEngine;
     throw new Error('No engine found for this strategy type');
   }
 }

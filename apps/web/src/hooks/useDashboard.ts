@@ -8,7 +8,7 @@ export const DASHBOARD_KEYS = {
   stats: ["dashboard", "stats"] as const,
 };
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '') || "http://localhost:3002";
+const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '') || "http://127.0.0.1:3002";
 
 export function useDashboard() {
   const queryClient = useQueryClient();

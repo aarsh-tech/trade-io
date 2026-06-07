@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
+import { GammaBlastEngine } from './gamma-blast.engine';
 
 /**
  * MarketSchedulerService
@@ -36,6 +37,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly breakoutEngine: Breakout15MinEngine,
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly emaRsiEngine: EmaRsiOptionsEngine,
+    private readonly gammaBlastEngine: GammaBlastEngine,
   ) {}
 
   onModuleInit() {
@@ -172,6 +174,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
     if (type === 'EMA_RSI_OPTIONS') return this.emaRsiEngine;
+    if (type === 'GAMMA_BLAST') return this.gammaBlastEngine;
     return null;
   }
 }

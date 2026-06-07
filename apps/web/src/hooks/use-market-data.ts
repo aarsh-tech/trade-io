@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3002/market';
+const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:3002/market';
 
 export interface MarketTick {
   symbol: string;

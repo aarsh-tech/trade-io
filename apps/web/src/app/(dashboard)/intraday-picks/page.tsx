@@ -154,9 +154,9 @@ _Powered by TradeIO Intelligence_`;
         {/* Targets */}
         <div className="flex gap-2 overflow-x-auto pb-1">
           {[
-            { label: "T1 (3%)", price: r.target1, color: "text-emerald-600 bg-emerald-50 border-emerald-100" },
-            { label: "T2 (5%)", price: r.target2, color: "text-teal-600 bg-teal-50 border-teal-100" },
-            { label: "T3 (10%)", price: r.target3, color: "text-indigo-600 bg-indigo-50 border-indigo-100" },
+            { label: "T1 (Fib 0.382)", price: r.target1, color: "text-emerald-600 bg-emerald-50 border-emerald-100" },
+            { label: "T2 (Fib 0.618)", price: r.target2, color: "text-teal-600 bg-teal-50 border-teal-100" },
+            { label: "T3 (Fib 1.0)", price: r.target3, color: "text-indigo-600 bg-indigo-50 border-indigo-100" },
           ].map((t) => (
             <div key={t.label} className={cn("flex-shrink-0 px-3 py-2 rounded-xl border flex flex-col items-center min-w-[90px]", t.color)}>
               <span className="text-[9px] font-bold uppercase">{t.label}</span>
@@ -423,7 +423,7 @@ export default function IntradayPicksPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((pick) => (
             <PickCard
-              key={`${pick.symbol}-${pick.pattern}`}
+              key={`${pick.symbol}-${pick.pattern}-${getDirection(pick)}`}
               r={pick}
               targetRs={targetRs}
               onQuickTrade={setTradeStock}

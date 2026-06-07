@@ -151,7 +151,7 @@ export class SwingScannerService {
 
             patterns.forEach(p => {
               // Calculate suggested qty to earn ₹500 at T1
-              const profitPerShare = p.target1 - p.entryPrice;
+              const profitPerShare = Math.abs(p.target1 - p.entryPrice);
               const suggestedQty = profitPerShare > 0
                 ? Math.ceil(500 / profitPerShare)
                 : 0;

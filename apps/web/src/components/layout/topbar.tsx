@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '') || "http://localhost:3002";
+const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '') || "http://127.0.0.1:3002";
 
 export function TopBar() {
   const pathname = usePathname();

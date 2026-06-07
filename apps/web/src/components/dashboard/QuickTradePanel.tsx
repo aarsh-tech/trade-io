@@ -183,6 +183,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
   const target2Num = parseFloat(target2) || 0;
 
   const isLong = activeStock.direction === "LONG";
+  const product = isLong ? (activeStock.product ?? "CNC") : "MIS";
   const accentColor = isLong ? "#10b981" : "#ef4444"; // emerald / rose
   const entrySide = isLong ? "BUY" : "SELL";
   const slSide = isLong ? "SELL" : "BUY";          // opposite for SL exit
@@ -226,7 +227,6 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
     setErrorMsg("");
 
     const variety = getOrderVariety();
-    const product = activeStock.product ?? "MIS";
 
     try {
       const placed: string[] = [];
@@ -345,7 +345,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                   ? <TrendingUp className="h-5 w-5" />
                   : <TrendingDown className="h-5 w-5" />}
                 <span className="text-xs font-black uppercase tracking-widest opacity-80">
-                  {isLong ? "Long (Buy)" : "Short (Sell)"} · {activeStock.product === "CNC" ? "Delivery CNC" : "Intraday MIS"}
+                  {isLong ? "Long (Buy)" : "Short (Sell)"} · {product === "CNC" ? "Delivery CNC" : "Intraday MIS"}
                 </span>
               </div>
               <h2 className={cn(
@@ -541,7 +541,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
           <div className="flex items-start gap-2 px-1">
             <Info className="h-3.5 w-3.5 text-slate-300 shrink-0 mt-0.5" />
             <div className="text-[10px] text-slate-400 leading-relaxed">
-              {activeStock.product === "CNC" ? (
+              {product === "CNC" ? (
                 <>2 orders will be placed: <strong>Entry (SL trigger)</strong> → <strong>GTT (Stop-Loss & Target)</strong>.</>
               ) : (
                 <>3 orders will be placed: <strong>Entry (SL trigger)</strong> → <strong>Stop-Loss (SL)</strong> → <strong>Target 1 (LIMIT)</strong>.</>
