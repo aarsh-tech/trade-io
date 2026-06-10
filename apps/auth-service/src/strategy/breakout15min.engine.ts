@@ -128,7 +128,7 @@ export class Breakout15MinEngine {
       // 1. Resolve Tradable Asset (Index Future or Equity Stock)
       if (!state.futureSymbol) {
         if (state.config.instrumentType === 'INDEX' || state.config.symbol.toUpperCase().includes('NIFTY')) {
-          const res = await this.findFutureSymbol(kite, state.config.symbol);
+          const res = await this.findFutureSymbol(client, state.config.symbol);
           state.futureSymbol = res.symbol;
           state.futureExchange = res.exchange;
         } else if (state.config.symbol === 'AUTO') {
@@ -144,7 +144,7 @@ export class Breakout15MinEngine {
       }
 
       // 2. Set Reference Range
-      const candles15 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '15minute', now, state.futureExchange);
+      const candles15 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '15minute', now, state.futureExchange);
       if (candles15.length === 0) return;
 
       const ref = candles15[0];
@@ -154,7 +154,7 @@ export class Breakout15MinEngine {
       this.log(state, `📊 (Catch-up) Reference Range Set — H: ₹${ref.high} | L: ₹${ref.low}`);
 
       // 3. Scan 5-min candles for breakout
-      const candles5 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '5minute', now, state.futureExchange);
+      const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
       const breakoutCandidates = candles5.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
 
       for (const candle of breakoutCandidates) {
@@ -241,7 +241,7 @@ export class Breakout15MinEngine {
     if (!state.futureSymbol) {
       if (state.config.instrumentType === 'INDEX' || state.config.symbol.toUpperCase().includes('NIFTY')) {
         try {
-          const res = await this.findFutureSymbol(kite, config.symbol);
+          const res = await this.findFutureSymbol(client, config.symbol);
           state.futureSymbol = res.symbol;
           state.futureExchange = res.exchange;
           this.log(state, `🔎 Resolved Future: ${state.futureExchange}:${state.futureSymbol}`);
@@ -267,7 +267,7 @@ export class Breakout15MinEngine {
         return;
       }
       try {
-        const candles15 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '15minute', now, state.futureExchange);
+        const candles15 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '15minute', now, state.futureExchange);
         if (candles15.length > 0) {
           const ref = candles15[0];
           state.refHigh = ref.high;
@@ -303,7 +303,7 @@ export class Breakout15MinEngine {
       const currentPrice = ltpData[futureKey]?.last_price;
       if (!currentPrice) { await this.persistLogs(state); return; }
 
-      const candles5 = await this.fetchCandlesForSymbol(kite, state.futureSymbol, '5minute', now, state.futureExchange);
+      const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
       const breakoutCandidates = candles5.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
       if (breakoutCandidates.length === 0) { await this.persistLogs(state); return; }
 
@@ -420,27 +420,24 @@ export class Breakout15MinEngine {
     state.entryTriggered = null; // Allow more trades if maxTradesPerDay not reached
   }
 
-  private async findFutureSymbol(kite: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
+  private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
     const upperSymbol = baseSymbol.toUpperCase().trim();
     const isSensex = upperSymbol === 'SENSEX' || upperSymbol === 'BSE SENSEX';
     const exchange = isSensex ? 'BFO' : 'NFO';
     const segment = isSensex ? 'BFO-FUT' : 'NFO-FUT';
     let underlying = isSensex ? 'SENSEX' : upperSymbol.includes('BANK') ? 'BANKNIFTY' : (upperSymbol.includes('NIFTY 50') || upperSymbol === 'NIFTY') ? 'NIFTY' : upperSymbol.includes('FIN') ? 'FINNIFTY' : upperSymbol.includes('MID') ? 'MIDCPNIFTY' : upperSymbol;
 
-    const instruments = await kite.getInstruments(exchange);
+    const instruments = await client.getInstruments(exchange);
     const futures = instruments.filter((i: any) => i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment);
     if (futures.length === 0) throw new Error(`No ${exchange} future for ${baseSymbol}`);
     const sorted = futures.sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
     return { symbol: sorted[0].tradingsymbol, exchange };
   }
 
-  private async fetchCandlesForSymbol(kite: any, symbol: string, interval: string, now: Date, exchange = 'NFO'): Promise<Candle[]> {
+  private async fetchCandlesForSymbol(client: any, symbol: string, interval: string, now: Date, exchange = 'NFO'): Promise<Candle[]> {
     const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
     const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
-    const instruments = await kite.getInstruments(exchange);
-    const found = instruments.find((i: any) => i.tradingsymbol === symbol);
-    if (!found) throw new Error(`Token not found for ${symbol}`);
-    const data = await kite.getHistoricalData(found.instrument_token, interval, from, now, false);
+    const data = await client.getHistoricalData(symbol, exchange, interval, from, now);
     return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
 
@@ -461,7 +458,7 @@ export class Breakout15MinEngine {
     if (isIndex) {
       try {
         const optionType = side === 'BUY' ? 'CE' : 'PE';
-        const optSym = await this.findOptionSymbol(kite, state, triggerPrice, optionType);
+        const optSym = await this.findOptionSymbol(client, state, triggerPrice, optionType);
         if (optSym) {
           symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
           const quotes = await kite.getLTP([`NFO:${symbol}`]);
@@ -509,7 +506,7 @@ export class Breakout15MinEngine {
     state.tradesPlacedToday += 1;
   }
 
-  private async findOptionSymbol(kite: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
+  private async findOptionSymbol(client: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
 
@@ -525,7 +522,7 @@ export class Breakout15MinEngine {
     const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
     const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
 
-    const instruments = await kite.getInstruments(exchange);
+    const instruments = await client.getInstruments(exchange);
     const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && i.segment === segment);
 
     if (options.length === 0) {
@@ -565,7 +562,7 @@ export class Breakout15MinEngine {
       for (let i = 0; i < allSymbols.length; i += CHUNK) {
         const chunk = allSymbols.slice(i, i + CHUNK);
         try {
-          const res = await kite.getLTP(chunk);
+          const res = await client.getLTP(chunk);
           Object.assign(quotes, res);
         } catch (e) {
           this.log(state, `⚠ LTP batch ${Math.floor(i / CHUNK) + 1} failed: ${e.message}`);

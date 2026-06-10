@@ -140,7 +140,7 @@ export class EmaVwapCrossoverEngine {
         state.config.qty = pick.qty; // Update quantity
         this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol} (Catch-up) - Qty: ${state.config.qty}`);
       }
-      const candles = await this.fetchCandles(kite, state.config, '5minute', now);
+      const candles = await this.fetchCandles(client, state.config, '5minute', now);
       if (candles.length < state.config.emaPeriod + 2) return;
 
       const emas = this.calculateEMA(candles, state.config.emaPeriod);
@@ -194,7 +194,7 @@ export class EmaVwapCrossoverEngine {
         config.qty = pick.qty; // Update quantity
         this.log(state, `🎯 Auto-Selected Stock: ${config.exchange}:${config.symbol} - Qty: ${config.qty}`);
       }
-      const candles = await this.fetchCandles(kite, config, '5minute', now);
+      const candles = await this.fetchCandles(client, config, '5minute', now);
       if (candles.length < 2) return;
 
       const emas = this.calculateEMA(candles, config.emaPeriod || 15);
@@ -246,7 +246,7 @@ export class EmaVwapCrossoverEngine {
 
     if (config.isOptionBuyingOnly) {
       const type = side === 'BUY' ? 'CE' : 'PE';
-      const optSym = await this.findOptionSymbol(kite, state, triggerPrice, type);
+      const optSym = await this.findOptionSymbol(client, state, triggerPrice, type);
       if (optSym) {
         symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
         const q = await kite.getLTP([`NFO:${symbol}`]);
@@ -303,24 +303,14 @@ export class EmaVwapCrossoverEngine {
     return vwaps;
   }
 
-  private async fetchCandles(kite: any, config: any, interval: string, now: Date): Promise<Candle[]> {
+  private async fetchCandles(client: any, config: any, interval: string, now: Date): Promise<Candle[]> {
     const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
     const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
-    let token = 0;
-    const indexTokens: Record<string, number> = { 'NIFTY 50': 256265, 'BANKNIFTY': 260105, 'SENSEX': 265 };
-    if (indexTokens[config.symbol.toUpperCase()]) {
-      token = indexTokens[config.symbol.toUpperCase()];
-    } else {
-      const instruments = await kite.getInstruments(config.exchange);
-      const found = instruments.find(i => i.tradingsymbol === config.symbol.toUpperCase());
-      if (!found) throw new Error(`Instrument ${config.symbol} not found`);
-      token = found.instrument_token;
-    }
-    const data = await kite.getHistoricalData(token, interval, from, now, false);
+    const data = await client.getHistoricalData(config.symbol, config.exchange, interval, from, now);
     return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
 
-  private async findOptionSymbol(kite: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
+  private async findOptionSymbol(client: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
     const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
@@ -338,7 +328,7 @@ export class EmaVwapCrossoverEngine {
     const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
     const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
 
-    const instruments = await kite.getInstruments(exchange);
+    const instruments = await client.getInstruments(exchange);
     const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && i.segment === segment);
     if (options.length === 0) {
       this.log(state, `⚠ No ${type} options found for ${underlying}`);
@@ -370,7 +360,7 @@ export class EmaVwapCrossoverEngine {
       const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
       const quotes: Record<string, any> = {};
       for (let i = 0; i < allSymbols.length; i += 200) {
-        try { Object.assign(quotes, await kite.getLTP(allSymbols.slice(i, i + 200))); }
+        try { Object.assign(quotes, await client.getLTP(allSymbols.slice(i, i + 200))); }
         catch (e) { this.log(state, `⚠ LTP batch failed: ${e.message}`); }
       }
       const mid = (config.minPremium + config.maxPremium) / 2;

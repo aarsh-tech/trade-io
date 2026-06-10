@@ -19,9 +19,8 @@ export class BrokerClientFactory {
   }
 }
 
-// Module-level cache so instrument list is downloaded only once
-let nseInstrumentsCache: any[] | null = null;
-let cacheTimestamp = 0;
+// Shared cache mapping exchange to instruments array
+const instrumentsCache = new Map<string, { data: any[]; timestamp: number }>();
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 class ZerodhaClient implements IBrokerClient {
@@ -184,25 +183,31 @@ class ZerodhaClient implements IBrokerClient {
     await this.kite.cancelOrder("regular", orderId);
   }
 
+  async getInstruments(exchange: string): Promise<any[]> {
+    const now = Date.now();
+    const cached = instrumentsCache.get(exchange);
+    if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+      return cached.data;
+    }
+
+    console.log(`Fetching ${exchange} instruments list from Zerodha...`);
+    const data = await this.kite.getInstruments(exchange);
+    instrumentsCache.set(exchange, { data, timestamp: now });
+    console.log(`Cached ${data.length} instruments for ${exchange}.`);
+    return data;
+  }
+
   async searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]> {
     try {
       const upperQuery = query.toUpperCase().trim();
-      const now = Date.now();
-
-      // We use a shared cache for instruments to avoid heavy API calls
-      if (!nseInstrumentsCache || (now - cacheTimestamp) > CACHE_TTL_MS) {
-        console.log('Fetching NSE & NFO instruments list from Zerodha...');
-        const [nse, nfo] = await Promise.all([
-          this.kite.getInstruments('NSE'),
-          this.kite.getInstruments('NFO'),
-        ]);
-        nseInstrumentsCache = [...nse, ...nfo];
-        cacheTimestamp = now;
-        console.log(`Cached ${nseInstrumentsCache.length} instruments.`);
-      }
+      const [nse, nfo] = await Promise.all([
+        this.getInstruments('NSE'),
+        this.getInstruments('NFO'),
+      ]);
+      const combined = [...nse, ...nfo];
 
       // Filter: prefer tradingsymbol matches
-      const matches = nseInstrumentsCache.filter((item: any) =>
+      const matches = combined.filter((item: any) =>
         item.tradingsymbol?.toUpperCase().includes(upperQuery) ||
         item.name?.toUpperCase().includes(upperQuery)
       );
@@ -244,11 +249,8 @@ class ZerodhaClient implements IBrokerClient {
       if (indexTokens[upperSymbol]) {
         token = indexTokens[upperSymbol];
       } else {
-        // Search instruments for token
-        if (!nseInstrumentsCache) {
-          await this.searchInstruments(symbol); // triggers cache load
-        }
-        const found = nseInstrumentsCache?.find(i => i.tradingsymbol === upperSymbol && i.exchange === exchange);
+        const instruments = await this.getInstruments(exchange);
+        const found = instruments.find(i => i.tradingsymbol === upperSymbol && i.exchange === exchange);
         if (found) token = found.instrument_token;
       }
 
@@ -267,12 +269,8 @@ class ZerodhaClient implements IBrokerClient {
       const upperSymbol = symbol.toUpperCase().trim();
       const upperExchange = exchange.toUpperCase().trim();
 
-      // Ensure cache is loaded
-      if (!nseInstrumentsCache) {
-        await this.searchInstruments(symbol); // triggers cache load
-      }
-
-      const found = nseInstrumentsCache?.find(
+      const instruments = await this.getInstruments(upperExchange);
+      const found = instruments.find(
         (i: any) => i.tradingsymbol === upperSymbol && i.exchange === upperExchange,
       );
 

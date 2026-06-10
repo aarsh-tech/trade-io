@@ -216,7 +216,7 @@ export class EmaRsiOptionsEngine {
     if (!state.futureSymbol) {
       if (state.config.instrumentType === 'INDEX') {
         try {
-          const resolved = await this.resolveFuture(kite, state.config.symbol);
+          const resolved = await this.resolveFuture(client, state.config.symbol);
           state.futureSymbol = resolved.symbol;
           state.futureExchange = resolved.exchange;
           this.log(state, `🔎 Resolved: ${state.futureExchange}:${state.futureSymbol}`);
@@ -257,7 +257,7 @@ export class EmaRsiOptionsEngine {
 
     // ── Step 3: Fetch 5-min candles, calculate indicators ────────────────────
     try {
-      const candles = await this.fetch5min(kite, state.futureSymbol, state.futureExchange, ist);
+      const candles = await this.fetch5min(client, state.futureSymbol, state.futureExchange, ist);
       if (candles.length < 22) { this.log(state, '⚠ Not enough 5-min bars yet'); return; }
 
       const emaFastArr = calcEMA(candles, state.config.emaFast ?? 9);
@@ -292,11 +292,11 @@ export class EmaRsiOptionsEngine {
       if (bullishCross && bullishRSI && aboveVWAP) {
         this.log(state, `✅ BULLISH SIGNAL — EMA cross✓ RSI ${rsi.toFixed(1)}✓ Above VWAP✓`);
         state.lastSignalBar = n;
-        await this.enterTrade(strategyId, state, kite, client, account, 'CALL', price);
+        await this.enterTrade(strategyId, state, client, account, 'CALL', price);
       } else if (bearishCross && bearishRSI && belowVWAP) {
         this.log(state, `✅ BEARISH SIGNAL — EMA cross✓ RSI ${rsi.toFixed(1)}✓ Below VWAP✓`);
         state.lastSignalBar = n;
-        await this.enterTrade(strategyId, state, kite, client, account, 'PUT', price);
+        await this.enterTrade(strategyId, state, client, account, 'PUT', price);
       }
 
     } catch (e) {
@@ -349,7 +349,7 @@ export class EmaRsiOptionsEngine {
   // ── Enter trade (buy ATM option or stock) ──────────────────────────────────
 
   private async enterTrade(
-    strategyId: string, state: StrategyState, kite: any, client: any, account: any,
+    strategyId: string, state: StrategyState, client: any, account: any,
     side: 'CALL' | 'PUT', indexPrice: number,
   ) {
     try {
@@ -361,11 +361,11 @@ export class EmaRsiOptionsEngine {
 
       if (isIndex) {
         const optExchange = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
-        const optSymbol = await this.findATMOption(kite, state.config.symbol, indexPrice, side === 'CALL' ? 'CE' : 'PE');
+        const optSymbol = await this.findATMOption(client, state.config.symbol, indexPrice, side === 'CALL' ? 'CE' : 'PE');
         if (!optSymbol) { this.log(state, `❌ No ATM ${side} option found`); return; }
 
         const key = `${optExchange}:${optSymbol}`;
-        const ltp = await kite.getLTP([key]);
+        const ltp = await client.getLTP([key]);
         const optLTP = ltp[key]?.last_price;
         if (!optLTP || optLTP <= 0) { this.log(state, `❌ Option LTP not available for ${optSymbol}`); return; }
 
@@ -444,13 +444,13 @@ export class EmaRsiOptionsEngine {
 
   // ── Find ATM option ───────────────────────────────────────────────────────────
 
-  private async findATMOption(kite: any, baseSymbol: string, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
+  private async findATMOption(client: any, baseSymbol: string, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
     const isSensex = baseSymbol.toUpperCase().includes('SENSEX');
     const exchange = isSensex ? 'BFO' : 'NFO';
     const underlying = this.resolveUnderlying(baseSymbol);
     const step = this.getStrikeStep(baseSymbol);
 
-    const instruments = await kite.getInstruments(exchange);
+    const instruments = await client.getInstruments(exchange);
     const options = instruments.filter((i: any) =>
       i.name === underlying && i.instrument_type === type && (isSensex ? i.segment === 'BFO-OPT' : i.segment === 'NFO-OPT')
     );
@@ -479,24 +479,11 @@ export class EmaRsiOptionsEngine {
     return null;
   }
 
-  private async fetch5min(kite: any, symbol: string, exchange: string, ist: Date): Promise<Candle[]> {
+  private async fetch5min(client: any, symbol: string, exchange: string, ist: Date): Promise<Candle[]> {
     const from = new Date(ist); from.setHours(9, 15, 0, 0);
     const to = new Date(ist);
 
-    let token = 0;
-    const indexTokens: Record<string, number> = { 'NIFTY 50': 256265, 'BANKNIFTY': 260105, 'SENSEX': 265 };
-
-    const instruments = await kite.getInstruments(exchange);
-    const found = instruments.find((i: any) => i.tradingsymbol === symbol);
-
-    if (!found) {
-      if (indexTokens[symbol.toUpperCase()]) token = indexTokens[symbol.toUpperCase()];
-      else throw new Error(`Token not found for ${symbol} on ${exchange}`);
-    } else {
-      token = found.instrument_token;
-    }
-
-    const data = await kite.getHistoricalData(token, '5minute', from, to, false);
+    const data = await client.getHistoricalData(symbol, exchange, '5minute', from, to);
     return (data || []).map((c: any) => ({
       date: new Date(c.date), open: c.open, high: c.high,
       low: c.low, close: c.close, volume: c.volume,
@@ -505,14 +492,14 @@ export class EmaRsiOptionsEngine {
 
   // ── Resolve future symbol ─────────────────────────────────────────────────────
 
-  private async resolveFuture(kite: any, symbol: string): Promise<{ symbol: string; exchange: string }> {
+  private async resolveFuture(client: any, symbol: string): Promise<{ symbol: string; exchange: string }> {
     const upper = symbol.toUpperCase().trim();
     const isSensex = upper === 'SENSEX' || upper === 'BSE SENSEX';
     const exchange = isSensex ? 'BFO' : 'NFO';
     const segment = isSensex ? 'BFO-FUT' : 'NFO-FUT';
     const underlying = this.resolveUnderlying(symbol);
 
-    const instruments = await kite.getInstruments(exchange);
+    const instruments = await client.getInstruments(exchange);
     const futures = instruments.filter((i: any) =>
       i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment
     );

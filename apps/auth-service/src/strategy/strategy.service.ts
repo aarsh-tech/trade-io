@@ -296,48 +296,31 @@ export class StrategyService {
         }
       }
       
-      if (strategyType === 'GAMMA_BLAST') {
-        const entryMatch = line.match(/📋\s+BUY\s+(CE|PE|CALL|PUT)\s*\|\s*(\S+)\s*\|.*LTP:\s*₹([\d.]+).*Qty:\s*(\d+)/i);
+      if (strategyType === 'DAILY_SCALPER') {
+        const entryMatch = line.match(/✅\s+Position\s+opened:\s+Buy\s+ATM\s+(CE|PE)\s+option\s+(\S+)\s+at\s+avg\s+price\s+₹([\d.]+)/i);
         if (entryMatch) {
           openTrade = {
             side: 'BUY',
             symbol: entryMatch[2],
             entryPrice: parseFloat(entryMatch[3]),
-            qty: parseInt(entryMatch[4])
+            qty: 1
           };
         }
         
-        const exitMatch = line.match(/🎯\s+TRAILING\s+SL\s+HIT!\s+Exit\s+at\s+₹([\d.]+)/i);
+        const exitMatch = line.match(/⏹\s+Position\s+Closed\s+\((\w+)\)\s+\|\s+P&L\s+on\s+Trade:\s*([+-]?)\s*₹?\s*(-?[\d.]+)/i);
         if (exitMatch && openTrade) {
-          const exitPrice = parseFloat(exitMatch[1]);
-          const pnl = (exitPrice - openTrade.entryPrice) * openTrade.qty;
+          const sign = exitMatch[2] === '-' ? -1 : 1;
+          const pnlVal = parseFloat(exitMatch[3]);
+          const pnl = sign * pnlVal;
           trades.push({
             symbol: openTrade.symbol,
             entryPrice: openTrade.entryPrice,
-            exitPrice,
+            exitPrice: openTrade.entryPrice + pnl,
             qty: openTrade.qty,
             side: openTrade.side,
             pnl,
             isWin: pnl > 0,
-            reason: 'TRAILING_SL',
-            source: 'log'
-          });
-          openTrade = null;
-        }
-        
-        const forceMatch = line.match(/Force\s+exit:.*Entry:\s*₹([\d.]+).*~P&L:\s*([+-]?)\s*₹?\s*([\d.]+)/i);
-        if (forceMatch && openTrade) {
-          const sign = forceMatch[2] === '-' ? -1 : 1;
-          const pnl = sign * parseFloat(forceMatch[3]);
-          trades.push({
-            symbol: openTrade.symbol,
-            entryPrice: openTrade.entryPrice,
-            exitPrice: openTrade.entryPrice + (pnl / openTrade.qty),
-            qty: openTrade.qty,
-            side: openTrade.side,
-            pnl,
-            isWin: pnl > 0,
-            reason: 'FORCE_EXIT',
+            reason: exitMatch[1],
             source: 'log'
           });
           openTrade = null;

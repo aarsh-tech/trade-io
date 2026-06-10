@@ -74,7 +74,7 @@ interface Strategy {
   isActive: boolean;
   isPaperTrade: boolean;
   brokerAccountId: string | null;
-  config: Breakout15MinConfig;
+  config: any;
   brokerAccount?: { broker: string; clientId: string } | null;
   executions: Execution[];
   createdAt: string;
@@ -106,7 +106,7 @@ export default function StrategyDetailPage() {
   // Real-time market data
   const { getPrice } = useMarketData(strategy?.config.symbol ? [strategy.config.symbol] : []);
   const ltp = strategy?.config.symbol ? getPrice(strategy.config.symbol) : null;
-  const [editConfig, setEditConfig] = useState<Partial<Breakout15MinConfig>>({});
+  const [editConfig, setEditConfig] = useState<Record<string, any>>({});
   const logsRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -543,8 +543,8 @@ export default function StrategyDetailPage() {
                       <span className="text-xs font-black text-blue-700">{liveState.optionSymbol}</span>
                     </div>
                   )}
-                  {/* Gamma Blast specific state */}
-                  {strategy.type === 'GAMMA_BLAST' && liveState.positions && (
+                  {/* Daily Scalper specific state */}
+                  {strategy.type === 'DAILY_SCALPER' && (
                     <>
                       <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
                         <span className="text-xs text-slate-500">Trades Today</span>
@@ -556,28 +556,18 @@ export default function StrategyDetailPage() {
                           {(liveState.pnlToday ?? 0) >= 0 ? '+' : ''}₹{(liveState.pnlToday ?? 0).toFixed(0)}
                         </span>
                       </div>
-                      {liveState.positions.length > 0 && liveState.positions.map((pos: any, idx: number) => (
-                        <div key={idx} className="p-2.5 rounded-lg bg-orange-50 border border-orange-100 space-y-1.5 mt-2">
+                      {liveState.optionSymbol && (
+                        <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-100 space-y-1.5 mt-2">
                           <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-bold text-orange-700">⚡ {pos.side} Position</span>
-                            <span className="text-[10px] font-black text-orange-900">{pos.symbol}</span>
+                            <span className="text-[10px] font-bold text-emerald-700">⚡ Active position ({liveState.side})</span>
+                            <span className="text-[10px] font-black text-emerald-900">{liveState.optionSymbol}</span>
                           </div>
-                          <div className="grid grid-cols-3 gap-2 text-center">
-                            <div>
-                              <p className="text-[9px] text-orange-500">Entry</p>
-                              <p className="text-[11px] font-bold text-orange-800">₹{pos.entry?.toFixed(2)}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] text-orange-500">HWM</p>
-                              <p className="text-[11px] font-bold text-green-700">₹{pos.hwm?.toFixed(2)}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] text-orange-500">Trail SL</p>
-                              <p className="text-[11px] font-bold text-red-600">₹{pos.trailSL?.toFixed(2)}</p>
-                            </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[9px] text-emerald-600">Entry Avg Price</span>
+                            <span className="text-[11px] font-bold text-emerald-800">₹{liveState.entryPrice?.toFixed(2)}</span>
                           </div>
                         </div>
-                      ))}
+                      )}
                     </>
                   )}
                 </div>
@@ -625,13 +615,13 @@ export default function StrategyDetailPage() {
         </div>
       )}
 
-      {strategy.type === 'GAMMA_BLAST' ? (
+      {strategy.type === 'DAILY_SCALPER' ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: "Index", value: cfg.symbol, icon: Flame, color: "text-orange-500" },
+            { label: "Index", value: cfg.symbol, icon: Target, color: "text-emerald-500" },
             { label: "Lots", value: `${(cfg as any).lots ?? 1}`, icon: Zap, color: "text-amber-500" },
-            { label: "Premium Range", value: `₹${(cfg as any).minPremium ?? 2}–${(cfg as any).maxPremium ?? 10}`, icon: Target, color: "text-blue-500" },
-            { label: "Max Loss/Day", value: `₹${(cfg as any).maxLossPerDay ?? 2000}`, icon: Shield, color: "text-red-500" },
+            { label: "Daily Target", value: `₹${(cfg as any).dailyTargetRs ?? 500}`, icon: TrendingUp, color: "text-green-600" },
+            { label: "Daily Max Loss", value: `₹${(cfg as any).dailyMaxLossRs ?? 800}`, icon: Shield, color: "text-red-500" },
           ].map(({ label, value, icon: Icon, color }) => (
             <Card key={label} className="text-center">
               <CardContent className="pt-4 pb-3">
@@ -731,6 +721,74 @@ export default function StrategyDetailPage() {
                 <div>
                   <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Order Mode</p>
                   <p className="text-sm font-semibold text-[hsl(var(--primary))]">LIMIT only</p>
+                </div>
+              </>
+            )}
+            {strategy.type === 'DAILY_SCALPER' && (
+              <>
+                <Field
+                  label="Capital Budget (₹)"
+                  editing={editing}
+                  value={editing ? String(editConfig.capital ?? cfg.capital) : String(cfg.capital)}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, capital: Number(v) }))}
+                  type="number"
+                />
+                <Field
+                  label="Daily Target Profit (₹)"
+                  editing={editing}
+                  value={editing ? String(editConfig.dailyTargetRs ?? cfg.dailyTargetRs) : String(cfg.dailyTargetRs)}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, dailyTargetRs: Number(v) }))}
+                  type="number"
+                />
+                <Field
+                  label="Daily Max Loss (₹)"
+                  editing={editing}
+                  value={editing ? String(editConfig.dailyMaxLossRs ?? cfg.dailyMaxLossRs) : String(cfg.dailyMaxLossRs)}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, dailyMaxLossRs: Number(v) }))}
+                  type="number"
+                />
+                <Field
+                  label="Number of Lots"
+                  editing={editing}
+                  value={editing ? String(editConfig.lots ?? cfg.lots) : String(cfg.lots)}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, lots: Number(v) }))}
+                  type="number"
+                />
+                <Field
+                  label="Max Trades / Day"
+                  editing={editing}
+                  value={editing ? String(editConfig.maxTradesPerDay ?? cfg.maxTradesPerDay) : String(cfg.maxTradesPerDay)}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, maxTradesPerDay: Number(v) }))}
+                  type="number"
+                />
+                <Field
+                  label="Custom Target Points"
+                  editing={editing}
+                  value={editing ? String(editConfig.targetPoints ?? cfg.targetPoints ?? '') : String(cfg.targetPoints ?? 'Default')}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, targetPoints: v ? Number(v) : null }))}
+                  type="number"
+                />
+                <Field
+                  label="Custom SL Points"
+                  editing={editing}
+                  value={editing ? String(editConfig.stopLossPoints ?? cfg.stopLossPoints ?? '') : String(cfg.stopLossPoints ?? 'Default')}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, stopLossPoints: v ? Number(v) : null }))}
+                  type="number"
+                />
+                <div>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Product</p>
+                  {editing ? (
+                    <select
+                      value={editConfig.product ?? cfg.product}
+                      onChange={(e) => setEditConfig((ec) => ({ ...ec, product: e.target.value }))}
+                      className="flex h-9 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                    >
+                      <option value="MIS">MIS (Intraday)</option>
+                      <option value="NRML">NRML (Overnight)</option>
+                    </select>
+                  ) : (
+                    <p className="text-sm font-semibold">{cfg.product}</p>
+                  )}
                 </div>
               </>
             )}

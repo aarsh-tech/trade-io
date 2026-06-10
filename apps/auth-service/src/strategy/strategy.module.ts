@@ -4,7 +4,7 @@ import { StrategyService } from './strategy.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
-import { GammaBlastEngine } from './gamma-blast.engine';
+import { DailyScalperEngine } from './daily-scalper.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { BrokersModule } from '../brokers/brokers.module';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -13,8 +13,8 @@ import { SwingScannerModule } from '../swing-scanner/swing-scanner.module';
 @Module({
   imports: [PrismaModule, BrokersModule],
   controllers: [StrategyController],
-  providers: [StrategyService, Breakout15MinEngine, EmaVwapCrossoverEngine, EmaRsiOptionsEngine, GammaBlastEngine, MarketSchedulerService],
-  exports: [StrategyService, Breakout15MinEngine, EmaVwapCrossoverEngine, EmaRsiOptionsEngine, GammaBlastEngine],
+  providers: [StrategyService, Breakout15MinEngine, EmaVwapCrossoverEngine, EmaRsiOptionsEngine, DailyScalperEngine, MarketSchedulerService],
+  exports: [StrategyService, Breakout15MinEngine, EmaVwapCrossoverEngine, EmaRsiOptionsEngine, DailyScalperEngine],
 })
 export class StrategyModule {}
 

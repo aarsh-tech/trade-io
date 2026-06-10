@@ -60,7 +60,7 @@ export default function NewStrategyPage() {
 
   const [form, setForm] = useState({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "GAMMA_BLAST" | "",
+    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "",
     // Common
     symbol: "NIFTY 50",
     exchange: "NSE",
@@ -85,24 +85,13 @@ export default function NewStrategyPage() {
     targetPct: "45",
     slPct: "25",
     startAfterMin: "25",
-    // Gamma Blast
-    gbExpiryMode: "weekly" as "weekly" | "monthly-last",
-    gbExpiryDay: "2",
-    gbMinPremium: "2",
-    gbMaxPremium: "10",
-    gbStrikesOTM: "5",
-    gbAtrMultiplier: "2.5",
-    gbPremiumVelocityX: "2.0",
-    gbVixSpikeThreshold: "3.0",
-    gbVwapDivergence: "0.3",
-    gbMinSignalScore: "70",
-    gbTrailTier1: "40",
-    gbTrailTier2: "30",
-    gbTrailTier3: "25",
-    gbTrailTier4: "20",
-    gbMaxTradesPerDay: "3",
-    gbMaxLossPerDay: "2000",
-    gbForceExitMinBefore: "15",
+    // Daily Scalper
+    dsCapital: "20000",
+    dsDailyTargetRs: "500",
+    dsDailyMaxLossRs: "800",
+    dsTargetPoints: "",
+    dsStopLossPoints: "",
+    dsMaxTradesPerDay: "2",
     // Broker
     brokerAccountId: "",
     isPaperTrade: true,
@@ -173,8 +162,8 @@ export default function NewStrategyPage() {
     if (step === 2) {
       if (form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS")
         return Number(form.stopLossRs) > 0 && Number(form.targetRs) > 0;
-      if (form.type === "GAMMA_BLAST")
-        return Number(form.gbMaxTradesPerDay) > 0 && Number(form.gbMaxLossPerDay) > 0;
+      if (form.type === "DAILY_SCALPER")
+        return Number(form.dsCapital) > 0 && Number(form.dsDailyTargetRs) > 0 && Number(form.dsDailyMaxLossRs) > 0;
       return true;
     }
     return !!form.brokerAccountId;
@@ -187,24 +176,17 @@ export default function NewStrategyPage() {
       const qty = Number(form.lots) * lotSize;
 
       let config: any;
-      if (form.type === "GAMMA_BLAST") {
+      if (form.type === "DAILY_SCALPER") {
         config = {
           symbol: form.symbol.trim(), exchange: form.exchange,
-          expiryMode: form.gbExpiryMode, expiryDay: Number(form.gbExpiryDay),
           lots: Number(form.lots),
-          minPremium: Number(form.gbMinPremium), maxPremium: Number(form.gbMaxPremium),
-          strikesOTM: Number(form.gbStrikesOTM),
-          atrMultiplier: Number(form.gbAtrMultiplier),
-          premiumVelocityX: Number(form.gbPremiumVelocityX),
-          vixSpikeThreshold: Number(form.gbVixSpikeThreshold),
-          vwapDivergence: Number(form.gbVwapDivergence),
-          minSignalScore: Number(form.gbMinSignalScore),
-          trailTier1: Number(form.gbTrailTier1), trailTier2: Number(form.gbTrailTier2),
-          trailTier3: Number(form.gbTrailTier3), trailTier4: Number(form.gbTrailTier4),
-          maxTradesPerDay: Number(form.gbMaxTradesPerDay),
-          maxLossPerDay: Number(form.gbMaxLossPerDay),
-          forceExitMinBefore: Number(form.gbForceExitMinBefore),
           product: form.product,
+          capital: Number(form.dsCapital),
+          dailyTargetRs: Number(form.dsDailyTargetRs),
+          dailyMaxLossRs: Number(form.dsDailyMaxLossRs),
+          ...(form.dsTargetPoints && { targetPoints: Number(form.dsTargetPoints) }),
+          ...(form.dsStopLossPoints && { stopLossPoints: Number(form.dsStopLossPoints) }),
+          maxTradesPerDay: Number(form.dsMaxTradesPerDay),
         };
       } else if (form.type === "BREAKOUT_15MIN") {
         config = {
@@ -360,12 +342,12 @@ export default function NewStrategyPage() {
                       badgeColor: "",
                     },
                     {
-                      type: "GAMMA_BLAST",
-                      label: "Gamma Blast (Expiry Day)",
-                      desc: "Expiry-day only. Buys ultra-cheap OTM options (₹3–5) and rides gamma explosions to ₹50–100+ using trailing SL. Nifty & BankNifty.",
-                      icon: Flame,
-                      badge: null,
-                      badgeColor: "bg-orange-100 text-orange-700",
+                      type: "DAILY_SCALPER",
+                      label: "Daily Target Scalper",
+                      desc: "Aims to earn 400-600 Rs daily with 20k capital. Trades ATM options on index using 3-min charts with 9-EMA + VWAP + RSI momentum crossover. Stops for the day once target is achieved.",
+                      icon: Target,
+                      badge: "Best for 20k Capital",
+                      badgeColor: "bg-emerald-100 text-emerald-700",
                     },
                   ].map(({ type, label, desc, icon: Icon, badge, badgeColor }) => (
                     <button
@@ -406,7 +388,7 @@ export default function NewStrategyPage() {
           {step === 1 && (
             <div className="space-y-5">
               {/* Preset quick-select */}
-              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_RSI_OPTIONS" || form.type === "EMA_VWAP_CROSSOVER") && (
+              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_RSI_OPTIONS" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "DAILY_SCALPER") && (
                 <div>
                   <label className="text-sm font-semibold mb-2 block">Quick Select Instrument</label>
                   <div className="flex flex-wrap gap-2">
@@ -587,91 +569,75 @@ export default function NewStrategyPage() {
                 </div>
               )}
 
-              {form.type === "GAMMA_BLAST" && (
+              {form.type === "DAILY_SCALPER" && (
                 <div className="space-y-4">
-                  <div className="p-3 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200">
-                    <p className="text-xs font-semibold text-orange-700">⚡ Gamma Blast — Expiry Day Strategy</p>
-                    <p className="text-[11px] text-orange-600 mt-1">Detects sharp moves via 1-min velocity, OTM premium spikes, VIX surges & VWAP divergence. Rides gamma with trailing SL.</p>
+                  <div className="p-3 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200">
+                    <p className="text-xs font-semibold text-emerald-700">⚡ Daily Target Scalper</p>
+                    <p className="text-[11px] text-emerald-600 mt-1">Trades ATM index options on 3-minute chart based on 9-EMA + VWAP + RSI crossover. Automatically halts trading once your daily profit target is met.</p>
                   </div>
 
                   {/* Index Selector */}
                   <div>
                     <label className="text-sm font-semibold mb-2 block">Select Index</label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-3">
                       {[
-                        { label: "NIFTY 50", symbol: "NIFTY 50", mode: "weekly" as const, lotSize: 65 },
-                        { label: "BANKNIFTY", symbol: "BANKNIFTY", mode: "monthly-last" as const, lotSize: 30 },
+                        { label: "NIFTY 50", symbol: "NIFTY 50", exchange: "NSE" },
+                        { label: "BANK NIFTY", symbol: "BANKNIFTY", exchange: "NSE" },
+                        { label: "SENSEX", symbol: "SENSEX", exchange: "BSE" },
                       ].map(idx => (
                         <button
                           key={idx.symbol}
                           onClick={() => {
                             set("symbol", idx.symbol);
-                            set("exchange", "NSE");
+                            set("exchange", idx.exchange);
                             set("instrumentType", "INDEX");
-                            set("gbExpiryMode", idx.mode);
                           }}
                           className={cn(
-                            "text-left p-4 rounded-xl border-2 transition-all",
+                            "text-left p-3.5 rounded-xl border-2 transition-all",
                             form.symbol === idx.symbol
-                              ? "border-orange-400 bg-orange-50 shadow-sm"
-                              : "border-[hsl(var(--border))] hover:border-orange-300"
+                              ? "border-emerald-400 bg-emerald-50 shadow-sm"
+                              : "border-[hsl(var(--border))] hover:border-emerald-300"
                           )}
                         >
                           <p className="font-bold text-sm">{idx.label}</p>
-                          <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                            {idx.mode === "weekly" ? "Weekly expiry (every Tuesday)" : "Monthly expiry (last Tuesday)"}
-                          </p>
-                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full mt-2 inline-block">
-                            1 Lot = {idx.lotSize} Qty
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">
+                            1 Lot = {getLotSize(idx.symbol)} Qty
                           </span>
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Lots & Premium Range */}
-                  <div className="grid grid-cols-3 gap-3">
+                  {/* Capital size */}
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-semibold">Number of Lots</label>
-                      </div>
-                      <Input type="number" min={1} value={form.lots} onChange={e => set("lots", e.target.value)} />
+                      <label className="text-sm font-semibold mb-2 block">Available Capital (₹)</label>
+                      <Input
+                        type="number"
+                        min={5000}
+                        value={form.dsCapital}
+                        onChange={(e) => set("dsCapital", e.target.value)}
+                      />
                       <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                        Total: {Number(form.lots) * getLotSize(form.symbol)} Qty
+                        Ensures trade cost does not exceed your budget (default ₹20,000)
                       </p>
                     </div>
                     <div>
-                      <label className="text-xs font-semibold mb-1 block">Min Premium (₹)</label>
-                      <Input type="number" value={form.gbMinPremium} onChange={e => set("gbMinPremium", e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">Max Premium (₹)</label>
-                      <Input type="number" value={form.gbMaxPremium} onChange={e => set("gbMaxPremium", e.target.value)} />
-                    </div>
-                  </div>
-
-                  {/* Expiry Day Override */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">Expiry Day</label>
-                      <select
-                        value={form.gbExpiryDay}
-                        onChange={e => set("gbExpiryDay", e.target.value)}
-                        className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-orange-300"
-                      >
-                        <option value="0">Sunday</option>
-                        <option value="1">Monday</option>
-                        <option value="2">Tuesday (Default)</option>
-                        <option value="3">Wednesday</option>
-                        <option value="4">Thursday</option>
-                        <option value="5">Friday</option>
-                        <option value="6">Saturday</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">Strikes OTM</label>
-                      <Input type="number" min={1} max={10} value={form.gbStrikesOTM} onChange={e => set("gbStrikesOTM", e.target.value)} />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">How far OTM to search for cheap options</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-semibold">Number of Lots</label>
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                          Lot Size: {getLotSize(form.symbol)} Qty
+                        </span>
+                      </div>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={form.lots}
+                        onChange={(e) => set("lots", e.target.value)}
+                      />
+                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                        Total Quantity: {Number(form.lots) * getLotSize(form.symbol)} Qty
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -682,114 +648,85 @@ export default function NewStrategyPage() {
 
           {step === 2 && (
             <div className="space-y-5">
-              {form.type === "GAMMA_BLAST" && (
+              {form.type === "DAILY_SCALPER" && (
                 <>
-                  {/* Trailing SL Tiers */}
-                  <div className="p-4 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 space-y-3">
-                    <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">Trailing Stop-Loss Tiers</p>
-                    <p className="text-[10px] text-orange-600">SL tightens as premium rises — letting winners run while protecting profits</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { key: "gbTrailTier1", label: "₹5–15 Premium", desc: "Loose — let it run" },
-                        { key: "gbTrailTier2", label: "₹15–50 Premium", desc: "Medium" },
-                        { key: "gbTrailTier3", label: "₹50–100 Premium", desc: "Tighter" },
-                        { key: "gbTrailTier4", label: "₹100+ Premium", desc: "Tight — protect profit" },
-                      ].map(tier => (
-                        <div key={tier.key} className="bg-white/50 p-2.5 rounded-lg border border-orange-100">
-                          <label className="text-[10px] font-bold text-orange-700 block mb-1">{tier.label}</label>
-                          <div className="flex items-center gap-2">
-                            <Input
-                              type="number" min={5} max={80}
-                              value={(form as any)[tier.key]}
-                              onChange={e => set(tier.key, e.target.value)}
-                              className="h-8 text-xs border-orange-200"
-                            />
-                            <span className="text-xs font-bold text-orange-600">%</span>
-                          </div>
-                          <p className="text-[9px] text-orange-500 mt-0.5">{tier.desc}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Risk Limits */}
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Zap className="h-4 w-4 text-amber-500" />
-                        Max Trades/Day
+                        <Target className="h-4 w-4 text-emerald-500" />
+                        Daily Target Profit (₹)
                       </label>
-                      <Input type="number" min={1} max={10} value={form.gbMaxTradesPerDay} onChange={e => set("gbMaxTradesPerDay", e.target.value)} />
+                      <Input
+                        type="number"
+                        min={100}
+                        value={form.dsDailyTargetRs}
+                        onChange={(e) => set("dsDailyTargetRs", e.target.value)}
+                        className="border-emerald-200 focus:ring-emerald-300 font-semibold"
+                      />
+                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
+                        Halt strategy once net P&L reaches this target (default ₹500)
+                      </p>
                     </div>
                     <div>
                       <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                         <Shield className="h-4 w-4 text-red-500" />
-                        Max Loss/Day (₹)
+                        Daily Max Loss (₹)
                       </label>
-                      <Input type="number" min={100} value={form.gbMaxLossPerDay} onChange={e => set("gbMaxLossPerDay", e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Target className="h-4 w-4 text-blue-500" />
-                        Exit Before Close
-                      </label>
-                      <Input type="number" min={5} max={30} value={form.gbForceExitMinBefore} onChange={e => set("gbForceExitMinBefore", e.target.value)} />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">Minutes before market close</p>
+                      <Input
+                        type="number"
+                        min={100}
+                        value={form.dsDailyMaxLossRs}
+                        onChange={(e) => set("dsDailyMaxLossRs", e.target.value)}
+                        className="border-red-200 focus:ring-red-300 font-semibold"
+                      />
+                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
+                        Halt strategy if daily losses touch this limit (default ₹800)
+                      </p>
                     </div>
                   </div>
 
-                  {/* Signal Thresholds (Advanced) */}
-                  <details className="group">
-                    <summary className="text-xs font-semibold cursor-pointer text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors">
-                      ⚙️ Advanced Signal Thresholds (click to expand)
-                    </summary>
-                    <div className="mt-3 grid grid-cols-3 gap-3 p-3 rounded-lg bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))]">
-                      <div>
-                        <label className="text-[10px] font-semibold mb-1 block">ATR Multiplier</label>
-                        <Input type="number" step={0.1} value={form.gbAtrMultiplier} onChange={e => set("gbAtrMultiplier", e.target.value)} className="h-8 text-xs" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold mb-1 block">Premium Velocity ×</label>
-                        <Input type="number" step={0.1} value={form.gbPremiumVelocityX} onChange={e => set("gbPremiumVelocityX", e.target.value)} className="h-8 text-xs" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold mb-1 block">VIX Spike %</label>
-                        <Input type="number" step={0.5} value={form.gbVixSpikeThreshold} onChange={e => set("gbVixSpikeThreshold", e.target.value)} className="h-8 text-xs" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold mb-1 block">VWAP Divergence %</label>
-                        <Input type="number" step={0.1} value={form.gbVwapDivergence} onChange={e => set("gbVwapDivergence", e.target.value)} className="h-8 text-xs" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold mb-1 block">Min Signal Score</label>
-                        <Input type="number" min={50} max={100} value={form.gbMinSignalScore} onChange={e => set("gbMinSignalScore", e.target.value)} className="h-8 text-xs" />
-                      </div>
+                  <div className="grid grid-cols-2 gap-4 pt-2">
+                    <div>
+                      <label className="text-sm font-semibold mb-2 block">Override Target Points</label>
+                      <Input
+                        type="number"
+                        placeholder="Default (10 Nifty, 20 Banknifty, 30 Sensex)"
+                        value={form.dsTargetPoints}
+                        onChange={(e) => set("dsTargetPoints", e.target.value)}
+                      />
+                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                        Optional: Set custom target points in option premium
+                      </p>
                     </div>
-                  </details>
+                    <div>
+                      <label className="text-sm font-semibold mb-2 block">Override Stop Loss Points</label>
+                      <Input
+                        type="number"
+                        placeholder="Default (7 Nifty, 15 Banknifty, 20 Sensex)"
+                        value={form.dsStopLossPoints}
+                        onChange={(e) => set("dsStopLossPoints", e.target.value)}
+                      />
+                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                        Optional: Set custom SL points in option premium
+                      </p>
+                    </div>
+                  </div>
 
-                  {/* Cost Preview */}
-                  <div className="p-4 rounded-xl bg-[hsl(var(--secondary)/0.5)] border border-[hsl(var(--border))] space-y-2">
-                    <p className="text-xs font-bold text-[hsl(var(--muted-foreground))] uppercase tracking-wide">Cost Preview</p>
-                    <div className="flex gap-6">
-                      <div>
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Max Cost / Trade</p>
-                        <p className="text-base font-bold">
-                          ₹{(Number(form.lots) * getLotSize(form.symbol) * Number(form.gbMaxPremium)).toLocaleString("en-IN")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Max Daily Exposure</p>
-                        <p className="text-base font-bold text-amber-600">
-                          ₹{(Number(form.gbMaxTradesPerDay) * Number(form.lots) * getLotSize(form.symbol) * Number(form.gbMaxPremium)).toLocaleString("en-IN")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Max Loss Cap</p>
-                        <p className="text-base font-bold text-red-500">
-                          ₹{Number(form.gbMaxLossPerDay).toLocaleString("en-IN")}
-                        </p>
-                      </div>
-                    </div>
+                  <div>
+                    <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                      <Zap className="h-4 w-4 text-amber-500" />
+                      Max Trades / Day
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={form.dsMaxTradesPerDay}
+                      onChange={(e) => set("dsMaxTradesPerDay", e.target.value)}
+                    />
+                    <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
+                      Max number of option trades to initiate in a day
+                    </p>
                   </div>
                 </>
               )}
@@ -1016,20 +953,20 @@ export default function NewStrategyPage() {
                     if (form.type === "BREAKOUT_15MIN") typeLabel = "15-Min High/Low Breakout";
                     else if (form.type === "EMA_VWAP_CROSSOVER") typeLabel = "EMA-VWAP Crossover";
                     else if (form.type === "EMA_RSI_OPTIONS") typeLabel = "EMA + RSI + VWAP";
-                    else if (form.type === "GAMMA_BLAST") typeLabel = "Gamma Blast (Expiry)";
+                    else if (form.type === "DAILY_SCALPER") typeLabel = "Daily Target Scalper";
                     
                     items.push(["Type", typeLabel]);
                     items.push(["Symbol", `${form.symbol}  ${form.exchange}`]);
                     items.push(["Order Size", `${form.lots} Lots (${Number(form.lots) * getLotSize(form.symbol)} Shares)`]);
                     items.push(["Product", form.product]);
                     
-                    if (form.type === "GAMMA_BLAST") {
-                      items.push(["Premium Range", `₹${form.gbMinPremium} - ₹${form.gbMaxPremium}`]);
-                      items.push(["OTM Strikes", `${form.gbStrikesOTM} strikes`]);
-                      items.push(["Max Trades", `${form.gbMaxTradesPerDay} / day`]);
-                      items.push(["Max Loss Limit", `₹${Number(form.gbMaxLossPerDay).toLocaleString("en-IN")} / day`]);
-                      items.push(["Exit Before Close", `${form.gbForceExitMinBefore} mins`]);
-                      items.push(["Expiry Mode", form.gbExpiryMode === "weekly" ? "Weekly (every Tuesday)" : "Monthly (last Tuesday)"]);
+                    if (form.type === "DAILY_SCALPER") {
+                      items.push(["Capital Budget", `₹${Number(form.dsCapital).toLocaleString("en-IN")}`]);
+                      items.push(["Daily Profit Target", `₹${Number(form.dsDailyTargetRs).toLocaleString("en-IN")}`]);
+                      items.push(["Daily Loss Limit", `₹${Number(form.dsDailyMaxLossRs).toLocaleString("en-IN")}`]);
+                      items.push(["Max Trades", `${form.dsMaxTradesPerDay} / day`]);
+                      if (form.dsTargetPoints) items.push(["Custom Target Points", `${form.dsTargetPoints} pts`]);
+                      if (form.dsStopLossPoints) items.push(["Custom SL Points", `${form.dsStopLossPoints} pts`]);
                     } else {
                       items.push(["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`]);
                       items.push(["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`]);

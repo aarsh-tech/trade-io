@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Play, Square, Trash2, Plus, TrendingUp,
-  Activity, BarChart2, Settings2, RefreshCw, Loader2, AlarmClock, Flame,
+  Activity, BarChart2, Settings2, RefreshCw, Loader2, AlarmClock, Flame, Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -246,21 +246,21 @@ function StrategyCard({
         <div className="flex gap-2 flex-wrap">
           <span className={cn(
             "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border",
-            s.type === "GAMMA_BLAST"
-              ? "bg-orange-50 text-orange-700 border-orange-200"
+            s.type === "DAILY_SCALPER"
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
               : "bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.2)]"
           )}>
             {is15Min ? (
               <><BarChart2 className="h-3 w-3" /> 15-Min Breakout</>
-            ) : s.type === "GAMMA_BLAST" ? (
-              <><Flame className="h-3 w-3" /> Gamma Blast</>
+            ) : s.type === "DAILY_SCALPER" ? (
+              <><Target className="h-3 w-3" /> Daily Scalper</>
             ) : (
               <><TrendingUp className="h-3 w-3" /> EMA Crossover</>
             )}
           </span>
-          {s.type === "GAMMA_BLAST" && (
-            <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-semibold">
-              Expiry Day Only
+          {s.type === "DAILY_SCALPER" && (
+            <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+              Daily Target Cap
             </span>
           )}
           {cfg.product && (
