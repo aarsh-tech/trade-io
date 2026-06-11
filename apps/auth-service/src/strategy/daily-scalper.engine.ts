@@ -407,7 +407,7 @@ export class DailyScalperEngine {
         return;
       }
 
-      this.log(state, `📋 Enqueueing order: Buy ${qty} shares of ATM ${optionSymbol} @ limit ₹${optionLTP} (Est. Cost: ₹${totalPremiumCost.toFixed(0)})`);
+      this.log(state, `📋 Enqueueing order: Buy ${qty} shares of ATM ${optionSymbol} @ limit ₹${optionLTP.toFixed(2)} (Est. Cost: ₹${totalPremiumCost.toFixed(0)})`);
 
       const params: OrderParams = {
         symbol: optionSymbol,
@@ -437,7 +437,7 @@ export class DailyScalperEngine {
       state.isStopLossTrailed = false;
 
       await this.trackOrderInDB(state, account, params, orderId, strategyId);
-      this.log(state, `✅ Position opened: Buy ATM ${side} option ${optionSymbol} at avg price ₹${optionLTP}`);
+      this.log(state, `✅ Position opened: Buy ATM ${side} option ${optionSymbol} at avg price ₹${optionLTP.toFixed(2)}`);
 
     } catch (e) {
       this.log(state, `❌ Order entry failed: ${e.message}`);
@@ -522,7 +522,7 @@ export class DailyScalperEngine {
       const exitPx = this.roundTick(exitPrice);
       const pnl = (exitPx - state.entryOptionPrice!) * qty;
 
-      this.log(state, `📤 Placing exit market order for ${state.optionSymbol} | Qty: ${qty} | Avg Price: ₹${exitPx}`);
+      this.log(state, `📤 Placing exit market order for ${state.optionSymbol} | Qty: ${qty} | Avg Price: ₹${exitPx.toFixed(2)}`);
 
       const params: OrderParams = {
         symbol: state.optionSymbol,
