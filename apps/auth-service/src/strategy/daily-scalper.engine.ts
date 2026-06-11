@@ -32,6 +32,7 @@ interface StrategyState {
   tradesPlacedToday: number;
   totalPnlToday: number;
   lastSignalBarTime: number; // ts of last signal bar to prevent duplicate entries
+  isStopLossTrailed?: boolean; // tracks if trailing SL is locked to breakeven
   logs: string[];
 }
 
@@ -151,6 +152,21 @@ export class DailyScalperEngine {
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
   }
 
+  private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
+    const state = this.running.get(strategyId);
+    if (state) {
+      clearInterval(this.timers.get(strategyId));
+      this.timers.delete(strategyId);
+      this.running.delete(strategyId);
+      this.log(state, logReason);
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+      });
+    }
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+  }
+
   isRunning(strategyId: string) { return this.running.has(strategyId); }
   getLogs(strategyId: string): string[] { return this.running.get(strategyId)?.logs ?? []; }
 
@@ -200,12 +216,14 @@ export class DailyScalperEngine {
     if (state.totalPnlToday >= state.config.dailyTargetRs) {
       this.log(state, `🎯 Daily Profit Target of ₹${state.config.dailyTargetRs} met! Net P&L: ₹${state.totalPnlToday.toFixed(0)}. Halting trading today to secure profits.`);
       await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `🎯 Auto-Stopped: Daily Profit Target Met`);
       return;
     }
 
     if (state.totalPnlToday <= -state.config.dailyMaxLossRs) {
       this.log(state, `🛑 Daily Max Loss of ₹${state.config.dailyMaxLossRs} hit! Net P&L: ₹${state.totalPnlToday.toFixed(0)}. Halting trading today to protect capital.`);
       await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'STOPPED', `🛑 Auto-Stopped: Daily Max Loss Hit`);
       return;
     }
 
@@ -247,6 +265,15 @@ export class DailyScalperEngine {
       return;
     }
 
+    // ── Mid-day Time Filter (Skip trading between 11:30 AM and 01:30 PM IST) ──
+    const MID_DAY_START = 11 * 60 + 30; // 11:30 AM (690 minutes)
+    const MID_DAY_END = 13 * 60 + 30;   // 01:30 PM (810 minutes)
+    if (hhmm >= MID_DAY_START && hhmm < MID_DAY_END) {
+      this.log(state, `⏳ Skipping trading during low-volume mid-day period (11:30 AM - 01:30 PM IST)`);
+      await this.persistLogs(state);
+      return;
+    }
+
     // ── Check Max Daily Trade Cap ───────────────────────────────────────────
     if (state.tradesPlacedToday >= state.config.maxTradesPerDay) {
       this.log(state, `⛔ Max daily trade cap (${state.config.maxTradesPerDay}) reached.`);
@@ -281,12 +308,10 @@ export class DailyScalperEngine {
 
       this.log(state, `📊 Spot Future: ₹${latestClose.toFixed(2)} | 9-EMA: ₹${latestEma.toFixed(2)} | VWAP: ₹${vwap.toFixed(2)} | RSI: ${latestRsi.toFixed(1)}`);
 
-      // ── Entry Conditions ───────────────────────────────────────────────────
-      // Bullish Crossover: Close is above both 9-EMA and VWAP, and RSI > 50
-      const bullishEntry = latestClose > latestEma && latestClose > vwap && latestRsi > 50;
+      // ── Entry Conditions (Optimized: RSI momentum filter at 55 / 45) ────────
+      const bullishEntry = latestClose > latestEma && latestClose > vwap && latestRsi > 55;
 
-      // Bearish Crossover: Close is below both 9-EMA and VWAP, and RSI < 50
-      const bearishEntry = latestClose < latestEma && latestClose < vwap && latestRsi < 50;
+      const bearishEntry = latestClose < latestEma && latestClose < vwap && latestRsi < 45;
 
       if (bullishEntry) {
         this.log(state, `🟢 Bullish Signal Triggered! Spot above 9-EMA & VWAP, RSI: ${latestRsi.toFixed(1)}`);
@@ -409,6 +434,7 @@ export class DailyScalperEngine {
       state.positionQty = qty;
       state.entryOrderId = orderId;
       state.tradesPlacedToday++;
+      state.isStopLossTrailed = false;
 
       await this.trackOrderInDB(state, account, params, orderId, strategyId);
       this.log(state, `✅ Position opened: Buy ATM ${side} option ${optionSymbol} at avg price ₹${optionLTP}`);
@@ -450,19 +476,29 @@ export class DailyScalperEngine {
         }
       }
 
+      // Check if we need to trigger Breakeven Trailing SL (Option premium gain is >= 50% of target points)
+      const breakevenTrigger = targetPts / 2;
       const pnlPerShare = currentPrice - entryPrice;
       const netPnl = pnlPerShare * state.positionQty;
 
-      this.log(state, `👀 Live option monitoring — ${state.optionSymbol}: ₹${currentPrice.toFixed(2)} | Entry: ₹${entryPrice.toFixed(2)} | Target: +${targetPts} pts (₹${(entryPrice + targetPts).toFixed(2)}) | SL: -${stopLossPts} pts (₹${(entryPrice - stopLossPts).toFixed(2)}) | P&L: ₹${netPnl.toFixed(0)}`);
+      if (!state.isStopLossTrailed && pnlPerShare >= breakevenTrigger) {
+        state.isStopLossTrailed = true;
+        this.log(state, `🔒 Trailing Stop Loss to Cost (Breakeven) activated! Current Price: ₹${currentPrice.toFixed(2)} | Cost: ₹${entryPrice.toFixed(2)}`);
+      }
+
+      const currentSLPts = state.isStopLossTrailed ? 0 : stopLossPts;
+      const currentSLPx = entryPrice - currentSLPts;
+
+      this.log(state, `👀 Live option monitoring — ${state.optionSymbol}: ₹${currentPrice.toFixed(2)} | Entry: ₹${entryPrice.toFixed(2)} | Target: +${targetPts} pts (₹${(entryPrice + targetPts).toFixed(2)}) | SL: ${state.isStopLossTrailed ? 'Breakeven' : `-${stopLossPts} pts`} (₹${currentSLPx.toFixed(2)}) | P&L: ₹${netPnl.toFixed(0)}`);
 
       // 1. Target Profit Hit
       if (pnlPerShare >= targetPts) {
         this.log(state, `🎯 TARGET HIT! Option premium ₹${currentPrice.toFixed(2)} >= target ₹${(entryPrice + targetPts).toFixed(2)}. Exiting.`);
         await this.exitPosition(state, currentPrice, 'TARGET');
       }
-      // 2. Stop Loss Hit
-      else if (pnlPerShare <= -stopLossPts) {
-        this.log(state, `🛑 STOP LOSS HIT! Option premium ₹${currentPrice.toFixed(2)} <= stop-loss ₹${(entryPrice - stopLossPts).toFixed(2)}. Exiting.`);
+      // 2. Stop Loss Hit (Normal SL or Trailed Breakeven SL)
+      else if (pnlPerShare <= -currentSLPts) {
+        this.log(state, `🛑 STOP LOSS HIT! Option premium ₹${currentPrice.toFixed(2)} <= stop-loss ₹${currentSLPx.toFixed(2)}. Exiting.`);
         await this.exitPosition(state, currentPrice, 'SL');
       }
       // 3. Absolute low price safeguard
@@ -635,6 +671,7 @@ export class DailyScalperEngine {
     state.totalPnlToday = 0;
     state.lastSignalBarTime = 0;
     state.futureSymbol = null;
+    state.isStopLossTrailed = false;
   }
 
   private async trackOrderInDB(state: StrategyState, account: any, params: OrderParams, orderId: string, strategyId: string) {
