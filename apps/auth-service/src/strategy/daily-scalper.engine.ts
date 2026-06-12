@@ -291,12 +291,19 @@ export class DailyScalperEngine {
       }
 
       const ema9 = calcEMA(candles, 9);
-      const vwap = calcVWAP(candles);
-      const rsi = calcRSI(candles, 14);
+      
+      // Filter candles for today's session to calculate VWAP
+      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const todayCandles = candles.filter(c => 
+        c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr
+      );
 
       const n = candles.length - 1;
       const latestCandle = candles[n];
       const latestClose = latestCandle.close;
+      const vwap = todayCandles.length > 0 ? calcVWAP(todayCandles) : latestClose;
+      const rsi = calcRSI(candles, 14);
+
       const latestEma = ema9[n];
       const latestRsi = rsi;
 
@@ -352,8 +359,7 @@ export class DailyScalperEngine {
 
       // Fetch near-expiry instruments
       const instruments = await client.getInstruments(exchange);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); // "YYYY-MM-DD"
 
       const options = instruments.filter((i: any) =>
         i.name === underlying && i.instrument_type === side && i.segment === segment
@@ -363,21 +369,29 @@ export class DailyScalperEngine {
         return;
       }
 
-      const uniqueExpiries = Array.from(new Set(options.map((i: any) => i.expiry)));
-      const sortedExpiries = uniqueExpiries
-        .map(e => new Date(e as any))
-        .filter(e => e >= today)
-        .sort((a, b) => a.getTime() - b.getTime());
+      const getExpiryStr = (expiry: any): string => {
+        if (!expiry) return '';
+        const d = new Date(expiry);
+        if (isNaN(d.getTime())) return '';
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+      };
+
+      const uniqueExpiries = Array.from(new Set(options.map((i: any) => getExpiryStr(i.expiry))))
+        .filter(exp => exp !== '' && exp >= todayStr);
+
+      const sortedExpiries = uniqueExpiries.sort(); // Alphabetical sort works chronologically for YYYY-MM-DD
 
       if (sortedExpiries.length === 0) {
         this.log(state, '❌ No active expiries found');
         return;
       }
 
-      const nearExpiry = options.find((i: any) => new Date(i.expiry as any).getTime() === sortedExpiries[0].getTime())?.expiry;
+      const nearExpiry = sortedExpiries[0];
 
       // Select ATM Strike Option Contract
-      const selectedOption = options.find((i: any) => i.expiry === nearExpiry && Number(i.strike) === atmStrike);
+      const selectedOption = options.find((i: any) =>
+        getExpiryStr(i.expiry) === nearExpiry && Number(i.strike) === atmStrike
+      );
       if (!selectedOption) {
         this.log(state, `❌ ATM Option for strike ${atmStrike} expiry ${nearExpiry} not found.`);
         return;
@@ -452,6 +466,49 @@ export class DailyScalperEngine {
       const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
       const key = `${exchange}:${state.optionSymbol}`;
 
+      // ── Verify Entry Order Status for Real Trades ─────────────────────────
+      if (!state.isPaperTrade && state.entryOrderId) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          const client = this.factory.createClient(account!);
+          const brokerOrder = await client.getOrder(state.entryOrderId);
+
+          if (brokerOrder.status === 'REJECTED' || brokerOrder.status === 'CANCELLED') {
+            this.log(state, `❌ Entry order ${state.entryOrderId} was ${brokerOrder.status}! Reason: ${brokerOrder.statusMessage || 'Unknown'}`);
+            await this.prisma.order.updateMany({
+              where: { brokerOrderId: state.entryOrderId },
+              data: { status: brokerOrder.status as any }
+            });
+            // Reset position state
+            state.positionSide = null;
+            state.optionSymbol = null;
+            state.entryOptionPrice = null;
+            state.positionQty = 0;
+            state.entryOrderId = null;
+            return;
+          }
+
+          if (brokerOrder.status !== 'COMPLETE') {
+            this.log(state, `⏳ Entry order ${state.entryOrderId} is still ${brokerOrder.status}, waiting for fill...`);
+            return; // Wait until fully filled
+          }
+
+          // Order complete: Update entry price to actual filled price if different
+          const actualAvgPrice = brokerOrder.avgPrice || brokerOrder.price || state.entryOptionPrice;
+          if (actualAvgPrice !== state.entryOptionPrice) {
+            this.log(state, `📈 Order filled at actual avg price: ₹${actualAvgPrice.toFixed(2)} (Estimated: ₹${state.entryOptionPrice.toFixed(2)})`);
+            state.entryOptionPrice = actualAvgPrice;
+            await this.prisma.order.updateMany({
+              where: { brokerOrderId: state.entryOrderId },
+              data: { status: 'COMPLETE', price: actualAvgPrice }
+            });
+          }
+        } catch (e) {
+          this.log(state, `⚠️ Failed to fetch entry order status: ${e.message}`);
+          return; // Defer to next tick
+        }
+      }
+
       const ltpData = await kite.getLTP([key]);
       const currentPrice = ltpData[key]?.last_price;
       if (!currentPrice) return;
@@ -520,7 +577,6 @@ export class DailyScalperEngine {
       const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
       const qty = state.positionQty;
       const exitPx = this.roundTick(exitPrice);
-      const pnl = (exitPx - state.entryOptionPrice!) * qty;
 
       this.log(state, `📤 Placing exit market order for ${state.optionSymbol} | Qty: ${qty} | Avg Price: ₹${exitPx.toFixed(2)}`);
 
@@ -535,6 +591,7 @@ export class DailyScalperEngine {
       };
 
       let orderId: string;
+      let actualExitPrice = exitPx;
       if (state.isPaperTrade) {
         orderId = `PAPER_EXIT_${Date.now().toString(36).toUpperCase()}`;
         this.log(state, `📝 PAPER TRADE — simulated exit order ${orderId}`);
@@ -542,12 +599,21 @@ export class DailyScalperEngine {
         const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
         const client = this.factory.createClient(account!);
         orderId = await client.placeOrder(params);
+        
+        // Fetch order to verify it wasn't rejected immediately
+        const brokerOrder = await client.getOrder(orderId);
+        if (brokerOrder.status === 'REJECTED') {
+          throw new Error(`Exit order was rejected by broker! Reason: ${brokerOrder.statusMessage || 'Unknown'}`);
+        }
+        actualExitPrice = brokerOrder.avgPrice || brokerOrder.price || exitPx;
       }
 
+      const pnl = (actualExitPrice - state.entryOptionPrice!) * qty;
       state.totalPnlToday += pnl;
 
       // Track order in DB
       const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+      params.price = actualExitPrice;
       await this.trackOrderInDB(state, account!, params, orderId, state.executionId);
 
       this.log(state, `⏹ Position Closed (${reason}) | P&L on Trade: ₹${pnl.toFixed(0)} | Total P&L Today: ₹${state.totalPnlToday.toFixed(0)}`);
@@ -605,7 +671,7 @@ export class DailyScalperEngine {
     if (u === 'SENSEX' || u === 'BSE SENSEX') return 'SENSEX';
     if (u.includes('BANK') && u.includes('NIFTY')) return 'BANKNIFTY';
     if (u.includes('NIFTY 50') || u === 'NIFTY50' || u === 'NIFTY') return 'NIFTY';
-    if (u.includes('MIDCAP')) return 'MIDCPNIFTY';
+    if (u.includes('MIDCAP') || u.includes('MIDCP')) return 'MIDCPNIFTY';
     if (u.includes('FIN')) return 'FINNIFTY';
     return u;
   }
@@ -615,6 +681,7 @@ export class DailyScalperEngine {
     if (u.includes('BANK')) return 100;
     if (u.includes('SENSEX')) return 100;
     if (u.includes('FIN')) return 50;
+    if (u.includes('MIDCAP') || u.includes('MIDCP')) return 25;
     return 50; // Nifty 50 defaults to 50
   }
 
@@ -629,7 +696,8 @@ export class DailyScalperEngine {
 
   private async fetchCandles3min(client: any, symbol: string, exchange: string, ist: Date): Promise<Candle[]> {
     const from = new Date(ist);
-    from.setHours(9, 15, 0, 0); // Always start from market open of current day
+    from.setDate(from.getDate() - 5); // Go back 5 days to ensure enough historical candles
+    from.setHours(9, 15, 0, 0);
     const to = new Date(ist);
 
     const data = await client.getHistoricalData(symbol, exchange, '3minute', from, to);

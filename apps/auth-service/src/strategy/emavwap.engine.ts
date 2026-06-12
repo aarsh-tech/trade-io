@@ -146,8 +146,13 @@ export class EmaVwapCrossoverEngine {
       const emas = this.calculateEMA(candles, state.config.emaPeriod);
       const vwaps = this.calculateVWAP(candles);
 
+      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
       for (let i = state.config.emaPeriod; i < candles.length; i++) {
         if (state.entryTriggered) break;
+
+        // Only trigger catch-up trades if the crossover is from TODAY's candles
+        const candleDateStr = candles[i].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        if (candleDateStr !== todayStr) continue;
 
         const currEma = emas[i], prevEma = emas[i - 1];
         const currVwap = vwaps[i], prevVwap = vwaps[i - 1];
@@ -296,9 +301,17 @@ export class EmaVwapCrossoverEngine {
   private calculateVWAP(candles: Candle[]) {
     const vwaps: (number | null)[] = new Array(candles.length).fill(null);
     let cpv = 0, cv = 0;
+    let lastDateStr = '';
     for (let i = 0; i < candles.length; i++) {
+      const dateStr = candles[i].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      if (dateStr !== lastDateStr) {
+        // Reset VWAP accumulation at the start of each new day
+        cpv = 0;
+        cv = 0;
+        lastDateStr = dateStr;
+      }
       cpv += ((candles[i].high + candles[i].low + candles[i].close) / 3) * candles[i].volume;
-      cv += candles[i].volume; vwaps[i] = cpv / cv;
+      cv += candles[i].volume; vwaps[i] = cv === 0 ? candles[i].close : cpv / cv;
     }
     return vwaps;
   }
@@ -306,6 +319,7 @@ export class EmaVwapCrossoverEngine {
   private async fetchCandles(client: any, config: any, interval: string, now: Date): Promise<Candle[]> {
     const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
     const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
+    from.setDate(from.getDate() - 5); // Go back 5 days to ensure enough historical candles
     const data = await client.getHistoricalData(config.symbol, config.exchange, interval, from, now);
     return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
@@ -335,24 +349,28 @@ export class EmaVwapCrossoverEngine {
       return null;
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); // "YYYY-MM-DD"
 
-    const uniqueExpiries = Array.from(new Set(options.map((i: any) => i.expiry)));
-    const sortedExpiries = uniqueExpiries
-      .map(e => new Date(e as any))
-      .filter(e => e >= today)
-      .sort((a, b) => a.getTime() - b.getTime());
+    const getExpiryStr = (expiry: any): string => {
+      if (!expiry) return '';
+      const d = new Date(expiry);
+      if (isNaN(d.getTime())) return '';
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    };
+
+    const uniqueExpiries = Array.from(new Set(options.map((i: any) => getExpiryStr(i.expiry))))
+      .filter(exp => exp !== '' && exp >= todayStr);
+
+    const sortedExpiries = uniqueExpiries.sort();
 
     if (sortedExpiries.length === 0) {
       this.log(state, `❌ No future expiries found for ${underlying}.`);
       return null;
     }
 
-    const nearestExpiryDate = sortedExpiries[0];
-    const nearestExpiry = options.find((i: any) => new Date(i.expiry as any).getTime() === nearestExpiryDate.getTime())?.expiry;
+    const nearestExpiry = sortedExpiries[0];
 
-    const filteredOptions = options.filter((i: any) => i.expiry === nearestExpiry);
+    const filteredOptions = options.filter((i: any) => getExpiryStr(i.expiry) === nearestExpiry);
 
     // ── Option 1: Premium range (batched LTP in chunks of 200) ────────────────────
     if (config.minPremium && config.maxPremium) {

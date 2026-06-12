@@ -262,7 +262,13 @@ export class EmaRsiOptionsEngine {
 
       const emaFastArr = calcEMA(candles, state.config.emaFast ?? 9);
       const emaSlowArr = calcEMA(candles, state.config.emaSlow ?? 21);
-      const vwap = calcVWAP(candles);
+      
+      // Filter candles for today's session to calculate VWAP
+      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const todayCandles = candles.filter(c => 
+        c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr
+      );
+      const vwap = todayCandles.length > 0 ? calcVWAP(todayCandles) : candles[candles.length - 1].close;
       const rsi = calcRSI(candles, state.config.rsiPeriod ?? 14);
 
       const n = candles.length - 1;
@@ -456,31 +462,37 @@ export class EmaRsiOptionsEngine {
     );
     if (options.length === 0) return null;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); // "YYYY-MM-DD"
 
-    const uniqueExpiries = Array.from(new Set(options.map((i: any) => i.expiry)));
-    const sortedExpiries = uniqueExpiries
-      .map(e => new Date(e as any))
-      .filter(e => e >= today)
-      .sort((a, b) => a.getTime() - b.getTime());
+    const getExpiryStr = (expiry: any): string => {
+      if (!expiry) return '';
+      const d = new Date(expiry);
+      if (isNaN(d.getTime())) return '';
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    };
+
+    const uniqueExpiries = Array.from(new Set(options.map((i: any) => getExpiryStr(i.expiry))))
+      .filter(exp => exp !== '' && exp >= todayStr);
+
+    const sortedExpiries = uniqueExpiries.sort();
 
     if (sortedExpiries.length === 0) return null;
 
-    const nearExpiryDate = sortedExpiries[0];
-    const nearExpiry = options.find((i: any) => new Date(i.expiry as any).getTime() === nearExpiryDate.getTime())?.expiry;
+    const nearExpiry = sortedExpiries[0];
     const atmStrike = Math.round(spotPrice / step) * step;
 
     // Try ATM, then ±1 step
     for (const strike of [atmStrike, atmStrike + step, atmStrike - step]) {
-      const match = options.find((i: any) => i.expiry === nearExpiry && Number(i.strike) === strike);
+      const match = options.find((i: any) => getExpiryStr(i.expiry) === nearExpiry && Number(i.strike) === strike);
       if (match) return match.tradingsymbol;
     }
     return null;
   }
 
   private async fetch5min(client: any, symbol: string, exchange: string, ist: Date): Promise<Candle[]> {
-    const from = new Date(ist); from.setHours(9, 15, 0, 0);
+    const from = new Date(ist);
+    from.setDate(from.getDate() - 5); // Go back 5 days to ensure enough historical candles
+    from.setHours(9, 15, 0, 0);
     const to = new Date(ist);
 
     const data = await client.getHistoricalData(symbol, exchange, '5minute', from, to);

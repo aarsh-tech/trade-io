@@ -530,26 +530,26 @@ export class Breakout15MinEngine {
       return null;
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); // "YYYY-MM-DD"
 
-    const allExpiries = Array.from(new Set(options.map((i: any) => i.expiry)));
+    const allExpiries = Array.from(new Set(options.map((i: any) => {
+      const exp = i.expiry ? i.expiry.toString().substring(0, 10) : '';
+      return exp;
+    }))).filter(exp => exp !== '');
+
     const sortedExpiries = allExpiries
-      .map(e => new Date(e as any))
-      .filter(e => e >= today)
-      .sort((a, b) => a.getTime() - b.getTime());
+      .filter(exp => exp >= todayStr)
+      .sort();
 
     if (sortedExpiries.length === 0) {
       this.log(state, `❌ No future expiries found for ${underlying}.`);
       return null;
     }
 
-    const nearestExpiryDate = sortedExpiries[0];
-    // Re-match the string/date to filter options
-    const nearestExpiry = options.find((i: any) => new Date(i.expiry as any).getTime() === nearestExpiryDate.getTime())?.expiry;
+    const nearestExpiry = sortedExpiries[0];
 
-    const filteredOptions = options.filter((i: any) => i.expiry === nearestExpiry);
-    this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiryDate.toDateString()})`);
+    const filteredOptions = options.filter((i: any) => i.expiry && i.expiry.toString().substring(0, 10) === nearestExpiry);
+    this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiry})`);
 
     // ─── Option 1: Premium Range Selection (batched LTP calls) ───────────────
     if (config.minPremium && config.maxPremium) {
