@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { DailyScalperConfig } from './dto/strategy.dto';
+import { TickerService } from '../market/ticker.service';
 
 interface Candle {
   date: Date;
@@ -70,15 +71,40 @@ function calcVWAP(candles: Candle[]): number {
 }
 
 @Injectable()
-export class DailyScalperEngine {
+export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DailyScalperEngine.name);
   private readonly running = new Map<string, StrategyState>();
   private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
+  private unsubscribeFromTicker: (() => void) | null = null;
 
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
+    private tickerService: TickerService,
   ) {}
+
+  onModuleInit() {
+    this.unsubscribeFromTicker = this.tickerService.registerListener((ticks) => {
+      this.handleTicks(ticks);
+    });
+  }
+
+  onModuleDestroy() {
+    if (this.unsubscribeFromTicker) {
+      this.unsubscribeFromTicker();
+    }
+  }
+
+  private handleTicks(ticks: Record<string, number>) {
+    for (const [strategyId, state] of this.running.entries()) {
+      if (state.optionSymbol && ticks[state.optionSymbol]) {
+        const livePrice = ticks[state.optionSymbol];
+        this.evaluateLivePosition(strategyId, state, livePrice).catch(e => 
+          this.logger.error(`Error in live position evaluation: ${e.message}`)
+        );
+      }
+    }
+  }
 
   // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -455,6 +481,11 @@ export class DailyScalperEngine {
       state.tradesPlacedToday++;
       state.isStopLossTrailed = false;
 
+      // Dynamically subscribe to this option symbol on the ticker
+      await this.tickerService.subscribeSymbol(state.brokerAccountId, optionSymbol).catch((err) => {
+        this.logger.error(`Failed to subscribe option symbol ${optionSymbol}: ${err.message}`);
+      });
+
       await this.trackOrderInDB(state, account, params, orderId, strategyId);
       this.log(state, `✅ Position opened: Buy ATM ${side} option ${optionSymbol} at avg price ₹${optionLTP.toFixed(2)}`);
 
@@ -769,6 +800,66 @@ export class DailyScalperEngine {
       });
     } catch (e) {
       this.log(state, `⚠️ Failed to log transaction in DB: ${e.message}`);
+    }
+  }
+
+  private async evaluateLivePosition(strategyId: string, state: StrategyState, currentPrice: number) {
+    if (!state.optionSymbol || !state.entryOptionPrice) return;
+
+    try {
+      const entryPrice = state.entryOptionPrice;
+
+      // Determine points target and SL limits
+      let targetPts = state.config.targetPoints;
+      let stopLossPts = state.config.stopLossPoints;
+
+      if (!targetPts || !stopLossPts) {
+        const u = state.config.symbol.toUpperCase();
+        if (u.includes('BANK')) {
+          targetPts = targetPts ?? 20;
+          stopLossPts = stopLossPts ?? 15;
+        } else if (u.includes('SENSEX')) {
+          targetPts = targetPts ?? 30;
+          stopLossPts = stopLossPts ?? 20;
+        } else {
+          targetPts = targetPts ?? 10; // Nifty 50 default
+          stopLossPts = stopLossPts ?? 7;
+        }
+      }
+
+      // Check if we need to trigger Breakeven Trailing SL (Option premium gain is >= 50% of target points)
+      const breakevenTrigger = targetPts / 2;
+      const pnlPerShare = currentPrice - entryPrice;
+      const netPnl = pnlPerShare * state.positionQty;
+
+      if (!state.isStopLossTrailed && pnlPerShare >= breakevenTrigger) {
+        state.isStopLossTrailed = true;
+        this.log(state, `🔒 Trailing Stop Loss to Cost (Breakeven) activated! Current Price: ₹${currentPrice.toFixed(2)} | Cost: ₹${entryPrice.toFixed(2)}`);
+      }
+
+      const currentSLPts = state.isStopLossTrailed ? 0 : stopLossPts;
+      const currentSLPx = entryPrice - currentSLPts;
+
+      // 1. Target Profit Hit
+      if (pnlPerShare >= targetPts) {
+        this.log(state, `🎯 TARGET HIT! Option premium ₹${currentPrice.toFixed(2)} >= target ₹${(entryPrice + targetPts).toFixed(2)}. Exiting.`);
+        await this.exitPosition(state, currentPrice, 'TARGET');
+      }
+      // 2. Stop Loss Hit (Normal SL or Trailed Breakeven SL)
+      else if (pnlPerShare <= -currentSLPts) {
+        this.log(state, `🛑 STOP LOSS HIT! Option premium ₹${currentPrice.toFixed(2)} <= stop-loss ₹${currentSLPx.toFixed(2)}. Exiting.`);
+        await this.exitPosition(state, currentPrice, 'SL');
+      }
+      // 3. Absolute low price safeguard
+      else if (currentPrice <= 1) {
+        this.log(state, `⚠️ Safeguard trigger: Premium dropped below ₹1. Cutting loss to prevent total erosion.`);
+        await this.exitPosition(state, currentPrice, 'SAFEGUARD');
+      }
+      
+      await this.persistLogs(state);
+
+    } catch (e) {
+      this.logger.error(`Error during live position monitoring: ${e.message}`);
     }
   }
 }

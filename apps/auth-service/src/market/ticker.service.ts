@@ -9,6 +9,30 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TickerService.name);
   private tickers = new Map<string, any>();
   private refreshInterval: NodeJS.Timeout;
+  private listeners = new Set<(ticks: Record<string, number>) => void>();
+
+  registerListener(callback: (ticks: Record<string, number>) => void) {
+    this.listeners.add(callback);
+    return () => {
+      this.listeners.delete(callback);
+    };
+  }
+
+  async subscribeSymbol(accountId: string, symbol: string) {
+    if (!this.tickers.has(accountId)) return;
+    const tickerData = this.tickers.get(accountId);
+    const token = tickerData.symbolToToken.get(symbol);
+    if (token) {
+      if (!tickerData.tokens.includes(token)) {
+        tickerData.tokens.push(token);
+        tickerData.instance.subscribe([token]);
+        tickerData.instance.setMode(tickerData.instance.modeFull, [token]);
+        this.logger.log(`Dynamically subscribed to ticker symbol: ${symbol} (token: ${token})`);
+      }
+    } else {
+      this.logger.warn(`Could not resolve token for symbol: ${symbol}`);
+    }
+  }
 
   constructor(
     private readonly marketGateway: MarketGateway,
@@ -159,7 +183,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           }
         });
         if (Object.keys(mappedTicks).length > 0) {
-           this.marketGateway.broadcastTicks(mappedTicks);
+          this.marketGateway.broadcastTicks(mappedTicks);
+          this.listeners.forEach((cb) => {
+            try { cb(mappedTicks); } catch (e) { this.logger.error(e); }
+          });
         }
       });
 
