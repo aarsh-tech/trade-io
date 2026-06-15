@@ -73,10 +73,13 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     const MARKET_OPEN  = 9 * 60 + 15; // 09:15
     const MARKET_CLOSE = 15 * 60 + 30; // 15:30
 
-    // ── Auto-start window: 09:15 – 09:16 ────────────────────────────────────
+    // ── Auto-start window: 09:15 – 09:16 (or boot mid-session during market hours) ──
     // Guard: fire at most once per calendar day so the 09:16 tick does
     // not re-start a strategy the user just stopped during the 09:15 tick.
-    if (hhmm === MARKET_OPEN || hhmm === MARKET_OPEN + 1) {
+    const isExactAutoStartTime = hhmm === MARKET_OPEN || hhmm === MARKET_OPEN + 1;
+    const isMidSessionStart = hhmm > MARKET_OPEN && hhmm < MARKET_CLOSE && this.lastAutoStartDate === null;
+
+    if (isExactAutoStartTime || isMidSessionStart) {
       const todayKey = ist.toDateString();
       if (this.lastAutoStartDate !== todayKey) {
         this.lastAutoStartDate = todayKey;

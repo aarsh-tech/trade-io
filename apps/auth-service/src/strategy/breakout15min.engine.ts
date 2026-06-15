@@ -245,7 +245,11 @@ export class Breakout15MinEngine {
           state.futureSymbol = res.symbol;
           state.futureExchange = res.exchange;
           this.log(state, `🔎 Resolved Future: ${state.futureExchange}:${state.futureSymbol}`);
-        } catch (err) { this.log(state, `❌ Resolve Error: ${err.message}`); return; }
+        } catch (err) {
+          this.log(state, `❌ Resolve Error: ${err.message}`);
+          await this.persistLogs(state);
+          return;
+        }
       } else if (config.symbol === 'AUTO') {
         try {
           const pick = await autoSelectStock(kite, config.targetRs, config.stopLossRs, this.logger);
@@ -253,7 +257,11 @@ export class Breakout15MinEngine {
           state.futureExchange = pick.exchange;
           state.config.qty = pick.qty; // Update quantity
           this.log(state, `🎯 Auto-Selected Stock: ${state.futureExchange}:${state.futureSymbol} - Qty: ${state.config.qty}`);
-        } catch (err) { this.log(state, `❌ Auto-Select Error: ${err.message}`); return; }
+        } catch (err) {
+          this.log(state, `❌ Auto-Select Error: ${err.message}`);
+          await this.persistLogs(state);
+          return;
+        }
       } else {
         state.futureSymbol = config.symbol;
         state.futureExchange = config.exchange;
@@ -264,6 +272,7 @@ export class Breakout15MinEngine {
     if (!state.refCandleSet) {
       if (hhmm < 9 * 60 + 30) {
         this.log(state, `⏳ Waiting for 15-min Future range (Current: ${this.formatTime(now)})`);
+        await this.persistLogs(state);
         return;
       }
       try {
@@ -275,7 +284,11 @@ export class Breakout15MinEngine {
           state.refCandleSet = true;
           this.log(state, `📊 FUTURE Range Set — H: ₹${ref.high} | L: ₹${ref.low}`);
         }
-      } catch (err) { this.log(state, `❌ 15-min error: ${err.message}`); return; }
+      } catch (err) {
+        this.log(state, `❌ 15-min error: ${err.message}`);
+        await this.persistLogs(state);
+        return;
+      }
     }
 
     // ─── Paper/Real Trade Monitoring (runs every tick while a trade is open) ────

@@ -134,6 +134,7 @@ export class EmaRsiOptionsEngine {
 
     this.running.set(strategyId, state);
     this.log(state, `▶ EMA-RSI Options strategy started — ${config.symbol}`);
+    await this.persistLogs(state);
 
     // Run every 5 minutes
     const timer = setInterval(
@@ -196,6 +197,7 @@ export class EmaRsiOptionsEngine {
     // Market hours: 9:15 – 15:25 (stop 5 min before close)
     if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 25) {
       if (hhmm < 9 * 60 + 15) this.resetDay(state);
+      await this.persistLogs(state);
       return;
     }
 
@@ -203,11 +205,16 @@ export class EmaRsiOptionsEngine {
     const marketMinutes = hhmm - (9 * 60 + 15);
     if (marketMinutes < (state.config.startAfterMin ?? 25)) {
       this.log(state, `⏳ Waiting for market to settle (${marketMinutes}/${state.config.startAfterMin}min)`);
+      await this.persistLogs(state);
       return;
     }
 
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-    if (!account?.accessToken) { this.log(state, '⚠ No active broker session'); return; }
+    if (!account?.accessToken) {
+      this.log(state, '⚠ No active broker session');
+      await this.persistLogs(state);
+      return;
+    }
 
     const client = this.factory.createClient(account);
     const kite = client['kite'];
@@ -221,7 +228,9 @@ export class EmaRsiOptionsEngine {
           state.futureExchange = resolved.exchange;
           this.log(state, `🔎 Resolved: ${state.futureExchange}:${state.futureSymbol}`);
         } catch (e) {
-          this.log(state, `❌ Future resolve failed: ${e.message}`); return;
+          this.log(state, `❌ Future resolve failed: ${e.message}`);
+          await this.persistLogs(state);
+          return;
         }
       } else {
         // STOCK — Trade directly
@@ -235,6 +244,7 @@ export class EmaRsiOptionsEngine {
             this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick)`);
           } catch (e) {
             this.log(state, `❌ Auto-Select failed: ${e.message}. Skipping tick — will retry next bar.`);
+            await this.persistLogs(state);
             return; // don't trade on a failed auto-select
           }
         } else {

@@ -126,6 +126,7 @@ export class DailyScalperEngine {
 
     this.running.set(strategyId, state);
     this.log(state, `▶ Daily Scalper strategy started — ${config.symbol} | Target: ₹${config.dailyTargetRs} | Max Loss: ₹${config.dailyMaxLossRs}`);
+    await this.persistLogs(state);
 
     // Tick every 15 seconds for high precision exit tracking and candle updates
     const timer = setInterval(
@@ -201,6 +202,7 @@ export class DailyScalperEngine {
     // Reset daily counters before market opens
     if (hhmm < MARKET_OPEN) {
       this.resetDailyCounters(state);
+      await this.persistLogs(state);
       return;
     }
 
@@ -209,6 +211,7 @@ export class DailyScalperEngine {
       if (state.positionSide && state.optionSymbol) {
         await this.forceExitAll(state, 'MARKET_CLOSE_EXIT');
       }
+      await this.persistLogs(state);
       return;
     }
 
@@ -231,6 +234,7 @@ export class DailyScalperEngine {
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
     if (!account?.accessToken) {
       this.log(state, '⚠ No active broker session');
+      await this.persistLogs(state);
       return;
     }
 
@@ -246,6 +250,7 @@ export class DailyScalperEngine {
         this.log(state, `🔎 Resolved Index Future: ${state.futureExchange}:${state.futureSymbol}`);
       } catch (e) {
         this.log(state, `❌ Future resolve failed: ${e.message}`);
+        await this.persistLogs(state);
         return;
       }
     }
