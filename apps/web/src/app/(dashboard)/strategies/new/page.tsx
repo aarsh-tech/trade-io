@@ -214,54 +214,60 @@ export default function NewStrategyPage() {
         };
       } else if (form.type === "BREAKOUT_15MIN") {
         config = {
-            symbol: form.symbol.trim(), exchange: form.exchange,
-            instrumentType: form.instrumentType, qty,
-            lots: Number(form.lots), product: form.product,
-            stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
-            maxTradesPerDay: Number(form.maxTradesPerDay),
-            ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
-              minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
-            }),
-          };
+          symbol: form.symbol.trim(), exchange: form.exchange,
+          instrumentType: form.instrumentType, qty,
+          lots: Number(form.lots), product: form.product,
+          stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          maxTradesPerDay: Number(form.maxTradesPerDay),
+          ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
+            minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
+          }),
+        };
       } else if (form.type === "EMA_RSI_OPTIONS") {
         config = {
-              symbol: form.symbol.trim(), exchange: form.exchange,
-              instrumentType: form.instrumentType,
-              emaFast: Number(form.emaFast), emaSlow: Number(form.emaSlow),
-              rsiPeriod: Number(form.rsiPeriod),
-              rsiEntryMin: Number(form.rsiEntryMin), rsiEntryMax: Number(form.rsiEntryMax),
-              lots: Number(form.lots), qty,
-              stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
-              maxTradesPerDay: Number(form.maxTradesPerDay),
-              product: form.product, startAfterMin: Number(form.startAfterMin),
-            };
+          symbol: form.symbol.trim(), exchange: form.exchange,
+          instrumentType: form.instrumentType,
+          emaFast: Number(form.emaFast), emaSlow: Number(form.emaSlow),
+          rsiPeriod: Number(form.rsiPeriod),
+          rsiEntryMin: Number(form.rsiEntryMin), rsiEntryMax: Number(form.rsiEntryMax),
+          lots: Number(form.lots), qty,
+          stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          maxTradesPerDay: Number(form.maxTradesPerDay),
+          product: form.product, startAfterMin: Number(form.startAfterMin),
+        };
       } else {
         config = {
-              symbol: form.symbol.trim(), exchange: form.exchange,
-              instrumentType: form.instrumentType,
-              emaPeriod: Number(form.emaPeriod), isOptionBuyingOnly: form.isOptionBuyingOnly,
-              qty, lots: Number(form.lots), product: form.product,
-              stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
-              maxTradesPerDay: Number(form.maxTradesPerDay),
-              ...(form.isOptionBuyingOnly && {
-                minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
-              }),
-            };
+          symbol: form.symbol.trim(), exchange: form.exchange,
+          instrumentType: form.instrumentType,
+          emaPeriod: Number(form.emaPeriod), isOptionBuyingOnly: form.isOptionBuyingOnly,
+          qty, lots: Number(form.lots), product: form.product,
+          stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          maxTradesPerDay: Number(form.maxTradesPerDay),
+          ...(form.isOptionBuyingOnly && {
+            minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
+          }),
+        };
       }
 
-      await strategyApi.create({
+      const payload = {
         name: form.name,
         type: form.type,
         brokerAccountId: form.brokerAccountId || undefined,
         config: JSON.stringify(config),
         isPaperTrade: form.isPaperTrade,
-      });
+      };
+
+      await strategyApi.create(payload);
 
       toast.success("Strategy created!", {
         description: `${form.name} is ready. Start it from the Strategies page.`,
       });
       router.push("/strategies");
     } catch (err: any) {
+      console.error("❌ Create strategy error:", err);
+      if (err.response) {
+        console.error("❌ Response data:", err.response.data);
+      }
       toast.error(err?.response?.data?.message ?? "Failed to create strategy");
     } finally {
       setSubmitting(false);
@@ -543,7 +549,7 @@ export default function NewStrategyPage() {
                             : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
                         )}
                       >
-                        <span className="text-base">ðŸ“ˆ</span>
+                        <BarChart2 className="h-5 w-5 mb-0.5" />
                         <span>Equity / Stock</span>
                         <span className="text-[10px] font-normal opacity-70">Trade NSE/BSE directly</span>
                       </button>
@@ -557,7 +563,7 @@ export default function NewStrategyPage() {
                             : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
                         )}
                       >
-                        <span className="text-base">ðŸŽ¯</span>
+                        <Target className="h-5 w-5 mb-0.5" />
                         <span>Options (CE/PE)</span>
                         <span className="text-[10px] font-normal opacity-70">Buy ATM options on NFO</span>
                       </button>
@@ -886,38 +892,38 @@ export default function NewStrategyPage() {
                 <>
                   {((form.type === "BREAKOUT_15MIN" && (form.instrumentType === "INDEX" || form.instrumentType === "OPTION")) ||
                     (form.type === "EMA_VWAP_CROSSOVER" && form.isOptionBuyingOnly)) && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                          <TrendingUp className="h-4 w-4 text-blue-500" />
-                          Min Premium
-                        </label>
-                        <Input
-                          type="number"
-                          value={form.minPremium}
-                          onChange={(e) => set("minPremium", e.target.value)}
-                          className="focus:ring-blue-300"
-                        />
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                            <TrendingUp className="h-4 w-4 text-blue-500" />
+                            Min Premium
+                          </label>
+                          <Input
+                            type="number"
+                            value={form.minPremium}
+                            onChange={(e) => set("minPremium", e.target.value)}
+                            className="focus:ring-blue-300"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                            <TrendingUp className="h-4 w-4 text-blue-600" />
+                            Max Premium
+                          </label>
+                          <Input
+                            type="number"
+                            value={form.maxPremium}
+                            onChange={(e) => set("maxPremium", e.target.value)}
+                            className="focus:ring-blue-300"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <p className="text-[10px] text-[hsl(var(--muted-foreground))] italic px-1">
+                            When breakout occurs, the bot will pick an Option contract with premium between {form.minPremium} and {form.maxPremium}.
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                          <TrendingUp className="h-4 w-4 text-blue-600" />
-                          Max Premium
-                        </label>
-                        <Input
-                          type="number"
-                          value={form.maxPremium}
-                          onChange={(e) => set("maxPremium", e.target.value)}
-                          className="focus:ring-blue-300"
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))] italic px-1">
-                          When breakout occurs, the bot will pick an Option contract with premium between {form.minPremium} and {form.maxPremium}.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                    )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -1090,19 +1096,19 @@ export default function NewStrategyPage() {
                     const items: [string, any][] = [
                       ["Name", form.name],
                     ];
-                    
+
                     let typeLabel = "";
                     if (form.type === "BREAKOUT_15MIN") typeLabel = "15-Min High/Low Breakout";
                     else if (form.type === "EMA_VWAP_CROSSOVER") typeLabel = "EMA-VWAP Crossover";
                     else if (form.type === "EMA_RSI_OPTIONS") typeLabel = "EMA + RSI + VWAP";
                     else if (form.type === "DAILY_SCALPER") typeLabel = "Daily Target Scalper";
                     else if (form.type === "STOCK_OPTIONS_BUYING") typeLabel = "Stock Options Buying";
-                    
+
                     items.push(["Type", typeLabel]);
                     items.push(["Symbol", `${form.symbol}  ${form.exchange}`]);
                     items.push(["Order Size", `${form.lots} Lots`]);
                     items.push(["Product", form.product]);
-                    
+
                     if (form.type === "DAILY_SCALPER") {
                       items.push(["Capital Budget", `₹${Number(form.dsCapital).toLocaleString("en-IN")}`]);
                       items.push(["Daily Profit Target", `₹${Number(form.dsDailyTargetRs).toLocaleString("en-IN")}`]);
@@ -1121,7 +1127,7 @@ export default function NewStrategyPage() {
                       items.push(["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`]);
                       items.push(["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`]);
                       items.push(["Max Trades", `${form.maxTradesPerDay} / day`]);
-                      
+
                       if (form.type === "BREAKOUT_15MIN") {
                         if (form.instrumentType === "INDEX" || form.instrumentType === "OPTION") {
                           items.push(["Premium Range", `₹${form.minPremium} - ₹${form.maxPremium}`]);
@@ -1136,7 +1142,7 @@ export default function NewStrategyPage() {
                         items.push(["Start Delay", `${form.startAfterMin} mins`]);
                       }
                     }
-                    
+
                     return items.map(([label, value]) => (
                       <div key={label} className="flex justify-between py-2 border-b border-[hsl(var(--border))] last:border-0 px-1">
                         <span className="text-sm text-[hsl(var(--muted-foreground))]">{label}</span>

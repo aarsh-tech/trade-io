@@ -29,6 +29,7 @@ interface StrategyState {
   entryOrderId: string | null;
   slOrderId: string | null;
   targetOrderId: string | null;
+  setupTimestamp: number | null;
   tradesPlacedToday: number;
   logs: string[];
 }
@@ -84,6 +85,7 @@ export class Breakout15MinEngine {
       entryOrderId: null,
       slOrderId: null,
       targetOrderId: null,
+      setupTimestamp: null,
       tradesPlacedToday: 0,
       logs: [],
     };
@@ -157,19 +159,80 @@ export class Breakout15MinEngine {
       const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
       const breakoutCandidates = candles5.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
 
-      for (const candle of breakoutCandidates) {
-        if (state.entryTriggered) break;
+      let optionCandles: Candle[] = [];
+      let optionCandleSymbol = '';
+
+      for (let k = 0; k < breakoutCandidates.length; k++) {
+        const currentCandle = breakoutCandidates[k];
+
+        if (state.entryTriggered) {
+          const candleTimeMs = new Date(currentCandle.date).getTime();
+          let currentOptionPriceLow = 0;
+          let currentOptionPriceHigh = 0;
+          let hasOptionData = false;
+
+          if (state.optionSymbol) {
+            if (optionCandleSymbol !== state.optionSymbol) {
+              const exchange = state.optionSymbol.includes('-') || state.optionSymbol.startsWith('NIFTY') || state.optionSymbol.startsWith('BANKNIFTY') ? 'NFO' : state.futureExchange;
+              const rawData = await client.getHistoricalData(state.optionSymbol, exchange, '5minute', new Date(state.setupTimestamp || currentCandle.date), now);
+              optionCandles = (rawData || []).map((c: any) => ({
+                date: new Date(c.date),
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume
+              }));
+              optionCandleSymbol = state.optionSymbol;
+            }
+
+            const optCandle = optionCandles.find(c => c.date.getTime() === candleTimeMs);
+            if (optCandle) {
+              currentOptionPriceLow = optCandle.low;
+              currentOptionPriceHigh = optCandle.high;
+              hasOptionData = true;
+            }
+          } else {
+            currentOptionPriceLow = currentCandle.low;
+            currentOptionPriceHigh = currentCandle.high;
+            hasOptionData = true;
+          }
+
+          if (hasOptionData) {
+            const orders = await this.prisma.order.findMany({
+              where: { executionId: state.executionId, status: 'OPEN' }
+            });
+            const slOrder = orders.find(o => o.orderType === 'SL');
+            const targetOrder = orders.find(o => o.orderType === 'LIMIT' && o.brokerOrderId.includes('TARGET'));
+
+            if (slOrder && currentOptionPriceLow <= slOrder.price!) {
+              this.log(state, `🔴 (Catch-up) PAPER SL HIT! ${state.optionSymbol || state.futureSymbol} at ₹${slOrder.price} (Trigger: ₹${slOrder.price})`);
+              await this.closePaperTradeHistorical(state, 'SL_HIT', slOrder.price!, new Date(currentCandle.date));
+              optionCandles = [];
+              optionCandleSymbol = '';
+              continue;
+            }
+            if (targetOrder && currentOptionPriceHigh >= targetOrder.price!) {
+              this.log(state, `🟢 (Catch-up) PAPER TARGET HIT! ${state.optionSymbol || state.futureSymbol} at ₹${targetOrder.price} (Target: ₹${targetOrder.price})`);
+              await this.closePaperTradeHistorical(state, 'TARGET_HIT', targetOrder.price!, new Date(currentCandle.date));
+              optionCandles = [];
+              optionCandleSymbol = '';
+              continue;
+            }
+          }
+          continue;
+        }
 
         // Check if this candle is closed (at least 5 mins passed since its start)
-        const candleStart = new Date(candle.date).getTime();
+        const candleStart = new Date(currentCandle.date).getTime();
         if ((now.getTime() - candleStart) < 5 * 60 * 1000) continue;
 
-        if (candle.close > state.refHigh!) {
-          this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(candle.date))}) closed at ₹${candle.close} > ₹${state.refHigh}`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', candle.close);
-        } else if (candle.close < state.refLow!) {
-          this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(candle.date))}) closed at ₹${candle.close} < ₹${state.refLow}`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', candle.close);
+        if (currentCandle.close > state.refHigh!) {
+          this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${state.refHigh}`);
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date));
+        } else if (currentCandle.close < state.refLow!) {
+          this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${state.refLow}`);
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date));
         }
       }
 
@@ -448,6 +511,7 @@ export class Breakout15MinEngine {
     });
     this.log(state, `🏁 Paper trade closed (${reason}) at ₹${price}`);
     state.entryTriggered = null; // Allow more trades if maxTradesPerDay not reached
+    state.setupTimestamp = null;
   }
 
   private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
@@ -477,7 +541,7 @@ export class Breakout15MinEngine {
     return parts[0] * 60 + (parts[1] || 0);
   }
 
-  private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number) {
+  private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date) {
     const { config } = state;
     const kite = client['kite'];
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
@@ -488,17 +552,32 @@ export class Breakout15MinEngine {
     if (isIndex) {
       try {
         const optionType = side === 'BUY' ? 'CE' : 'PE';
-        const optSym = await this.findOptionSymbol(client, state, triggerPrice, optionType);
+        const optSym = await this.findOptionSymbol(client, state, triggerPrice, optionType, triggerTime);
         if (optSym) {
           symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
-          const quotes = await kite.getLTP([`NFO:${symbol}`]);
-          const ltp = quotes[`NFO:${symbol}`]?.last_price;
+          let ltp: number | null = null;
+          if (triggerTime) {
+            ltp = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
+            if (ltp !== null) {
+              this.log(state, `💡 Selected Option Historical Price: ₹${ltp} (Underlying: ₹${triggerPrice.toFixed(2)}) at ${this.formatTime(triggerTime)}`);
+            } else {
+              this.log(state, `⚠ Could not fetch historical option price for ${symbol} at ${this.formatTime(triggerTime)}. Using current LTP.`);
+              const quotes = await kite.getLTP([`NFO:${symbol}`]);
+              ltp = quotes[`NFO:${symbol}`]?.last_price;
+            }
+          } else {
+            const quotes = await kite.getLTP([`NFO:${symbol}`]);
+            ltp = quotes[`NFO:${symbol}`]?.last_price;
+            if (ltp) {
+              this.log(state, `💡 Selected Option LTP: ₹${ltp} (Underlying: ₹${triggerPrice.toFixed(2)})`);
+            }
+          }
+
           if (ltp) {
-            this.log(state, `💡 Selected Option LTP: ₹${ltp} (Underlying: ₹${triggerPrice.toFixed(2)})`);
             const entry = this.roundTick(ltp);
             const sl = this.roundTick(entry - (config.stopLossRs / config.qty));
             const tgt = this.roundTick(entry + (config.targetRs / config.qty));
-            await this.executeOrders(strategyId, state, client, account, symbol, exchange, finalSide, entry, sl, tgt);
+            await this.executeOrders(strategyId, state, client, account, symbol, exchange, finalSide, entry, sl, tgt, triggerTime);
             return;
           }
         }
@@ -513,30 +592,60 @@ export class Breakout15MinEngine {
     if (isIndex) {
       this.log(state, `⚠ Falling back to ${symbol} (Spot/Future) as no suitable option was found.`);
     }
-    await this.executeOrders(strategyId, state, client, account, symbol, exchange, side, entry, sl, tgt);
+    await this.executeOrders(strategyId, state, client, account, symbol, exchange, side, entry, sl, tgt, triggerTime);
   }
 
-  private async executeOrders(strategyId: string, state: StrategyState, client: any, account: any, symbol: string, exchange: string, side: 'BUY' | 'SELL', entry: number, sl: number, tgt: number) {
+  private async executeOrders(strategyId: string, state: StrategyState, client: any, account: any, symbol: string, exchange: string, side: 'BUY' | 'SELL', entry: number, sl: number, tgt: number, triggerTime?: Date) {
     const { config, executionId } = state;
     this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}`);
 
     const entryId = state.isPaperTrade ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry });
     this.log(state, `✅ Entry: ${entryId}`);
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry }, entryId, strategyId);
+    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry }, entryId, strategyId, triggerTime);
 
     const exitSide = side === 'BUY' ? 'SELL' : 'BUY';
     const slId = state.isPaperTrade ? `PAPER_SL_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(e => 'FAILED');
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, strategyId);
+    await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, strategyId, triggerTime);
 
     const tgtId = state.isPaperTrade ? `PAPER_TARGET_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(e => 'FAILED');
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, strategyId);
+    await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, strategyId, triggerTime);
 
     state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
     state.optionSymbol = symbol;
     state.tradesPlacedToday += 1;
+    state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
   }
 
-  private async findOptionSymbol(client: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
+  private async getHistoricalOptionPrice(client: any, symbol: string, exchange: string, timestamp: Date): Promise<number | null> {
+    try {
+      const from = new Date(timestamp.getTime() - 10 * 60 * 1000);
+      const to = new Date(timestamp.getTime() + 10 * 60 * 1000);
+      const data = await client.getHistoricalData(symbol, exchange, '5minute', from, to);
+      if (!data || data.length === 0) return null;
+
+      const targetTimeMs = timestamp.getTime();
+      const match = data.find((c: any) => new Date(c.date).getTime() === targetTimeMs);
+      if (match) {
+        return match.close;
+      }
+      
+      let closest = data[0];
+      let minDiff = Math.abs(new Date(closest.date).getTime() - targetTimeMs);
+      for (const c of data) {
+        const diff = Math.abs(new Date(c.date).getTime() - targetTimeMs);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = c;
+        }
+      }
+      return closest.close;
+    } catch (e) {
+      this.logger.error(`Error getting historical option price for ${symbol} at ${timestamp.toISOString()}: ${e.message}`);
+      return null;
+    }
+  }
+
+  private async findOptionSymbol(client: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
 
@@ -581,45 +690,53 @@ export class Breakout15MinEngine {
     const filteredOptions = options.filter((i: any) => i.expiry && i.expiry.toString().substring(0, 10) === nearestExpiry);
     this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiry})`);
 
-    // ─── Option 1: Premium Range Selection (batched LTP calls) ───────────────
+    // ─── Option 1: Premium Range Selection (batched LTP calls or historical check) ─
     if (config.minPremium && config.maxPremium) {
       this.log(state, `🔍 Searching for ${type} option in premium range ₹${config.minPremium} - ₹${config.maxPremium}...`);
+      const step = ['NIFTY', 'FINNIFTY'].includes(underlying) ? 50 : underlying === 'MIDCPNIFTY' ? 25 : 100;
+      const atm = Math.round(spotPrice / step) * step;
+      const candidateStrikes = [atm, atm + step, atm - step, atm + 2 * step, atm - 2 * step, atm + 3 * step, atm - 3 * step, atm + 4 * step, atm - 4 * step];
 
-      // ── Batch in chunks of 200 to avoid Zerodha's 500-symbol silent limit ──
-      const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
-      const CHUNK = 200;
-      const quotes: Record<string, any> = {};
-      for (let i = 0; i < allSymbols.length; i += CHUNK) {
-        const chunk = allSymbols.slice(i, i + CHUNK);
-        try {
-          const res = await client.getLTP(chunk);
-          Object.assign(quotes, res);
-        } catch (e) {
-          this.log(state, `⚠ LTP batch ${Math.floor(i / CHUNK) + 1} failed: ${e.message}`);
-        }
-      }
+      if (triggerTime) {
+        for (const strike of candidateStrikes) {
+          const opt = filteredOptions.find((i: any) => Number(i.strike) === strike);
+          if (!opt) continue;
 
-      let bestMatch: string | null = null;
-      let minDiff = Infinity;
-      const targetPremium = (config.minPremium + config.maxPremium) / 2;
-
-      for (const opt of filteredOptions) {
-        const key = `${exchange}:${opt.tradingsymbol}`;
-        const ltp = quotes[key]?.last_price;
-        if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
-          const diff = Math.abs(ltp - targetPremium);
-          if (diff < minDiff) {
-            minDiff = diff;
-            bestMatch = opt.tradingsymbol;
+          const price = await this.getHistoricalOptionPrice(client, opt.tradingsymbol, exchange, triggerTime);
+          if (price !== null && price >= config.minPremium && price <= config.maxPremium) {
+            this.log(state, `🎯 Found ${opt.tradingsymbol} within premium range (historical check).`);
+            return opt.tradingsymbol;
           }
         }
-      }
+        this.log(state, `⚠ No option found in range ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ATM.`);
+      } else {
+        // ── Batch in chunks of 200 to avoid Zerodha's 500-symbol silent limit ──
+        const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
+        const CHUNK = 200;
+        const quotes: Record<string, any> = {};
+        for (let i = 0; i < allSymbols.length; i += CHUNK) {
+          const chunk = allSymbols.slice(i, i + CHUNK);
+          try {
+            const res = await client.getLTP(chunk);
+            Object.assign(quotes, res);
+          } catch (e) {
+            this.log(state, `⚠ LTP batch ${Math.floor(i / CHUNK) + 1} failed: ${e.message}`);
+          }
+        }
 
-      if (bestMatch) {
-        this.log(state, `🎯 Found ${bestMatch} within premium range.`);
-        return bestMatch;
+        for (const strike of candidateStrikes) {
+          const opt = filteredOptions.find((i: any) => Number(i.strike) === strike);
+          if (!opt) continue;
+
+          const key = `${exchange}:${opt.tradingsymbol}`;
+          const ltp = quotes[key]?.last_price;
+          if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
+            this.log(state, `🎯 Found ${opt.tradingsymbol} within premium range.`);
+            return opt.tradingsymbol;
+          }
+        }
+        this.log(state, `⚠ No option found in range ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ATM.`);
       }
-      this.log(state, `⚠ No option found in range ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ATM.`);
     }
 
     // ─── Option 2: Default ATM Strike ────────────────────────────────────────
@@ -654,7 +771,17 @@ export class Breakout15MinEngine {
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
-  private async trackOrder(state: StrategyState, account: any, executionId: string, params: any, brokerOrderId: string, strategyId: string) {
+  private async closePaperTradeHistorical(state: StrategyState, reason: string, price: number, timestamp: Date) {
+    await this.prisma.order.updateMany({
+      where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
+      data: { status: 'COMPLETE', price, createdAt: timestamp }
+    });
+    this.log(state, `🏁 (Catch-up) Paper trade closed (${reason}) at ₹${price}`);
+    state.entryTriggered = null;
+    state.setupTimestamp = null;
+  }
+
+  private async trackOrder(state: StrategyState, account: any, executionId: string, params: any, brokerOrderId: string, strategyId: string, createdAt?: Date) {
     try {
       const isEntry = !brokerOrderId.includes('SL') && !brokerOrderId.includes('TARGET');
       await this.prisma.order.create({
@@ -672,10 +799,11 @@ export class Breakout15MinEngine {
           triggerPrice: params.triggerPrice ?? null,
           brokerOrderId,
           status: state.isPaperTrade ? (isEntry ? 'COMPLETE' : 'OPEN') : 'OPEN',
-          isPaperTrade: state.isPaperTrade
+          isPaperTrade: state.isPaperTrade,
+          ...(createdAt ? { createdAt } : {})
         } as any
       });
     } catch (err) { this.log(state, `⚠ DB track failed: ${err.message}`); }
   }
-  private resetDailyState(state: StrategyState) { state.refHigh = null; state.refLow = null; state.refCandleSet = false; state.entryTriggered = null; state.optionSymbol = null; state.tradesPlacedToday = 0; }
+  private resetDailyState(state: StrategyState) { state.refHigh = null; state.refLow = null; state.refCandleSet = false; state.entryTriggered = null; state.optionSymbol = null; state.tradesPlacedToday = 0; state.setupTimestamp = null; }
 }

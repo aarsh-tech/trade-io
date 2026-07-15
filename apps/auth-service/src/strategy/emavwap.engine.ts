@@ -20,6 +20,8 @@ interface StrategyState {
   config: EmaVwapCrossoverConfig;
   brokerAccountId: string;
   isPaperTrade: boolean;
+  futureSymbol: string | null;
+  futureExchange: string;
   lastEma: number | null;
   lastVwap: number | null;
   waitingForConfirmation: 'LONG' | 'SHORT' | null;
@@ -68,6 +70,8 @@ export class EmaVwapCrossoverEngine {
       config,
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: strategy.isPaperTrade,
+      futureSymbol: null,
+      futureExchange: 'NFO',
       lastEma: null,
       lastVwap: null,
       waitingForConfirmation: null,
@@ -169,7 +173,17 @@ export class EmaVwapCrossoverEngine {
         state.config.qty = pick.qty; // Update quantity
         this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol} (Catch-up) - Qty: ${state.config.qty}`);
       }
-      const candles = await this.fetchCandles(client, state.config, '5minute', now);
+
+      const upper = state.config.symbol.toUpperCase().trim();
+      const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
+      if (isIndex && !state.futureSymbol) {
+        const res = await this.findFutureSymbol(client, state.config.symbol);
+        state.futureSymbol = res.symbol;
+        state.futureExchange = res.exchange;
+        this.log(state, `Resolved future contract for index: ${state.futureExchange}:${state.futureSymbol}`);
+      }
+
+      const candles = await this.fetchCandles(client, state.config, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
       const emaPeriod = state.config.emaPeriod || 15;
       if (candles.length < emaPeriod + 2) return;
 
@@ -177,11 +191,64 @@ export class EmaVwapCrossoverEngine {
       const vwaps = this.calculateVWAP(candles);
 
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      let optionCandles: Candle[] = [];
+      let optionCandleSymbol = '';
+
       for (let i = emaPeriod + 1; i < candles.length; i++) {
-        if (state.entryTriggered) break;
+        const currentCandle = candles[i];
+
+        if (state.entryTriggered) {
+          const candleTimeMs = currentCandle.date.getTime();
+          let currentOptionPriceLow = 0;
+          let currentOptionPriceHigh = 0;
+          let hasOptionData = false;
+
+          if (state.optionSymbol) {
+            if (optionCandleSymbol !== state.optionSymbol) {
+              const exchange = state.optionSymbol.includes('-') || state.optionSymbol.startsWith('NIFTY') || state.optionSymbol.startsWith('BANKNIFTY') ? 'NFO' : state.config.exchange;
+              const rawData = await client.getHistoricalData(state.optionSymbol, exchange, '5minute', new Date(state.setupTimestamp || currentCandle.date), now);
+              optionCandles = (rawData || []).map((c: any) => ({
+                date: new Date(c.date),
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume
+              }));
+              optionCandleSymbol = state.optionSymbol;
+            }
+
+            const optCandle = optionCandles.find(c => c.date.getTime() === candleTimeMs);
+            if (optCandle) {
+              currentOptionPriceLow = optCandle.low;
+              currentOptionPriceHigh = optCandle.high;
+              hasOptionData = true;
+            }
+          } else {
+            currentOptionPriceLow = currentCandle.low;
+            currentOptionPriceHigh = currentCandle.high;
+            hasOptionData = true;
+          }
+
+          if (hasOptionData) {
+            if (currentOptionPriceLow <= state.stopLossPrice!) {
+              await this.exitPositionHistorical(state, client, state.stopLossPrice!, 'SL', currentCandle.date);
+              optionCandles = [];
+              optionCandleSymbol = '';
+              continue;
+            }
+            if (currentOptionPriceHigh >= state.targetPrice!) {
+              await this.exitPositionHistorical(state, client, state.targetPrice!, 'TARGET', currentCandle.date);
+              optionCandles = [];
+              optionCandleSymbol = '';
+              continue;
+            }
+          }
+          continue;
+        }
 
         // Only trigger catch-up trades if the crossover is from TODAY's candles
-        const candleDateStr = candles[i].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        const candleDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
         if (candleDateStr !== todayStr) continue;
 
         // Crossover check on candle i-1
@@ -198,8 +265,8 @@ export class EmaVwapCrossoverEngine {
           const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
 
           if (isInsideCandle) {
-            const triggerHigh = baby.high;
-            const triggerLow = baby.low;
+            const triggerHigh = mother.high;
+            const triggerLow = mother.low;
 
             // Scan subsequent candles to see if breakout happened
             for (let j = i + 1; j < Math.min(i + 4, candles.length); j++) {
@@ -208,7 +275,8 @@ export class EmaVwapCrossoverEngine {
               if (crossoverLong) {
                 if (checkCandle.high > triggerHigh) {
                   this.log(state, `🚀 (Catch-up) Found past LONG Breakout at ${this.formatTime(new Date(checkCandle.date))}!`);
-                  await this.placeTrade(state, client, account, 'BUY', checkCandle.close);
+                  await this.placeTrade(state, client, account, 'BUY', mother.high, new Date(checkCandle.date), new Date(mother.date));
+                  i = j; // Skip to breakout candle index
                   break;
                 }
                 if (checkCandle.low < triggerLow) {
@@ -217,7 +285,8 @@ export class EmaVwapCrossoverEngine {
               } else {
                 if (checkCandle.low < triggerLow) {
                   this.log(state, `🚀 (Catch-up) Found past SHORT Breakout at ${this.formatTime(new Date(checkCandle.date))}!`);
-                  await this.placeTrade(state, client, account, 'SELL', checkCandle.close);
+                  await this.placeTrade(state, client, account, 'SELL', mother.low, new Date(checkCandle.date), new Date(mother.date));
+                  i = j; // Skip to breakout candle index
                   break;
                 }
                 if (checkCandle.high > triggerHigh) {
@@ -273,7 +342,17 @@ export class EmaVwapCrossoverEngine {
         config.qty = pick.qty; // Update quantity
         this.log(state, `🎯 Auto-Selected Stock: ${config.exchange}:${config.symbol} - Qty: ${config.qty}`);
       }
-      const candles = await this.fetchCandles(client, config, '5minute', now);
+
+      const upper = config.symbol.toUpperCase().trim();
+      const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
+      if (isIndex && !state.futureSymbol) {
+        const res = await this.findFutureSymbol(client, config.symbol);
+        state.futureSymbol = res.symbol;
+        state.futureExchange = res.exchange;
+        this.log(state, `Resolved future contract for index: ${state.futureExchange}:${state.futureSymbol}`);
+      }
+
+      const candles = await this.fetchCandles(client, config, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
       if (candles.length < 2) return;
 
       // ── Filter for closed candles only ─────────────────────────────────────
@@ -306,8 +385,10 @@ export class EmaVwapCrossoverEngine {
           return;
         }
 
-        const ltpData = await kite.getLTP([`${config.exchange}:${config.symbol}`]);
-        const ltp = ltpData[`${config.exchange}:${config.symbol}`]?.last_price;
+        const checkSymbol = state.futureSymbol || config.symbol;
+        const checkExchange = state.futureSymbol ? state.futureExchange : config.exchange;
+        const ltpData = await kite.getLTP([`${checkExchange}:${checkSymbol}`]);
+        const ltp = ltpData[`${checkExchange}:${checkSymbol}`]?.last_price;
         if (ltp) {
           if (state.waitingForConfirmation === 'LONG') {
             if (ltp > state.confirmationHigh!) {
@@ -354,16 +435,16 @@ export class EmaVwapCrossoverEngine {
         if (isInsideCandle) {
           if (crossoverLong) {
             state.waitingForConfirmation = 'LONG';
-            state.confirmationHigh = baby.high;
-            state.invalidationPrice = baby.low;
+            state.confirmationHigh = mother.high;
+            state.invalidationPrice = mother.low;
             state.setupTimestamp = baby.date.getTime();
-            this.log(state, `🔔 Bullish crossover setup detected! Inside candle high: ₹${baby.high.toFixed(2)}, low: ₹${baby.low.toFixed(2)}. Waiting for break above high...`);
+            this.log(state, `🔔 Bullish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break above high...`);
           } else {
             state.waitingForConfirmation = 'SHORT';
-            state.confirmationLow = baby.low;
-            state.invalidationPrice = baby.high;
+            state.confirmationLow = mother.low;
+            state.invalidationPrice = mother.high;
             state.setupTimestamp = baby.date.getTime();
-            this.log(state, `🔔 Bearish crossover setup detected! Inside candle high: ₹${baby.high.toFixed(2)}, low: ₹${baby.low.toFixed(2)}. Waiting for break below low...`);
+            this.log(state, `🔔 Bearish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break below low...`);
           }
         }
       }
@@ -371,7 +452,7 @@ export class EmaVwapCrossoverEngine {
     await this.persistLogs(state);
   }
 
-  private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number) {
+  private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date) {
     const { config } = state;
     const kite = client['kite'];
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
@@ -379,11 +460,40 @@ export class EmaVwapCrossoverEngine {
 
     if (config.isOptionBuyingOnly) {
       const type = side === 'BUY' ? 'CE' : 'PE';
-      const optSym = await this.findOptionSymbol(client, state, triggerPrice, type);
+      const optSym = await this.findOptionSymbol(client, state, triggerPrice, type, triggerTime);
       if (optSym) {
         symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
-        const q = await kite.getLTP([`NFO:${symbol}`]);
-        if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
+        if (triggerTime) {
+          if (motherTime) {
+            try {
+              const optCandles = await client.getHistoricalData(symbol, exchange, '5minute', new Date(motherTime.getTime() - 5 * 60 * 1000), new Date(motherTime.getTime() + 5 * 60 * 1000));
+              const motherOptCandle = optCandles.find((c: any) => new Date(c.date).getTime() === motherTime.getTime());
+              if (motherOptCandle) {
+                // Breakout entry is at the high of the mother option candle (option breakout level)
+                triggerPrice = motherOptCandle.high;
+                this.log(state, `💡 Selected Option Breakout Entry Price: ₹${triggerPrice.toFixed(2)} (High of Mother Option Candle at ${this.formatTime(motherTime)})`);
+              } else {
+                const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
+                if (histPrice !== null) triggerPrice = histPrice;
+              }
+            } catch {
+              const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
+              if (histPrice !== null) triggerPrice = histPrice;
+            }
+          } else {
+            const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
+            if (histPrice !== null) {
+              triggerPrice = histPrice;
+            } else {
+              this.log(state, `⚠ Could not fetch historical option price for ${symbol} at ${this.formatTime(triggerTime)}. Using current LTP.`);
+              const q = await kite.getLTP([`NFO:${symbol}`]);
+              if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
+            }
+          }
+        } else {
+          const q = await kite.getLTP([`NFO:${symbol}`]);
+          if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
+        }
       } else {
         this.log(state, `⚠ No option found. Trading equity directly.`);
       }
@@ -403,7 +513,7 @@ export class EmaVwapCrossoverEngine {
       this.log(state, `✅ Entry: ${entryId}`);
 
       // Track order in DB
-      await this.trackOrderInDB(state, finalSide, symbol, exchange, config.qty, entry, entryId);
+      await this.trackOrderInDB(state, finalSide, symbol, exchange, config.qty, entry, entryId, triggerTime);
 
       const exitSide = finalSide === 'BUY' ? 'SELL' : 'BUY';
       let slOrderId: string | null = null;
@@ -423,6 +533,7 @@ export class EmaVwapCrossoverEngine {
       state.targetPrice = tgt;
       state.slOrderId = slOrderId;
       state.targetOrderId = targetOrderId;
+      state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
 
       if (!state.isPaperTrade && (!slOrderId || !targetOrderId)) {
         this.log(state, `⚠ Warning: Failed to place SL or Target order at broker. Active monitoring will try to exit if needed.`);
@@ -542,7 +653,39 @@ export class EmaVwapCrossoverEngine {
     }
   }
 
-  private async trackOrderInDB(state: StrategyState, side: 'BUY' | 'SELL', symbol: string, exchange: string, qty: number, price: number, orderId: string) {
+  private async exitPositionHistorical(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET', timestamp: Date) {
+    const { config } = state;
+    const symbol = state.optionSymbol || config.symbol;
+    const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : config.exchange;
+    const exitSide = config.isOptionBuyingOnly ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
+    const qty = config.qty;
+
+    try {
+      const exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      this.log(state, `🏁 (Catch-up) Paper trade closed (${reason}) at ₹${exitPrice.toFixed(2)}`);
+      
+      // Track exit order in DB
+      await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, exitPrice, exitOrderId, timestamp);
+      state.tradesPlacedToday++;
+
+      state.entryTriggered = null;
+      state.optionSymbol = null;
+      state.entryPrice = null;
+      state.stopLossPrice = null;
+      state.targetPrice = null;
+      state.slOrderId = null;
+      state.targetOrderId = null;
+      state.waitingForConfirmation = null;
+      state.confirmationHigh = null;
+      state.confirmationLow = null;
+      state.invalidationPrice = null;
+      state.setupTimestamp = null;
+    } catch (e) {
+      this.log(state, `❌ Historical exit failed: ${e.message}`);
+    }
+  }
+
+  private async trackOrderInDB(state: StrategyState, side: 'BUY' | 'SELL', symbol: string, exchange: string, qty: number, price: number, orderId: string, createdAt?: Date) {
     try {
       const exec = await this.prisma.strategyExecution.findUnique({
         where: { id: state.executionId },
@@ -565,6 +708,7 @@ export class EmaVwapCrossoverEngine {
           status: 'COMPLETE',
           brokerOrderId: orderId,
           isPaperTrade: state.isPaperTrade,
+          ...(createdAt ? { createdAt } : {}),
         } as any
       });
     } catch (e) {
@@ -604,15 +748,46 @@ export class EmaVwapCrossoverEngine {
     return vwaps;
   }
 
-  private async fetchCandles(client: any, config: any, interval: string, now: Date): Promise<Candle[]> {
+  private async fetchCandles(client: any, config: any, interval: string, now: Date, symbol?: string, exchange?: string): Promise<Candle[]> {
     const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
     const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
     from.setDate(from.getDate() - 5); // Go back 5 days to ensure enough historical candles
-    const data = await client.getHistoricalData(config.symbol, config.exchange, interval, from, now);
+    const sym = symbol || config.symbol;
+    const exch = exchange || config.exchange;
+    const data = await client.getHistoricalData(sym, exch, interval, from, now);
     return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
 
-  private async findOptionSymbol(client: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE'): Promise<string | null> {
+  private async getHistoricalOptionPrice(client: any, symbol: string, exchange: string, timestamp: Date): Promise<number | null> {
+    try {
+      const from = new Date(timestamp.getTime() - 10 * 60 * 1000);
+      const to = new Date(timestamp.getTime() + 10 * 60 * 1000);
+      const data = await client.getHistoricalData(symbol, exchange, '5minute', from, to);
+      if (!data || data.length === 0) return null;
+
+      const targetTimeMs = timestamp.getTime();
+      const match = data.find((c: any) => new Date(c.date).getTime() === targetTimeMs);
+      if (match) {
+        return match.close;
+      }
+      
+      let closest = data[0];
+      let minDiff = Math.abs(new Date(closest.date).getTime() - targetTimeMs);
+      for (const c of data) {
+        const diff = Math.abs(new Date(c.date).getTime() - targetTimeMs);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = c;
+        }
+      }
+      return closest.close;
+    } catch (e) {
+      this.logger.error(`Error getting historical option price for ${symbol} at ${timestamp.toISOString()}: ${e.message}`);
+      return null;
+    }
+  }
+
+  private async findOptionSymbol(client: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
     const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
@@ -660,26 +835,45 @@ export class EmaVwapCrossoverEngine {
 
     const filteredOptions = options.filter((i: any) => getExpiryStr(i.expiry) === nearestExpiry);
 
-    // ── Option 1: Premium range (batched LTP in chunks of 200) ────────────────────
+    // ── Option 1: Premium range (batched LTP or historical candles) ────────────────────
     if (config.minPremium && config.maxPremium) {
       this.log(state, `🔍 Searching ${type} in premium range ₹${config.minPremium}-₹${config.maxPremium}...`);
-      const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
-      const quotes: Record<string, any> = {};
-      for (let i = 0; i < allSymbols.length; i += 200) {
-        try { Object.assign(quotes, await client.getLTP(allSymbols.slice(i, i + 200))); }
-        catch (e) { this.log(state, `⚠ LTP batch failed: ${e.message}`); }
-      }
-      const mid = (config.minPremium + config.maxPremium) / 2;
-      let best: string | null = null, bestDiff = Infinity;
-      for (const opt of filteredOptions) {
-        const ltp = quotes[`${exchange}:${opt.tradingsymbol}`]?.last_price;
-        if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
-          const d = Math.abs(ltp - mid);
-          if (d < bestDiff) { bestDiff = d; best = opt.tradingsymbol; }
+      const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : underlying === 'MIDCPNIFTY' ? 25 : 100;
+      const atm = Math.round(spotPrice / step) * step;
+      const candidateStrikes = [atm, atm + step, atm - step, atm + 2 * step, atm - 2 * step, atm + 3 * step, atm - 3 * step, atm + 4 * step, atm - 4 * step];
+
+      if (triggerTime) {
+        for (const strike of candidateStrikes) {
+          const opt = filteredOptions.find((i: any) => Number(i.strike) === strike);
+          if (!opt) continue;
+
+          const price = await this.getHistoricalOptionPrice(client, opt.tradingsymbol, exchange, triggerTime);
+          if (price !== null && price >= config.minPremium && price <= config.maxPremium) {
+            this.log(state, `🎯 Found ${opt.tradingsymbol} in premium range (historical check)`);
+            return opt.tradingsymbol;
+          }
         }
+        this.log(state, `⚠ No option in range. Falling back to ATM.`);
+      } else {
+        const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
+        const quotes: Record<string, any> = {};
+        for (let i = 0; i < allSymbols.length; i += 200) {
+          try { Object.assign(quotes, await client.getLTP(allSymbols.slice(i, i + 200))); }
+          catch (e) { this.log(state, `⚠ LTP batch failed: ${e.message}`); }
+        }
+
+        for (const strike of candidateStrikes) {
+          const opt = filteredOptions.find((i: any) => Number(i.strike) === strike);
+          if (!opt) continue;
+
+          const ltp = quotes[`${exchange}:${opt.tradingsymbol}`]?.last_price;
+          if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
+            this.log(state, `🎯 Found ${opt.tradingsymbol} in premium range`);
+            return opt.tradingsymbol;
+          }
+        }
+        this.log(state, `⚠ No option in range. Falling back to ATM.`);
       }
-      if (best) { this.log(state, `🎯 Found ${best} in premium range`); return best; }
-      this.log(state, `⚠ No option in range. Falling back to ATM.`);
     }
 
     // ── Option 2: ATM strike ─────────────────────────────────────────
@@ -708,7 +902,23 @@ export class EmaVwapCrossoverEngine {
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
+  private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
+    const upperSymbol = baseSymbol.toUpperCase().trim();
+    const isSensex = upperSymbol === 'SENSEX' || upperSymbol === 'BSE SENSEX';
+    const exchange = isSensex ? 'BFO' : 'NFO';
+    const segment = isSensex ? 'BFO-FUT' : 'NFO-FUT';
+    let underlying = isSensex ? 'SENSEX' : upperSymbol.includes('BANK') ? 'BANKNIFTY' : (upperSymbol.includes('NIFTY 50') || upperSymbol === 'NIFTY') ? 'NIFTY' : upperSymbol.includes('FIN') ? 'FINNIFTY' : upperSymbol.includes('MID') ? 'MIDCPNIFTY' : upperSymbol;
+
+    const instruments = await client.getInstruments(exchange);
+    const futures = instruments.filter((i: any) => i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment);
+    if (futures.length === 0) throw new Error(`No ${exchange} future for ${baseSymbol}`);
+    const sorted = futures.sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+    return { symbol: sorted[0].tradingsymbol, exchange };
+  }
+
   private resetDailyState(state: StrategyState) {
+    state.futureSymbol = null;
+    state.futureExchange = 'NFO';
     state.entryTriggered = null;
     state.optionSymbol = null;
     state.tradesPlacedToday = 0;
