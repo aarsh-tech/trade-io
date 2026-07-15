@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { StockOptionsBuyingConfig } from './dto/strategy.dto';
+import { autoSelectStock } from './smart-stock-picker';
 
 interface Candle {
   date: Date;
@@ -167,6 +168,30 @@ export class StockOptionsBuyingEngine {
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
+
+    // Resolve AUTO symbol to a real liquid stock if it is set to AUTO
+    if (state.config.symbol === 'AUTO') {
+      const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+      if (account?.accessToken) {
+        try {
+          const client = this.factory.createClient(account);
+          const kite = client['kite'];
+          this.log(state, `🔍 Symbol is AUTO. Selecting best liquid momentum stock...`);
+          const pick = await autoSelectStock(kite, 1000, 500, this.logger);
+          state.config.symbol = pick.symbol;
+          state.config.exchange = pick.exchange;
+          this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol}`);
+        } catch (err) {
+          this.log(state, `❌ Failed to auto-select stock: ${err.message}`);
+          await this.persistLogs(state);
+          return;
+        }
+      } else {
+        this.log(state, '⚠ No active broker session to resolve AUTO symbol');
+        await this.persistLogs(state);
+        return;
+      }
+    }
 
     const now = new Date();
     const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));

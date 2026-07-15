@@ -391,7 +391,18 @@ export default function NewStrategyPage() {
                     <button
                       key={type}
                       id={`type-${type}`}
-                      onClick={() => set("type", type)}
+                      onClick={() => {
+                        set("type", type);
+                        if (type === "STOCK_OPTIONS_BUYING") {
+                          set("symbol", "AUTO");
+                          set("exchange", "NSE");
+                          set("instrumentType", "STOCK");
+                        } else if (form.symbol === "AUTO") {
+                          set("symbol", "NIFTY 50");
+                          set("exchange", "NSE");
+                          set("instrumentType", "INDEX");
+                        }
+                      }}
                       className={cn(
                         "text-left p-4 rounded-xl border-2 transition-all",
                         form.type === type
