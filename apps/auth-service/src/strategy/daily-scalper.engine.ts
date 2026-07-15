@@ -81,7 +81,7 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
     private tickerService: TickerService,
-  ) {}
+  ) { }
 
   onModuleInit() {
     this.unsubscribeFromTicker = this.tickerService.registerListener((ticks) => {
@@ -99,7 +99,7 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
     for (const [strategyId, state] of this.running.entries()) {
       if (state.optionSymbol && ticks[state.optionSymbol]) {
         const livePrice = ticks[state.optionSymbol];
-        this.evaluateLivePosition(strategyId, state, livePrice).catch(e => 
+        this.evaluateLivePosition(strategyId, state, livePrice).catch(e =>
           this.logger.error(`Error in live position evaluation: ${e.message}`)
         );
       }
@@ -309,6 +309,7 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
     if (state.tradesPlacedToday >= state.config.maxTradesPerDay) {
       this.log(state, `⛔ Max daily trade cap (${state.config.maxTradesPerDay}) reached.`);
       await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
       return;
     }
 
@@ -321,25 +322,36 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      const ema9 = calcEMA(candles, 9);
-      
+      // ── Filter for closed candles only ─────────────────────────────────────
+      const latestCandle = candles[candles.length - 1];
+      const isClosed = (now.getTime() - latestCandle.date.getTime()) >= 3 * 60 * 1000;
+      const closedCandles = isClosed ? candles : candles.slice(0, -1);
+
+      if (closedCandles.length < 20) {
+        this.log(state, `⚠ Not enough closed historical bars to calculate 9-EMA and 14-RSI (${closedCandles.length}/20)`);
+        await this.persistLogs(state);
+        return;
+      }
+
+      const ema9 = calcEMA(closedCandles, 9);
+
       // Filter candles for today's session to calculate VWAP
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-      const todayCandles = candles.filter(c => 
+      const todayCandles = closedCandles.filter(c =>
         c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr
       );
 
-      const n = candles.length - 1;
-      const latestCandle = candles[n];
-      const latestClose = latestCandle.close;
+      const n = closedCandles.length - 1;
+      const targetCandle = closedCandles[n];
+      const latestClose = targetCandle.close;
       const vwap = todayCandles.length > 0 ? calcVWAP(todayCandles) : latestClose;
-      const rsi = calcRSI(candles, 14);
+      const rsi = calcRSI(closedCandles, 14);
 
       const latestEma = ema9[n];
       const latestRsi = rsi;
 
       // Prevent entry on same bar twice
-      const currentBarTime = new Date(latestCandle.date).getTime();
+      const currentBarTime = new Date(targetCandle.date).getTime();
       if (currentBarTime === state.lastSignalBarTime) {
         return;
       }
@@ -452,16 +464,17 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      this.log(state, `📋 Enqueueing order: Buy ${qty} shares of ATM ${optionSymbol} @ limit ₹${optionLTP.toFixed(2)} (Est. Cost: ₹${totalPremiumCost.toFixed(0)})`);
+      const limitPrice = this.roundTick(optionLTP * 1.1); // 10% protection buffer for buying
+      this.log(state, `📋 Enqueueing order: Buy ${qty} shares of ATM ${optionSymbol} @ limit (with protection) ₹${limitPrice.toFixed(2)} (Est. Cost: ₹${totalPremiumCost.toFixed(0)})`);
 
       const params: OrderParams = {
         symbol: optionSymbol,
         exchange,
         side: 'BUY',
-        orderType: 'MARKET', // Fast execution for options scalping
+        orderType: 'LIMIT', // Use LIMIT instead of MARKET for option buy protection
         product: state.config.product as any ?? 'MIS',
         qty,
-        price: 0,
+        price: limitPrice,
       };
 
       let orderId: string;
@@ -613,17 +626,18 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
       const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
       const qty = state.positionQty;
       const exitPx = this.roundTick(exitPrice);
+      const limitPrice = Math.max(0.05, this.roundTick(exitPx * 0.9)); // 10% protection buffer for selling
 
-      this.log(state, `📤 Placing exit market order for ${state.optionSymbol} | Qty: ${qty} | Avg Price: ₹${exitPx.toFixed(2)}`);
+      this.log(state, `📤 Placing exit market order (limit with protection) for ${state.optionSymbol} | Qty: ${qty} | Avg Price: ₹${exitPx.toFixed(2)} | Protected Limit: ₹${limitPrice.toFixed(2)}`);
 
       const params: OrderParams = {
         symbol: state.optionSymbol,
         exchange,
         side: 'SELL',
-        orderType: 'MARKET',
+        orderType: 'LIMIT', // Use LIMIT instead of MARKET for option sell protection
         product: state.config.product as any ?? 'MIS',
         qty,
-        price: 0,
+        price: limitPrice,
       };
 
       let orderId: string;
@@ -635,7 +649,7 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
         const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
         const client = this.factory.createClient(account!);
         orderId = await client.placeOrder(params);
-        
+
         // Fetch order to verify it wasn't rejected immediately
         const brokerOrder = await client.getOrder(orderId);
         if (brokerOrder.status === 'REJECTED') {
@@ -855,7 +869,7 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
         this.log(state, `⚠️ Safeguard trigger: Premium dropped below ₹1. Cutting loss to prevent total erosion.`);
         await this.exitPosition(state, currentPrice, 'SAFEGUARD');
       }
-      
+
       await this.persistLogs(state);
 
     } catch (e) {

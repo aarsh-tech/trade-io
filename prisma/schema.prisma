@@ -106,6 +106,7 @@ enum StrategyType {
   EMA_VWAP_CROSSOVER
   EMA_RSI_OPTIONS
   DAILY_SCALPER
+  STOCK_OPTIONS_BUYING
   CUSTOM
 }
 
@@ -242,6 +243,13 @@ model SwingScan {
   contractions  Int      @default(0)
   suggestedQty  Int      @default(0)
   notes         String   @default("[]")
+  isFnO         Boolean  @default(false)
+  lotSize       Int      @default(1)
+  optionSymbol  String?
+  optionLtp     Float?
+  optionStrike  Float?
+  optionExpiry  String?
+  optionType    String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

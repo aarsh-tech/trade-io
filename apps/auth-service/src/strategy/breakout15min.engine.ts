@@ -198,6 +198,21 @@ export class Breakout15MinEngine {
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
   }
 
+  private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
+    const state = this.running.get(strategyId);
+    if (state) {
+      clearInterval(this.timers.get(strategyId));
+      this.timers.delete(strategyId);
+      this.running.delete(strategyId);
+      this.log(state, logReason);
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+      });
+    }
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+  }
+
   isRunning(strategyId: string): boolean {
     return this.running.has(strategyId);
   }
@@ -306,7 +321,9 @@ export class Breakout15MinEngine {
 
     // ─── Breakout Scanning (only when no active trade) ────────────────────────
     if (state.tradesPlacedToday >= config.maxTradesPerDay) {
+      this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached.`);
       await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
       return;
     }
 

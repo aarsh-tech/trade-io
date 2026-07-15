@@ -47,7 +47,7 @@ export default function EditStrategyPage() {
   
   const [form, setForm] = useState({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "",
+    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "",
     symbol: "",
     exchange: "NSE",
     instrumentType: "INDEX" as "INDEX" | "STOCK" | "OPTION" | "FUTURE",
@@ -78,6 +78,13 @@ export default function EditStrategyPage() {
     dsTargetPoints: "",
     dsStopLossPoints: "",
     dsMaxTradesPerDay: "2",
+    // Stock Options Buying
+    sTimeframe: "15min",
+    sEmaPeriod: "15",
+    sRiskRewardRatio: "2",
+    sMaxCapital: "25000",
+    sTriggerOffset: "0.50",
+    sProtectionBufferPct: "10",
     // Broker
     brokerAccountId: "",
   });
@@ -129,6 +136,13 @@ export default function EditStrategyPage() {
           dsTargetPoints: String(config.targetPoints || ""),
           dsStopLossPoints: String(config.stopLossPoints || ""),
           dsMaxTradesPerDay: String(config.maxTradesPerDay || "2"),
+          // Stock Options Buying
+          sTimeframe: config.timeframe || "15min",
+          sEmaPeriod: String(config.emaPeriod || "15"),
+          sRiskRewardRatio: String(config.riskRewardRatio || "2"),
+          sMaxCapital: String(config.maxCapital || "25000"),
+          sTriggerOffset: String(config.triggerOffset || "0.50"),
+          sProtectionBufferPct: String(config.protectionBufferPct || "10"),
           brokerAccountId: strategy.brokerAccountId || "",
         });
       } catch (err) {
@@ -163,6 +177,21 @@ export default function EditStrategyPage() {
           ...(form.dsTargetPoints && { targetPoints: Number(form.dsTargetPoints) }),
           ...(form.dsStopLossPoints && { stopLossPoints: Number(form.dsStopLossPoints) }),
           maxTradesPerDay: Number(form.dsMaxTradesPerDay),
+        };
+      } else if (form.type === "STOCK_OPTIONS_BUYING") {
+        config = {
+          symbol: form.symbol.trim(),
+          exchange: "NSE",
+          timeframe: form.sTimeframe,
+          emaPeriod: Number(form.sEmaPeriod),
+          riskRewardRatio: Number(form.sRiskRewardRatio),
+          maxCapital: Number(form.sMaxCapital),
+          lots: Number(form.lots),
+          maxTradesPerDay: Number(form.maxTradesPerDay),
+          product: form.product,
+          startAfterMin: Number(form.startAfterMin || 25),
+          triggerOffset: Number(form.sTriggerOffset),
+          protectionBufferPct: Number(form.sProtectionBufferPct),
         };
       } else if (form.type === "BREAKOUT_15MIN") {
         config = {
@@ -228,6 +257,7 @@ export default function EditStrategyPage() {
   const isDailyScalper = form.type === "DAILY_SCALPER";
   const isEmaRsi = form.type === "EMA_RSI_OPTIONS";
   const isEmaVwap = form.type === "EMA_VWAP_CROSSOVER";
+  const isStockOptionsBuying = form.type === "STOCK_OPTIONS_BUYING";
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-[fade-up_0.4s_ease_both]">
@@ -394,6 +424,28 @@ export default function EditStrategyPage() {
             </div>
           )}
 
+          {isStockOptionsBuying && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Timeframe</label>
+                  <select
+                    value={form.sTimeframe}
+                    onChange={(e) => set("sTimeframe", e.target.value)}
+                    className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                  >
+                    <option value="5min">5 Minute Candles</option>
+                    <option value="15min">15 Minute Candles</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">EMA Period</label>
+                  <Input type="number" value={form.sEmaPeriod} onChange={e => set("sEmaPeriod", e.target.value)} />
+                </div>
+              </div>
+            </div>
+          )}
+
           {isDailyScalper && (
             <div>
               <label className="text-sm font-semibold mb-2 block">Available Capital (₹)</label>
@@ -413,7 +465,7 @@ export default function EditStrategyPage() {
           <CardTitle className="text-sm font-medium">Risk & Execution</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {isDailyScalper ? (
+          {isDailyScalper && (
             <>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -453,7 +505,7 @@ export default function EditStrategyPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-semibold mb-2 block">Override Stop Loss Points</label>
+                  <label className="text-sm font-semibold mb-2 block">Override SL Points</label>
                   <Input
                     type="number"
                     placeholder="Default"
@@ -472,7 +524,88 @@ export default function EditStrategyPage() {
                 />
               </div>
             </>
-          ) : (
+          )}
+
+          {isStockOptionsBuying && (
+            <>
+              <div className="flex gap-3 p-3 rounded-xl bg-blue-50 border border-blue-100 mb-4">
+                <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                <p className="text-xs text-blue-600 leading-relaxed font-semibold">
+                  Risk Management: Stop Loss is dynamically set to the Option's Mother Candle Low. Target is determined using the Risk-Reward Ratio.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                    <Shield className="h-4 w-4 text-red-500" />
+                    Max Capital Budget (₹)
+                  </label>
+                  <Input
+                    type="number"
+                    min={1000}
+                    value={form.sMaxCapital}
+                    onChange={(e) => set("sMaxCapital", e.target.value)}
+                    className="border-red-200 focus:ring-red-300 font-semibold"
+                  />
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                    Failsafe: Skips trade if 1 lot exceeds this capital (e.g. 25000).
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                    <Target className="h-4 w-4 text-green-500" />
+                    Risk-Reward Ratio (e.g. 2 for 1:2)
+                  </label>
+                  <Input
+                    type="number"
+                    min={0.5}
+                    step={0.5}
+                    value={form.sRiskRewardRatio}
+                    onChange={(e) => set("sRiskRewardRatio", e.target.value)}
+                    className="border-green-200 focus:ring-green-300 font-semibold"
+                  />
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                    If risk is ₹1.50 and RR is 2, Target is ₹3.00 profit.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Trigger Offset (points)</label>
+                  <Input
+                    type="number"
+                    step={0.05}
+                    value={form.sTriggerOffset}
+                    onChange={(e) => set("sTriggerOffset", e.target.value)}
+                  />
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Points above mother high to entry (e.g. 0.50)</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Slippage Buffer %</label>
+                  <Input
+                    type="number"
+                    value={form.sProtectionBufferPct}
+                    onChange={(e) => set("sProtectionBufferPct", e.target.value)}
+                  />
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Max execution slippage allowed (default 10%)</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Max Trades / Day</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={form.maxTradesPerDay}
+                    onChange={(e) => set("maxTradesPerDay", e.target.value)}
+                  />
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Stops trading after this count</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {!isDailyScalper && !isStockOptionsBuying && (
             <>
               {((is15Min && (form.instrumentType === "INDEX" || form.instrumentType === "OPTION")) || (isEmaVwap && form.isOptionBuyingOnly)) && (
                 <div className="grid grid-cols-2 gap-4">

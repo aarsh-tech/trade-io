@@ -6,6 +6,7 @@ export enum StrategyTypeEnum {
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
   EMA_RSI_OPTIONS = 'EMA_RSI_OPTIONS',
   DAILY_SCALPER = 'DAILY_SCALPER',
+  STOCK_OPTIONS_BUYING = 'STOCK_OPTIONS_BUYING',
   CUSTOM = 'CUSTOM',
 }
 
@@ -67,6 +68,22 @@ export interface DailyScalperConfig {
   targetPoints?: number;       // Override target in premium points
   stopLossPoints?: number;     // Override SL in premium points
   maxTradesPerDay: number;     // default: 2
+}
+
+// ─── Stock Options Buying Config ───────────────────────────────────────────────
+export interface StockOptionsBuyingConfig {
+  symbol: string;               // Stock symbol, e.g., 'TECHM'
+  exchange: string;             // 'NSE'
+  timeframe: '5min' | '15min';  // Candle timeframe
+  emaPeriod: number;            // default 15
+  riskRewardRatio: number;      // default 2 (1:2 RR ratio)
+  maxCapital: number;           // default 25000 (INR)
+  lots: number;                 // default 1
+  maxTradesPerDay: number;      // default 2
+  product: 'MIS' | 'NRML';      // default 'MIS'
+  startAfterMin: number;        // default 25
+  triggerOffset: number;        // default 0.50 (points above option mother high)
+  protectionBufferPct: number;  // default 10 (%)
 }
 
 export class CreateStrategyDto {

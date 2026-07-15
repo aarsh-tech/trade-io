@@ -10,6 +10,7 @@ export enum BrokerType {
 export enum StrategyType {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
+  STOCK_OPTIONS_BUYING = 'STOCK_OPTIONS_BUYING',
   CUSTOM = 'CUSTOM',
 }
 

@@ -79,6 +79,7 @@ export class StrategyService {
         config: dto.config,
         brokerAccountId: dto.brokerAccountId || null,
         isActive: false,
+        isPaperTrade: dto.isPaperTrade !== undefined ? dto.isPaperTrade : true,
       },
     });
   }
@@ -92,6 +93,9 @@ export class StrategyService {
         ...(dto.config && { config: dto.config }),
         ...(dto.brokerAccountId !== undefined && {
           brokerAccountId: dto.brokerAccountId,
+        }),
+        ...(dto.isPaperTrade !== undefined && {
+          isPaperTrade: dto.isPaperTrade,
         }),
       },
     });
@@ -285,6 +289,36 @@ export class StrategyService {
             symbol: openTrade.symbol,
             entryPrice: openTrade.entryPrice,
             exitPrice: openTrade.entryPrice + (pnl / openTrade.qty),
+            qty: openTrade.qty,
+            side: openTrade.side,
+            pnl,
+            isWin: pnl > 0,
+            reason: exitMatch[1],
+            source: 'log'
+          });
+          openTrade = null;
+        }
+      }
+      
+      if (strategyType === 'STOCK_OPTIONS_BUYING') {
+        const entryMatch = line.match(/Position\s+Opened\s+\[(LIVE|PAPER)\]:\s+(Filled|Bought)\s+(\d+)\s+of\s+(\S+)\s+at\s+Avg\s+₹([\d.]+)/i);
+        if (entryMatch) {
+          openTrade = {
+            side: 'BUY',
+            symbol: entryMatch[4],
+            entryPrice: parseFloat(entryMatch[5]),
+            qty: parseInt(entryMatch[3])
+          };
+        }
+        
+        const exitMatch = line.match(/Exiting\s+Position\s+—\s+Reason:\s+(\w+)\s+\|\s+Price:\s+₹([\d.]+)\s+\|\s+P&L:\s*([+-]?)\s*₹?\s*([\d.]+)/i);
+        if (exitMatch && openTrade) {
+          const sign = exitMatch[3] === '-' ? -1 : 1;
+          const pnl = sign * parseFloat(exitMatch[4]);
+          trades.push({
+            symbol: openTrade.symbol,
+            entryPrice: openTrade.entryPrice,
+            exitPrice: parseFloat(exitMatch[2]),
             qty: openTrade.qty,
             side: openTrade.side,
             pnl,

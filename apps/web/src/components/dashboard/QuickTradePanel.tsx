@@ -23,6 +23,8 @@ export interface QuickTradeStock {
   currentPrice: number;
   suggestedQty: number;
   product?: "MIS" | "CNC";       // MIS for intraday, CNC for delivery/swing
+  isFnO?: boolean;
+  lotSize?: number;
 }
 
 interface Props {
@@ -158,7 +160,16 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
     if (!activeStock) return;
     const profitPerShare = Math.abs(activeStock.target1 - activeStock.entryPrice);
     const calcQty = profitPerShare > 0 ? Math.ceil(targetRs / profitPerShare) : activeStock.suggestedQty;
-    setQty(calcQty);
+    
+    const isFnO = activeStock.isFnO ?? false;
+    const lotSize = activeStock.lotSize ?? 1;
+    let qtyVal = calcQty;
+    if (isFnO) {
+      const lots = Math.max(1, Math.round(calcQty / lotSize));
+      qtyVal = lots * lotSize;
+    }
+    setQty(qtyVal);
+    
     const decimals = getDecimals(tickSize);
     setEntryPrice(snapToTick(activeStock.entryPrice, tickSize).toFixed(decimals));
     setSlPrice(snapToTick(activeStock.stopLoss, tickSize).toFixed(decimals));
@@ -176,6 +187,9 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
   }, [brokers, selectedBrokerId]);
 
   if (!activeStock) return null;
+
+  const isFnO = activeStock.isFnO ?? false;
+  const lotSize = activeStock.lotSize ?? 1;
 
   const entryNum = parseFloat(entryPrice) || 0;
   const slNum = parseFloat(slPrice) || 0;
@@ -497,11 +511,26 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                 <p className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Qty</p>
                 <input
                   type="number"
-                  min={1}
+                  min={isFnO ? lotSize : 1}
+                  step={isFnO ? lotSize : 1}
                   value={qty}
-                  onChange={(e) => setQty(Math.max(1, Number(e.target.value)))}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setQty(isFnO ? Math.max(lotSize, val) : Math.max(1, val));
+                  }}
+                  onBlur={() => {
+                    if (isFnO) {
+                      const lotsCount = Math.max(1, Math.round(qty / lotSize));
+                      setQty(lotsCount * lotSize);
+                    }
+                  }}
                   className="w-full bg-transparent text-sm font-black text-white text-center focus:outline-none border-b border-slate-700 pb-0.5"
                 />
+                {isFnO && (
+                  <p className="text-[8px] text-slate-400 font-medium mt-0.5">
+                    {Math.round(qty / lotSize)} Lot{Math.round(qty / lotSize) > 1 ? 's' : ''}
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Capital</p>

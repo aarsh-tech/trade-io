@@ -167,6 +167,21 @@ export class EmaRsiOptionsEngine {
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
   }
 
+  private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
+    const state = this.running.get(strategyId);
+    if (state) {
+      clearInterval(this.timers.get(strategyId));
+      this.timers.delete(strategyId);
+      this.running.delete(strategyId);
+      this.log(state, logReason);
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+      });
+    }
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+  }
+
   isRunning(strategyId: string) { return this.running.has(strategyId); }
   getLogs(strategyId: string): string[] { return this.running.get(strategyId)?.logs ?? []; }
 
@@ -262,7 +277,10 @@ export class EmaRsiOptionsEngine {
 
     // ── Step 2: Check max trades ──────────────────────────────────────────────
     if (state.tradesPlacedToday >= state.config.maxTradesPerDay) {
-      this.log(state, `⛔ Max ${state.config.maxTradesPerDay} trades reached today`); return;
+      this.log(state, `⛔ Max ${state.config.maxTradesPerDay} trades reached today`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trades reached`);
+      return;
     }
 
     // ── Step 3: Fetch 5-min candles, calculate indicators ────────────────────
@@ -270,23 +288,30 @@ export class EmaRsiOptionsEngine {
       const candles = await this.fetch5min(client, state.futureSymbol, state.futureExchange, ist);
       if (candles.length < 22) { this.log(state, '⚠ Not enough 5-min bars yet'); return; }
 
-      const emaFastArr = calcEMA(candles, state.config.emaFast ?? 9);
-      const emaSlowArr = calcEMA(candles, state.config.emaSlow ?? 21);
+      // ── Filter for closed candles only ─────────────────────────────────────
+      const latestCandle = candles[candles.length - 1];
+      const isClosed = (now.getTime() - latestCandle.date.getTime()) >= 5 * 60 * 1000;
+      const closedCandles = isClosed ? candles : candles.slice(0, -1);
+
+      if (closedCandles.length < 22) { this.log(state, '⚠ Not enough closed 5-min bars yet'); return; }
+
+      const emaFastArr = calcEMA(closedCandles, state.config.emaFast ?? 9);
+      const emaSlowArr = calcEMA(closedCandles, state.config.emaSlow ?? 21);
       
       // Filter candles for today's session to calculate VWAP
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-      const todayCandles = candles.filter(c => 
+      const todayCandles = closedCandles.filter(c => 
         c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr
       );
-      const vwap = todayCandles.length > 0 ? calcVWAP(todayCandles) : candles[candles.length - 1].close;
-      const rsi = calcRSI(candles, state.config.rsiPeriod ?? 14);
+      const vwap = todayCandles.length > 0 ? calcVWAP(todayCandles) : closedCandles[closedCandles.length - 1].close;
+      const rsi = calcRSI(closedCandles, state.config.rsiPeriod ?? 14);
 
-      const n = candles.length - 1;
+      const n = closedCandles.length - 1;
       const prevFast = emaFastArr[n - 1];
       const prevSlow = emaSlowArr[n - 1];
       const currFast = emaFastArr[n];
       const currSlow = emaSlowArr[n];
-      const price = candles[n].close;
+      const price = closedCandles[n].close;
 
       const rsiMin = state.config.rsiEntryMin ?? 45;
       const rsiMax = state.config.rsiEntryMax ?? 65;
@@ -404,12 +429,16 @@ export class EmaRsiOptionsEngine {
 
       entryPx = this.roundTick(entryPx);
 
-      this.log(state, `📋 ${tradeSide} ${tradingSymbol} | LTP ₹${entryPx} | SL ₹${state.config.stopLossRs} | Target ₹${state.config.targetRs} | Qty ${qty}`);
+      const limitPrice = tradeSide === 'BUY'
+        ? this.roundTick(entryPx * 1.1)
+        : Math.max(0.05, this.roundTick(entryPx * 0.9));
+
+      this.log(state, `📋 ${tradeSide} ${tradingSymbol} | LTP ₹${entryPx} | Protected Limit ₹${limitPrice.toFixed(2)} | SL ₹${state.config.stopLossRs} | Target ₹${state.config.targetRs} | Qty ${qty}`);
 
       const params: OrderParams = {
         symbol: tradingSymbol, exchange: tradingExchange,
-        side: tradeSide, orderType: 'MARKET',
-        product: state.config.product as any ?? 'MIS', qty, price: 0,
+        side: tradeSide, orderType: 'LIMIT',
+        product: state.config.product as any ?? 'MIS', qty, price: limitPrice,
       };
 
       let orderId: string;

@@ -4,6 +4,7 @@ import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
 import { DailyScalperEngine } from './daily-scalper.engine';
+import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 
 /**
  * MarketSchedulerService
@@ -38,6 +39,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly emaRsiEngine: EmaRsiOptionsEngine,
     private readonly dailyScalperEngine: DailyScalperEngine,
+    private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
   ) {}
 
   onModuleInit() {
@@ -178,6 +180,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
     if (type === 'EMA_RSI_OPTIONS') return this.emaRsiEngine;
     if (type === 'DAILY_SCALPER') return this.dailyScalperEngine;
+    if (type === 'STOCK_OPTIONS_BUYING') return this.stockOptionsBuyingEngine;
     return null;
   }
 }

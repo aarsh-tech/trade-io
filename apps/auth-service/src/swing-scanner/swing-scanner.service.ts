@@ -29,6 +29,8 @@ export interface ScanResult {
   contractions: number;
   suggestedQty: number;   // to earn ₹500 at T1
   notes: string[];
+  isFnO: boolean;
+  lotSize: number;
 }
 
 export interface ScanRun {
@@ -72,6 +74,21 @@ export class SwingScannerService {
     } catch (err) {
       throw new BadRequestException(`Failed to fetch NSE instruments: ${err.message}`);
     }
+
+    // Fetch NFO instruments to map F&O lot sizes dynamically
+    let nfoInstruments: any[] = [];
+    try {
+      nfoInstruments = await kite.getInstruments('NFO');
+    } catch (err) {
+      this.logger.warn(`Failed to fetch NFO instruments: ${err.message}`);
+    }
+
+    const fnoLotSizes = new Map<string, number>();
+    nfoInstruments.forEach((i: any) => {
+      if (i.name && i.lot_size) {
+        fnoLotSizes.set(i.name.toUpperCase(), i.lot_size);
+      }
+    });
 
     // ── Build dynamic universe from NSE instruments ─────────────────────────────
     const tokenMap = new Map<string, number>();
@@ -149,6 +166,9 @@ export class SwingScannerService {
             const patterns = analyzeStock(symbol, candles);
             if (!patterns || patterns.length === 0) return;
 
+            const isFnO = fnoLotSizes.has(symbol.toUpperCase());
+            const lotSize = fnoLotSizes.get(symbol.toUpperCase()) ?? 1;
+
             patterns.forEach(p => {
               // Calculate suggested qty to earn ₹500 at T1
               const profitPerShare = Math.abs(p.target1 - p.entryPrice);
@@ -177,6 +197,8 @@ export class SwingScannerService {
                 contractions: p.contractions,
                 suggestedQty,
                 notes: p.notes,
+                isFnO,
+                lotSize,
               });
             });
           } catch (err) {
@@ -279,6 +301,8 @@ export class SwingScannerService {
         contractions: r.contractions,
         suggestedQty: r.suggestedQty,
         notes: JSON.parse(r.notes || '[]'),
+        isFnO: r.isFnO ?? false,
+        lotSize: r.lotSize ?? 1,
       })),
     };
   }
@@ -332,6 +356,8 @@ export class SwingScannerService {
         contractions: r.contractions,
         suggestedQty: r.suggestedQty,
         notes: JSON.stringify(r.notes),
+        isFnO: r.isFnO,
+        lotSize: r.lotSize,
       })),
     }).catch(() => {});
   }
