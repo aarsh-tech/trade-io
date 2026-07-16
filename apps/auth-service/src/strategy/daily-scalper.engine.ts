@@ -35,6 +35,7 @@ interface StrategyState {
   lastSignalBarTime: number; // ts of last signal bar to prevent duplicate entries
   isStopLossTrailed?: boolean; // tracks if trailing SL is locked to breakeven
   logs: string[];
+  lastProcessedTimestamp?: number;
 }
 
 // ─── Indicator Calculators ───────────────────────────────────────────────────
@@ -148,6 +149,7 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
       totalPnlToday: 0,
       lastSignalBarTime: 0,
       logs: [],
+      lastProcessedTimestamp: 0,
     };
 
     this.running.set(strategyId, state);
@@ -356,21 +358,37 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      this.log(state, `📊 Spot Future: ₹${latestClose.toFixed(2)} | 9-EMA: ₹${latestEma.toFixed(2)} | VWAP: ₹${vwap.toFixed(2)} | RSI: ${latestRsi.toFixed(1)}`);
+      const lastClosedCandleTime = targetCandle.date.getTime();
+      if (lastClosedCandleTime > (state.lastProcessedTimestamp || 0)) {
+        state.lastProcessedTimestamp = lastClosedCandleTime;
 
-      // ── Entry Conditions (Optimized: RSI momentum filter at 55 / 45) ────────
-      const bullishEntry = latestClose > latestEma && latestClose > vwap && latestRsi > 55;
+        const timeStr = new Date(lastClosedCandleTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        this.log(state, `🔍 Scanning candle closed at ${timeStr} | Spot Close: ₹${latestClose.toFixed(2)} | 9-EMA: ₹${latestEma.toFixed(2)} | VWAP: ₹${vwap.toFixed(2)} | RSI: ${latestRsi.toFixed(1)}`);
 
-      const bearishEntry = latestClose < latestEma && latestClose < vwap && latestRsi < 45;
+        // Check crossover of 9-EMA and VWAP on the last closed candle
+        const prevEma = ema9[n - 1];
+        const currEma = ema9[n];
 
-      if (bullishEntry) {
-        this.log(state, `🟢 Bullish Signal Triggered! Spot above 9-EMA & VWAP, RSI: ${latestRsi.toFixed(1)}`);
-        state.lastSignalBarTime = currentBarTime;
-        await this.enterOptionPosition(strategyId, state, client, account, 'CE', latestClose);
-      } else if (bearishEntry) {
-        this.log(state, `🔴 Bearish Signal Triggered! Spot below 9-EMA & VWAP, RSI: ${latestRsi.toFixed(1)}`);
-        state.lastSignalBarTime = currentBarTime;
-        await this.enterOptionPosition(strategyId, state, client, account, 'PE', latestClose);
+        if (prevEma !== null && currEma !== null) {
+          const prevVwap = todayCandles.length > 1 ? calcVWAP(todayCandles.slice(0, -1)) : prevEma;
+          const currVwap = vwap;
+
+          const bullishCrossover = prevEma <= prevVwap && currEma > currVwap;
+          const bearishCrossover = prevEma >= prevVwap && currEma < currVwap;
+
+          const bullishEntry = bullishCrossover && latestRsi > 55;
+          const bearishEntry = bearishCrossover && latestRsi < 45;
+
+          if (bullishEntry) {
+            this.log(state, `🟢 Bullish Crossover Triggered! 9-EMA crossed above VWAP, RSI: ${latestRsi.toFixed(1)}`);
+            state.lastSignalBarTime = currentBarTime;
+            await this.enterOptionPosition(strategyId, state, client, account, 'CE', latestClose);
+          } else if (bearishEntry) {
+            this.log(state, `🔴 Bearish Crossover Triggered! 9-EMA crossed below VWAP, RSI: ${latestRsi.toFixed(1)}`);
+            state.lastSignalBarTime = currentBarTime;
+            await this.enterOptionPosition(strategyId, state, client, account, 'PE', latestClose);
+          }
+        }
       }
 
     } catch (e) {
@@ -790,6 +808,7 @@ export class DailyScalperEngine implements OnModuleInit, OnModuleDestroy {
     state.lastSignalBarTime = 0;
     state.futureSymbol = null;
     state.isStopLossTrailed = false;
+    state.lastProcessedTimestamp = 0;
   }
 
   private async trackOrderInDB(state: StrategyState, account: any, params: OrderParams, orderId: string, strategyId: string) {
