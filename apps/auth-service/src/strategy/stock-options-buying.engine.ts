@@ -283,34 +283,25 @@ export class StockOptionsBuyingEngine {
 
       // Prevent recalculating the same closed candles
       if (lastClosedCandleTime <= state.lastProcessedTimestamp) return;
+      state.lastProcessedTimestamp = lastClosedCandleTime;
 
       const emas = this.calculateEMA(closedCandles, emaPeriod);
       const vwaps = this.calculateVWAP(closedCandles);
 
-      // We look at:
-      // Index n-1: Crossover Candle (which becomes the Mother Candle if next is inside)
-      // Index n: Baby Candle (Inside Candle)
-      const prevEma = emas[n - 2];
-      const currEma = emas[n - 1];
-      const prevVwap = vwaps[n - 2];
-      const currVwap = vwaps[n - 1];
+      const timeStr = new Date(lastClosedCandleTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const currEma = emas[n];
+      const currVwap = vwaps[n];
+      this.log(state, `🔍 Scanning candle closed at ${timeStr} | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
 
-      if (prevEma === null || currEma === null || prevVwap === null || currVwap === null) return;
+      const mother = closedCandles[n - 1];
+      const baby = closedCandles[n];
+      const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
 
-      const bullishCrossover = prevEma <= prevVwap && currEma > currVwap;
-      const bearishCrossover = prevEma >= prevVwap && currEma < currVwap;
-
-      if (bullishCrossover || bearishCrossover) {
-        const mother = closedCandles[n - 1];
-        const baby = closedCandles[n];
-
-        // Inside candle condition: baby high <= mother high AND baby low >= mother low
-        const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
-
-        if (isInsideCandle) {
-          const side = bullishCrossover ? 'CALL' : 'PUT';
-          this.log(state, `✨ Inside Candle Detected! Mother candle high: ₹${mother.high.toFixed(2)}, low: ₹${mother.low.toFixed(2)} | Crossover: ${side}`);
-          state.lastProcessedTimestamp = lastClosedCandleTime;
+      if (isInsideCandle) {
+        const trend = this.getLatestCrossoverToday(n, closedCandles, emas, vwaps);
+        if (trend !== null) {
+          const side = trend === 'LONG' ? 'CALL' : 'PUT';
+          this.log(state, `✨ Inside Candle Detected! Mother candle high: ₹${mother.high.toFixed(2)}, low: ₹${mother.low.toFixed(2)} | Trend: ${side}`);
           await this.setupBreakoutTrigger(state, client, kite, side, mother.date);
         }
       }
@@ -670,6 +661,27 @@ export class StockOptionsBuyingEngine {
     state.stopLossPrice = null;
     state.targetPrice = null;
     state.entryOrderId = null;
+  }
+
+  private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
+    let latestCrossover: 'LONG' | 'SHORT' | null = null;
+    const todayStr = candles[idx].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+
+    for (let k = 1; k <= idx; k++) {
+      const candleDateStr = candles[k].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      if (candleDateStr !== todayStr) continue;
+
+      const prevEma = emas[k - 1], currEma = emas[k];
+      const prevVwap = vwaps[k - 1], currVwap = vwaps[k];
+      if (prevEma === null || currEma === null || prevVwap === null || currVwap === null) continue;
+
+      if (prevEma <= prevVwap && currEma > currVwap) {
+        latestCrossover = 'LONG';
+      } else if (prevEma >= prevVwap && currEma < currVwap) {
+        latestCrossover = 'SHORT';
+      }
+    }
+    return latestCrossover;
   }
 
   private resetDailyState(state: StrategyState) {

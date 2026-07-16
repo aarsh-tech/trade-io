@@ -38,6 +38,7 @@ interface StrategyState {
   optionSymbol: string | null;
   tradesPlacedToday: number;
   logs: string[];
+  lastProcessedTimestamp?: number;
 }
 
 @Injectable()
@@ -88,6 +89,7 @@ export class EmaVwapCrossoverEngine {
       optionSymbol: null,
       tradesPlacedToday: 0,
       logs: [],
+      lastProcessedTimestamp: 0,
     };
 
     this.running.set(strategyId, state);
@@ -251,20 +253,14 @@ export class EmaVwapCrossoverEngine {
         const candleDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
         if (candleDateStr !== todayStr) continue;
 
-        // Crossover check on candle i-1
-        const prevEma = emas[i - 2], currEma = emas[i - 1];
-        const prevVwap = vwaps[i - 2], currVwap = vwaps[i - 1];
-        if (prevEma === null || currEma === null || prevVwap === null || currVwap === null) continue;
+        const mother = candles[i - 1];
+        const baby = candles[i];
+        const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
 
-        const crossoverLong = prevEma <= prevVwap && currEma > currVwap;
-        const crossoverShort = prevEma >= prevVwap && currEma < currVwap;
-
-        if (crossoverLong || crossoverShort) {
-          const mother = candles[i - 1];
-          const baby = candles[i];
-          const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
-
-          if (isInsideCandle) {
+        if (isInsideCandle) {
+          const trend = this.getLatestCrossoverToday(i, candles, emas, vwaps);
+          if (trend !== null) {
+            const isBullish = trend === 'LONG';
             const triggerHigh = mother.high;
             const triggerLow = mother.low;
 
@@ -272,7 +268,7 @@ export class EmaVwapCrossoverEngine {
             for (let j = i + 1; j < Math.min(i + 4, candles.length); j++) {
               const checkCandle = candles[j];
               
-              if (crossoverLong) {
+              if (isBullish) {
                 if (checkCandle.high > triggerHigh) {
                   this.log(state, `🚀 (Catch-up) Found past LONG Breakout at ${this.formatTime(new Date(checkCandle.date))}!`);
                   await this.placeTrade(state, client, account, 'BUY', mother.high, new Date(checkCandle.date), new Date(mother.date));
@@ -424,27 +420,41 @@ export class EmaVwapCrossoverEngine {
         }
       }
 
-      const crossoverLong = prevEma <= prevVwap && currEma > currVwap;
-      const crossoverShort = prevEma >= prevVwap && currEma < currVwap;
+      // ─── Scan for Inside Candle Setup ──────────────────────────────────────────
+      if (!state.entryTriggered) {
+        const lastClosedCandleTime = closedCandles[lastIdx].date.getTime();
+        if (lastClosedCandleTime > (state.lastProcessedTimestamp || 0)) {
+          state.lastProcessedTimestamp = lastClosedCandleTime;
+          const timeStr = this.formatTime(closedCandles[lastIdx].date);
+          const currEma = emas[lastIdx];
+          const currVwap = vwaps[lastIdx];
+          this.log(state, `🔍 Scanning candle closed at ${timeStr} | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
 
-      if ((crossoverLong || crossoverShort) && !state.entryTriggered) {
-        const mother = closedCandles[prevIdx];
-        const baby = closedCandles[lastIdx];
-        const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
+          const mother = closedCandles[prevIdx];
+          const baby = closedCandles[lastIdx];
+          const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
 
-        if (isInsideCandle) {
-          if (crossoverLong) {
-            state.waitingForConfirmation = 'LONG';
-            state.confirmationHigh = mother.high;
-            state.invalidationPrice = mother.low;
-            state.setupTimestamp = baby.date.getTime();
-            this.log(state, `🔔 Bullish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break above high...`);
-          } else {
-            state.waitingForConfirmation = 'SHORT';
-            state.confirmationLow = mother.low;
-            state.invalidationPrice = mother.high;
-            state.setupTimestamp = baby.date.getTime();
-            this.log(state, `🔔 Bearish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break below low...`);
+          if (isInsideCandle) {
+            const trend = this.getLatestCrossoverToday(lastIdx, closedCandles, emas, vwaps);
+            if (trend !== null) {
+              if (trend === 'LONG') {
+                // Bullish Trend -> LONG Setup
+                state.waitingForConfirmation = 'LONG';
+                state.confirmationHigh = mother.high;
+                state.confirmationLow = null;
+                state.invalidationPrice = mother.low;
+                state.setupTimestamp = lastClosedCandleTime;
+                this.log(state, `🔔 Bullish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break above high...`);
+              } else if (trend === 'SHORT') {
+                // Bearish Trend -> SHORT Setup
+                state.waitingForConfirmation = 'SHORT';
+                state.confirmationHigh = null;
+                state.confirmationLow = mother.low;
+                state.invalidationPrice = mother.high;
+                state.setupTimestamp = lastClosedCandleTime;
+                this.log(state, `🔔 Bearish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break below low...`);
+              }
+            }
           }
         }
       }
@@ -507,7 +517,8 @@ export class EmaVwapCrossoverEngine {
 
     this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}`);
     try {
-      const entryId = state.isPaperTrade
+      const isHistorical = !!triggerTime;
+      const entryId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
         : await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: finalSide, orderType: 'LIMIT', price: entry });
       this.log(state, `✅ Entry: ${entryId}`);
@@ -519,7 +530,7 @@ export class EmaVwapCrossoverEngine {
       let slOrderId: string | null = null;
       let targetOrderId: string | null = null;
 
-      if (!state.isPaperTrade) {
+      if (!state.isPaperTrade && !isHistorical) {
         slOrderId = await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'SL', price: sl, triggerPrice: sl })
           .catch((e: any) => { this.log(state, `❌ SL Failed: ${e.message}`); return null; });
         targetOrderId = await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt })
@@ -916,6 +927,27 @@ export class EmaVwapCrossoverEngine {
     return { symbol: sorted[0].tradingsymbol, exchange };
   }
 
+  private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
+    let latestCrossover: 'LONG' | 'SHORT' | null = null;
+    const todayStr = candles[idx].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+
+    for (let k = 1; k <= idx; k++) {
+      const candleDateStr = candles[k].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      if (candleDateStr !== todayStr) continue;
+
+      const prevEma = emas[k - 1], currEma = emas[k];
+      const prevVwap = vwaps[k - 1], currVwap = vwaps[k];
+      if (prevEma === null || currEma === null || prevVwap === null || currVwap === null) continue;
+
+      if (prevEma <= prevVwap && currEma > currVwap) {
+        latestCrossover = 'LONG';
+      } else if (prevEma >= prevVwap && currEma < currVwap) {
+        latestCrossover = 'SHORT';
+      }
+    }
+    return latestCrossover;
+  }
+
   private resetDailyState(state: StrategyState) {
     state.futureSymbol = null;
     state.futureExchange = 'NFO';
@@ -932,5 +964,6 @@ export class EmaVwapCrossoverEngine {
     state.targetPrice = null;
     state.slOrderId = null;
     state.targetOrderId = null;
+    state.lastProcessedTimestamp = 0;
   }
 }
