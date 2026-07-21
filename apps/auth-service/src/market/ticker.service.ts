@@ -196,6 +196,22 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         ticker.setMode(ticker.modeFull, tokensToSubscribe);
       });
 
+      ticker.on('error', (err: any) => {
+        this.logger.error(`Zerodha Ticker error for account ${account.clientId}: ${err?.message || err}`);
+      });
+
+      ticker.on('disconnect', (error: any) => {
+        this.logger.warn(`Zerodha Ticker disconnected for account ${account.clientId}: ${error?.message || error}`);
+      });
+
+      ticker.on('reconnect', (reconnectCount: number, reconnectInterval: number) => {
+        this.logger.log(`Zerodha Ticker reconnecting for account ${account.clientId}: attempt ${reconnectCount}, interval ${reconnectInterval}ms`);
+      });
+
+      ticker.on('noreconnect', () => {
+        this.logger.error(`Zerodha Ticker reconnection failed for account ${account.clientId}. No more attempts will be made.`);
+      });
+
       ticker.connect();
       this.tickers.set(account.id, {
         disconnect: () => ticker.disconnect(),

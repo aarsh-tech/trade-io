@@ -249,6 +249,11 @@ export class EmaVwapCrossoverEngine {
           continue;
         }
 
+        if (state.tradesPlacedToday >= state.config.maxTradesPerDay) {
+          this.log(state, `⛔ Catch-up: Max daily trade cap (${state.config.maxTradesPerDay}) reached.`);
+          break;
+        }
+
         // Only trigger catch-up trades if the crossover is from TODAY's candles
         const candleDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
         if (candleDateStr !== todayStr) continue;
@@ -258,11 +263,16 @@ export class EmaVwapCrossoverEngine {
         const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
 
         if (isInsideCandle) {
-          const trend = this.getLatestCrossoverToday(i, candles, emas, vwaps);
-          if (trend !== null) {
-            const isBullish = trend === 'LONG';
+          const details = this.getLatestCrossoverTodayDetails(i, candles, emas, vwaps);
+          if (details !== null) {
+            const isBullish = details.trend === 'LONG';
             const triggerHigh = mother.high;
             const triggerLow = mother.low;
+
+            this.log(
+              state,
+              `🔍 Detected ${details.trend} Crossover at ${this.formatTime(details.crossoverTime)} (15-EMA: ₹${details.ema.toFixed(2)}, VWAP: ₹${details.vwap.toFixed(2)}) -> Inside Candle at ${this.formatTime(new Date(baby.date))} (Mother: ${this.formatTime(new Date(mother.date))}, High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)})`
+            );
 
             // Scan subsequent candles to see if breakout happened
             for (let j = i + 1; j < Math.min(i + 4, candles.length); j++) {
@@ -927,13 +937,17 @@ export class EmaVwapCrossoverEngine {
     return { symbol: sorted[0].tradingsymbol, exchange };
   }
 
-  private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
+  private getLatestCrossoverTodayDetails(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): { trend: 'LONG' | 'SHORT'; crossoverIdx: number; ema: number; vwap: number; crossoverTime: Date } | null {
     let latestCrossover: 'LONG' | 'SHORT' | null = null;
+    let crossoverIdx = -1;
     const todayStr = candles[idx].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
 
     for (let k = 1; k <= idx; k++) {
       const candleDateStr = candles[k].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
       if (candleDateStr !== todayStr) continue;
+
+      const prevDateStr = candles[k - 1].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      if (prevDateStr !== todayStr) continue;
 
       const prevEma = emas[k - 1], currEma = emas[k];
       const prevVwap = vwaps[k - 1], currVwap = vwaps[k];
@@ -941,11 +955,29 @@ export class EmaVwapCrossoverEngine {
 
       if (prevEma <= prevVwap && currEma > currVwap) {
         latestCrossover = 'LONG';
+        crossoverIdx = k;
       } else if (prevEma >= prevVwap && currEma < currVwap) {
         latestCrossover = 'SHORT';
+        crossoverIdx = k;
       }
     }
-    return latestCrossover;
+
+    if (latestCrossover !== null && (idx - crossoverIdx) <= 3) {
+      return {
+        trend: latestCrossover,
+        crossoverIdx,
+        ema: emas[crossoverIdx]!,
+        vwap: vwaps[crossoverIdx]!,
+        crossoverTime: new Date(candles[crossoverIdx].date),
+      };
+    }
+
+    return null;
+  }
+
+  private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
+    const details = this.getLatestCrossoverTodayDetails(idx, candles, emas, vwaps);
+    return details ? details.trend : null;
   }
 
   private resetDailyState(state: StrategyState) {

@@ -376,11 +376,15 @@ export class BacktestService {
 
   private getLatestCrossoverToday(idx: number, candles: any[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
     let latestCrossover: 'LONG' | 'SHORT' | null = null;
+    let crossoverIdx = -1;
     const todayStr = new Date(candles[idx].date).toISOString().split('T')[0];
 
     for (let k = 1; k <= idx; k++) {
       const candleDateStr = new Date(candles[k].date).toISOString().split('T')[0];
       if (candleDateStr !== todayStr) continue;
+
+      const prevDateStr = new Date(candles[k - 1].date).toISOString().split('T')[0];
+      if (prevDateStr !== todayStr) continue;
 
       const prevEma = emas[k - 1], currEma = emas[k];
       const prevVwap = vwaps[k - 1], currVwap = vwaps[k];
@@ -388,10 +392,18 @@ export class BacktestService {
 
       if (prevEma <= prevVwap && currEma > currVwap) {
         latestCrossover = 'LONG';
+        crossoverIdx = k;
       } else if (prevEma >= prevVwap && currEma < currVwap) {
         latestCrossover = 'SHORT';
+        crossoverIdx = k;
       }
     }
+
+    // Inside candle setup is only valid if crossover occurred recently (within 3 candles / 15 mins)
+    if (latestCrossover !== null && (idx - crossoverIdx) > 3) {
+      return null;
+    }
+
     return latestCrossover;
   }
 

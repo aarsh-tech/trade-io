@@ -1,7 +1,17 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+
+const logger = new Logger('ProcessBoundary');
+
+process.on('uncaughtException', (error) => {
+  logger.error(`Uncaught Exception: ${error?.message || error}`, error?.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error(`Unhandled Rejection at Promise: ${promise}, reason: ${reason instanceof Error ? reason.stack : reason}`);
+});
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

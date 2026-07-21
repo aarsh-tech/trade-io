@@ -665,11 +665,15 @@ export class StockOptionsBuyingEngine {
 
   private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
     let latestCrossover: 'LONG' | 'SHORT' | null = null;
+    let crossoverIdx = -1;
     const todayStr = candles[idx].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
 
     for (let k = 1; k <= idx; k++) {
       const candleDateStr = candles[k].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
       if (candleDateStr !== todayStr) continue;
+
+      const prevDateStr = candles[k - 1].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      if (prevDateStr !== todayStr) continue;
 
       const prevEma = emas[k - 1], currEma = emas[k];
       const prevVwap = vwaps[k - 1], currVwap = vwaps[k];
@@ -677,10 +681,18 @@ export class StockOptionsBuyingEngine {
 
       if (prevEma <= prevVwap && currEma > currVwap) {
         latestCrossover = 'LONG';
+        crossoverIdx = k;
       } else if (prevEma >= prevVwap && currEma < currVwap) {
         latestCrossover = 'SHORT';
+        crossoverIdx = k;
       }
     }
+
+    // Inside candle setup is only valid if crossover occurred recently (within 3 candles / 15 mins)
+    if (latestCrossover !== null && (idx - crossoverIdx) > 3) {
+      return null;
+    }
+
     return latestCrossover;
   }
 
