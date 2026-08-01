@@ -4,8 +4,6 @@ import { StrategyService } from './strategy.service';
 import { StrategyGateway } from './strategy.gateway';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
-import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
-import { DailyScalperEngine } from './daily-scalper.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { BrokersModule } from '../brokers/brokers.module';
@@ -22,8 +20,6 @@ import { AuthModule } from '../auth/auth.module';
     StrategyGateway,
     Breakout15MinEngine,
     EmaVwapCrossoverEngine,
-    EmaRsiOptionsEngine,
-    DailyScalperEngine,
     StockOptionsBuyingEngine,
     MarketSchedulerService,
   ],
@@ -32,8 +28,6 @@ import { AuthModule } from '../auth/auth.module';
     StrategyGateway,
     Breakout15MinEngine,
     EmaVwapCrossoverEngine,
-    EmaRsiOptionsEngine,
-    DailyScalperEngine,
     StockOptionsBuyingEngine,
   ],
 })

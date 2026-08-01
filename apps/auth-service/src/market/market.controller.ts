@@ -34,6 +34,14 @@ export class MarketController {
     const data = await this.marketService.getLivePrices(req.user.id);
     return { success: true, data };
   }
+
+  @Get('fo-stocks')
+  @ApiOperation({ summary: 'Get active F&O stock list with lot sizes and quotes' })
+  async foStocks(@Request() req: any) {
+    const data = await this.marketService.getFoStocks(req.user.id);
+    return { success: true, data };
+  }
+
  
   @Post('watchlist')
   @ApiOperation({ summary: 'Add symbol to watchlist' })

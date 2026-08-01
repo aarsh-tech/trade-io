@@ -2,8 +2,6 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
-import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
-import { DailyScalperEngine } from './daily-scalper.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 
 /**
@@ -37,8 +35,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly breakoutEngine: Breakout15MinEngine,
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
-    private readonly emaRsiEngine: EmaRsiOptionsEngine,
-    private readonly dailyScalperEngine: DailyScalperEngine,
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
   ) {}
 
@@ -178,8 +174,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   private getEngine(type: string) {
     if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
-    if (type === 'EMA_RSI_OPTIONS') return this.emaRsiEngine;
-    if (type === 'DAILY_SCALPER') return this.dailyScalperEngine;
     if (type === 'STOCK_OPTIONS_BUYING') return this.stockOptionsBuyingEngine;
     return null;
   }

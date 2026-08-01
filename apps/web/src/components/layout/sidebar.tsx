@@ -15,6 +15,7 @@ import {
   LogOut,
   Wallet,
   ScanSearch,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -26,14 +27,15 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
+  { href: "/fo-stocks", label: "F&O Stocks", icon: Layers },
   { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
   { href: "/swing-scanner", label: "Scanner", icon: ScanSearch },
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/backtest", label: "Backtest", icon: FlaskConical },
   { href: "/brokers", label: "Brokers", icon: Plug },
-  { href: "/orders", label: "Orders", icon: ClipboardList },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+
 
 export function Sidebar() {
   const pathname = usePathname();

@@ -357,27 +357,12 @@ export default function NewStrategyPage() {
                       badgeColor: "",
                     },
                     {
-                      type: "EMA_RSI_OPTIONS",
-                      label: "EMA + RSI + VWAP",
-                      desc: "Best for 500-700 daily. Fires ONLY when EMA cross + RSI in safe zone + price on right side of VWAP. Supports Equity & Options.",
-                      icon: Zap,
-                      badgeColor: "bg-indigo-100 text-indigo-700",
-                    },
-                    {
                       type: "EMA_VWAP_CROSSOVER",
                       label: "15-EMA & VWAP",
                       desc: "Trade when 15-period EMA crosses VWAP. Confirmation candle logic. Optimized for Options & Stocks.",
                       icon: TrendingUp,
                       badge: null,
                       badgeColor: "",
-                    },
-                    {
-                      type: "DAILY_SCALPER",
-                      label: "Daily Target Scalper",
-                      desc: "Aims to earn 400-600 Rs daily with 20k capital. Trades ATM options on index using 3-min charts with 9-EMA + VWAP + RSI momentum crossover. Stops for the day once target is achieved.",
-                      icon: Target,
-                      badge: "Best for 20k Capital",
-                      badgeColor: "bg-emerald-100 text-emerald-700",
                     },
                     {
                       type: "STOCK_OPTIONS_BUYING",

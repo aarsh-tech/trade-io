@@ -4,8 +4,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export enum StrategyTypeEnum {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
-  EMA_RSI_OPTIONS = 'EMA_RSI_OPTIONS',
-  DAILY_SCALPER = 'DAILY_SCALPER',
   STOCK_OPTIONS_BUYING = 'STOCK_OPTIONS_BUYING',
   CUSTOM = 'CUSTOM',
 }
@@ -37,37 +35,6 @@ export interface EmaVwapCrossoverConfig {
   targetRs: number;
   minPremium?: number;
   maxPremium?: number;
-}
-
-// ─── EMA-RSI Options Config ────────────────────────────────────────────────────
-export interface EmaRsiOptionsConfig {
-  symbol: string;          // 'NIFTY 50' | 'BANKNIFTY' | 'SENSEX'
-  exchange: string;        // 'NSE' | 'BSE'
-  emaFast: number;         // 9
-  emaSlow: number;         // 21
-  rsiPeriod: number;       // 14
-  rsiEntryMin: number;     // 45
-  rsiEntryMax: number;     // 65
-  optionLots: number;      // 1
-  targetPct: number;       // 45
-  slPct: number;           // 25
-  maxTradesPerDay: number; // 2
-  product: string;         // MIS
-  startAfterMin: number;   // 25
-}
-
-// ─── Daily Scalper Config ──────────────────────────────────────────────────────
-export interface DailyScalperConfig {
-  symbol: string;              // 'NIFTY 50' | 'BANKNIFTY' | 'SENSEX'
-  exchange: string;            // 'NSE' | 'BSE'
-  lots: number;                // default: 1
-  product: 'MIS' | 'NRML';     // default: 'MIS'
-  capital: number;             // default: 20000
-  dailyTargetRs: number;       // target profit (e.g. 500)
-  dailyMaxLossRs: number;      // max loss cap (e.g. 800)
-  targetPoints?: number;       // Override target in premium points
-  stopLossPoints?: number;     // Override SL in premium points
-  maxTradesPerDay: number;     // default: 2
 }
 
 // ─── Stock Options Buying Config ───────────────────────────────────────────────

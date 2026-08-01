@@ -270,36 +270,6 @@ export class StrategyService {
     let openTrade: any = null;
 
     for (const line of logs) {
-      if (strategyType === 'EMA_RSI_OPTIONS') {
-        const entryMatch = line.match(/📋\s+(BUY|SELL)\s+(\S+)\s+\|\s+LTP\s+₹([\d.]+).*Qty\s+(\d+)/i);
-        if (entryMatch) {
-          openTrade = {
-            side: entryMatch[1].toUpperCase(),
-            symbol: entryMatch[2],
-            entryPrice: parseFloat(entryMatch[3]),
-            qty: parseInt(entryMatch[4])
-          };
-        }
-        
-        const exitMatch = line.match(/Exit\s+—\s+Reason:\s+(\w+)\s+\|\s+P&L:\s*([+-]?)\s*₹?\s*([\d.]+)/i);
-        if (exitMatch && openTrade) {
-          const sign = exitMatch[2] === '-' ? -1 : 1;
-          const pnl = sign * parseFloat(exitMatch[3]);
-          trades.push({
-            symbol: openTrade.symbol,
-            entryPrice: openTrade.entryPrice,
-            exitPrice: openTrade.entryPrice + (pnl / openTrade.qty),
-            qty: openTrade.qty,
-            side: openTrade.side,
-            pnl,
-            isWin: pnl > 0,
-            reason: exitMatch[1],
-            source: 'log'
-          });
-          openTrade = null;
-        }
-      }
-      
       if (strategyType === 'STOCK_OPTIONS_BUYING') {
         const entryMatch = line.match(/Position\s+Opened\s+\[(LIVE|PAPER)\]:\s+(Filled|Bought)\s+(\d+)\s+of\s+(\S+)\s+at\s+Avg\s+₹([\d.]+)/i);
         if (entryMatch) {
@@ -329,36 +299,13 @@ export class StrategyService {
           openTrade = null;
         }
       }
-      
-      if (strategyType === 'DAILY_SCALPER') {
-        const entryMatch = line.match(/✅\s+Position\s+opened:\s+Buy\s+ATM\s+(CE|PE)\s+option\s+(\S+)\s+at\s+avg\s+price\s+₹([\d.]+)/i);
-        if (entryMatch) {
-          openTrade = {
-            side: 'BUY',
-            symbol: entryMatch[2],
-            entryPrice: parseFloat(entryMatch[3]),
-            qty: 1
-          };
-        }
-        
-        const exitMatch = line.match(/⏹\s+Position\s+Closed\s+\((\w+)\)\s+\|\s+P&L\s+on\s+Trade:\s*([+-]?)\s*₹?\s*(-?[\d.]+)/i);
-        if (exitMatch && openTrade) {
-          const sign = exitMatch[2] === '-' ? -1 : 1;
-          const pnlVal = parseFloat(exitMatch[3]);
-          const pnl = sign * pnlVal;
-          trades.push({
-            symbol: openTrade.symbol,
-            entryPrice: openTrade.entryPrice,
-            exitPrice: openTrade.entryPrice + pnl,
-            qty: openTrade.qty,
-            side: openTrade.side,
-            pnl,
-            isWin: pnl > 0,
-            reason: exitMatch[1],
-            source: 'log'
-          });
-          openTrade = null;
-        }
+
+      if (strategyType === 'BREAKOUT_15MIN') {
+        // Implementation for BREAKOUT_15MIN
+      }
+
+      if (strategyType === 'EMA_VWAP_CROSSOVER') {
+        // Implementation for EMA_VWAP_CROSSOVER
       }
     }
     
