@@ -72,7 +72,7 @@ export interface DailyScalperConfig {
 
 // ─── Stock Options Buying Config ───────────────────────────────────────────────
 export interface StockOptionsBuyingConfig {
-  symbol: string;               // Stock symbol, e.g., 'TECHM'
+  symbol: string;               // Stock symbol, e.g., 'BPCL'
   exchange: string;             // 'NSE'
   timeframe: '5min' | '15min';  // Candle timeframe
   emaPeriod: number;            // default 15
@@ -84,7 +84,18 @@ export interface StockOptionsBuyingConfig {
   startAfterMin: number;        // default 25
   triggerOffset: number;        // default 0.50 (points above option mother high)
   protectionBufferPct: number;  // default 10 (%)
+  
+  // High Accuracy Upgrades
+  minRvol?: number;             // Relative Volume multiplier (default: 1.5)
+  moneyness?: 'ATM' | 'ITM';    // Option Strike type (default: 'ATM')
+  maxBidAskSpreadPct?: number;  // Max allowed bid-ask spread % (default: 1.5)
+  minOptionVolumeLots?: number; // Minimum required option traded lots (default: 500)
+  orderTimeoutSec?: number;     // Order execution timeout seconds (default: 5)
+  maxStagnantTimeMin?: number;  // Max stagnant position holding time in min (default: 45)
+  enableTrailingSl?: boolean;   // Trailing SL to cost after 50% target (default: true)
+  spotStopLossPct?: number;     // Optional underlying spot-based stop loss %
 }
+
 
 export class CreateStrategyDto {
   @ApiProperty({ example: 'Nifty 15-Min Breakout' })

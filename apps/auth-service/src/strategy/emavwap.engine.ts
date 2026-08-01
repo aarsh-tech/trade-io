@@ -4,7 +4,7 @@ import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
 import { autoSelectStock } from './smart-stock-picker';
-
+import { strategyEvents } from '../common/events';
 
 interface Candle {
   date: Date;
@@ -16,6 +16,7 @@ interface Candle {
 }
 
 interface StrategyState {
+  strategyId: string;
   executionId: string;
   config: EmaVwapCrossoverConfig;
   brokerAccountId: string;
@@ -67,6 +68,7 @@ export class EmaVwapCrossoverEngine {
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
     const state: StrategyState = {
+      strategyId,
       executionId: execution.id,
       config,
       brokerAccountId: strategy.brokerAccountId!,
@@ -277,9 +279,22 @@ export class EmaVwapCrossoverEngine {
             // Scan subsequent candles to see if breakout happened
             for (let j = i + 1; j < Math.min(i + 4, candles.length); j++) {
               const checkCandle = candles[j];
-              
+
               if (isBullish) {
                 if (checkCandle.high > triggerHigh) {
+                  // If option buying, verify option high crossed option breakout price before triggering
+                  if (state.config.isOptionBuyingOnly) {
+                    const optSym = await this.findOptionSymbol(client, state, mother.high, 'CE', new Date(checkCandle.date));
+                    if (optSym) {
+                      const optCandles = await client.getHistoricalData(optSym, 'NFO', '5minute', new Date(mother.date.getTime() - 5 * 60 * 1000), new Date(checkCandle.date.getTime() + 5 * 60 * 1000));
+                      const mOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === mother.date.getTime());
+                      const cOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === checkCandle.date.getTime());
+                      if (mOpt && cOpt && cOpt.high <= mOpt.high) {
+                        // Option high did not break mother option high at this candle -> Skip triggering at this candle
+                        continue;
+                      }
+                    }
+                  }
                   this.log(state, `🚀 (Catch-up) Found past LONG Breakout at ${this.formatTime(new Date(checkCandle.date))}!`);
                   await this.placeTrade(state, client, account, 'BUY', mother.high, new Date(checkCandle.date), new Date(mother.date));
                   i = j; // Skip to breakout candle index
@@ -290,6 +305,17 @@ export class EmaVwapCrossoverEngine {
                 }
               } else {
                 if (checkCandle.low < triggerLow) {
+                  if (state.config.isOptionBuyingOnly) {
+                    const optSym = await this.findOptionSymbol(client, state, mother.low, 'PE', new Date(checkCandle.date));
+                    if (optSym) {
+                      const optCandles = await client.getHistoricalData(optSym, 'NFO', '5minute', new Date(mother.date.getTime() - 5 * 60 * 1000), new Date(checkCandle.date.getTime() + 5 * 60 * 1000));
+                      const mOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === mother.date.getTime());
+                      const cOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === checkCandle.date.getTime());
+                      if (mOpt && cOpt && cOpt.high <= mOpt.high) {
+                        continue;
+                      }
+                    }
+                  }
                   this.log(state, `🚀 (Catch-up) Found past SHORT Breakout at ${this.formatTime(new Date(checkCandle.date))}!`);
                   await this.placeTrade(state, client, account, 'SELL', mother.low, new Date(checkCandle.date), new Date(mother.date));
                   i = j; // Skip to breakout candle index
@@ -595,20 +621,20 @@ export class EmaVwapCrossoverEngine {
           const avgPrice = Number(slOrder.average_price) || state.stopLossPrice!;
           this.log(state, `🛑 Stop Loss Order filled at ₹${avgPrice.toFixed(2)}`);
           if (state.targetOrderId) {
-            await client.cancelOrder(state.targetOrderId).catch(() => {});
+            await client.cancelOrder(state.targetOrderId).catch(() => { });
           }
           await this.exitPosition(state, client, avgPrice, 'SL');
         } else if (targetOrder && targetOrder.status === 'COMPLETE') {
           const avgPrice = Number(targetOrder.average_price) || state.targetPrice!;
           this.log(state, `🎯 Target Order filled at ₹${avgPrice.toFixed(2)}`);
           if (state.slOrderId) {
-            await client.cancelOrder(state.slOrderId).catch(() => {});
+            await client.cancelOrder(state.slOrderId).catch(() => { });
           }
           await this.exitPosition(state, client, avgPrice, 'TARGET');
         } else if (slOrder && (slOrder.status === 'REJECTED' || slOrder.status === 'CANCELLED')) {
           this.log(state, `⚠ Stop Loss order was ${slOrder.status}! Checking position status.`);
           if (state.targetOrderId) {
-            await client.cancelOrder(state.targetOrderId).catch(() => {});
+            await client.cancelOrder(state.targetOrderId).catch(() => { });
           }
           const symbol = state.optionSymbol;
           const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : state.config.exchange;
@@ -619,7 +645,7 @@ export class EmaVwapCrossoverEngine {
         } else if (targetOrder && (targetOrder.status === 'REJECTED' || targetOrder.status === 'CANCELLED')) {
           this.log(state, `⚠ Target order was ${targetOrder.status}! Checking position status.`);
           if (state.slOrderId) {
-            await client.cancelOrder(state.slOrderId).catch(() => {});
+            await client.cancelOrder(state.slOrderId).catch(() => { });
           }
           const symbol = state.optionSymbol;
           const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : state.config.exchange;
@@ -684,7 +710,7 @@ export class EmaVwapCrossoverEngine {
     try {
       const exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
       this.log(state, `🏁 (Catch-up) Paper trade closed (${reason}) at ₹${exitPrice.toFixed(2)}`);
-      
+
       // Track exit order in DB
       await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, exitPrice, exitOrderId, timestamp);
       state.tradesPlacedToday++;
@@ -791,7 +817,7 @@ export class EmaVwapCrossoverEngine {
       if (match) {
         return match.close;
       }
-      
+
       let closest = data[0];
       let minDiff = Math.abs(new Date(closest.date).getTime() - targetTimeMs);
       for (const c of data) {
@@ -922,7 +948,16 @@ export class EmaVwapCrossoverEngine {
   private roundTick(p: number) { return Math.round(p / 0.05) * 0.05; }
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
-  private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
+  private async persistLogs(state: StrategyState) {
+    try {
+      await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } });
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
+    } catch {}
+  }
   private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
     const upperSymbol = baseSymbol.toUpperCase().trim();
     const isSensex = upperSymbol === 'SENSEX' || upperSymbol === 'BSE SENSEX';

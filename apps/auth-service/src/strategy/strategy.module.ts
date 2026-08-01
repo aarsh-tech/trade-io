@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { StrategyController } from './strategy.controller';
 import { StrategyService } from './strategy.service';
+import { StrategyGateway } from './strategy.gateway';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { EmaRsiOptionsEngine } from './ema-rsi-options.engine';
@@ -11,12 +12,14 @@ import { BrokersModule } from '../brokers/brokers.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SwingScannerModule } from '../swing-scanner/swing-scanner.module';
 import { MarketModule } from '../market/market.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [PrismaModule, BrokersModule, MarketModule],
+  imports: [PrismaModule, BrokersModule, MarketModule, AuthModule],
   controllers: [StrategyController],
   providers: [
     StrategyService,
+    StrategyGateway,
     Breakout15MinEngine,
     EmaVwapCrossoverEngine,
     EmaRsiOptionsEngine,
@@ -26,6 +29,7 @@ import { MarketModule } from '../market/market.module';
   ],
   exports: [
     StrategyService,
+    StrategyGateway,
     Breakout15MinEngine,
     EmaVwapCrossoverEngine,
     EmaRsiOptionsEngine,
@@ -34,4 +38,5 @@ import { MarketModule } from '../market/market.module';
   ],
 })
 export class StrategyModule {}
+
 

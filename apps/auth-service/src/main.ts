@@ -49,7 +49,12 @@ async function bootstrap() {
   SwaggerModule.setup('docs', app, document);
 
   const port = process.env.PORT || 3002;
-  await app.listen(port, '0.0.0.0');
+  const server = await app.listen(port, '0.0.0.0');
+  const httpServer = app.getHttpServer();
+  if (httpServer && httpServer.keepAliveTimeout !== undefined) {
+    httpServer.keepAliveTimeout = 65000;
+    httpServer.headersTimeout = 66000;
+  }
   console.log(`Auth Service running on http://localhost:${port}`);
   console.log(`Swagger: http://localhost:${port}/docs`);
 }

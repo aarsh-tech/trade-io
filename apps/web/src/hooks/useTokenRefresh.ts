@@ -81,11 +81,20 @@ export function useTokenRefresh() {
     // Then refresh on schedule
     timerRef.current = setInterval(silentRefresh, REFRESH_INTERVAL_MS);
 
+    // Refresh automatically when tab becomes visible again after being idle
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        silentRefresh();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);

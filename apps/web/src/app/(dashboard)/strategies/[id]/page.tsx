@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, Activity } from "react";
+import { io } from "socket.io-client";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -153,21 +154,32 @@ export default function StrategyDetailPage() {
     load();
   }, [load]);
 
+  // Real-time WebSockets for zero-latency strategy updates (replaces HTTP status polling)
   useEffect(() => {
-    if (strategy?.isActive) {
-      pollRef.current = setInterval(async () => {
-        try {
-          const r = await strategyApi.status(id);
-          setLiveLogs(r.data?.data?.logs ?? []);
-          setLiveState(r.data?.data?.state ?? null);
-          setActiveOrders(r.data?.data?.orders ?? []);
-        } catch { }
-      }, 30_000);
-    }
+    if (typeof window === "undefined" || !id) return;
+    const token = localStorage.getItem("accessToken");
+    if (!token) return;
+
+    const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '') || "http://127.0.0.1:3002";
+    const socket = io(`${SOCKET_URL}/strategy`, {
+      transports: ["websocket"],
+      auth: { token },
+    });
+
+    socket.on("connect", () => {
+      socket.emit("subscribe", { strategyId: id });
+    });
+
+    socket.on("strategy-event", (payload: { logs?: string[]; state?: any; orders?: any[] }) => {
+      if (payload.logs) setLiveLogs(payload.logs);
+      if (payload.state !== undefined) setLiveState(payload.state);
+      if (payload.orders) setActiveOrders(payload.orders);
+    });
+
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      socket.disconnect();
     };
-  }, [strategy?.isActive, id]);
+  }, [id]);
 
   useEffect(() => {
     if (logsRef.current && showLogs) {
