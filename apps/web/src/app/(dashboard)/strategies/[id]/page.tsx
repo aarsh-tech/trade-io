@@ -704,7 +704,7 @@ export default function StrategyDetailPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: "Symbol", value: cfg.symbol, icon: BarChart2, color: "text-[hsl(var(--primary))]" },
-            { label: "Qty / Lots", value: cfg.qty ?? `${cfg.lots ?? 1} Lot`, icon: Zap, color: "text-amber-500" },
+            { label: "Qty / Lots", value: cfg.symbol === 'AUTO' ? 'Auto (5x MIS)' : (cfg.qty ?? `${cfg.lots ?? 1} Lot`), icon: Zap, color: "text-amber-500" },
             { label: "Stop Loss", value: cfg.stopLossRs ? `₹${cfg.stopLossRs}` : 'Dynamic', icon: Shield, color: "text-red-500" },
             { label: "Target", value: cfg.targetRs ? `₹${cfg.targetRs}` : 'Dynamic', icon: Target, color: "text-green-600" },
           ].map(({ label, value, icon: Icon, color }) => (
@@ -760,7 +760,7 @@ export default function StrategyDetailPage() {
                 <Field
                   label="Qty / Lots"
                   editing={editing}
-                  value={editing ? String(editConfig.qty ?? cfg.qty) : String(cfg.qty)}
+                  value={editing ? String(editConfig.qty ?? cfg.qty) : (cfg.symbol === 'AUTO' ? 'Auto (5x MIS)' : String(cfg.qty))}
                   onChange={(v) => setEditConfig((e) => ({ ...e, qty: Number(v) }))}
                   type="number"
                 />
@@ -931,9 +931,9 @@ export default function StrategyDetailPage() {
                   type="number"
                 />
                 <Field
-                  label="Lots"
+                  label="Qty / Sizing"
                   editing={editing}
-                  value={editing ? String(editConfig.lots ?? cfg.lots ?? 1) : String(cfg.lots ?? 1)}
+                  value={editing ? String(editConfig.lots ?? cfg.lots ?? 1) : (cfg.symbol === 'AUTO' ? 'Auto (5x MIS)' : String(cfg.lots ?? 1))}
                   onChange={(v) => setEditConfig((e) => ({ ...e, lots: Number(v) }))}
                   type="number"
                 />

@@ -334,22 +334,22 @@ function StrategyCard({
         </div>
 
         {/* Risk config */}
-        {is15Min && (
-          <div className="grid grid-cols-3 gap-2">
-            <div className="text-center p-2 rounded-lg bg-[hsl(var(--secondary)/0.5)]">
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Qty</p>
-              <p className="text-sm font-bold">{cfg.qty ?? "—"}</p>
-            </div>
-            <div className="text-center p-2 rounded-lg bg-[hsl(220,20%,96%)] dark:bg-red-950/30">
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">SL ₹</p>
-              <p className="text-sm font-bold text-red-500">₹{cfg.stopLossRs ?? "—"}</p>
-            </div>
-            <div className="text-center p-2 rounded-lg bg-[hsl(142,20%,96%)] dark:bg-green-950/30">
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Target ₹</p>
-              <p className="text-sm font-bold text-green-600">₹{cfg.targetRs ?? "—"}</p>
-            </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="text-center p-2 rounded-lg bg-[hsl(var(--secondary)/0.5)]">
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Qty / Sizing</p>
+            <p className="text-xs font-bold truncate">
+              {cfg.symbol === "AUTO" ? "Auto (5x MIS)" : (cfg.qty ? `${cfg.qty} Qty` : "Auto")}
+            </p>
           </div>
-        )}
+          <div className="text-center p-2 rounded-lg bg-[hsl(220,20%,96%)] dark:bg-red-950/30">
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))]">SL ₹</p>
+            <p className="text-sm font-bold text-red-500">₹{cfg.stopLossRs ?? "500"}</p>
+          </div>
+          <div className="text-center p-2 rounded-lg bg-[hsl(142,20%,96%)] dark:bg-green-950/30">
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Target ₹</p>
+            <p className="text-sm font-bold text-green-600">₹{cfg.targetRs ?? "500"}</p>
+          </div>
+        </div>
 
         {/* Latest execution badge */}
         {s.latestExecution && (
