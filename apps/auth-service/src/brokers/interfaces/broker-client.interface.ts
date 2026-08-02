@@ -60,6 +60,7 @@ export interface IBrokerClient {
   getInstruments(exchange: string): Promise<any[]>;
   getTickSize(symbol: string, exchange: string): Promise<number>;
   placeGtt(params: GttParams): Promise<string>;
+  createTicker?(): any;
 }
 
 export interface GttParams {

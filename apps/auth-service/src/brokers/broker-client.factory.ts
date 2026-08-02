@@ -25,12 +25,30 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 class ZerodhaClient implements IBrokerClient {
   private kite: any;
+  private apiKey: string;
+  private accessToken: string | null;
 
   constructor(apiKey: string, accessToken: string | null) {
+    this.apiKey = apiKey;
+    this.accessToken = accessToken;
     const { KiteConnect } = require('kiteconnect');
     this.kite = new KiteConnect({ api_key: apiKey });
     if (accessToken) {
       this.kite.setAccessToken(accessToken);
+    }
+  }
+
+  createTicker(): any {
+    if (!this.apiKey || !this.accessToken) return null;
+    try {
+      const { KiteTicker } = require('kiteconnect');
+      return new KiteTicker({
+        api_key: this.apiKey,
+        access_token: this.accessToken,
+      });
+    } catch (err) {
+      console.error('KiteTicker initialization error:', err);
+      return null;
     }
   }
 

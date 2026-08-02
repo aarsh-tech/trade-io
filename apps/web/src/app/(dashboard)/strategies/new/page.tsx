@@ -349,9 +349,9 @@ export default function NewStrategyPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {[
                     {
-                      type: "BREAKOUT_15MIN",
+                      type: "EMA_VWAP_CROSSOVER",
                       label: "Intraday Auto Stock Picker (₹500/day Target)",
-                      desc: "Auto-scans top liquid NSE stocks at 9:15 AM, picks the best momentum stock, & executes Zerodha MIS orders automatically with a ₹500 target & ₹250 SL (1:2 RR).",
+                      desc: "Auto-scans top liquid NSE stocks at 9:15 AM, picks the best momentum stock using EMA + VWAP crossover with candle confirmation, & executes Zerodha MIS orders automatically with a ₹500 target & ₹500 SL (1:1 RR).",
                       icon: Zap,
                       badge: "₹500/day Target",
                       badgeColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold",
@@ -397,7 +397,7 @@ export default function NewStrategyPage() {
                           set("instrumentType", "STOCK");
                           set("product", "MIS");
                           set("targetRs", "500");
-                          set("stopLossRs", "250");
+                          set("stopLossRs", "500");
                           set("maxTradesPerDay", "2");
                         } else if (type === "STOCK_OPTIONS_BUYING") {
                           set("symbol", "AUTO");

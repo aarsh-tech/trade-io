@@ -76,7 +76,7 @@ export default function StrategiesPage() {
 
       const res = await strategyApi.create({
         name: "Intraday Auto Stock Picker (₹500/day Target)",
-        type: "BREAKOUT_15MIN",
+        type: "EMA_VWAP_CROSSOVER",
         brokerAccountId: activeBroker.id,
         isPaperTrade: false,
         config: JSON.stringify({
@@ -85,9 +85,10 @@ export default function StrategiesPage() {
           instrumentType: "STOCK",
           product: "MIS",
           qty: 1,
-          stopLossRs: 250,
+          stopLossRs: 500,
           targetRs: 500,
-          maxTradesPerDay: 2,
+          maxTradesPerDay: 1,
+          emaPeriod: 15,
         }),
       });
 
@@ -203,13 +204,13 @@ export default function StrategiesPage() {
             <Badge className="bg-emerald-600 text-white font-bold px-2 py-0.5 text-[10px] tracking-wide uppercase">
               DEPLOYS FOR TOMORROW
             </Badge>
-            <h3 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-              <Sparkles className="h-4 w-4 text-amber-500" />
+            <h3 className="font-bold text-base text-[hsl(var(--foreground))] flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4 text-amber-500 shrink-0" />
               Intraday Auto Stock Picker (₹500/Day Target)
             </h3>
           </div>
-          <p className="text-xs text-slate-600 dark:text-slate-300 max-w-2xl leading-relaxed">
-            Auto-scans top liquid NSE stocks at 9:15 AM, picks the best momentum stock, & executes Zerodha MIS orders automatically with a <strong>₹500 daily target</strong> & <strong>₹250 stop-loss</strong> (1:2 Risk-Reward).
+          <p className="text-xs text-[hsl(var(--muted-foreground))] max-w-2xl leading-relaxed">
+            Auto-scans top liquid NSE stocks at 9:15 AM, picks the best momentum stock using <strong>EMA + VWAP trend crossover & candle confirmation</strong>, & executes Zerodha MIS orders automatically with a <strong>₹500 daily target</strong> & <strong>₹500 stop-loss</strong> (1:1 Risk-Reward).
           </p>
         </div>
         <Button
