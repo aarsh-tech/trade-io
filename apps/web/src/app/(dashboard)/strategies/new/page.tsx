@@ -350,11 +350,21 @@ export default function NewStrategyPage() {
                   {[
                     {
                       type: "BREAKOUT_15MIN",
-                      label: "15-Min Breakout",
-                      desc: "Enters after 5-min candle closes above/below the first 15-min range. Fixed SL & Target.",
+                      label: "Intraday Auto Stock Picker (₹500/day Target)",
+                      desc: "Auto-scans top liquid NSE stocks at 9:15 AM, picks the best momentum stock, & executes Zerodha MIS orders automatically with a ₹500 target & ₹250 SL (1:2 RR).",
+                      icon: Zap,
+                      badge: "₹500/day Target",
+                      badgeColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold",
+                      isAutoStockPreset: true,
+                    },
+                    {
+                      type: "BREAKOUT_15MIN",
+                      label: "15-Min Breakout (Single Instrument)",
+                      desc: "Enters after 5-min candle closes above/below the first 15-min range for a specific stock or index. Fixed SL & Target.",
                       icon: BarChart2,
                       badge: null,
                       badgeColor: "",
+                      isAutoStockPreset: false,
                     },
                     {
                       type: "EMA_VWAP_CROSSOVER",
@@ -363,26 +373,37 @@ export default function NewStrategyPage() {
                       icon: TrendingUp,
                       badge: null,
                       badgeColor: "",
+                      isAutoStockPreset: false,
                     },
                     {
                       type: "STOCK_OPTIONS_BUYING",
                       label: "Stock Options Buying",
-                      desc: "Best for 20k-25k capital. Trades ATM stock options using 15-EMA & VWAP crossover on 5/15-min stock charts, waiting for Inside Candle confirmation, with dynamic SL (Mother Low) & RR Target.",
+                      desc: "Best for 20k-25k capital. Trades ATM stock options using 15-EMA & VWAP crossover on 5/15-min stock charts with dynamic SL & RR Target.",
                       icon: Flame,
                       badge: "F&O Stocks",
                       badgeColor: "bg-blue-100 text-blue-700",
+                      isAutoStockPreset: false,
                     },
-                  ].map(({ type, label, desc, icon: Icon, badge, badgeColor }) => (
+                  ].map(({ type, label, desc, icon: Icon, badge, badgeColor, isAutoStockPreset }) => (
                     <button
-                      key={type}
-                      id={`type-${type}`}
+                      key={label}
+                      id={`type-${label}`}
                       onClick={() => {
                         set("type", type);
-                        if (type === "STOCK_OPTIONS_BUYING") {
+                        if (isAutoStockPreset) {
+                          set("name", "Intraday Auto Stock Picker (₹500/day Target)");
                           set("symbol", "AUTO");
                           set("exchange", "NSE");
                           set("instrumentType", "STOCK");
-                        } else if (form.symbol === "AUTO") {
+                          set("product", "MIS");
+                          set("targetRs", "500");
+                          set("stopLossRs", "250");
+                          set("maxTradesPerDay", "2");
+                        } else if (type === "STOCK_OPTIONS_BUYING") {
+                          set("symbol", "AUTO");
+                          set("exchange", "NSE");
+                          set("instrumentType", "STOCK");
+                        } else if (form.symbol === "AUTO" && !isAutoStockPreset) {
                           set("symbol", "NIFTY 50");
                           set("exchange", "NSE");
                           set("instrumentType", "INDEX");

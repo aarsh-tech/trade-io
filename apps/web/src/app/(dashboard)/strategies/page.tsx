@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Play, Square, Trash2, Plus, TrendingUp,
-  Activity, BarChart2, Settings2, RefreshCw, Loader2, AlarmClock, Flame, Target,
+  Activity, BarChart2, Settings2, RefreshCw, Loader2, AlarmClock, Flame, Target, Zap, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -61,6 +61,52 @@ export default function StrategiesPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  async function handleQuickDeploy500() {
+    setActionId("quick-500");
+    try {
+      const brokerRes = await brokerApi.list();
+      const accounts = brokerRes.data?.data ?? [];
+      const activeBroker = accounts.find((a: any) => a.isActive) || accounts[0];
+
+      if (!activeBroker) {
+        toast.error("Please connect a Zerodha broker account first in Brokers page");
+        return;
+      }
+
+      const res = await strategyApi.create({
+        name: "Intraday Auto Stock Picker (₹500/day Target)",
+        type: "BREAKOUT_15MIN",
+        brokerAccountId: activeBroker.id,
+        isPaperTrade: false,
+        config: JSON.stringify({
+          symbol: "AUTO",
+          exchange: "NSE",
+          instrumentType: "STOCK",
+          product: "MIS",
+          qty: 1,
+          stopLossRs: 250,
+          targetRs: 500,
+          maxTradesPerDay: 2,
+        }),
+      });
+
+      const newStrategyId = res.data?.id;
+      if (newStrategyId) {
+        await strategyApi.setAutoStart(newStrategyId, true);
+        await strategyApi.start(newStrategyId);
+      }
+
+      toast.success("🚀 Intraday Auto-Stock Strategy Deployed!", {
+        description: "Auto-picks the best stock & auto-starts at 09:15 AM tomorrow.",
+      });
+      await load();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message ?? "Failed to deploy strategy");
+    } finally {
+      setActionId(null);
+    }
+  }
 
   async function toggleStrategy(s: Strategy) {
     setActionId(s.id);
@@ -148,6 +194,32 @@ export default function StrategiesPage() {
             </Button>
           </Link>
         </div>
+      </div>
+
+      {/* 1-Click Quick Deploy Banner for Tomorrow */}
+      <div className="bg-gradient-to-r from-emerald-500/10 via-amber-500/10 to-indigo-500/10 border border-emerald-500/30 dark:border-emerald-500/20 rounded-2xl p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Badge className="bg-emerald-600 text-white font-bold px-2 py-0.5 text-[10px] tracking-wide uppercase">
+              DEPLOYS FOR TOMORROW
+            </Badge>
+            <h3 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4 text-amber-500" />
+              Intraday Auto Stock Picker (₹500/Day Target)
+            </h3>
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-300 max-w-2xl leading-relaxed">
+            Auto-scans top liquid NSE stocks at 9:15 AM, picks the best momentum stock, & executes Zerodha MIS orders automatically with a <strong>₹500 daily target</strong> & <strong>₹250 stop-loss</strong> (1:2 Risk-Reward).
+          </p>
+        </div>
+        <Button
+          onClick={handleQuickDeploy500}
+          disabled={actionId === "quick-500"}
+          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 h-10 shadow-md whitespace-nowrap flex items-center gap-2 self-stretch md:self-auto justify-center"
+        >
+          {actionId === "quick-500" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+          Deploy Strategy for Tomorrow
+        </Button>
       </div>
 
       {/* Grid */}
