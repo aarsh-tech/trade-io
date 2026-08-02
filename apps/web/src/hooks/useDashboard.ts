@@ -93,13 +93,24 @@ export function useDashboard() {
     };
   }, [marketOverviewQuery.data?.stocks?.length, queryClient]);
 
+  const moversQuery = useQuery({
+    queryKey: ["dashboard", "movers"],
+    queryFn: async () => {
+      const res = await marketApi.movers();
+      return res.data.data;
+    },
+    refetchInterval: 30 * 1000,
+  });
+
   return {
     market: marketOverviewQuery.data || { indices: [], stocks: [] },
+    movers: moversQuery.data || { topGainers: [], topLosers: [] },
     stats: statsQuery.data || { portfolioValue: 0, todayPnl: 0, pnlChange: 0, winRate: 0 },
-    isLoading: marketOverviewQuery.isLoading || statsQuery.isLoading,
+    isLoading: marketOverviewQuery.isLoading || statsQuery.isLoading || moversQuery.isLoading,
     refresh: () => {
       marketOverviewQuery.refetch();
+      moversQuery.refetch();
       statsQuery.refetch();
-    }
+    },
   };
 }

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import axios from 'axios';
 
 // Symbols to show in the ticker banner
 const TICKER_SYMBOLS = [
@@ -27,13 +28,22 @@ export class MarketService {
     private factory: BrokerClientFactory,
   ) { }
 
-  async search(query: string, userId: string, accountId?: string) {
+  async search(query: string, userId?: string, accountId?: string) {
     let account = null;
     if (accountId && accountId !== 'null' && accountId !== 'undefined') {
       account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
-    } else {
+    }
+    if (!account || !account.accessToken) {
+      if (userId) {
+        account = await this.prisma.brokerAccount.findFirst({
+          where: { userId, accessToken: { not: null } },
+        });
+      }
+    }
+    // Fallback to any active broker account with accessToken in system
+    if (!account || !account.accessToken) {
       account = await this.prisma.brokerAccount.findFirst({
-        where: { userId, accessToken: { not: null } },
+        where: { accessToken: { not: null }, isActive: true },
       });
     }
 
@@ -50,13 +60,19 @@ export class MarketService {
       const symbols = instruments.map((s: any) => `${s.exchange}:${s.symbol}`);
       const quotes = await client.getLTP(symbols);
       const hasQ = Object.keys(quotes).length > 0;
-      return instruments.map((s: any) => ({
-        ...s,
-        ltpNSE: hasQ ? (quotes[`NSE:${s.symbol}`] || null) : null,
-        ltpBSE: hasQ ? (quotes[`BSE:${s.symbol}`] || null) : null,
-      }));
+      return instruments.map((s: any) => {
+        const exactKey = `${s.exchange}:${s.symbol}`;
+        const ltpVal = quotes[exactKey] ?? quotes[`NSE:${s.symbol}`] ?? quotes[`NFO:${s.symbol}`] ?? quotes[`BSE:${s.symbol}`] ?? null;
+        return {
+          ...s,
+          ltp: ltpVal,
+          ltpNSE: quotes[`NSE:${s.symbol}`] || null,
+          ltpBSE: quotes[`BSE:${s.symbol}`] || null,
+          price: ltpVal || 0,
+        };
+      });
     } catch {
-      return instruments.map((s: any) => ({ ...s, ltpNSE: null, ltpBSE: null }));
+      return instruments.map((s: any) => ({ ...s, ltp: null, ltpNSE: null, ltpBSE: null, price: 0 }));
     }
   }
 
@@ -249,17 +265,30 @@ export class MarketService {
         const client = this.factory.createClient(account);
         const kite = (client as any)['kite'];
         const keys = FO_STOCKS_LIST.map(s => `NSE:${s.symbol}`);
-        const quotes = await kite.getLTP(keys).catch(() => ({}));
+
+        const quotes = await kite.getOHLC(keys).catch(() => kite.getLTP(keys).catch(() => ({})));
+
+        let nfoInstruments: any[] = [];
+        try {
+          nfoInstruments = await kite.getInstruments(['NFO']).catch(() => []);
+        } catch {}
 
         foStocks.forEach(stock => {
           const key = `NSE:${stock.symbol}`;
           const q = quotes[key];
           if (q) {
             stock.ltp = q.last_price || 0;
-            const close = q.close_price || q.last_price || 0;
+            const close = q.ohlc?.close || q.close_price || stock.ltp;
             stock.close = close;
-            stock.change = stock.ltp - close;
-            stock.changePercent = close > 0 ? ((stock.ltp - close) / close) * 100 : 0;
+            stock.change = Number((stock.ltp - close).toFixed(2));
+            stock.changePercent = close > 0 ? Number((((stock.ltp - close) / close) * 100).toFixed(2)) : 0;
+          }
+
+          if (nfoInstruments.length > 0) {
+            const match = nfoInstruments.find(inst => inst.name === stock.symbol || inst.tradingsymbol === stock.symbol);
+            if (match && match.lot_size > 0) {
+              stock.lotSize = match.lot_size;
+            }
           }
         });
       } catch (e) {
@@ -268,6 +297,104 @@ export class MarketService {
     }
 
     return foStocks;
+  }
+
+  // ── Top Gainers & Top Losers ────────────────────────────────────────────────
+
+  private moversCache: { data: { topGainers: any[]; topLosers: any[] }; timestamp: number } | null = null;
+
+  async getMovers(userId: string) {
+    if (this.moversCache && (Date.now() - this.moversCache.timestamp < 60_000)) {
+      return this.moversCache.data;
+    }
+
+    const nseSymbols = [
+      'BAJFINANCE', 'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'SBIN', 'BHARTIARTL', 'LT', 'ITC',
+      'AXISBANK', 'KOTAKBANK', 'TATAMOTORS', 'M&M', 'SUNPHARMA', 'TITAN', 'ULTRACEMCO', 'NTPC', 'POWERGRID', 'MARUTI',
+      'ADANIPORTS', 'ASIANPAINT', 'BAJAJFINSV', 'BPCL', 'CIPLA', 'COALINDIA', 'DRREDDY', 'EICHERMOT', 'GRASIM', 'HCLTECH',
+      'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'INDUSINDBK', 'JSWSTEEL', 'LTIM', 'NESTLEIND', 'ONGC', 'TATACONSUM', 'TATASTEEL',
+      'TECHM', 'WIPRO', 'ADANIENT', 'BEL', 'HAL', 'DIVISLAB', 'APOLLOHOSP', 'DLF', 'SHRIRAMFIN', 'TRENT'
+    ];
+
+    let results: Array<{ symbol: string; exchange: string; ltp: number; change: number; changePercent: number }> = [];
+
+    const account = await this.prisma.brokerAccount.findFirst({
+      where: { userId, isActive: true, accessToken: { not: null } },
+    });
+
+    if (account?.accessToken) {
+      try {
+        const client = this.factory.createClient(account);
+        const kite = (client as any)['kite'];
+
+        const chunkSize = 25;
+        for (let i = 0; i < nseSymbols.length; i += chunkSize) {
+          const chunk = nseSymbols.slice(i, i + chunkSize);
+          const keys = chunk.map(s => `NSE:${s}`);
+          const quotes = await kite.getOHLC(keys).catch(() => kite.getLTP(keys).catch(() => ({})));
+
+          for (const sym of chunk) {
+            const key = `NSE:${sym}`;
+            const q = quotes[key];
+            if (q) {
+              const ltp = q.last_price || 0;
+              const close = q.ohlc?.close || q.close_price || ltp;
+              if (ltp > 0) {
+                const change = ltp - close;
+                const changePercent = close > 0 ? ((ltp - close) / close) * 100 : 0;
+                results.push({
+                  symbol: sym,
+                  exchange: 'NSE',
+                  ltp: Number(ltp.toFixed(2)),
+                  change: Number(change.toFixed(2)),
+                  changePercent: Number(changePercent.toFixed(2)),
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`Zerodha getOHLC failed: ${e.message}`);
+      }
+    }
+
+    if (results.length < 10) {
+      results = [];
+      const fetchQuotes = nseSymbols.map(async (sym) => {
+        try {
+          const url = `https://query2.finance.yahoo.com/v8/finance/chart/${sym}.NS?interval=1d`;
+          const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 4000 });
+          const meta = res.data?.chart?.result?.[0]?.meta;
+          if (meta && meta.regularMarketPrice) {
+            const ltp = meta.regularMarketPrice;
+            const prev = meta.chartPreviousClose || meta.previousClose || ltp;
+            const change = ltp - prev;
+            const changePercent = prev > 0 ? (change / prev) * 100 : 0;
+            return {
+              symbol: sym,
+              exchange: 'NSE',
+              ltp: Number(ltp.toFixed(2)),
+              change: Number(change.toFixed(2)),
+              changePercent: Number(changePercent.toFixed(2)),
+            };
+          }
+        } catch {}
+        return null;
+      });
+
+      const fetched = await Promise.all(fetchQuotes);
+      results = fetched.filter(Boolean) as any[];
+    }
+
+    const topGainers = [...results].sort((a, b) => b.changePercent - a.changePercent).slice(0, 8);
+    const topLosers = [...results].sort((a, b) => a.changePercent - b.changePercent).slice(0, 8);
+
+    const payload = { topGainers, topLosers };
+    if (results.length > 0) {
+      this.moversCache = { data: payload, timestamp: Date.now() };
+    }
+
+    return payload;
   }
 }
 

@@ -94,7 +94,9 @@ class ZerodhaClient implements IBrokerClient {
 
   async placeOrder(params: OrderParams): Promise<string> {
     try {
+      const variety = (params.variety || "regular").toLowerCase();
       console.log('Placing Zerodha Order:', {
+        variety,
         exchange: params.exchange,
         symbol: params.symbol,
         side: params.side,
@@ -104,7 +106,7 @@ class ZerodhaClient implements IBrokerClient {
         price: params.price
       });
 
-      const response = await this.kite.placeOrder(params.variety || "regular", {
+      const response = await this.kite.placeOrder(variety, {
         exchange: params.exchange,
         tradingsymbol: params.symbol,
         transaction_type: params.side,
@@ -113,6 +115,9 @@ class ZerodhaClient implements IBrokerClient {
         order_type: params.orderType,
         price: params.price ? Number(params.price) : undefined,
         trigger_price: params.triggerPrice ? Number(params.triggerPrice) : undefined,
+        validity: params.validity,
+        disclosed_quantity: params.disclosedQty ? Number(params.disclosedQty) : undefined,
+        tag: params.tag,
       });
 
       console.log('Zerodha Order Success:', response.order_id);
@@ -122,8 +127,12 @@ class ZerodhaClient implements IBrokerClient {
         throw new Error('IP Access Denied: Please add your IP to the Kite Developer Console.');
       }
       
-      if (err.message?.includes('Markets are closed')) {
-        throw new Error('Market is currently CLOSED. Please try again during market hours (9:15 AM - 3:30 PM).');
+      if (err.message?.includes('Markets are closed') || err.message?.includes('Market is closed')) {
+        if (params.variety !== 'amo') {
+          throw new Error('Market is currently CLOSED. Please select the AMO (After Market Order) tab to place off-market orders.');
+        } else {
+          throw new Error(`Zerodha AMO Error: ${err.message}`);
+        }
       }
 
       console.error('Zerodha Place Order Detailed Error:', {

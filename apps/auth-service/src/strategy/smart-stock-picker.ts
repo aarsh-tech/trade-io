@@ -23,8 +23,9 @@ export async function autoSelectStock(
   targetRs: number,
   stopLossRs: number,
   logger?: Logger,
+  maxCapital?: number,
 ): Promise<{ symbol: string; exchange: string; ltp: number; qty: number }> {
-  logger?.log(`🎯 Auto-selecting best stock from ${TOP_LIQUID_STOCKS.length} candidates...`);
+  logger?.log(`🎯 Auto-selecting best stock from ${TOP_LIQUID_STOCKS.length} candidates (Max Capital Limit: ₹${maxCapital || 'Unlimited'})...`);
 
   // 1. Fetch NSE instruments to get tokens
   const instruments = await kite.getInstruments('NSE');

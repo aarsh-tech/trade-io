@@ -124,6 +124,7 @@ export const brokerApi = {
 export const marketApi = {
   marketOverview: () => api.get("/market/overview"),
   livePrices: () => api.get("/market/live-prices"),
+  movers: () => api.get("/market/movers"),
   candles: (params: {
     symbol: string; exchange: string; interval: string; from: string; to: string;
   }) => api.get("/market/candles", { params }),

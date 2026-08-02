@@ -52,7 +52,7 @@ export interface StockOptionsBuyingConfig {
   triggerOffset: number;        // default 0.50 (points above option mother high)
   protectionBufferPct: number;  // default 10 (%)
   
-  // High Accuracy Upgrades
+  // High Accuracy & 100% ROI Upgrades
   minRvol?: number;             // Relative Volume multiplier (default: 1.5)
   moneyness?: 'ATM' | 'ITM';    // Option Strike type (default: 'ATM')
   maxBidAskSpreadPct?: number;  // Max allowed bid-ask spread % (default: 1.5)
@@ -60,6 +60,12 @@ export interface StockOptionsBuyingConfig {
   orderTimeoutSec?: number;     // Order execution timeout seconds (default: 5)
   maxStagnantTimeMin?: number;  // Max stagnant position holding time in min (default: 45)
   enableTrailingSl?: boolean;   // Trailing SL to cost after 50% target (default: true)
+  target1RR?: number;           // Target 1 RR ratio (default: 1.5 / +50% gain)
+  target2RR?: number;           // Target 2 RR ratio (default: 3.0 / +100% gain)
+  trailingStepPct?: number;     // Trailing SL distance % behind peak once T1 hit (default: 20%)
+  enableHtfFilter?: boolean;   // Enable 15-min HTF trend filter (default: true)
+  htfTimeframe?: '15min' | '60min'; // HTF trend timeframe (default: '15min')
+  htfEmaPeriod?: number;        // HTF EMA period (default: 50)
   spotStopLossPct?: number;     // Optional underlying spot-based stop loss %
 }
 

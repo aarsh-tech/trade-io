@@ -466,20 +466,37 @@ export default function NewStrategyPage() {
 
                 {/* Search Results Dropdown */}
                 {searchResults.length > 0 && (
-                  <div className="absolute z-50 w-full mt-1 bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl max-h-60 overflow-y-auto animate-[fade-up_0.2s_ease_both]">
-                    {searchResults.map((item) => (
-                      <button
-                        key={`${item.exchange}:${item.symbol}`}
-                        onClick={() => selectInstrument(item)}
-                        className="w-full flex items-center justify-between p-3 hover:bg-[hsl(var(--secondary)/0.5)] transition-colors border-b last:border-0"
-                      >
-                        <div className="text-left">
-                          <p className="text-sm font-bold">{item.symbol}</p>
-                          <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase">{item.name}</p>
-                        </div>
-                        <Badge className="text-[10px]">{item.exchange}</Badge>
-                      </button>
-                    ))}
+                  <div className="absolute z-50 w-full mt-1 bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl max-h-60 overflow-y-auto divide-y divide-[hsl(var(--border)/0.5)]">
+                    {searchResults.map((item) => {
+                      const itemPrice = item.ltp || item.ltpNSE || item.price;
+                      return (
+                        <button
+                          key={`${item.exchange}:${item.symbol}`}
+                          onClick={() => selectInstrument(item)}
+                          className="w-full flex items-center justify-between p-3 hover:bg-[hsl(var(--secondary)/0.5)] transition-colors text-left group"
+                        >
+                          <div>
+                            <p className="text-sm font-bold text-[hsl(var(--foreground))] group-hover:text-indigo-600 transition-colors">
+                              {item.symbol}
+                            </p>
+                            <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase truncate max-w-[220px]">
+                              {item.name}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {itemPrice ? (
+                              <div className="text-right">
+                                <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                  ₹{Number(itemPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                </p>
+                                <span className="text-[9px] text-slate-400">Live LTP</span>
+                              </div>
+                            ) : null}
+                            <Badge className="text-[10px] font-semibold">{item.exchange}</Badge>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 

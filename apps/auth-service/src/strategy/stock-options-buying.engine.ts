@@ -29,6 +29,10 @@ interface StrategyState {
   entryTriggerPrice: number | null;
   stopLossPrice: number | null;
   targetPrice: number | null;
+  target1Price?: number | null;
+  target2Price?: number | null;
+  highestPriceReached?: number;
+  isT1Reached?: boolean;
   positionQty: number;
   entryOrderId: string | null;
   lotSize: number;
@@ -193,7 +197,7 @@ export class StockOptionsBuyingEngine {
           const client = this.factory.createClient(account);
           const kite = client['kite'];
           this.log(state, `🔍 Symbol is AUTO. Selecting best liquid momentum stock...`);
-          const pick = await autoSelectStock(kite, 1000, 500, this.logger);
+          const pick = await autoSelectStock(kite, 1000, 500, this.logger, state.config.maxCapital);
           state.config.symbol = pick.symbol;
           state.config.exchange = pick.exchange;
           this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol}`);
@@ -332,7 +336,33 @@ export class StockOptionsBuyingEngine {
         const trend = this.getLatestCrossoverToday(n, closedCandles, emas, vwaps);
         if (trend !== null) {
           const side = trend === 'LONG' ? 'CALL' : 'PUT';
-          this.log(state, `✅ High-RVOL Confirmation Passed! Trend Direction: ${side}`);
+
+          // Upgrade: Higher Timeframe (15-Min) Trend Filter
+          if (state.config.enableHtfFilter ?? true) {
+            const htfInterval = state.config.htfTimeframe === '60min' ? '60minute' : '15minute';
+            const htfCandles = await this.fetchCandles(client, state.config.symbol, state.config.exchange, htfInterval);
+            const htfPeriod = state.config.htfEmaPeriod ?? 50;
+
+            if (htfCandles.length >= htfPeriod) {
+              const htfEmas = this.calculateEMA(htfCandles, htfPeriod);
+              const lastHtfClose = htfCandles[htfCandles.length - 1].close;
+              const lastHtfEma = htfEmas[htfEmas.length - 1];
+
+              if (lastHtfEma !== null) {
+                if (side === 'CALL' && lastHtfClose < lastHtfEma) {
+                  this.log(state, `⏳ 15-Min HTF trend check failed: Price (₹${lastHtfClose.toFixed(2)}) < EMA${htfPeriod} (₹${lastHtfEma.toFixed(2)}). Skipping CALL entry.`);
+                  return;
+                }
+                if (side === 'PUT' && lastHtfClose > lastHtfEma) {
+                  this.log(state, `⏳ 15-Min HTF trend check failed: Price (₹${lastHtfClose.toFixed(2)}) > EMA${htfPeriod} (₹${lastHtfEma.toFixed(2)}). Skipping PUT entry.`);
+                  return;
+                }
+                this.log(state, `🌐 15-Min HTF Trend Confirmation Passed! Price: ₹${lastHtfClose.toFixed(2)} vs HTF EMA${htfPeriod}: ₹${lastHtfEma.toFixed(2)}`);
+              }
+            }
+          }
+
+          this.log(state, `✅ High-RVOL & HTF Confirmation Passed! Signal Direction: ${side}`);
           await this.setupBreakoutTrigger(state, client, kite, side, mother.date, mother.low);
         }
       }
@@ -389,17 +419,21 @@ export class StockOptionsBuyingEngine {
         return;
       }
 
-      const targetPrice = this.roundTick(entryPrice + risk * (state.config.riskRewardRatio ?? 2));
+      const target1Price = this.roundTick(entryPrice + risk * (state.config.target1RR ?? 1.5));
+      const target2Price = this.roundTick(entryPrice + risk * (state.config.target2RR ?? 3.0));
       
       // Fetch Lot Size
       const instruments = await client.getInstruments('NFO');
       const optInst = instruments.find((i: any) => i.tradingsymbol === optionSymbol);
       const lotSize = optInst?.lot_size ?? 1;
 
-      // Capital Check
-      const requiredCapital = entryPrice * lotSize * (state.config.lots ?? 1);
-      if (requiredCapital > state.config.maxCapital) {
-        this.log(state, `❌ Capital check failed: 1 lot of ${optionSymbol} needs ₹${requiredCapital.toFixed(2)}, exceeding limit ₹${state.config.maxCapital}`);
+      // Dynamic Capital-Based Lot Check
+      const costPerLot = entryPrice * lotSize;
+      const maxAffordableLots = Math.floor(state.config.maxCapital / costPerLot);
+      const lotsToTrade = Math.min(state.config.lots ?? 1, maxAffordableLots);
+
+      if (lotsToTrade < 1) {
+        this.log(state, `❌ Capital check failed: 1 lot of ${optionSymbol} costs ₹${costPerLot.toFixed(2)}, exceeding your capital limit ₹${state.config.maxCapital}`);
         return;
       }
 
@@ -408,15 +442,19 @@ export class StockOptionsBuyingEngine {
       state.signalSide = side;
       state.entryTriggerPrice = entryPrice;
       state.stopLossPrice = slPrice;
-      state.targetPrice = targetPrice;
+      state.targetPrice = target2Price; // Final 100% ROI target
+      state.target1Price = target1Price; // T1 +50% ROI target
+      state.target2Price = target2Price; // T2 +100% ROI target
+      state.highestPriceReached = entryPrice;
+      state.isT1Reached = false;
       state.lotSize = lotSize;
-      state.positionQty = lotSize * (state.config.lots ?? 1);
+      state.positionQty = lotSize * lotsToTrade;
       state.spotEntryPrice = spotPrice;
       state.spotStopLossPrice = motherSpotLow;
       state.isSlTrailedToCost = false;
 
-      this.log(state, `🎯 Smart Resolved Strike: NFO:${optionSymbol} (${moneyness}, Lot Size: ${lotSize})`);
-      this.log(state, `📋 Entry Trigger: ₹${entryPrice.toFixed(2)} | SL: ₹${slPrice.toFixed(2)} | Target: ₹${targetPrice.toFixed(2)} (RR 1:${state.config.riskRewardRatio})`);
+      this.log(state, `🎯 Smart Resolved Strike: NFO:${optionSymbol} (${moneyness}, Lot Size: ${lotSize}, Lots Allocated: ${lotsToTrade})`);
+      this.log(state, `📋 Entry: ₹${entryPrice.toFixed(2)} | SL: ₹${slPrice.toFixed(2)} | T1 (+50% ROI): ₹${target1Price.toFixed(2)} | T2 (+100% ROI): ₹${target2Price.toFixed(2)} | Total Capital Required: ₹${(costPerLot * lotsToTrade).toFixed(2)}`);
 
       // Upgrade 3: Precision Order Execution with Ask Offset & Timeout
       state.orderPlacedTimestamp = Date.now();
@@ -541,6 +579,9 @@ export class StockOptionsBuyingEngine {
         `👀 ${state.optionSymbol}: ₹${currentPrice.toFixed(2)} | Target: ₹${state.targetPrice.toFixed(2)} | SL: ₹${state.stopLossPrice.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)} | Held: ${heldMinutes}m`,
       );
 
+      // Update highest price peak reached
+      state.highestPriceReached = Math.max(state.highestPriceReached ?? currentPrice, currentPrice);
+
       // Upgrade 4A: Spot Price SL Breach Check
       if (currentSpot && state.spotStopLossPrice) {
         const isSpotBreached = state.signalSide === 'CALL' 
@@ -554,28 +595,42 @@ export class StockOptionsBuyingEngine {
         }
       }
 
-      // Upgrade 4B: Cost-to-Cost Trailing SL when 50% target reached
-      const halfTargetPrice = state.entryTriggerPrice + 0.5 * (state.targetPrice - state.entryTriggerPrice);
-      if (currentPrice >= halfTargetPrice && !state.isSlTrailedToCost && (state.config.enableTrailingSl ?? true)) {
-        state.stopLossPrice = state.entryTriggerPrice;
+      // Upgrade 4B: Target 1 (+50% Gain) -> Trail SL to Cost (Risk-Free) & Dynamic Trailing
+      const t1Price = state.target1Price || (state.entryTriggerPrice + 1.5 * (state.entryTriggerPrice - state.stopLossPrice));
+      const t2Price = state.target2Price || (state.entryTriggerPrice + 3.0 * (state.entryTriggerPrice - state.stopLossPrice));
+
+      if (currentPrice >= t1Price && !state.isT1Reached && (state.config.enableTrailingSl ?? true)) {
+        state.isT1Reached = true;
+        state.stopLossPrice = Math.max(state.stopLossPrice, state.entryTriggerPrice);
         state.isSlTrailedToCost = true;
-        this.log(state, `🛡 50% Target Reached! Trailing Stop-Loss moved to cost (₹${state.entryTriggerPrice.toFixed(2)})`);
+        this.log(state, `🛡 Target 1 (+50% Gain / 1:1.5 RR) Reached at ₹${currentPrice.toFixed(2)}! Trailing SL moved to Cost (₹${state.entryTriggerPrice.toFixed(2)}) — Trade is now 100% RISK-FREE!`);
+      }
+
+      // Dynamic Trailing SL after T1: Trail specified % behind peak price reached
+      if (state.isT1Reached && (state.config.enableTrailingSl ?? true)) {
+        const trailingStepPct = (state.config.trailingStepPct ?? 20) / 100;
+        const dynamicSl = this.roundTick((state.highestPriceReached ?? currentPrice) * (1 - trailingStepPct));
+        if (dynamicSl > state.stopLossPrice) {
+          state.stopLossPrice = dynamicSl;
+          this.log(state, `📈 Dynamic Trailing SL updated to ₹${dynamicSl.toFixed(2)} (Peak Price: ₹${state.highestPriceReached?.toFixed(2)})`);
+        }
       }
 
       // Upgrade 4C: Time-Based Stagnant Position Exit (Default 45 Minutes)
       const maxStagnantTime = state.config.maxStagnantTimeMin ?? 45;
-      if (heldMinutes >= maxStagnantTime && currentPrice < halfTargetPrice) {
+      if (heldMinutes >= maxStagnantTime && !state.isT1Reached) {
         this.log(state, `⏰ Stagnant position held for ${heldMinutes}m (> ${maxStagnantTime}m limit). Exiting to prevent Theta decay.`);
         await this.exitPosition(state, client, currentPrice, 'TIME_EXIT');
         return;
       }
 
-      // Standard SL & Target Checks
+      // Standard SL & Target 2 (+100% ROI) Checks
       if (currentPrice <= state.stopLossPrice) {
-        this.log(state, `🛑 Stop Loss Hit at ₹${currentPrice.toFixed(2)}`);
+        const slReason = state.isT1Reached ? 'Trailing Stop Loss' : 'Stop Loss';
+        this.log(state, `🛑 ${slReason} Hit at ₹${currentPrice.toFixed(2)}`);
         await this.exitPosition(state, client, currentPrice, 'SL');
-      } else if (currentPrice >= state.targetPrice) {
-        this.log(state, `🎯 Target Hit at ₹${currentPrice.toFixed(2)} (RR Ratio: 1:${state.config.riskRewardRatio})`);
+      } else if (currentPrice >= t2Price) {
+        this.log(state, `🎯 Target 2 (+100% ROI / 2x Premium) Hit at ₹${currentPrice.toFixed(2)}! Exiting 1 lot with peak profit!`);
         await this.exitPosition(state, client, currentPrice, 'TARGET');
       }
     } catch (e) {
@@ -823,6 +878,10 @@ export class StockOptionsBuyingEngine {
     state.entryTriggerPrice = null;
     state.stopLossPrice = null;
     state.targetPrice = null;
+    state.target1Price = null;
+    state.target2Price = null;
+    state.highestPriceReached = undefined;
+    state.isT1Reached = undefined;
     state.entryOrderId = null;
     state.entryTime = undefined;
     state.spotEntryPrice = undefined;

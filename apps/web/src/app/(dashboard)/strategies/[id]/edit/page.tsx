@@ -44,10 +44,10 @@ export default function EditStrategyPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
-  
+
   const [form, setForm] = useState({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "",
+    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "STOCK_OPTIONS_BUYING" | "",
     symbol: "",
     exchange: "NSE",
     instrumentType: "INDEX" as "INDEX" | "STOCK" | "OPTION" | "FUTURE",
@@ -61,23 +61,7 @@ export default function EditStrategyPage() {
     // EMA-VWAP crossover
     emaPeriod: "15",
     isOptionBuyingOnly: true,
-    // EMA-RSI Options
-    emaFast: "9",
-    emaSlow: "21",
-    rsiPeriod: "14",
-    rsiEntryMin: "45",
-    rsiEntryMax: "65",
-    optionLots: "1",
-    targetPct: "45",
-    slPct: "25",
     startAfterMin: "25",
-    // Daily Scalper
-    dsCapital: "20000",
-    dsDailyTargetRs: "500",
-    dsDailyMaxLossRs: "800",
-    dsTargetPoints: "",
-    dsStopLossPoints: "",
-    dsMaxTradesPerDay: "2",
     // Stock Options Buying
     sTimeframe: "15min",
     sEmaPeriod: "15",
@@ -85,6 +69,13 @@ export default function EditStrategyPage() {
     sMaxCapital: "25000",
     sTriggerOffset: "0.50",
     sProtectionBufferPct: "10",
+    sMinRvol: "1.5",
+    sMoneyness: "ITM",
+    sTarget1RR: "1.5",
+    sTarget2RR: "3.0",
+    sEnableTrailingSl: true,
+    sTrailingStepPct: "20",
+    sEnableHtfFilter: true,
     // Broker
     brokerAccountId: "",
   });
@@ -96,13 +87,13 @@ export default function EditStrategyPage() {
           strategyApi.get(id),
           brokerApi.list()
         ]);
-        
+
         const strategy = stratRes.data.data;
         const config = strategy.config || {};
         const brokerList = brokerRes.data?.data ?? [];
-        
+
         setBrokers(brokerList);
-        
+
         setForm({
           name: strategy.name,
           type: strategy.type,
@@ -119,23 +110,7 @@ export default function EditStrategyPage() {
           // EMA-VWAP crossover
           emaPeriod: String(config.emaPeriod || "15"),
           isOptionBuyingOnly: config.isOptionBuyingOnly !== false,
-          // EMA-RSI Options
-          emaFast: String(config.emaFast || "9"),
-          emaSlow: String(config.emaSlow || "21"),
-          rsiPeriod: String(config.rsiPeriod || "14"),
-          rsiEntryMin: String(config.rsiEntryMin || "45"),
-          rsiEntryMax: String(config.rsiEntryMax || "65"),
-          optionLots: String(config.lots || "1"),
-          targetPct: String(config.targetPct || "45"),
-          slPct: String(config.slPct || "25"),
           startAfterMin: String(config.startAfterMin || "25"),
-          // Daily Scalper
-          dsCapital: String(config.capital || "20000"),
-          dsDailyTargetRs: String(config.dailyTargetRs || "500"),
-          dsDailyMaxLossRs: String(config.dailyMaxLossRs || "800"),
-          dsTargetPoints: String(config.targetPoints || ""),
-          dsStopLossPoints: String(config.stopLossPoints || ""),
-          dsMaxTradesPerDay: String(config.maxTradesPerDay || "2"),
           // Stock Options Buying
           sTimeframe: config.timeframe || "15min",
           sEmaPeriod: String(config.emaPeriod || "15"),
@@ -143,6 +118,13 @@ export default function EditStrategyPage() {
           sMaxCapital: String(config.maxCapital || "25000"),
           sTriggerOffset: String(config.triggerOffset || "0.50"),
           sProtectionBufferPct: String(config.protectionBufferPct || "10"),
+          sMinRvol: String(config.minRvol || "1.5"),
+          sMoneyness: config.moneyness || "ITM",
+          sTarget1RR: String(config.target1RR || "1.5"),
+          sTarget2RR: String(config.target2RR || "3.0"),
+          sEnableTrailingSl: config.enableTrailingSl !== false,
+          sTrailingStepPct: String(config.trailingStepPct || "20"),
+          sEnableHtfFilter: config.enableHtfFilter !== false,
           brokerAccountId: strategy.brokerAccountId || "",
         });
       } catch (err) {
@@ -166,19 +148,7 @@ export default function EditStrategyPage() {
       const qty = Number(form.lots) * lotSize;
 
       let config: any;
-      if (form.type === "DAILY_SCALPER") {
-        config = {
-          symbol: form.symbol.trim(), exchange: form.exchange,
-          lots: Number(form.lots),
-          product: form.product,
-          capital: Number(form.dsCapital),
-          dailyTargetRs: Number(form.dsDailyTargetRs),
-          dailyMaxLossRs: Number(form.dsDailyMaxLossRs),
-          ...(form.dsTargetPoints && { targetPoints: Number(form.dsTargetPoints) }),
-          ...(form.dsStopLossPoints && { stopLossPoints: Number(form.dsStopLossPoints) }),
-          maxTradesPerDay: Number(form.dsMaxTradesPerDay),
-        };
-      } else if (form.type === "STOCK_OPTIONS_BUYING") {
+      if (form.type === "STOCK_OPTIONS_BUYING") {
         config = {
           symbol: form.symbol.trim(),
           exchange: "NSE",
@@ -192,6 +162,13 @@ export default function EditStrategyPage() {
           startAfterMin: Number(form.startAfterMin || 25),
           triggerOffset: Number(form.sTriggerOffset),
           protectionBufferPct: Number(form.sProtectionBufferPct),
+          minRvol: Number(form.sMinRvol || 1.5),
+          moneyness: form.sMoneyness || "ITM",
+          target1RR: Number(form.sTarget1RR || 1.5),
+          target2RR: Number(form.sTarget2RR || 3.0),
+          enableTrailingSl: form.sEnableTrailingSl,
+          trailingStepPct: Number(form.sTrailingStepPct || 20),
+          enableHtfFilter: form.sEnableHtfFilter,
         };
       } else if (form.type === "BREAKOUT_15MIN") {
         config = {
@@ -203,18 +180,6 @@ export default function EditStrategyPage() {
           ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
             minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
           }),
-        };
-      } else if (form.type === "EMA_RSI_OPTIONS") {
-        config = {
-          symbol: form.symbol.trim(), exchange: form.exchange,
-          instrumentType: form.instrumentType,
-          emaFast: Number(form.emaFast), emaSlow: Number(form.emaSlow),
-          rsiPeriod: Number(form.rsiPeriod),
-          rsiEntryMin: Number(form.rsiEntryMin), rsiEntryMax: Number(form.rsiEntryMax),
-          lots: Number(form.lots), qty,
-          stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
-          maxTradesPerDay: Number(form.maxTradesPerDay),
-          product: form.product, startAfterMin: Number(form.startAfterMin),
         };
       } else {
         config = {
@@ -254,8 +219,6 @@ export default function EditStrategyPage() {
   }
 
   const is15Min = form.type === "BREAKOUT_15MIN";
-  const isDailyScalper = form.type === "DAILY_SCALPER";
-  const isEmaRsi = form.type === "EMA_RSI_OPTIONS";
   const isEmaVwap = form.type === "EMA_VWAP_CROSSOVER";
   const isStockOptionsBuying = form.type === "STOCK_OPTIONS_BUYING";
 
@@ -395,34 +358,7 @@ export default function EditStrategyPage() {
             </div>
           )}
 
-          {isEmaRsi && (
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs font-semibold mb-1 block">EMA Fast</label>
-                <Input type="number" value={form.emaFast} onChange={e => set("emaFast", e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold mb-1 block">EMA Slow</label>
-                <Input type="number" value={form.emaSlow} onChange={e => set("emaSlow", e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold mb-1 block">RSI Period</label>
-                <Input type="number" value={form.rsiPeriod} onChange={e => set("rsiPeriod", e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold mb-1 block">RSI Min (Long)</label>
-                <Input type="number" value={form.rsiEntryMin} onChange={e => set("rsiEntryMin", e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold mb-1 block">RSI Max (Long)</label>
-                <Input type="number" value={form.rsiEntryMax} onChange={e => set("rsiEntryMax", e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold mb-1 block">Skip first (min)</label>
-                <Input type="number" value={form.startAfterMin} onChange={e => set("startAfterMin", e.target.value)} />
-              </div>
-            </div>
-          )}
+
 
           {isStockOptionsBuying && (
             <div className="space-y-4">
@@ -444,86 +380,6 @@ export default function EditStrategyPage() {
                 </div>
               </div>
             </div>
-          )}
-
-          {isDailyScalper && (
-            <div>
-              <label className="text-sm font-semibold mb-2 block">Available Capital (₹)</label>
-              <Input
-                type="number"
-                min={5000}
-                value={form.dsCapital}
-                onChange={(e) => set("dsCapital", e.target.value)}
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Risk & Execution</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isDailyScalper && (
-            <>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                    <Target className="h-4 w-4 text-emerald-500" />
-                    Daily Target Profit (₹)
-                  </label>
-                  <Input
-                    type="number"
-                    value={form.dsDailyTargetRs}
-                    onChange={(e) => set("dsDailyTargetRs", e.target.value)}
-                    className="border-emerald-200 focus:ring-emerald-300 font-semibold"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                    <Shield className="h-4 w-4 text-red-500" />
-                    Daily Max Loss (₹)
-                  </label>
-                  <Input
-                    type="number"
-                    value={form.dsDailyMaxLossRs}
-                    onChange={(e) => set("dsDailyMaxLossRs", e.target.value)}
-                    className="border-red-200 focus:ring-red-300 font-semibold"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-semibold mb-2 block">Override Target Points</label>
-                  <Input
-                    type="number"
-                    placeholder="Default"
-                    value={form.dsTargetPoints}
-                    onChange={(e) => set("dsTargetPoints", e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-semibold mb-2 block">Override SL Points</label>
-                  <Input
-                    type="number"
-                    placeholder="Default"
-                    value={form.dsStopLossPoints}
-                    onChange={(e) => set("dsStopLossPoints", e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold mb-2 block">Max Trades / Day</label>
-                <Input
-                  type="number"
-                  value={form.dsMaxTradesPerDay}
-                  onChange={(e) => set("dsMaxTradesPerDay", e.target.value)}
-                />
-              </div>
-            </>
           )}
 
           {isStockOptionsBuying && (
@@ -549,25 +405,85 @@ export default function EditStrategyPage() {
                     className="border-red-200 focus:ring-red-300 font-semibold"
                   />
                   <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                    Failsafe: Skips trade if 1 lot exceeds this capital (e.g. 25000).
+                    Failsafe: Skips trade if 1 lot exceeds this capital (e.g. 20000).
                   </p>
                 </div>
                 <div>
                   <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                     <Target className="h-4 w-4 text-green-500" />
-                    Risk-Reward Ratio (e.g. 2 for 1:2)
+                    Option Strike Type (Moneyness)
                   </label>
+                  <select
+                    value={form.sMoneyness}
+                    onChange={(e) => set("sMoneyness", e.target.value)}
+                    className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)] font-semibold text-green-700"
+                  >
+                    <option value="ITM">In The Money (High Delta ~0.60, Lower Decay)</option>
+                    <option value="ATM">At The Money (ATM Strike)</option>
+                  </select>
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                    ITM provides higher sensitivity to spot price moves.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Target 1 RR (+50% ROI Target)</label>
                   <Input
                     type="number"
-                    min={0.5}
-                    step={0.5}
-                    value={form.sRiskRewardRatio}
-                    onChange={(e) => set("sRiskRewardRatio", e.target.value)}
-                    className="border-green-200 focus:ring-green-300 font-semibold"
+                    step={0.1}
+                    value={form.sTarget1RR}
+                    onChange={(e) => set("sTarget1RR", e.target.value)}
                   />
-                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                    If risk is ₹1.50 and RR is 2, Target is ₹3.00 profit.
-                  </p>
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">1:1.5 RR (Moves SL to Cost for 100% Risk-Free trade)</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Target 2 RR (+100% ROI Target)</label>
+                  <Input
+                    type="number"
+                    step={0.1}
+                    value={form.sTarget2RR}
+                    onChange={(e) => set("sTarget2RR", e.target.value)}
+                  />
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">1:3.0 RR (Exits 1 lot at 2x option premium gain)</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Min Relative Volume (RVOL)</label>
+                  <Input
+                    type="number"
+                    step={0.1}
+                    value={form.sMinRvol}
+                    onChange={(e) => set("sMinRvol", e.target.value)}
+                  />
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Minimum volume spike (e.g. 1.5x of 20 SMA)</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">15-Min HTF Trend Filter</label>
+                  <select
+                    value={String(form.sEnableHtfFilter)}
+                    onChange={(e) => set("sEnableHtfFilter", e.target.value === "true")}
+                    className="flex h-9 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                  >
+                    <option value="true">Enabled (15-min 50 EMA)</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Confirms 15-min trend before breakout</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Trailing SL (Cost @ T1)</label>
+                  <select
+                    value={String(form.sEnableTrailingSl)}
+                    onChange={(e) => set("sEnableTrailingSl", e.target.value === "true")}
+                    className="flex h-9 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                  >
+                    <option value="true">Enabled (Trail 20% behind peak)</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Trails SL as option price doubles</p>
                 </div>
               </div>
 
@@ -605,7 +521,7 @@ export default function EditStrategyPage() {
             </>
           )}
 
-          {!isDailyScalper && !isStockOptionsBuying && (
+          {!isStockOptionsBuying && (
             <>
               {((is15Min && (form.instrumentType === "INDEX" || form.instrumentType === "OPTION")) || (isEmaVwap && form.isOptionBuyingOnly)) && (
                 <div className="grid grid-cols-2 gap-4">
@@ -672,9 +588,9 @@ export default function EditStrategyPage() {
         <Link href={`/strategies/${id}`}>
           <Button variant="outline">Cancel</Button>
         </Link>
-        <Button 
-          variant="success" 
-          onClick={handleSubmit} 
+        <Button
+          variant="success"
+          onClick={handleSubmit}
           disabled={submitting}
         >
           {submitting ? (

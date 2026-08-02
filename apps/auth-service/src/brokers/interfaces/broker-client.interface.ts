@@ -40,7 +40,10 @@ export interface OrderParams {
   qty: number;
   price?: number;
   triggerPrice?: number;
-  variety?: 'regular' | 'amo' | 'bo' | 'co';
+  variety?: string;
+  validity?: string;
+  disclosedQty?: number;
+  tag?: string;
 }
 
 export interface IBrokerClient {

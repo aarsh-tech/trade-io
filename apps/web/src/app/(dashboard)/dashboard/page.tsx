@@ -8,7 +8,10 @@ import {
   ArrowUpCircle,
   PieChart as PieChartIcon,
   Loader2,
-  Zap
+  Zap,
+  ChevronUp,
+  ChevronDown,
+  MoreVertical
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -17,6 +20,7 @@ import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import { useDashboard } from "@/hooks/useDashboard";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { useBrokers } from "@/hooks/useBrokers";
+import { useMarketData } from "@/hooks/use-market-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -98,9 +102,17 @@ function useMarketStatus() {
 }
 
 export default function DashboardPage() {
-  const { isLoading: isDashboardLoading } = useDashboard();
+  const { movers, isLoading: isDashboardLoading } = useDashboard();
   const { brokers } = useBrokers();
   const marketStatus = useMarketStatus();
+
+  const moverSymbols = useMemo(() => {
+    const gainers = (movers?.topGainers || []).map((g: any) => g.symbol);
+    const losers = (movers?.topLosers || []).map((l: any) => l.symbol);
+    return [...gainers, ...losers];
+  }, [movers]);
+
+  const { prices } = useMarketData(moverSymbols);
 
   const [showRenewModal, setShowRenewModal] = useState(false);
   const [requestToken, setRequestToken] = useState("");
@@ -297,90 +309,105 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        {/* Holdings Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card className="lg:col-span-3 shadow-sm border-slate-100 overflow-hidden">
-            <CardHeader className="pb-2 border-b border-slate-50">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-bold text-slate-600 flex items-center gap-2">
-                  <PieChartIcon className="h-4 w-4" />
-                  Holdings ({holdings.length})
-                </CardTitle>
-                <div className="flex gap-4">
-                  <div className="flex items-center gap-1.5">
-                    <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current value</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Invested</span>
-                  </div>
+        {/* Top Gainers & Top Losers Section (Exact Zerodha Kite Style) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Top Gainers Card */}
+          <div className="bg-white border border-slate-200/80 rounded-xl p-5 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-semibold text-slate-800 tracking-tight">Top Gainers</h3>
+                  <span className="text-[11px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                    Nifty 500
+                  </span>
                 </div>
+                <button className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-md">
+                  <MoreVertical className="h-4 w-4" />
+                </button>
               </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="grid grid-cols-1 md:grid-cols-4 items-center">
-                <div className="p-8 md:col-span-2 border-r border-slate-50 flex flex-col justify-center">
-                  <div className="flex items-baseline gap-2">
-                    <span className={cn(
-                      "text-5xl font-black tracking-tighter",
-                      stats.pnl >= 0 ? "text-emerald-500" : "text-orange-600"
-                    )}>
-                      {stats.pnl >= 0 ? "" : "-"}₹{Math.abs(stats.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                    </span>
-                    <span className={cn(
-                      "text-lg font-bold",
-                      stats.pnl >= 0 ? "text-emerald-400" : "text-orange-400"
-                    )}>
-                      {stats.pnl >= 0 ? "+" : ""}{stats.pnlPercent.toFixed(2)}%
-                    </span>
-                  </div>
-                  <span className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-1">Total P&L</span>
 
-                  {/* Allocation Bar */}
-                  <div className="mt-8">
-                    <div className="h-8 w-full rounded-md bg-slate-100 overflow-hidden flex shadow-inner">
-                      {allocationData.map((item, idx) => (
-                        <div
-                          key={item.symbol}
-                          style={{
-                            width: `${(item.value / stats.currentValue) * 100}%`,
-                            backgroundColor: item.color
-                          }}
-                          className="h-full hover:brightness-110 transition-all cursor-help"
-                          title={`${item.symbol}: ${((item.value / stats.currentValue) * 100).toFixed(1)}%`}
-                        />
-                      ))}
-                    </div>
-                    <div className="flex justify-between items-center mt-3">
-                      <span className="text-xs font-black text-slate-700">₹{stats.currentValue.toLocaleString('en-IN')}</span>
-                      <div className="flex gap-4 text-[10px] font-bold text-slate-400">
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input type="radio" name="view" defaultChecked className="h-2 w-2 accent-blue-600" /> Current value
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input type="radio" name="view" className="h-2 w-2 accent-blue-600" /> Invested
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input type="radio" name="view" className="h-2 w-2 accent-blue-600" /> P&L
-                        </label>
+              <div className="divide-y divide-slate-100">
+                {(movers?.topGainers || []).slice(0, 8).map((item: any) => {
+                  const livePrice = prices[item.symbol] || item.ltp;
+                  const liveChangePct = item.changePercent;
+                  return (
+                    <div
+                      key={item.symbol}
+                      onClick={() => setOrderState({ isOpen: true, type: 'BUY', symbol: item.symbol, ltp: livePrice })}
+                      className="py-2.5 flex items-center justify-between hover:bg-slate-50/80 px-2 -mx-2 rounded-lg transition-colors cursor-pointer group"
+                    >
+                      <div>
+                        <div className="font-semibold text-slate-800 text-[13.5px] uppercase tracking-tight group-hover:text-blue-600 transition-colors">
+                          {item.symbol}
+                        </div>
+                        <div className="text-[10.5px] font-semibold text-slate-400 uppercase tracking-wider mt-0.5">
+                          {item.exchange || 'NSE'}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[13.5px] font-semibold text-emerald-600 tracking-tight">
+                          {livePrice ? livePrice.toFixed(2) : '0.00'}
+                        </div>
+                        <div className="text-[11.5px] font-medium text-emerald-600 flex items-center justify-end gap-0.5 mt-0.5">
+                          <ChevronUp className="h-3 w-3 stroke-[2.5]" />
+                          {Math.abs(liveChangePct || 0).toFixed(2)}%
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-
-                <div className="p-8 flex flex-col items-center justify-center gap-2 border-r border-slate-50 h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Current value</span>
-                  <span className="text-xl font-black text-slate-800 tracking-tight">₹{(stats.currentValue / 1000).toFixed(2)}k</span>
-                </div>
-
-                <div className="p-8 flex flex-col items-center justify-center gap-2 h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Investment</span>
-                  <span className="text-xl font-black text-slate-800 tracking-tight">₹{(stats.totalInvestment / 1000).toFixed(2)}k</span>
-                </div>
+                  );
+                })}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
+
+          {/* Top Losers Card */}
+          <div className="bg-white border border-slate-200/80 rounded-xl p-5 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-semibold text-slate-800 tracking-tight">Top Losers</h3>
+                  <span className="text-[11px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                    Nifty 500
+                  </span>
+                </div>
+                <button className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-md">
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="divide-y divide-slate-100">
+                {(movers?.topLosers || []).slice(0, 8).map((item: any) => {
+                  const livePrice = prices[item.symbol] || item.ltp;
+                  const liveChangePct = item.changePercent;
+                  return (
+                    <div
+                      key={item.symbol}
+                      onClick={() => setOrderState({ isOpen: true, type: 'BUY', symbol: item.symbol, ltp: livePrice })}
+                      className="py-2.5 flex items-center justify-between hover:bg-slate-50/80 px-2 -mx-2 rounded-lg transition-colors cursor-pointer group"
+                    >
+                      <div>
+                        <div className="font-semibold text-slate-800 text-[13.5px] uppercase tracking-tight group-hover:text-blue-600 transition-colors">
+                          {item.symbol}
+                        </div>
+                        <div className="text-[10.5px] font-semibold text-slate-400 uppercase tracking-wider mt-0.5">
+                          {item.exchange || 'NSE'}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[13.5px] font-semibold text-rose-500 tracking-tight">
+                          {livePrice ? livePrice.toFixed(2) : '0.00'}
+                        </div>
+                        <div className="text-[11.5px] font-medium text-rose-500 flex items-center justify-end gap-0.5 mt-0.5">
+                          <ChevronDown className="h-3 w-3 stroke-[2.5]" />
+                          -{Math.abs(liveChangePct || 0).toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
 
 

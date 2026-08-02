@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Info, Settings, ChevronDown, RotateCcw, Plus } from "lucide-react";
+import { Settings, ChevronDown, ChevronUp, RotateCcw, Plus, Minus, Loader2, Info, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -20,36 +20,78 @@ interface OrderWindowProps {
   onTypeChange?: (type: 'BUY' | 'SELL') => void;
 }
 
-export function OrderWindow({ isOpen, onClose, symbol, type, ltp, availableMargin, brokerId, onTypeChange }: OrderWindowProps) {
-  const [product, setProduct] = useState<'MIS' | 'CNC'>('MIS');
-  const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT' | 'SL' | 'SL-M'>('LIMIT');
+type TabType = 'Regular' | 'Cover' | 'AMO' | 'Iceberg';
+type ProductType = 'MIS' | 'CNC';
+type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SL-M';
+type ValidityType = 'DAY' | 'IOC' | 'TTL';
+
+export function OrderWindow({
+  isOpen,
+  onClose,
+  symbol,
+  type,
+  ltp,
+  availableMargin,
+  brokerId,
+  onTypeChange,
+}: OrderWindowProps) {
+  const [product, setProduct] = useState<ProductType>('MIS');
+  const [orderType, setOrderType] = useState<OrderType>('LIMIT');
   const [qty, setQty] = useState(1);
   const [price, setPrice] = useState(ltp);
   const [triggerPrice, setTriggerPrice] = useState(0);
-  const [activeTab, setActiveTab] = useState('Regular');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>('Regular');
   const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
 
+  // Advanced options state
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [validity, setValidity] = useState<ValidityType>('DAY');
+  const [disclosedQty, setDisclosedQty] = useState(0);
+  const [orderTag, setOrderTag] = useState('');
+  const [ttlMinutes, setTtlMinutes] = useState(2);
+
+  // Settings popover state
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Loading & refresh state
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRefreshingMargin, setIsRefreshingMargin] = useState(false);
+
   useEffect(() => {
-    setPrice(ltp);
+    if (ltp > 0) {
+      setPrice(Number(ltp.toFixed(2)));
+    }
   }, [ltp, isOpen]);
+
+  useEffect(() => {
+    // Reset trigger price when order type changes
+    if (orderType === 'MARKET') {
+      setPrice(ltp);
+    }
+  }, [orderType, ltp]);
 
   if (!isOpen) return null;
 
   const isBuy = type === 'BUY';
-  const themeColor = isBuy ? '#448aff' : '#ff5722';
+  // Exact Zerodha Kite colors: #4184f3 for Buy, #ff5722 for Sell
+  const themeColor = isBuy ? '#4184f3' : '#ff5722';
+  const themeHover = isBuy ? '#3371dc' : '#ea4c19';
 
+  // Margin calculation (approximate 5x leverage for MIS)
+  const effectivePrice = orderType === 'MARKET' ? ltp : price;
   const marginRequired = product === 'MIS'
-    ? ((orderType === 'MARKET' ? ltp : price) * qty) / 5
-    : ((orderType === 'MARKET' ? ltp : price) * qty);
+    ? (effectivePrice * qty) / 5
+    : (effectivePrice * qty);
 
   const handlePlaceOrder = async () => {
     if (!brokerId) {
       toast.error("No active broker selected");
       return;
     }
+
     try {
       setIsSubmitting(true);
+      const variety = activeTab === 'AMO' ? 'amo' : activeTab === 'Cover' ? 'co' : activeTab === 'Iceberg' ? 'iceberg' : 'regular';
       await brokerApi.placeOrder(brokerId, {
         symbol,
         exchange,
@@ -59,8 +101,13 @@ export function OrderWindow({ isOpen, onClose, symbol, type, ltp, availableMargi
         qty: qty,
         price: orderType === 'MARKET' ? 0 : price,
         triggerPrice: orderType.startsWith('SL') ? triggerPrice : 0,
+        variety,
+        validity,
+        disclosedQty,
+        tag: orderTag || undefined,
       });
-      // toast.success(`Order placed for ${qty} ${symbol}`);
+
+      toast.success(`${activeTab === 'AMO' ? 'AMO' : type} order placed for ${qty} ${symbol}`);
       onClose();
     } catch (error: any) {
       toast.error(error?.response?.data?.message || "Failed to place order");
@@ -69,214 +116,500 @@ export function OrderWindow({ isOpen, onClose, symbol, type, ltp, availableMargi
     }
   };
 
+  const handleRefreshMargin = () => {
+    setIsRefreshingMargin(true);
+    setTimeout(() => setIsRefreshingMargin(false), 400);
+  };
+
   return (
     <AnimatePresence>
       <motion.div
         drag
         dragMomentum={false}
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        dragConstraints={{ left: -400, right: 400, top: -200, bottom: 400 }}
+        initial={{ opacity: 0, scale: 0.96, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="fixed z-[100] w-[450px] bg-white rounded-md shadow-2xl border border-slate-200 overflow-hidden font-sans select-none"
-        style={{ left: '40%', top: '25%' }}
+        exit={{ opacity: 0, scale: 0.96, y: 15 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
+        className="fixed z-[1000] w-[460px] bg-white rounded-md shadow-2xl border border-slate-200 overflow-hidden font-sans select-none"
+        style={{ left: 'calc(50% - 230px)', top: '20%' }}
       >
-        {/* Header */}
+        {/* ─── HEADER ─── */}
         <div
-          className={cn(
-            "px-4 py-3 flex items-center justify-between text-white",
-            isBuy ? "bg-[#448aff]" : "bg-[#ff5722]"
-          )}
+          className="px-5 py-3.5 flex items-center justify-between text-white transition-colors duration-200 cursor-move"
+          style={{ backgroundColor: themeColor }}
         >
-          <div className="flex flex-col">
+          <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              <span className="font-bold text-sm uppercase">{isBuy ? 'Buy' : 'Sell'} {symbol}</span>
-              <span className="text-[10px] font-medium px-1 bg-white/20 rounded-sm">x {qty}</span>
+              <span className="font-bold text-[15px] uppercase tracking-wide">
+                {isBuy ? 'BUY' : 'SELL'} {symbol}
+              </span>
+              <span className="text-[11px] font-semibold px-1.5 py-0.5 bg-white/20 rounded text-white">
+                x {qty}
+              </span>
             </div>
-            <div className="flex items-center gap-3 text-[11px] mt-1 text-white/90">
-              <div
-                className={cn("flex items-center gap-1 cursor-pointer transition-opacity", exchange === 'BSE' ? "opacity-100 font-bold" : "opacity-60")}
+            <div className="flex items-center gap-4 text-[11px] text-white/90 font-medium">
+              <label
+                className="flex items-center gap-1.5 cursor-pointer hover:opacity-100 transition-opacity"
                 onClick={() => setExchange('BSE')}
               >
-                <div className={cn("h-1.5 w-1.5 rounded-full", exchange === 'BSE' ? "bg-white" : "bg-white/40")} />
-                <span>BSE ₹{ltp.toLocaleString('en-IN')}</span>
-              </div>
-              <div
-                className={cn("flex items-center gap-1 cursor-pointer transition-opacity", exchange === 'NSE' ? "opacity-100 font-bold" : "opacity-60")}
+                <div className={cn(
+                  "h-2 w-2 rounded-full transition-all",
+                  exchange === 'BSE' ? "bg-white ring-2 ring-white/40" : "bg-white/40 border border-white/60"
+                )} />
+                <span className={exchange === 'BSE' ? 'font-bold text-white' : 'text-white/80'}>
+                  BSE ₹{ltp > 0 ? ltp.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '0.00'}
+                </span>
+              </label>
+
+              <label
+                className="flex items-center gap-1.5 cursor-pointer hover:opacity-100 transition-opacity"
                 onClick={() => setExchange('NSE')}
               >
-                <div className={cn("h-1.5 w-1.5 rounded-full", exchange === 'NSE' ? "bg-white" : "bg-white/40")} />
-                <span>NSE ₹{ltp.toLocaleString('en-IN')}</span>
-              </div>
+                <div className={cn(
+                  "h-2 w-2 rounded-full transition-all",
+                  exchange === 'NSE' ? "bg-white ring-2 ring-white/40" : "bg-white/40 border border-white/60"
+                )} />
+                <span className={exchange === 'NSE' ? 'font-bold text-white' : 'text-white/80'}>
+                  NSE ₹{ltp > 0 ? ltp.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '0.00'}
+                </span>
+              </label>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Toggle Switch (BUY / SELL) */}
+          <div className="flex items-center gap-3">
             <div
-              className="h-5 w-9 bg-white/20 rounded-full relative cursor-pointer shadow-inner"
+              className="w-11 h-6 bg-white/30 rounded-full relative cursor-pointer p-0.5 transition-colors shadow-inner flex items-center"
+              title={`Switch to ${isBuy ? 'SELL' : 'BUY'}`}
               onClick={() => onTypeChange?.(isBuy ? 'SELL' : 'BUY')}
             >
-              <div className={cn(
-                "absolute top-0.5 h-4 w-4 bg-white rounded-full transition-all duration-200 shadow-sm",
-                isBuy ? "left-0.5" : "left-[18px]"
-              )} />
+              <motion.div
+                layout
+                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                className={cn(
+                  "h-5 w-5 bg-white rounded-full shadow-md",
+                  isBuy ? "translate-x-0" : "translate-x-5"
+                )}
+              />
             </div>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-slate-100 bg-slate-50/50">
-          {['Regular', 'Cover', 'AMO', 'Iceberg'].map((tab) => (
-            <div
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={cn(
-                "px-4 py-2.5 text-[11px] font-bold cursor-pointer border-b-2 transition-colors",
-                activeTab === tab ? "border-[#448aff] text-[#448aff]" : "border-transparent text-slate-400 hover:text-slate-600"
-              )}
-              style={{ borderBottomColor: activeTab === tab ? themeColor : 'transparent', color: activeTab === tab ? themeColor : undefined }}
+        {/* ─── TABS BAR ─── */}
+        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-1">
+          <div className="flex items-center">
+            {(['Regular', 'Cover', 'AMO', 'Iceberg'] as TabType[]).map((tab) => {
+              const isActive = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={cn(
+                    "px-4 py-2.5 text-[12px] font-semibold cursor-pointer border-b-2 transition-all relative",
+                    isActive ? "text-[#333]" : "text-slate-500 hover:text-slate-800 border-transparent"
+                  )}
+                  style={{
+                    borderBottomColor: isActive ? themeColor : 'transparent',
+                    color: isActive ? themeColor : undefined,
+                  }}
+                >
+                  {tab}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="relative pr-3">
+            <button
+              type="button"
+              onClick={() => setShowSettings(!showSettings)}
+              className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+              title="Order Window Preferences"
             >
-              {tab}
-            </div>
-          ))}
-          <div className="flex-1" />
-          <div className="flex items-center px-4 text-slate-300">
-            <Settings className="h-3.5 w-3.5 hover:text-slate-500 cursor-pointer" />
+              <Settings className="h-4 w-4" />
+            </button>
+
+            {/* Settings Popover */}
+            <AnimatePresence>
+              {showSettings && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -5, scale: 0.95 }}
+                  className="absolute right-0 top-8 z-50 w-56 bg-white border border-slate-200 rounded shadow-lg p-3 text-xs space-y-2 text-slate-700"
+                >
+                  <div className="flex items-center justify-between font-bold border-b pb-1 text-slate-800">
+                    <span>Order Preferences</span>
+                    <X className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" onClick={() => setShowSettings(false)} />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-slate-400">Default Product</span>
+                    <select
+                      value={product}
+                      onChange={(e) => setProduct(e.target.value as ProductType)}
+                      className="w-full border rounded px-2 py-1 bg-slate-50 text-xs"
+                    >
+                      <option value="MIS">Intraday (MIS)</option>
+                      <option value="CNC">Longterm (CNC)</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-slate-400">Default Order Type</span>
+                    <select
+                      value={orderType}
+                      onChange={(e) => setOrderType(e.target.value as OrderType)}
+                      className="w-full border rounded px-2 py-1 bg-slate-50 text-xs"
+                    >
+                      <option value="LIMIT">Limit</option>
+                      <option value="MARKET">Market</option>
+                      <option value="SL">SL</option>
+                      <option value="SL-M">SL-M</option>
+                    </select>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
-        {/* Form Body */}
-        <div className="p-6 space-y-6">
-          {/* Product Selector */}
+        {/* ─── FORM BODY ─── */}
+        <div className="p-5 space-y-5">
+          {/* Product Type Selector */}
           <div className="flex items-center gap-8">
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <div className={cn(
-                "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                product === 'MIS' ? "border-[#448aff]" : "border-slate-300 group-hover:border-slate-400"
-              )} style={{ borderColor: product === 'MIS' ? themeColor : undefined }}>
-                {product === 'MIS' && <div className="h-2 w-2 rounded-full" style={{ backgroundColor: themeColor }} />}
-              </div>
-              <input type="radio" className="hidden" checked={product === 'MIS'} onChange={() => setProduct('MIS')} />
-              <span className={cn("text-[12px] font-medium", product === 'MIS' ? "text-slate-700" : "text-slate-500")}>Intraday <span className="text-[10px] text-slate-400 uppercase ml-1">MIS</span></span>
-            </label>
-
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <div className={cn(
-                "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                product === 'CNC' ? "border-[#448aff]" : "border-slate-300 group-hover:border-slate-400"
-              )} style={{ borderColor: product === 'CNC' ? themeColor : undefined }}>
-                {product === 'CNC' && <div className="h-2 w-2 rounded-full" style={{ backgroundColor: themeColor }} />}
-              </div>
-              <input type="radio" className="hidden" checked={product === 'CNC'} onChange={() => setProduct('CNC')} />
-              <span className={cn("text-[12px] font-medium", product === 'CNC' ? "text-slate-700" : "text-slate-500")}>Longterm <span className="text-[10px] text-slate-400 uppercase ml-1">CNC</span></span>
-            </label>
-          </div>
-
-          {/* Inputs Row */}
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase">Qty.</label>
-              <div className="relative group">
-                <Input
-                  type="number"
-                  value={qty}
-                  onChange={(e) => setQty(Number(e.target.value))}
-                  className="h-10 text-[13px] font-bold focus-visible:ring-1 focus-visible:ring-slate-200 border-slate-200 pr-8"
-                />
-                <div className="absolute right-0 top-0 bottom-0 flex flex-col border-l border-slate-200 overflow-hidden rounded-r-md">
-                  <div
-                    className="flex-1 px-1.5 hover:bg-slate-50 cursor-pointer flex items-center justify-center select-none"
-                    onClick={() => setQty(prev => prev + 1)}
-                  >
-                    <Plus className="h-2 w-2" />
-                  </div>
-                  <div
-                    className="flex-1 px-1.5 border-t border-slate-200 hover:bg-slate-50 cursor-pointer flex items-center justify-center select-none"
-                    onClick={() => setQty(prev => Math.max(1, prev - 1))}
-                  >
-                    -
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase">Price</label>
-              <Input
-                type="number"
-                step="0.05"
-                value={price}
-                disabled={orderType === 'MARKET'}
-                onChange={(e) => setPrice(Number(e.target.value))}
-                className="h-10 text-[13px] font-bold focus-visible:ring-1 focus-visible:ring-slate-200 border-slate-200 disabled:bg-slate-50 disabled:text-slate-300"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase">Trigger price</label>
-              <Input
-                type="number"
-                step="0.05"
-                value={triggerPrice}
-                disabled={!orderType.startsWith('SL')}
-                onChange={(e) => setTriggerPrice(Number(e.target.value))}
-                className="h-10 text-[13px] font-bold focus-visible:ring-1 focus-visible:ring-slate-200 border-slate-200 disabled:bg-slate-50 disabled:text-slate-300"
-              />
-            </div>
-          </div>
-
-          {/* Order Type Selector */}
-          <div className="flex items-center gap-6">
-            {['Market', 'Limit', 'SL', 'SL-M'].map((t) => (
-              <label key={t} className="flex items-center gap-2 cursor-pointer group">
-                <div className={cn(
+            {/* Intraday MIS */}
+            <label
+              className="flex items-center gap-2.5 cursor-pointer group"
+              onClick={() => setProduct('MIS')}
+            >
+              <div
+                className={cn(
                   "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                  orderType.toUpperCase() === t.toUpperCase() ? "border-[#448aff]" : "border-slate-300 group-hover:border-slate-400"
-                )} style={{ borderColor: orderType.toUpperCase() === t.toUpperCase() ? themeColor : undefined }}>
-                  {orderType.toUpperCase() === t.toUpperCase() && <div className="h-2 w-2 rounded-full" style={{ backgroundColor: themeColor }} />}
-                </div>
-                <input type="radio" className="hidden" checked={orderType.toUpperCase() === t.toUpperCase()} onChange={() => setOrderType(t.toUpperCase() as any)} />
-                <span className={cn("text-[12px] font-medium", orderType.toUpperCase() === t.toUpperCase() ? "text-slate-700" : "text-slate-500")}>{t}</span>
+                  product === 'MIS' ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
+                )}
+                style={{
+                  borderColor: product === 'MIS' ? themeColor : undefined,
+                  borderWidth: product === 'MIS' ? '2px' : '1px',
+                }}
+              >
+                {product === 'MIS' && (
+                  <div
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: themeColor }}
+                  />
+                )}
+              </div>
+              <span className="text-[13px] font-medium text-slate-800">
+                Intraday <span className="text-[11px] text-slate-400 uppercase font-normal ml-1">MIS</span>
+              </span>
+            </label>
+
+            {/* Longterm CNC */}
+            <label
+              className="flex items-center gap-2.5 cursor-pointer group"
+              onClick={() => setProduct('CNC')}
+            >
+              <div
+                className={cn(
+                  "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
+                  product === 'CNC' ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
+                )}
+                style={{
+                  borderColor: product === 'CNC' ? themeColor : undefined,
+                  borderWidth: product === 'CNC' ? '2px' : '1px',
+                }}
+              >
+                {product === 'CNC' && (
+                  <div
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: themeColor }}
+                  />
+                )}
+              </div>
+              <span className="text-[13px] font-medium text-slate-800">
+                Longterm <span className="text-[11px] text-slate-400 uppercase font-normal ml-1">CNC</span>
+              </span>
+            </label>
+          </div>
+
+          {/* ─── INPUT FIELDS GRID (3 COLUMNS) ─── */}
+          <div className="grid grid-cols-3 gap-3">
+            {/* QTY FIELD */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                QTY.
               </label>
-            ))}
+              <div className="relative flex items-center rounded bg-[#edf2f7] border border-slate-200/80 focus-within:bg-white focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20 transition-all h-10 overflow-hidden">
+                <input
+                  type="number"
+                  min={1}
+                  value={qty}
+                  onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full h-full bg-transparent px-3 text-[14px] font-bold text-slate-800 outline-none pr-7 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                {/* Stepper buttons (+ / -) */}
+                <div className="absolute right-0 top-0 bottom-0 w-6 flex flex-col border-l border-slate-200/60 bg-slate-100/50">
+                  <button
+                    type="button"
+                    onClick={() => setQty((prev) => prev + 1)}
+                    className="flex-1 flex items-center justify-center text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 transition-colors"
+                  >
+                    <Plus className="h-2.5 w-2.5" />
+                  </button>
+                  <div className="border-t border-slate-200/60" />
+                  <button
+                    type="button"
+                    onClick={() => setQty((prev) => Math.max(1, prev - 1))}
+                    className="flex-1 flex items-center justify-center text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 transition-colors"
+                  >
+                    <Minus className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* PRICE FIELD */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                PRICE
+              </label>
+              <div className={cn(
+                "relative flex items-center rounded border transition-all h-10 overflow-hidden",
+                orderType === 'MARKET'
+                  ? "bg-[#f8f9fa] border-slate-200 text-slate-400 cursor-not-allowed"
+                  : "bg-[#edf2f7] border-slate-200/80 focus-within:bg-white focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
+              )}>
+                <input
+                  type="number"
+                  step="0.05"
+                  disabled={orderType === 'MARKET'}
+                  value={orderType === 'MARKET' ? (ltp > 0 ? ltp : 0) : price}
+                  onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
+                  className={cn(
+                    "w-full h-full bg-transparent px-3 text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+                    orderType === 'MARKET' ? "text-slate-400 cursor-not-allowed" : "text-slate-800"
+                  )}
+                />
+              </div>
+            </div>
+
+            {/* TRIGGER PRICE FIELD */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                TRIGGER PRICE
+              </label>
+              <div className={cn(
+                "relative flex items-center rounded border transition-all h-10 overflow-hidden",
+                !orderType.startsWith('SL')
+                  ? "bg-[#f8f9fa] border-slate-200 text-slate-400 cursor-not-allowed"
+                  : "bg-[#edf2f7] border-slate-200/80 focus-within:bg-white focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
+              )}>
+                <input
+                  type="number"
+                  step="0.05"
+                  disabled={!orderType.startsWith('SL')}
+                  value={orderType.startsWith('SL') ? triggerPrice : 0}
+                  onChange={(e) => setTriggerPrice(parseFloat(e.target.value) || 0)}
+                  className={cn(
+                    "w-full h-full bg-transparent px-3 text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+                    !orderType.startsWith('SL') ? "text-slate-400 cursor-not-allowed" : "text-slate-800"
+                  )}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ─── ORDER TYPE RADIO SELECTOR ─── */}
+          <div className="flex items-center gap-6 pt-1">
+            {(['Market', 'Limit', 'SL', 'SL-M'] as const).map((t) => {
+              const isSelected = orderType === t.toUpperCase();
+              return (
+                <label
+                  key={t}
+                  className="flex items-center gap-2 cursor-pointer group"
+                  onClick={() => setOrderType(t.toUpperCase() as OrderType)}
+                >
+                  <div
+                    className={cn(
+                      "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
+                      isSelected ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
+                    )}
+                    style={{
+                      borderColor: isSelected ? themeColor : undefined,
+                      borderWidth: isSelected ? '2px' : '1px',
+                    }}
+                  >
+                    {isSelected && (
+                      <div
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: themeColor }}
+                      />
+                    )}
+                  </div>
+                  <span className={cn(
+                    "text-[13px] font-medium transition-colors",
+                    isSelected ? "text-slate-800 font-semibold" : "text-slate-600"
+                  )}>
+                    {t}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          {/* ─── ADVANCED OPTIONS ACCORDION ─── */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="flex items-center gap-1 text-[12px] font-semibold text-[#4184f3] hover:underline focus:outline-none"
+            >
+              <span>Advanced options</span>
+              {showAdvanced ? (
+                <ChevronUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
+            </button>
+
+            <AnimatePresence>
+              {showAdvanced && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden space-y-4 pt-3 text-xs"
+                >
+                  {/* Validity */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold text-slate-400 uppercase">
+                      Validity
+                    </label>
+                    <div className="flex items-center gap-4">
+                      {(['DAY', 'IOC', 'TTL'] as ValidityType[]).map((v) => (
+                        <label
+                          key={v}
+                          className="flex items-center gap-1.5 cursor-pointer"
+                          onClick={() => setValidity(v)}
+                        >
+                          <input
+                            type="radio"
+                            checked={validity === v}
+                            onChange={() => setValidity(v)}
+                            className="accent-[#4184f3]"
+                          />
+                          <span className="text-slate-700 font-medium">{v}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {validity === 'TTL' && (
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-400 uppercase">
+                        TTL (Minutes)
+                      </label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={ttlMinutes}
+                        onChange={(e) => setTtlMinutes(parseInt(e.target.value) || 1)}
+                        className="h-8 text-xs bg-[#edf2f7] border-slate-200 w-28"
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-400 uppercase">
+                        Disclosed Qty
+                      </label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={disclosedQty}
+                        onChange={(e) => setDisclosedQty(parseInt(e.target.value) || 0)}
+                        className="h-8 text-xs bg-[#edf2f7] border-slate-200"
+                        placeholder="Optional"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-400 uppercase">
+                        Order Tag
+                      </label>
+                      <Input
+                        type="text"
+                        value={orderTag}
+                        onChange={(e) => setOrderTag(e.target.value)}
+                        className="h-8 text-xs bg-[#edf2f7] border-slate-200"
+                        placeholder="e.g. Scalp1"
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
-        {/* More Options Link */}
-        <div className="px-6 py-2 flex items-center justify-between text-[11px] text-blue-500 font-bold hover:underline cursor-pointer group">
-          <div className="flex items-center gap-1">
-            Advanced options <ChevronDown className="h-3 w-3 group-hover:translate-y-0.5 transition-transform" />
-          </div>
-        </div>
+        {/* ─── FOOTER SECTION ─── */}
+        <div className="bg-[#f9fafb] px-5 py-3.5 border-t border-slate-200 flex items-center justify-between">
+          {/* Left info column */}
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-1.5 text-[12px]">
+              <span className="text-slate-500 font-normal">Margin required</span>
+              <span className="font-bold text-slate-800">
+                ₹{marginRequired.toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+              </span>
+              <button
+                type="button"
+                onClick={handleRefreshMargin}
+                className="p-0.5 text-slate-400 hover:text-slate-600 transition-colors focus:outline-none"
+                title="Refresh Margin"
+              >
+                <RotateCcw className={cn("h-3 w-3", isRefreshingMargin && "animate-spin text-[#4184f3]")} />
+              </button>
+            </div>
 
-        {/* Footer */}
-        <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-t border-slate-100">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 text-[12px]">
-              <span className="text-slate-400">Margin required</span>
-              <span className="font-bold text-slate-700">₹{marginRequired.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-              <RotateCcw className="h-3 w-3 text-slate-300 cursor-pointer hover:text-slate-500" />
-            </div>
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="text-slate-400">Available</span>
-              <span className="font-bold text-slate-700">₹{availableMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-              <span className="text-blue-500 hover:underline cursor-pointer">Add funds</span>
+            <div className="flex items-center gap-1.5 text-[11px]">
+              <span className="text-slate-500 font-normal">Available</span>
+              <span className="font-semibold text-slate-800">
+                ₹{availableMargin.toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+              </span>
+
             </div>
           </div>
-          <div className="flex items-center gap-3">
+
+          {/* Right action buttons column */}
+          <div className="flex items-center gap-2.5">
             <Button
-              variant="ghost"
+              type="button"
+              variant="outline"
               onClick={onClose}
-              className="bg-white border border-slate-200 text-slate-600 font-bold px-6 h-10 hover:bg-slate-50 hover:border-slate-300"
+              className="bg-white border border-slate-300 text-slate-700 font-semibold px-5 h-9 rounded text-xs hover:bg-slate-50 hover:text-slate-900 transition-colors"
             >
               Cancel
             </Button>
+
             <Button
-              className={cn(
-                "text-white font-bold px-8 h-10",
-                isBuy ? "bg-[#448aff] hover:bg-[#3d7ae6]" : "bg-[#ff5722] hover:bg-[#f4511e]"
-              )}
-              style={{ backgroundColor: themeColor }}
+              type="button"
               onClick={handlePlaceOrder}
               disabled={isSubmitting}
+              className="text-white font-bold px-8 h-9 rounded text-xs transition-all shadow-sm hover:brightness-105 active:scale-[0.98]"
+              style={{
+                backgroundColor: themeColor,
+              }}
             >
-              {isSubmitting ? '...' : (isBuy ? 'Buy' : 'Sell')}
+              {isSubmitting ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Placing...
+                </span>
+              ) : (
+                isBuy ? 'Buy' : 'Sell'
+              )}
             </Button>
           </div>
         </div>
