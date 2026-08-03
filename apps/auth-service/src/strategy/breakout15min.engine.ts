@@ -229,10 +229,10 @@ export class Breakout15MinEngine {
 
         if (currentCandle.close > state.refHigh!) {
           this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${state.refHigh}`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date));
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
         } else if (currentCandle.close < state.refLow!) {
           this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${state.refLow}`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date));
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
         }
       }
 
@@ -411,10 +411,10 @@ export class Breakout15MinEngine {
 
       if (target.close > state.refHigh!) {
         this.log(state, `🚀 BREAKOUT! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} > ₹${state.refHigh}`);
-        await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice);
+        await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh);
       } else if (target.close < state.refLow!) {
         this.log(state, `🚀 BREAKOUT! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} < ₹${state.refLow}`);
-        await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice);
+        await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh);
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
 
@@ -541,10 +541,13 @@ export class Breakout15MinEngine {
     return parts[0] * 60 + (parts[1] || 0);
   }
 
-  private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date) {
+  private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, refLow?: number, refHigh?: number) {
     const { config } = state;
     const kite = client['kite'];
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
+
+    const stopLow = refLow ?? state.refLow;
+    const stopHigh = refHigh ?? state.refHigh;
 
     // Try to find an option ONLY for INDEX or NIFTY symbols (User wants equity for stocks)
     const isIndex = config.instrumentType === 'INDEX' || config.symbol.toUpperCase().includes('NIFTY') || config.symbol.toUpperCase().includes('SENSEX');
@@ -575,8 +578,10 @@ export class Breakout15MinEngine {
 
           if (ltp) {
             const entry = this.roundTick(ltp);
-            const sl = this.roundTick(entry - (config.stopLossRs / config.qty));
-            const tgt = this.roundTick(entry + (config.targetRs / config.qty));
+            // Option SL: default to 15% or config stopLossRs
+            const sl = this.roundTick(Math.max(entry * 0.85, entry - (config.stopLossRs / config.qty)));
+            const risk = Math.max(0.50, entry - sl);
+            const tgt = this.roundTick(entry + Math.max(risk * 1.5, config.targetRs / config.qty));
             await this.executeOrders(strategyId, state, client, account, symbol, exchange, finalSide, entry, sl, tgt, triggerTime);
             return;
           }
@@ -584,10 +589,20 @@ export class Breakout15MinEngine {
       } catch (err) { this.log(state, `❌ Option error: ${err.message}`); }
     }
 
-    // Fallback: trade the spot/future directly
+    // Fallback or Equity trade
     const entry = this.roundTick(triggerPrice);
-    const sl = side === 'BUY' ? this.roundTick(entry - config.stopLossRs / config.qty) : this.roundTick(entry + config.stopLossRs / config.qty);
-    const tgt = side === 'BUY' ? this.roundTick(entry + config.targetRs / config.qty) : this.roundTick(entry - config.targetRs / config.qty);
+    let sl: number;
+    let tgt: number;
+
+    if (side === 'BUY') {
+      sl = stopLow ? this.roundTick(stopLow) : this.roundTick(entry - config.stopLossRs / config.qty);
+      const risk = Math.max(0.50, Math.abs(entry - sl));
+      tgt = this.roundTick(entry + Math.max(risk * 1.5, config.targetRs / config.qty));
+    } else {
+      sl = stopHigh ? this.roundTick(stopHigh) : this.roundTick(entry + config.stopLossRs / config.qty);
+      const risk = Math.max(0.50, Math.abs(sl - entry));
+      tgt = this.roundTick(entry - Math.max(risk * 1.5, config.targetRs / config.qty));
+    }
 
     if (isIndex) {
       this.log(state, `⚠ Falling back to ${symbol} (Spot/Future) as no suitable option was found.`);
@@ -597,11 +612,12 @@ export class Breakout15MinEngine {
 
   private async executeOrders(strategyId: string, state: StrategyState, client: any, account: any, symbol: string, exchange: string, side: 'BUY' | 'SELL', entry: number, sl: number, tgt: number, triggerTime?: Date) {
     const { config, executionId } = state;
-    this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}`);
+    this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL (Ref Low/High): ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
 
-    const entryId = state.isPaperTrade ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry });
-    this.log(state, `✅ Entry: ${entryId}`);
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry }, entryId, strategyId, triggerTime);
+    const limitPrice = side === 'BUY' ? this.roundTick(entry + 0.20) : this.roundTick(entry - 0.20);
+    const entryId = state.isPaperTrade ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry });
+    this.log(state, `✅ Entry Order (SL-Limit @ ₹${entry} / Limit ₹${limitPrice}): ${entryId}`);
+    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry }, entryId, strategyId, triggerTime);
 
     const exitSide = side === 'BUY' ? 'SELL' : 'BUY';
     const slId = state.isPaperTrade ? `PAPER_SL_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(e => 'FAILED');

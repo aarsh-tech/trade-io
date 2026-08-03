@@ -32,6 +32,7 @@ interface StrategyState {
   setupTimestamp: number | null;
   entryPrice: number | null;
   stopLossPrice: number | null;
+  spotStopLossPrice?: number | null;
   targetPrice: number | null;
   slOrderId: string | null;
   targetOrderId: string | null;
@@ -260,74 +261,106 @@ export class EmaVwapCrossoverEngine {
         const candleDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
         if (candleDateStr !== todayStr) continue;
 
+        // Dual Entry Catch-up Scanning (Direct Crossover Breakout + Inside Candle Pullback)
         const mother = candles[i - 1];
         const baby = candles[i];
         const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
+        const details = this.getLatestCrossoverTodayDetails(i, candles, emas, vwaps);
 
-        if (isInsideCandle) {
-          const details = this.getLatestCrossoverTodayDetails(i, candles, emas, vwaps);
-          if (details !== null) {
-            const isBullish = details.trend === 'LONG';
-            const triggerHigh = mother.high;
-            const triggerLow = mother.low;
+        if (details !== null) {
+          const isBullish = details.trend === 'LONG';
+          const crossoverCandle = candles[details.crossoverIdx];
+          const isFreshCrossover = (i - details.crossoverIdx) <= 2;
 
+          let triggerHigh: number | null = null;
+          let triggerLow: number | null = null;
+          let setupType = '';
+
+          if (isInsideCandle) {
+            triggerHigh = mother.high;
+            triggerLow = mother.low;
+            setupType = 'Inside Candle Pullback';
+          } else if (isFreshCrossover && i === details.crossoverIdx) {
+            triggerHigh = crossoverCandle.high;
+            triggerLow = crossoverCandle.low;
+            setupType = 'Direct Crossover Breakout';
+          }
+
+          if (triggerHigh !== null && triggerLow !== null) {
             this.log(
               state,
-              `🔍 Detected ${details.trend} Crossover at ${this.formatTime(details.crossoverTime)} (15-EMA: ₹${details.ema.toFixed(2)}, VWAP: ₹${details.vwap.toFixed(2)}) -> Inside Candle at ${this.formatTime(new Date(baby.date))} (Mother: ${this.formatTime(new Date(mother.date))}, High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)})`
+              `🔍 Detected ${details.trend} (${setupType}) at ${this.formatTime(new Date(baby.date))} (EMA: ₹${details.ema.toFixed(2)}, VWAP: ₹${details.vwap.toFixed(2)}) — Trigger High: ₹${triggerHigh.toFixed(2)}, Low: ₹${triggerLow.toFixed(2)}`
             );
 
-            // Scan subsequent candles to see if breakout happened
-            for (let j = i + 1; j < Math.min(i + 4, candles.length); j++) {
+            // Scan subsequent candles (up to 12 candles / 1 hour) to see if breakout happened
+            let breakoutFound = false;
+            let setupInvalidated = false;
+
+            for (let j = i + 1; j < Math.min(i + 13, candles.length); j++) {
               const checkCandle = candles[j];
 
               if (isBullish) {
                 if (checkCandle.high > triggerHigh) {
-                  // If option buying, verify option high crossed option breakout price before triggering
                   if (state.config.isOptionBuyingOnly) {
-                    const optSym = await this.findOptionSymbol(client, state, mother.high, 'CE', new Date(checkCandle.date));
+                    const optSym = await this.findOptionSymbol(client, state, triggerHigh, 'CE', new Date(checkCandle.date));
                     if (optSym) {
-                      const optCandles = await client.getHistoricalData(optSym, 'NFO', '5minute', new Date(mother.date.getTime() - 5 * 60 * 1000), new Date(checkCandle.date.getTime() + 5 * 60 * 1000));
-                      const mOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === mother.date.getTime());
+                      const optCandles = await client.getHistoricalData(optSym, 'NFO', '5minute', new Date(baby.date.getTime() - 5 * 60 * 1000), new Date(checkCandle.date.getTime() + 5 * 60 * 1000));
+                      const mOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === baby.date.getTime());
                       const cOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === checkCandle.date.getTime());
                       if (mOpt && cOpt && cOpt.high <= mOpt.high) {
-                        // Option high did not break mother option high at this candle -> Skip triggering at this candle
                         continue;
                       }
                     }
                   }
-                  this.log(state, `🚀 (Catch-up) Found past LONG Breakout at ${this.formatTime(new Date(checkCandle.date))}!`);
-                  await this.placeTrade(state, client, account, 'BUY', mother.high, new Date(checkCandle.date), new Date(mother.date));
+                  this.log(state, `🚀 (Catch-up) Found past LONG Breakout (${setupType}) at ${this.formatTime(new Date(checkCandle.date))}!`);
+                  await this.placeTrade(state, client, account, 'BUY', triggerHigh, new Date(checkCandle.date), new Date(baby.date), triggerLow, triggerHigh);
                   i = j; // Skip to breakout candle index
+                  breakoutFound = true;
                   break;
                 }
                 if (checkCandle.low < triggerLow) {
-                  break; // invalidated
+                  this.log(state, `❌ (Catch-up) Setup invalidated at ${this.formatTime(new Date(checkCandle.date))} (Price fell below SL ₹${triggerLow.toFixed(2)})`);
+                  setupInvalidated = true;
+                  break;
                 }
               } else {
                 if (checkCandle.low < triggerLow) {
                   if (state.config.isOptionBuyingOnly) {
-                    const optSym = await this.findOptionSymbol(client, state, mother.low, 'PE', new Date(checkCandle.date));
+                    const optSym = await this.findOptionSymbol(client, state, triggerLow, 'PE', new Date(checkCandle.date));
                     if (optSym) {
-                      const optCandles = await client.getHistoricalData(optSym, 'NFO', '5minute', new Date(mother.date.getTime() - 5 * 60 * 1000), new Date(checkCandle.date.getTime() + 5 * 60 * 1000));
-                      const mOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === mother.date.getTime());
+                      const optCandles = await client.getHistoricalData(optSym, 'NFO', '5minute', new Date(baby.date.getTime() - 5 * 60 * 1000), new Date(checkCandle.date.getTime() + 5 * 60 * 1000));
+                      const mOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === baby.date.getTime());
                       const cOpt = optCandles?.find((c: any) => new Date(c.date).getTime() === checkCandle.date.getTime());
                       if (mOpt && cOpt && cOpt.high <= mOpt.high) {
                         continue;
                       }
                     }
                   }
-                  this.log(state, `🚀 (Catch-up) Found past SHORT Breakout at ${this.formatTime(new Date(checkCandle.date))}!`);
-                  await this.placeTrade(state, client, account, 'SELL', mother.low, new Date(checkCandle.date), new Date(mother.date));
+                  this.log(state, `🚀 (Catch-up) Found past SHORT Breakout (${setupType}) at ${this.formatTime(new Date(checkCandle.date))}!`);
+                  await this.placeTrade(state, client, account, 'SELL', triggerLow, new Date(checkCandle.date), new Date(baby.date), triggerLow, triggerHigh);
                   i = j; // Skip to breakout candle index
+                  breakoutFound = true;
                   break;
                 }
                 if (checkCandle.high > triggerHigh) {
-                  break; // invalidated
+                  this.log(state, `❌ (Catch-up) Setup invalidated at ${this.formatTime(new Date(checkCandle.date))} (Price rose above SL ₹${triggerHigh.toFixed(2)})`);
+                  setupInvalidated = true;
+                  break;
                 }
               }
             }
+
+            if (!breakoutFound && !setupInvalidated) {
+              this.log(state, `⏳ (Catch-up) Setup expired without breakout above ₹${triggerHigh.toFixed(2)}`);
+            }
           }
         }
+      }
+
+      if (state.entryTriggered) {
+        const lastCandle = candles[candles.length - 1];
+        const pnl = (lastCandle.close - state.entryPrice!) * state.config.qty;
+        this.log(state, `📊 (Catch-up) Position remains OPEN at 15:30 close | Symbol: ${state.optionSymbol || state.config.symbol} | Entry: ₹${state.entryPrice?.toFixed(2)} | Target: ₹${state.targetPrice?.toFixed(2)} | SL: ₹${state.stopLossPrice?.toFixed(2)} | Close Price: ₹${lastCandle.close.toFixed(2)} | P&L: ₹${pnl.toFixed(2)}`);
       }
       if (!state.entryTriggered) this.log(state, `✅ Catch-up complete. No past signals found.`);
       await this.persistLogs(state);
@@ -425,7 +458,7 @@ export class EmaVwapCrossoverEngine {
           if (state.waitingForConfirmation === 'LONG') {
             if (ltp > state.confirmationHigh!) {
               this.log(state, `🚀 LONG Trigger! LTP ₹${ltp} > ₹${state.confirmationHigh}`);
-              await this.placeTrade(state, client, account, 'BUY', ltp);
+              await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, state.invalidationPrice ?? undefined, state.confirmationHigh ?? undefined);
               state.waitingForConfirmation = null;
               state.confirmationHigh = null;
               state.invalidationPrice = null;
@@ -440,7 +473,7 @@ export class EmaVwapCrossoverEngine {
           } else if (state.waitingForConfirmation === 'SHORT') {
             if (ltp < state.confirmationLow!) {
               this.log(state, `🚀 SHORT Trigger! LTP ₹${ltp} < ₹${state.confirmationLow}`);
-              await this.placeTrade(state, client, account, 'SELL', ltp);
+              await this.placeTrade(state, client, account, 'SELL', ltp, undefined, undefined, state.confirmationLow ?? undefined, state.invalidationPrice ?? undefined);
               state.waitingForConfirmation = null;
               state.confirmationLow = null;
               state.invalidationPrice = null;
@@ -456,7 +489,7 @@ export class EmaVwapCrossoverEngine {
         }
       }
 
-      // ─── Scan for Inside Candle Setup ──────────────────────────────────────────
+      // ─── Dual Entry Scanning: Direct Crossover Breakout OR Inside Candle Pullback ───
       if (!state.entryTriggered) {
         const lastClosedCandleTime = closedCandles[lastIdx].date.getTime();
         if (lastClosedCandleTime > (state.lastProcessedTimestamp || 0)) {
@@ -470,25 +503,47 @@ export class EmaVwapCrossoverEngine {
           const baby = closedCandles[lastIdx];
           const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
 
-          if (isInsideCandle) {
-            const trend = this.getLatestCrossoverToday(lastIdx, closedCandles, emas, vwaps);
-            if (trend !== null) {
+          const crossoverDetails = this.getLatestCrossoverTodayDetails(lastIdx, closedCandles, emas, vwaps);
+
+          if (crossoverDetails) {
+            const { trend, crossoverIdx } = crossoverDetails;
+            const crossoverCandle = closedCandles[crossoverIdx];
+            const isFreshCrossover = (lastIdx - crossoverIdx) <= 2;
+
+            // Scenario 1: Inside Candle Pullback (Refines trigger to mother candle high/low)
+            if (isInsideCandle) {
               if (trend === 'LONG') {
-                // Bullish Trend -> LONG Setup
                 state.waitingForConfirmation = 'LONG';
                 state.confirmationHigh = mother.high;
                 state.confirmationLow = null;
                 state.invalidationPrice = mother.low;
                 state.setupTimestamp = lastClosedCandleTime;
-                this.log(state, `🔔 Bullish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break above high...`);
+                this.log(state, `🔔 Bullish crossover pullback setup! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break above high...`);
               } else if (trend === 'SHORT') {
-                // Bearish Trend -> SHORT Setup
                 state.waitingForConfirmation = 'SHORT';
                 state.confirmationHigh = null;
                 state.confirmationLow = mother.low;
                 state.invalidationPrice = mother.high;
                 state.setupTimestamp = lastClosedCandleTime;
-                this.log(state, `🔔 Bearish crossover setup detected! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break below low...`);
+                this.log(state, `🔔 Bearish crossover pullback setup! Inside candle (Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)}). Waiting for break below low...`);
+              }
+            } 
+            // Scenario 2: Direct Breakout (Triggers immediately on breakout of crossover candle high/low)
+            else if (isFreshCrossover && !state.waitingForConfirmation) {
+              if (trend === 'LONG') {
+                state.waitingForConfirmation = 'LONG';
+                state.confirmationHigh = crossoverCandle.high;
+                state.confirmationLow = null;
+                state.invalidationPrice = crossoverCandle.low;
+                state.setupTimestamp = lastClosedCandleTime;
+                this.log(state, `🚀 Bullish Direct Crossover setup! Crossover Candle High: ₹${crossoverCandle.high.toFixed(2)}, Low (SL): ₹${crossoverCandle.low.toFixed(2)}. Waiting for momentum breakout...`);
+              } else if (trend === 'SHORT') {
+                state.waitingForConfirmation = 'SHORT';
+                state.confirmationHigh = null;
+                state.confirmationLow = crossoverCandle.low;
+                state.invalidationPrice = crossoverCandle.high;
+                state.setupTimestamp = lastClosedCandleTime;
+                this.log(state, `🚀 Bearish Direct Crossover setup! Crossover Candle Low: ₹${crossoverCandle.low.toFixed(2)}, High (SL): ₹${crossoverCandle.high.toFixed(2)}. Waiting for momentum breakdown...`);
               }
             }
           }
@@ -498,43 +553,34 @@ export class EmaVwapCrossoverEngine {
     await this.persistLogs(state);
   }
 
-  private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date) {
+  private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date, motherLow?: number, motherHigh?: number) {
     const { config } = state;
     const kite = client['kite'];
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
     const product = (config as any).product ?? 'MIS';
+    let optionMotherLow: number | null = null;
 
     if (config.isOptionBuyingOnly) {
       const type = side === 'BUY' ? 'CE' : 'PE';
       const optSym = await this.findOptionSymbol(client, state, triggerPrice, type, triggerTime);
       if (optSym) {
         symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
-        if (triggerTime) {
-          if (motherTime) {
-            try {
-              const optCandles = await client.getHistoricalData(symbol, exchange, '5minute', new Date(motherTime.getTime() - 5 * 60 * 1000), new Date(motherTime.getTime() + 5 * 60 * 1000));
-              const motherOptCandle = optCandles.find((c: any) => new Date(c.date).getTime() === motherTime.getTime());
-              if (motherOptCandle) {
-                // Breakout entry is at the high of the mother option candle (option breakout level)
-                triggerPrice = motherOptCandle.high;
-                this.log(state, `💡 Selected Option Breakout Entry Price: ₹${triggerPrice.toFixed(2)} (High of Mother Option Candle at ${this.formatTime(motherTime)})`);
-              } else {
-                const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
-                if (histPrice !== null) triggerPrice = histPrice;
-              }
-            } catch {
+        if (triggerTime && motherTime) {
+          try {
+            const optCandles = await client.getHistoricalData(symbol, exchange, '5minute', new Date(motherTime.getTime() - 5 * 60 * 1000), new Date(motherTime.getTime() + 5 * 60 * 1000));
+            const motherOptCandle = optCandles.find((c: any) => new Date(c.date).getTime() === motherTime.getTime());
+            if (motherOptCandle) {
+              // Breakout entry is at the high of the mother option candle (option breakout level)
+              triggerPrice = motherOptCandle.high;
+              optionMotherLow = motherOptCandle.low;
+              this.log(state, `💡 Selected Option Breakout Entry Price: ₹${triggerPrice.toFixed(2)} (High of Mother Option Candle), SL: ₹${optionMotherLow.toFixed(2)} (Low of Mother Option Candle)`);
+            } else {
               const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
               if (histPrice !== null) triggerPrice = histPrice;
             }
-          } else {
+          } catch {
             const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
-            if (histPrice !== null) {
-              triggerPrice = histPrice;
-            } else {
-              this.log(state, `⚠ Could not fetch historical option price for ${symbol} at ${this.formatTime(triggerTime)}. Using current LTP.`);
-              const q = await kite.getLTP([`NFO:${symbol}`]);
-              if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
-            }
+            if (histPrice !== null) triggerPrice = histPrice;
           }
         } else {
           const q = await kite.getLTP([`NFO:${symbol}`]);
@@ -548,16 +594,34 @@ export class EmaVwapCrossoverEngine {
     }
 
     const entry = this.roundTick(triggerPrice);
-    const sl = finalSide === 'BUY' ? this.roundTick(entry - (config.stopLossRs / config.qty)) : this.roundTick(entry + (config.stopLossRs / config.qty));
-    const tgt = finalSide === 'BUY' ? this.roundTick(entry + (config.targetRs / config.qty)) : this.roundTick(entry - (config.targetRs / config.qty));
+    let sl: number;
+    let tgt: number;
 
-    this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}`);
+    if (config.isOptionBuyingOnly) {
+      sl = optionMotherLow !== null ? this.roundTick(optionMotherLow) : this.roundTick(entry - (config.stopLossRs / config.qty));
+      const optionRisk = Math.max(0.50, Math.abs(entry - sl));
+      tgt = this.roundTick(entry + Math.max(optionRisk * 1.5, config.targetRs / config.qty));
+      state.spotStopLossPrice = side === 'BUY' ? motherLow : motherHigh;
+    } else {
+      if (finalSide === 'BUY') {
+        sl = motherLow ? this.roundTick(motherLow) : this.roundTick(entry - (config.stopLossRs / config.qty));
+        const risk = Math.max(0.50, Math.abs(entry - sl));
+        tgt = this.roundTick(entry + Math.max(risk * 1.5, config.targetRs / config.qty));
+      } else {
+        sl = motherHigh ? this.roundTick(motherHigh) : this.roundTick(entry + (config.stopLossRs / config.qty));
+        const risk = Math.max(0.50, Math.abs(sl - entry));
+        tgt = this.roundTick(entry - Math.max(risk * 1.5, config.targetRs / config.qty));
+      }
+    }
+
+    this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL (Mother Candle Low/High): ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
     try {
       const isHistorical = !!triggerTime;
+      const limitPrice = finalSide === 'BUY' ? this.roundTick(entry + 0.20) : this.roundTick(entry - 0.20);
       const entryId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: finalSide, orderType: 'LIMIT', price: entry });
-      this.log(state, `✅ Entry: ${entryId}`);
+        : await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: finalSide, orderType: 'SL', triggerPrice: entry, price: limitPrice });
+      this.log(state, `✅ Entry Order (SL-Limit @ ₹${entry} / Limit ₹${limitPrice}): ${entryId}`);
 
       // Track order in DB
       await this.trackOrderInDB(state, finalSide, symbol, exchange, config.qty, entry, entryId, triggerTime);
@@ -687,6 +751,7 @@ export class EmaVwapCrossoverEngine {
       state.optionSymbol = null;
       state.entryPrice = null;
       state.stopLossPrice = null;
+      state.spotStopLossPrice = null;
       state.targetPrice = null;
       state.slOrderId = null;
       state.targetOrderId = null;
@@ -719,6 +784,7 @@ export class EmaVwapCrossoverEngine {
       state.optionSymbol = null;
       state.entryPrice = null;
       state.stopLossPrice = null;
+      state.spotStopLossPrice = null;
       state.targetPrice = null;
       state.slOrderId = null;
       state.targetOrderId = null;
@@ -1028,6 +1094,7 @@ export class EmaVwapCrossoverEngine {
     state.setupTimestamp = null;
     state.entryPrice = null;
     state.stopLossPrice = null;
+    state.spotStopLossPrice = null;
     state.targetPrice = null;
     state.slOrderId = null;
     state.targetOrderId = null;

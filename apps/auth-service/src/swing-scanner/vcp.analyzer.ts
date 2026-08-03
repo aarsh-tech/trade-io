@@ -411,6 +411,23 @@ export function detectTightArea(candles: DailyCandle[]): PatternResult | null {
 // Original working detector: finds stocks with TODAY's volume surge, bullish
 // close (top 30% of day range) and positive return. Simple and effective.
 
+// Calculate elapsed trading time fraction for TODAY's partial daily candle during Indian market hours (09:15 to 15:30 IST)
+export function getElapsedMarketFraction(candleDate: Date): number {
+  const now = new Date();
+  const isToday = candleDate.toDateString() === now.toDateString();
+  if (!isToday) return 1.0; // Completed past daily candle
+
+  const nowHours = now.getHours();
+  const nowMins = now.getMinutes();
+
+  // Market hours: 09:15 to 15:30 (375 mins)
+  if (nowHours < 9 || (nowHours === 9 && nowMins < 15)) return 0.04; // Market pre-open/just started (min 4%)
+  if (nowHours > 15 || (nowHours === 15 && nowMins >= 30)) return 1.0; // Market closed
+
+  const elapsedMins = (nowHours - 9) * 60 + (nowMins - 15);
+  return Math.max(0.04, Math.min(1.0, elapsedMins / 375));
+}
+
 export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | null {
   if (candles.length < 50) return null;
 
@@ -427,11 +444,13 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
   const sma50v = sma(candles, 50)[n];
   if (currentPrice < sma50v) return null;
 
-  // Volume must be active (at least 95% of 20-day average)
+  // Volume pace (RVOL) prorated against elapsed market time
   const recentVol = candles[n].volume;
   const baseVol = avgVolume(candles, 20, n);
-  const volRatio = recentVol / baseVol;
-  if (volRatio < 0.95) return null;
+  const dayFraction = getElapsedMarketFraction(candles[n].date);
+  const expectedVol = Math.max(1, baseVol * dayFraction);
+  const volRatio = recentVol / expectedVol;
+  if (volRatio < 0.80) return null;
 
   // Must have a real trading range
   const dayRange = candles[n].high - candles[n].low;
@@ -496,7 +515,7 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
     trendStrength: 'STRONG', volumeSignal, contractions: 0,
     notes: [
       `🔥 Momentum Signal: +${(todayReturn * 100).toFixed(1)}% on ${candles[n].date.toLocaleDateString()}`,
-      `📊 Volume: ${(volRatio).toFixed(1)}x average`,
+      `📊 RVOL Pace: ${(volRatio).toFixed(1)}x expected`,
       `✨ Bullish Close: Top ${Math.round(closeRelativePos * 100)}% of day range`,
       `🚀 Breakout Level: Buy above ₹${candles[n].high.toFixed(2)}`,
       `📐 Swing Range: ₹${swingLow.toFixed(2)} → ₹${swingHigh.toFixed(2)} (₹${swingRange.toFixed(2)})`,
@@ -529,11 +548,13 @@ export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResu
   const sma50v = sma(candles, 50)[n];
   if (currentPrice > sma50v) return null;
 
-  // Volume must be active (at least 95% of 20-day average)
+  // Volume pace (RVOL) prorated against elapsed market time
   const recentVol = candles[n].volume;
   const baseVol = avgVolume(candles, 20, n);
-  const volRatio = recentVol / baseVol;
-  if (volRatio < 0.95) return null;
+  const dayFraction = getElapsedMarketFraction(candles[n].date);
+  const expectedVol = Math.max(1, baseVol * dayFraction);
+  const volRatio = recentVol / expectedVol;
+  if (volRatio < 0.80) return null;
 
   // Must have a real trading range
   const dayRange = candles[n].high - candles[n].low;

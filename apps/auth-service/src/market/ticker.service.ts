@@ -112,26 +112,45 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureTickerRunning(accountId: string, symbols: string[]) {
-    if (this.tickers.has(accountId)) {
-      const tickerData = this.tickers.get(accountId);
-      const currentTokens = new Set(tickerData.tokens);
-      const newTokens = symbols.map(s => tickerData.symbolToToken.get(s)).filter(Boolean) as number[];
-      
-      const tokensToSubscribe = newTokens.filter(t => !currentTokens.has(t));
-      if (tokensToSubscribe.length > 0) {
-        this.logger.log(`Subscribing to ${tokensToSubscribe.length} new tokens for account ${accountId}`);
-        tickerData.instance.subscribe(tokensToSubscribe);
-        tickerData.instance.setMode(tickerData.instance.modeFull, tokensToSubscribe);
-        tickerData.tokens = newTokens;
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
+    if (!account || !account.isActive || !account.accessToken) {
+      if (this.tickers.has(accountId)) {
+        this.logger.log(`Cleaning up ticker for account ${accountId} (account inactive or missing access token)`);
+        const existing = this.tickers.get(accountId);
+        if (existing?.disconnect) {
+          try { existing.disconnect(); } catch (_) {}
+        }
+        this.tickers.delete(accountId);
       }
       return;
     }
 
-    const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
-    if (!account || !account.accessToken) return;
+    if (this.tickers.has(accountId)) {
+      const tickerData = this.tickers.get(accountId);
+      // If access token changed, tear down old connection to reconnect with new token
+      if (tickerData.accessToken !== account.accessToken) {
+        this.logger.log(`Access token changed for account ${account.clientId}, reconnecting ticker...`);
+        if (tickerData.disconnect) {
+          try { tickerData.disconnect(); } catch (_) {}
+        }
+        this.tickers.delete(accountId);
+      } else {
+        const currentTokens = new Set(tickerData.tokens || []);
+        const newTokens = symbols.map(s => tickerData.symbolToToken.get(s)).filter(Boolean) as number[];
+        
+        const tokensToSubscribe = newTokens.filter(t => !currentTokens.has(t));
+        if (tokensToSubscribe.length > 0 && tickerData.instance) {
+          this.logger.log(`Subscribing to ${tokensToSubscribe.length} new tokens for account ${accountId}`);
+          tickerData.instance.subscribe(tokensToSubscribe);
+          tickerData.instance.setMode(tickerData.instance.modeFull, tokensToSubscribe);
+          tickerData.tokens = newTokens;
+        }
+        return;
+      }
+    }
 
     if (account.broker === BrokerType.ZERODHA) {
-      this.setupZerodhaTicker(account, symbols);
+      await this.setupZerodhaTicker(account, symbols);
     }
     // Add other brokers here...
   }
@@ -197,7 +216,13 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       ticker.on('error', (err: any) => {
-        this.logger.error(`Zerodha Ticker error for account ${account.clientId}: ${err?.message || err}`);
+        const errMsg = err?.message || String(err || '');
+        this.logger.error(`Zerodha Ticker error for account ${account.clientId}: ${errMsg}`);
+        if (errMsg.includes('403') || errMsg.includes('Forbidden') || errMsg.includes('TokenException')) {
+          this.logger.warn(`Zerodha session/token for account ${account.clientId} is invalid or expired (403 Forbidden). Stopping auto-reconnect.`);
+          try { ticker.disconnect(); } catch (_) {}
+          this.tickers.delete(account.id);
+        }
       });
 
       ticker.on('disconnect', (error: any) => {
@@ -209,19 +234,24 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       ticker.on('noreconnect', () => {
-        this.logger.error(`Zerodha Ticker reconnection failed for account ${account.clientId}. No more attempts will be made.`);
+        this.logger.error(`Zerodha Ticker reconnection failed for account ${account.clientId}. Cleaning up ticker instance.`);
+        this.tickers.delete(account.id);
       });
 
       ticker.connect();
       this.tickers.set(account.id, {
-        disconnect: () => ticker.disconnect(),
+        disconnect: () => {
+          try { ticker.disconnect(); } catch (_) {}
+        },
         instance: ticker,
         tokens: tokensToSubscribe,
         symbolToToken,
         tokenToSymbol,
+        accessToken: account.accessToken,
       });
     } catch (err) {
       this.logger.error(`Failed to setup Zerodha Ticker for ${account.id}: ${err.message}`);
+      this.tickers.delete(account.id);
     }
   }
 }

@@ -363,7 +363,7 @@ export class StockOptionsBuyingEngine {
           }
 
           this.log(state, `✅ High-RVOL & HTF Confirmation Passed! Signal Direction: ${side}`);
-          await this.setupBreakoutTrigger(state, client, kite, side, mother.date, mother.low);
+          await this.setupBreakoutTrigger(state, client, kite, side, mother.date, side === 'CALL' ? mother.low : mother.high);
         }
       }
     } catch (e) {
@@ -375,7 +375,7 @@ export class StockOptionsBuyingEngine {
 
   private async setupBreakoutTrigger(
     state: StrategyState, client: any, kite: any,
-    side: 'CALL' | 'PUT', motherTimestamp: Date, motherSpotLow: number
+    side: 'CALL' | 'PUT', motherTimestamp: Date, motherSpotSl: number
   ) {
     try {
       const ltpData = await kite.getLTP([`${state.config.exchange}:${state.config.symbol}`]);
@@ -450,7 +450,7 @@ export class StockOptionsBuyingEngine {
       state.lotSize = lotSize;
       state.positionQty = lotSize * lotsToTrade;
       state.spotEntryPrice = spotPrice;
-      state.spotStopLossPrice = motherSpotLow;
+      state.spotStopLossPrice = motherSpotSl;
       state.isSlTrailedToCost = false;
 
       this.log(state, `🎯 Smart Resolved Strike: NFO:${optionSymbol} (${moneyness}, Lot Size: ${lotSize}, Lots Allocated: ${lotsToTrade})`);

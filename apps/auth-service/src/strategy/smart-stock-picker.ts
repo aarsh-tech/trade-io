@@ -184,26 +184,41 @@ export async function autoSelectStock(
     return { symbol: best.symbol, exchange: 'NSE', ltp: best.ltp, qty: best.qty };
   }
 
-  // ── Smarter fallback: pick highest-liquid stock that has live price data ──
-  logger?.warn(`⚠ No intraday momentum candidates found from ${TOP_LIQUID_STOCKS.length} stocks. Using liquid fallback.`);
+  // ── Smarter fallback: dynamically pick the highest momentum gainer/loser from liveQuotes ──
+  logger?.warn(`⚠ No strict VCP pattern candidates found. Ranking liquid stocks dynamically by momentum & volatility...`);
 
-  const fallbackSymbols = ['HDFCBANK', 'ICICIBANK', 'AXISBANK', 'SBIN', 'TCS', 'INFY', 'RELIANCE'];
-  for (const sym of fallbackSymbols) {
+  const dynamicRankings: Array<{ symbol: string; score: number; ltp: number; qty: number }> = [];
+
+  for (const sym of TOP_LIQUID_STOCKS) {
     const key = `NSE:${sym}`;
     const quote = liveQuotes[key];
-    if (quote?.last_price && quote.last_price > 0) {
+    if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
       const ltp = quote.last_price;
+      const prevClose = quote.ohlc.close;
+      const changePct = Math.abs((ltp - prevClose) / prevClose) * 100;
+      const dayRangePct = ((quote.ohlc.high - quote.ohlc.low) / ltp) * 100;
+
+      // Exclude slow-moving / low-volatility stocks (less than 1.0% day range / move)
+      if (dayRangePct < 1.0 && changePct < 0.6) continue;
+
+      const score = Math.round((changePct * 50) + (dayRangePct * 30));
       const maxBuyingPower = (availableCapital || 25000) * 5;
-      const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.01)), Math.floor(maxBuyingPower / ltp)));
-      logger?.warn(`↩ Fallback to ${sym} @ ₹${ltp.toFixed(2)} (Qty: ${qty})`);
-      return { symbol: sym, exchange: 'NSE', ltp, qty };
+      const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.015)), Math.floor(maxBuyingPower / ltp)));
+      dynamicRankings.push({ symbol: sym, score, ltp, qty });
     }
   }
 
+  if (dynamicRankings.length > 0) {
+    dynamicRankings.sort((a, b) => b.score - a.score);
+    const topDynamic = dynamicRankings[0];
+    logger?.log(`🚀 Dynamic Momentum Pick: ${topDynamic.symbol} (Score: ${topDynamic.score}, LTP: ₹${topDynamic.ltp.toFixed(2)}, Qty: ${topDynamic.qty})`);
+    return { symbol: topDynamic.symbol, exchange: 'NSE', ltp: topDynamic.ltp, qty: topDynamic.qty };
+  }
+
   // Absolute last resort
-  const relQuotes = await kite.getLTP([`NSE:RELIANCE`]);
-  const ltp = relQuotes['NSE:RELIANCE']?.last_price || 2500;
-  const qty = Math.ceil(stopLossRs / (ltp * 0.01));
-  logger?.warn(`↩ Absolute fallback to RELIANCE @ ₹${ltp.toFixed(2)}`);
-  return { symbol: 'RELIANCE', exchange: 'NSE', ltp, qty };
+  const relQuotes = await kite.getLTP([`NSE:TATAMOTORS`]);
+  const ltp = relQuotes['NSE:TATAMOTORS']?.last_price || 950;
+  const qty = Math.ceil(stopLossRs / (ltp * 0.015));
+  logger?.warn(`↩ Fallback to high-momentum stock TATAMOTORS @ ₹${ltp.toFixed(2)}`);
+  return { symbol: 'TATAMOTORS', exchange: 'NSE', ltp, qty };
 }

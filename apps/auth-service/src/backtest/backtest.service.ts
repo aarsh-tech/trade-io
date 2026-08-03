@@ -146,8 +146,9 @@ export class BacktestService {
               if (candle.high > confirmationHigh) {
                 position = 'LONG';
                 entryPrice = confirmationHigh;
-                stopLoss = entryPrice - (config.stopLossRs / config.qty);
-                target = entryPrice + (config.targetRs / config.qty);
+                stopLoss = invalidationPrice || (entryPrice - (config.stopLossRs / config.qty));
+                const risk = Math.max(0.50, Math.abs(entryPrice - stopLoss));
+                target = entryPrice + Math.max(risk * 1.5, config.targetRs / config.qty);
                 waitingForConfirmation = null;
               } else if (candle.low < invalidationPrice) {
                 waitingForConfirmation = null;
@@ -156,8 +157,9 @@ export class BacktestService {
               if (candle.low < confirmationLow) {
                 position = 'SHORT';
                 entryPrice = confirmationLow;
-                stopLoss = entryPrice + (config.stopLossRs / config.qty);
-                target = entryPrice - (config.targetRs / config.qty);
+                stopLoss = invalidationPrice || (entryPrice + (config.stopLossRs / config.qty));
+                const risk = Math.max(0.50, Math.abs(stopLoss - entryPrice));
+                target = entryPrice - Math.max(risk * 1.5, config.targetRs / config.qty);
                 waitingForConfirmation = null;
               } else if (candle.high > invalidationPrice) {
                 waitingForConfirmation = null;
