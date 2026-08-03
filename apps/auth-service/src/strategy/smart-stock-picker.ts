@@ -91,9 +91,9 @@ export async function autoSelectStock(
   const from = new Date();
   from.setDate(from.getDate() - 100);
 
-  // Use a 10-stock batch for ultra-fast scanning across 200+ stocks
-  for (let i = 0; i < TOP_LIQUID_STOCKS.length; i += 10) {
-    const batch = TOP_LIQUID_STOCKS.slice(i, i + 10);
+  // Use a 3-stock batch with 150ms pause to comply with Zerodha 3 req/sec rate limit
+  for (let i = 0; i < TOP_LIQUID_STOCKS.length; i += 3) {
+    const batch = TOP_LIQUID_STOCKS.slice(i, i + 3);
     await Promise.allSettled(batch.map(async (symbol) => {
       try {
         const token = tokenMap.get(symbol);
@@ -171,8 +171,8 @@ export async function autoSelectStock(
         // Skip on error
       }
     }));
-    // Small pause for Zerodha rate limits
-    await new Promise(r => setTimeout(r, 50));
+    // 150ms pause for Zerodha rate limits (3 req/sec)
+    await new Promise(r => setTimeout(r, 150));
   }
 
   if (candidates.length > 0) {

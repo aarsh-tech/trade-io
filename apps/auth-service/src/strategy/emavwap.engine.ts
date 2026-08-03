@@ -282,7 +282,7 @@ export class EmaVwapCrossoverEngine {
             setupType = 'Inside Candle Pullback';
           } else if (isFreshCrossover && i === details.crossoverIdx) {
             triggerHigh = crossoverCandle.high;
-            triggerLow = crossoverCandle.low;
+            triggerLow = details.trend === 'LONG' ? Math.min(crossoverCandle.low, details.vwap) : Math.max(crossoverCandle.high, details.vwap);
             setupType = 'Direct Crossover Breakout';
           }
 
@@ -534,16 +534,16 @@ export class EmaVwapCrossoverEngine {
                 state.waitingForConfirmation = 'LONG';
                 state.confirmationHigh = crossoverCandle.high;
                 state.confirmationLow = null;
-                state.invalidationPrice = crossoverCandle.low;
+                state.invalidationPrice = Math.min(crossoverCandle.low, crossoverDetails.vwap);
                 state.setupTimestamp = lastClosedCandleTime;
-                this.log(state, `🚀 Bullish Direct Crossover setup! Crossover Candle High: ₹${crossoverCandle.high.toFixed(2)}, Low (SL): ₹${crossoverCandle.low.toFixed(2)}. Waiting for momentum breakout...`);
+                this.log(state, `🚀 Bullish Direct Crossover setup! Crossover Candle High: ₹${crossoverCandle.high.toFixed(2)}, SL (VWAP): ₹${state.invalidationPrice.toFixed(2)}. Waiting for momentum breakout...`);
               } else if (trend === 'SHORT') {
                 state.waitingForConfirmation = 'SHORT';
                 state.confirmationHigh = null;
                 state.confirmationLow = crossoverCandle.low;
-                state.invalidationPrice = crossoverCandle.high;
+                state.invalidationPrice = Math.max(crossoverCandle.high, crossoverDetails.vwap);
                 state.setupTimestamp = lastClosedCandleTime;
-                this.log(state, `🚀 Bearish Direct Crossover setup! Crossover Candle Low: ₹${crossoverCandle.low.toFixed(2)}, High (SL): ₹${crossoverCandle.high.toFixed(2)}. Waiting for momentum breakdown...`);
+                this.log(state, `🚀 Bearish Direct Crossover setup! Crossover Candle Low: ₹${crossoverCandle.low.toFixed(2)}, SL (VWAP): ₹${state.invalidationPrice.toFixed(2)}. Waiting for momentum breakdown...`);
               }
             }
           }

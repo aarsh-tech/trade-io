@@ -127,7 +127,10 @@ export class StockOptionsBuyingEngine {
       15_000,
     );
     this.timers.set(strategyId, timer);
-    this.tick(strategyId).catch(e => this.logger.error(e));
+
+    this.initialCatchup(strategyId).then(() => {
+      this.tick(strategyId).catch(e => this.logger.error(e));
+    }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
 
     return { executionId: execution.id };
   }
@@ -191,6 +194,8 @@ export class StockOptionsBuyingEngine {
 
     // Resolve AUTO symbol if configured
     if (state.config.symbol === 'AUTO') {
+      if ((state as any).isResolvingAuto) return;
+      (state as any).isResolvingAuto = true;
       const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
       if (account?.accessToken) {
         try {
@@ -205,8 +210,11 @@ export class StockOptionsBuyingEngine {
           this.log(state, `❌ Failed to auto-select stock: ${err.message}`);
           await this.persistLogs(state);
           return;
+        } finally {
+          (state as any).isResolvingAuto = false;
         }
       } else {
+        (state as any).isResolvingAuto = false;
         this.log(state, '⚠ No active broker session to resolve AUTO symbol');
         await this.persistLogs(state);
         return;
@@ -675,27 +683,38 @@ export class StockOptionsBuyingEngine {
       }
 
       // Record exit order in DB
-      await this.prisma.order.create({
-        data: {
-          userId: (await this.prisma.strategyExecution.findUnique({ where: { id: state.executionId }, include: { strategy: true } }))?.strategy.userId!,
-          brokerAccountId: state.brokerAccountId,
-          executionId: state.executionId,
-          symbol: state.optionSymbol!,
-          exchange: 'NFO',
-          side: 'SELL',
-          orderType: 'LIMIT',
-          productType: state.config.product as any ?? 'MIS',
-          qty: state.positionQty,
-          price: actualExitPrice,
-          status: 'COMPLETE',
-          isPaperTrade: state.isPaperTrade,
-        } as any,
-      });
+      try {
+        const exec = await this.prisma.strategyExecution.findUnique({
+          where: { id: state.executionId },
+          include: { strategy: true },
+        });
+        if (exec?.strategy?.userId) {
+          await this.prisma.order.create({
+            data: {
+              userId: exec.strategy.userId,
+              brokerAccountId: state.brokerAccountId,
+              executionId: state.executionId,
+              symbol: state.optionSymbol || state.config.symbol || 'OPTION',
+              exchange: 'NFO',
+              side: 'SELL',
+              orderType: 'LIMIT',
+              productType: state.config.product as any ?? 'MIS',
+              qty: Math.max(1, state.positionQty || 1),
+              price: actualExitPrice || 0.05,
+              status: 'COMPLETE',
+              isPaperTrade: state.isPaperTrade,
+            } as any,
+          });
+        }
+      } catch (dbErr) {
+        this.log(state, `⚠ DB order log skipped: ${dbErr.message}`);
+      }
 
       state.tradesPlacedToday++;
-      this.resetStateToScanning(state);
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
+    } finally {
+      this.resetStateToScanning(state);
     }
   }
 
@@ -704,6 +723,11 @@ export class StockOptionsBuyingEngine {
     
     this.log(state, `⏰ Market closing hour (15:15 IST). Closing triggers and positions.`);
     
+    if (!state.optionSymbol) {
+      this.resetStateToScanning(state);
+      return;
+    }
+
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
     if (account?.accessToken) {
       const client = this.factory.createClient(account);
@@ -719,8 +743,8 @@ export class StockOptionsBuyingEngine {
         this.resetStateToScanning(state);
       } else if (state.stateType === 'ACTIVE_POSITION') {
         const key = `NFO:${state.optionSymbol}`;
-        const ltpData = await kite.getLTP([key]);
-        const currentPrice = ltpData[key]?.last_price || state.entryTriggerPrice!;
+        const ltpData = await kite.getLTP([key]).catch(() => ({}));
+        const currentPrice = ltpData[key]?.last_price || state.entryTriggerPrice || 0.05;
         await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
       }
     } else {
@@ -891,7 +915,7 @@ export class StockOptionsBuyingEngine {
     state.executionLatencyMs = undefined;
   }
 
-  private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
+  private getLatestCrossoverTodayDetails(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): { trend: 'LONG' | 'SHORT'; crossoverIdx: number; ema: number; vwap: number; crossoverTime: Date } | null {
     let latestCrossover: 'LONG' | 'SHORT' | null = null;
     let crossoverIdx = -1;
     const todayStr = candles[idx].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
@@ -916,17 +940,231 @@ export class StockOptionsBuyingEngine {
       }
     }
 
-    if (latestCrossover !== null && (idx - crossoverIdx) > 3) {
-      return null;
+    if (latestCrossover !== null && (idx - crossoverIdx) <= 3) {
+      return {
+        trend: latestCrossover,
+        crossoverIdx,
+        ema: emas[crossoverIdx]!,
+        vwap: vwaps[crossoverIdx]!,
+        crossoverTime: new Date(candles[crossoverIdx].date),
+      };
     }
 
-    return latestCrossover;
+    return null;
+  }
+
+  private formatTime(d: Date): string {
+    return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
+    const details = this.getLatestCrossoverTodayDetails(idx, candles, emas, vwaps);
+    return details ? details.trend : null;
+  }
+
+  private async initialCatchup(strategyId: string) {
+    const state = this.running.get(strategyId);
+    if (!state) return;
+    const now = new Date();
+
+    this.log(state, `🔍 Running catch-up for today's data...`);
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+    if (!account || !account.accessToken) {
+      this.log(state, `⚠ Catch-up skipped: No active broker account or access token found.`);
+      await this.persistLogs(state);
+      return;
+    }
+
+    const client = this.factory.createClient(account);
+    const kite = client['kite'];
+
+    try {
+      if (state.config.symbol === 'AUTO') {
+        const pick = await autoSelectStock(kite, 1000, 500, this.logger, state.config.maxCapital);
+        state.config.symbol = pick.symbol;
+        state.config.exchange = pick.exchange;
+        this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol} (Catch-up)`);
+        await this.persistLogs(state);
+      }
+
+      const interval = state.config.timeframe === '5min' ? '5minute' : '15minute';
+      const candles = await this.fetchCandles(client, state.config.symbol, state.config.exchange, interval);
+      const emaPeriod = state.config.emaPeriod || 15;
+      if (candles.length < emaPeriod + 2) {
+        this.log(state, `⚠ Catch-up skipped: Insufficient candles fetched for ${state.config.symbol} (need ${emaPeriod + 2}, got ${candles.length})`);
+        await this.persistLogs(state);
+        return;
+      }
+
+      const emas = this.calculateEMA(candles, emaPeriod);
+      const vwaps = this.calculateVWAP(candles);
+      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+
+      let cachedOptCandles: Candle[] = [];
+      let cachedOptSymbol = '';
+
+      for (let i = emaPeriod + 1; i < candles.length; i++) {
+        const currentCandle = candles[i];
+        const candleDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        if (candleDateStr !== todayStr) continue;
+
+        if (state.stateType === 'ACTIVE_POSITION' && state.optionSymbol) {
+          if (cachedOptSymbol !== state.optionSymbol) {
+            const rawOptData = await client.getHistoricalData(state.optionSymbol, 'NFO', interval, new Date(state.entryTime || currentCandle.date), now).catch(() => []);
+            cachedOptCandles = (rawOptData || []).map((c: any) => ({
+              date: new Date(c.date),
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+              volume: c.volume,
+            }));
+            cachedOptSymbol = state.optionSymbol;
+            await new Promise(r => setTimeout(r, 250)); // Rate limit pause
+          }
+
+          const currentOptCandle = cachedOptCandles.find(c => c.date.getTime() === currentCandle.date.getTime());
+
+          if (currentOptCandle) {
+            const high = currentOptCandle.high;
+            const low = currentOptCandle.low;
+
+            if (!state.isT1Reached && high >= state.target1Price!) {
+              state.isT1Reached = true;
+              state.stopLossPrice = state.entryTriggerPrice;
+              state.isSlTrailedToCost = true;
+              this.log(state, `🎯 (Catch-up) T1 (+50% ROI) hit at ₹${high.toFixed(2)} on ${this.formatTime(currentCandle.date)}! SL trailed to cost ₹${state.entryTriggerPrice}`);
+            }
+
+            if (high >= state.target2Price!) {
+              this.log(state, `🏁 (Catch-up) T2 (+100% ROI Target) hit at ₹${high.toFixed(2)} on ${this.formatTime(currentCandle.date)}! Trade Closed.`);
+              this.resetDailyState(state);
+              cachedOptCandles = [];
+              cachedOptSymbol = '';
+              continue;
+            }
+
+            if (low <= state.stopLossPrice!) {
+              this.log(state, `🛑 (Catch-up) Stop Loss hit at ₹${low.toFixed(2)} on ${this.formatTime(currentCandle.date)}. Trade Closed.`);
+              this.resetDailyState(state);
+              cachedOptCandles = [];
+              cachedOptSymbol = '';
+              continue;
+            }
+          }
+          continue;
+        }
+
+        if (state.tradesPlacedToday >= state.config.maxTradesPerDay) break;
+
+        const mother = candles[i - 1];
+        const baby = candles[i];
+        const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
+        const details = this.getLatestCrossoverTodayDetails(i, candles, emas, vwaps);
+
+        if (details !== null) {
+          const side = details.trend === 'LONG' ? 'CALL' : 'PUT';
+          const crossoverCandle = candles[details.crossoverIdx];
+          const isFreshCrossover = (i - details.crossoverIdx) <= 2;
+
+          let triggerHigh: number | null = null;
+          let triggerLow: number | null = null;
+          let setupType = '';
+
+          if (isInsideCandle) {
+            triggerHigh = mother.high;
+            triggerLow = mother.low;
+            setupType = 'Inside Candle Pullback';
+          } else if (isFreshCrossover && i === details.crossoverIdx) {
+            triggerHigh = crossoverCandle.high;
+            triggerLow = details.trend === 'LONG' ? Math.min(crossoverCandle.low, details.vwap) : Math.max(crossoverCandle.high, details.vwap);
+            setupType = 'Direct Crossover Breakout';
+          }
+
+          if (triggerHigh !== null && triggerLow !== null) {
+            this.log(
+              state,
+              `🔍 Detected ${side} (${setupType}) at ${this.formatTime(new Date(baby.date))} (EMA: ₹${details.ema.toFixed(2)}, VWAP: ₹${details.vwap.toFixed(2)}) — Trigger High: ₹${triggerHigh.toFixed(2)}, Low (SL): ₹${triggerLow.toFixed(2)}`
+            );
+
+            let breakoutFound = false;
+            let setupInvalidated = false;
+
+            for (let j = i + 1; j < Math.min(i + 13, candles.length); j++) {
+              const checkCandle = candles[j];
+              const isBreakout = side === 'CALL' ? checkCandle.high > triggerHigh : checkCandle.low < triggerLow;
+              const isInvalidated = side === 'CALL' ? checkCandle.low < triggerLow : checkCandle.high > triggerHigh;
+
+              if (isBreakout) {
+                this.log(state, `🚀 (Catch-up) Found past ${side} Breakout (${setupType}) at ${this.formatTime(new Date(checkCandle.date))}!`);
+                await this.setupBreakoutTrigger(state, client, kite, side, baby.date, side === 'CALL' ? triggerLow : triggerHigh);
+                await new Promise(r => setTimeout(r, 250)); // Rate limit pause
+                if (state.isPaperTrade) {
+                  state.stateType = 'ACTIVE_POSITION';
+                  state.entryTime = checkCandle.date.getTime();
+                }
+                i = j;
+                breakoutFound = true;
+                break;
+              } else if (isInvalidated) {
+                this.log(state, `❌ (Catch-up) Setup invalidated at ${this.formatTime(new Date(checkCandle.date))} (Price crossed VWAP/SL level ₹${triggerLow.toFixed(2)})`);
+                setupInvalidated = true;
+                break;
+              }
+            }
+
+            if (!breakoutFound && !setupInvalidated) {
+              this.log(state, `⏳ (Catch-up) Setup expired without breakout above ₹${triggerHigh.toFixed(2)}`);
+            }
+          }
+        }
+      }
+
+      if (state.stateType === 'ACTIVE_POSITION') {
+        this.log(state, `📊 (Catch-up) Position remains OPEN at 15:30 close | Option: NFO:${state.optionSymbol} | Entry: ₹${state.entryTriggerPrice} | T1: ₹${state.target1Price} | T2: ₹${state.target2Price} | SL: ₹${state.stopLossPrice}`);
+      }
+      if (state.stateType === 'SCANNING') this.log(state, `✅ Catch-up complete. No past signals found.`);
+      await this.persistLogs(state);
+    } catch (err) {
+      this.log(state, `⚠ Catch-up failed: ${err.message}`);
+      await this.persistLogs(state);
+    }
   }
 
   private resetDailyState(state: StrategyState) {
     this.resetStateToScanning(state);
     state.tradesPlacedToday = 0;
     state.lastProcessedTimestamp = 0;
+  }
+
+  private async trackOrder(state: StrategyState, price: number, status: 'OPEN' | 'COMPLETE') {
+    try {
+      const exec = await this.prisma.strategyExecution.findUnique({
+        where: { id: state.executionId },
+        include: { strategy: true },
+      });
+      if (!exec?.strategy?.userId) return;
+
+      await this.prisma.order.create({
+        data: {
+          userId: exec.strategy.userId,
+          brokerAccountId: state.brokerAccountId,
+          executionId: state.executionId,
+          symbol: state.optionSymbol || state.config.symbol || 'OPTION',
+          exchange: 'NFO',
+          side: 'BUY',
+          orderType: 'SL',
+          productType: state.config.product as any ?? 'MIS',
+          qty: Math.max(1, state.positionQty || 1),
+          price: price || 0,
+          brokerOrderId: state.entryOrderId || `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`,
+          status: state.isPaperTrade ? 'COMPLETE' : status,
+          isPaperTrade: state.isPaperTrade,
+        } as any,
+      });
+    } catch (e) {
+      this.logger.warn(`Failed to track order in DB: ${e.message}`);
+    }
   }
 
   private log(state: StrategyState, msg: string) {
@@ -947,31 +1185,6 @@ export class StockOptionsBuyingEngine {
         state: this.getState(state.strategyId),
       });
     } catch {}
-  }
-
-  private async trackOrder(state: StrategyState, price: number, status: 'OPEN' | 'COMPLETE') {
-    try {
-      const strategy = await this.prisma.strategy.findUnique({ where: { id: (await this.prisma.strategyExecution.findUnique({ where: { id: state.executionId } }))?.strategyId } });
-      await this.prisma.order.create({
-        data: {
-          userId: strategy?.userId!,
-          brokerAccountId: state.brokerAccountId,
-          executionId: state.executionId,
-          symbol: state.optionSymbol!,
-          exchange: 'NFO',
-          side: 'BUY',
-          orderType: 'SL',
-          productType: state.config.product as any ?? 'MIS',
-          qty: state.positionQty,
-          price,
-          brokerOrderId: state.entryOrderId,
-          status: state.isPaperTrade ? 'COMPLETE' : status,
-          isPaperTrade: state.isPaperTrade,
-        } as any,
-      });
-    } catch (e) {
-      this.logger.error(`Failed to track trigger order: ${e.message}`);
-    }
   }
 
   private async updateOrderStatus(brokerOrderId: string, status: string, filledPrice: number | null) {
