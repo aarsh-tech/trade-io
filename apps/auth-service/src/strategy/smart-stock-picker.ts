@@ -139,6 +139,30 @@ export async function autoSelectStock(
           }
         }
 
+        // ── Event / Corporate Action Filter ─────────────────────────────────
+        // Stocks with earnings, AGMs, dividends, splits etc. show abnormal
+        // overnight gaps and/or huge volume spikes. Skip them to avoid
+        // unreliable technical setups.
+        if (candles.length >= 22) {
+          const todayCandle = candles[candles.length - 1];
+          const prevDayCandle = candles[candles.length - 2];
+
+          // 1. Abnormal overnight gap (>3% from prev close to today's open)
+          const gapPct = Math.abs((todayCandle.open - prevDayCandle.close) / prevDayCandle.close) * 100;
+          if (gapPct > 3.0) {
+            logger?.log(`  🚫 Skipping ${symbol}: Abnormal gap ${gapPct.toFixed(1)}% (likely event/result)`);
+            return;
+          }
+
+          // 2. Abnormal volume spike (>3x the 20-day average volume)
+          const recentCandles = candles.slice(-22, -2); // last 20 trading days (excluding today)
+          const avgVolume = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
+          if (avgVolume > 0 && todayCandle.volume > avgVolume * 3) {
+            logger?.log(`  🚫 Skipping ${symbol}: Volume spike ${(todayCandle.volume / avgVolume).toFixed(1)}x avg (likely event/result)`);
+            return;
+          }
+        }
+
         // Helper to calculate exact capital-constrained quantity with 5x MIS leverage
         const calcCapitalQty = (price: number, riskPerShare: number) => {
           const riskQty = riskPerShare > 0 ? Math.ceil(stopLossRs / riskPerShare) : 1;
@@ -195,8 +219,13 @@ export async function autoSelectStock(
     if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
       const ltp = quote.last_price;
       const prevClose = quote.ohlc.close;
+      const todayOpen = quote.ohlc.open || ltp;
       const changePct = Math.abs((ltp - prevClose) / prevClose) * 100;
       const dayRangePct = ((quote.ohlc.high - quote.ohlc.low) / ltp) * 100;
+
+      // Skip stocks with abnormal overnight gap (>3%) — likely event/result
+      const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
+      if (gapPct > 3.0) continue;
 
       // Exclude slow-moving / low-volatility stocks (less than 1.0% day range / move)
       if (dayRangePct < 1.0 && changePct < 0.6) continue;

@@ -313,7 +313,22 @@ export class EmaVwapCrossoverEngine {
                     }
                   }
                   this.log(state, `🚀 (Catch-up) Found past LONG Breakout (${setupType}) at ${this.formatTime(new Date(checkCandle.date))}!`);
-                  await this.placeTrade(state, client, account, 'BUY', triggerHigh, new Date(checkCandle.date), new Date(baby.date), triggerLow, triggerHigh);
+
+                  // For live accounts: check current LTP and place a real order if still valid
+                  if (!state.isPaperTrade) {
+                    const checkSymbol = state.futureSymbol || state.config.symbol;
+                    const checkExchange = state.futureSymbol ? state.futureExchange : state.config.exchange;
+                    const ltpData = await kite.getLTP([`${checkExchange}:${checkSymbol}`]);
+                    const currentLtp = ltpData[`${checkExchange}:${checkSymbol}`]?.last_price;
+                    if (currentLtp && currentLtp > triggerLow && currentLtp < triggerHigh + (triggerHigh - triggerLow) * 2) {
+                      this.log(state, `📡 Live entry! LTP ₹${currentLtp.toFixed(2)} still valid (SL: ₹${triggerLow!.toFixed(2)}). Placing real order...`);
+                      await this.placeTrade(state, client, account, 'BUY', currentLtp, undefined, undefined, triggerLow!, triggerHigh!);
+                    } else {
+                      this.log(state, `⏭ Skipping live entry — LTP ₹${currentLtp?.toFixed(2) || 'N/A'} too far from setup (Entry was ₹${triggerHigh!.toFixed(2)}, SL: ₹${triggerLow!.toFixed(2)})`);
+                    }
+                  } else {
+                    await this.placeTrade(state, client, account, 'BUY', triggerHigh, new Date(checkCandle.date), new Date(baby.date), triggerLow, triggerHigh);
+                  }
                   i = j; // Skip to breakout candle index
                   breakoutFound = true;
                   break;
@@ -337,7 +352,22 @@ export class EmaVwapCrossoverEngine {
                     }
                   }
                   this.log(state, `🚀 (Catch-up) Found past SHORT Breakout (${setupType}) at ${this.formatTime(new Date(checkCandle.date))}!`);
-                  await this.placeTrade(state, client, account, 'SELL', triggerLow, new Date(checkCandle.date), new Date(baby.date), triggerLow, triggerHigh);
+
+                  // For live accounts: check current LTP and place a real order if still valid
+                  if (!state.isPaperTrade) {
+                    const checkSymbol = state.futureSymbol || state.config.symbol;
+                    const checkExchange = state.futureSymbol ? state.futureExchange : state.config.exchange;
+                    const ltpData = await kite.getLTP([`${checkExchange}:${checkSymbol}`]);
+                    const currentLtp = ltpData[`${checkExchange}:${checkSymbol}`]?.last_price;
+                    if (currentLtp && currentLtp < triggerHigh && currentLtp > triggerLow - (triggerHigh - triggerLow) * 2) {
+                      this.log(state, `📡 Live entry! LTP ₹${currentLtp.toFixed(2)} still valid (SL: ₹${triggerHigh!.toFixed(2)}). Placing real order...`);
+                      await this.placeTrade(state, client, account, 'SELL', currentLtp, undefined, undefined, triggerLow!, triggerHigh!);
+                    } else {
+                      this.log(state, `⏭ Skipping live entry — LTP ₹${currentLtp?.toFixed(2) || 'N/A'} too far from setup (Entry was ₹${triggerLow!.toFixed(2)}, SL: ₹${triggerHigh!.toFixed(2)})`);
+                    }
+                  } else {
+                    await this.placeTrade(state, client, account, 'SELL', triggerLow, new Date(checkCandle.date), new Date(baby.date), triggerLow, triggerHigh);
+                  }
                   i = j; // Skip to breakout candle index
                   breakoutFound = true;
                   break;
@@ -360,7 +390,8 @@ export class EmaVwapCrossoverEngine {
       if (state.entryTriggered) {
         const lastCandle = candles[candles.length - 1];
         const pnl = (lastCandle.close - state.entryPrice!) * state.config.qty;
-        this.log(state, `📊 (Catch-up) Position remains OPEN at 15:30 close | Symbol: ${state.optionSymbol || state.config.symbol} | Entry: ₹${state.entryPrice?.toFixed(2)} | Target: ₹${state.targetPrice?.toFixed(2)} | SL: ₹${state.stopLossPrice?.toFixed(2)} | Close Price: ₹${lastCandle.close.toFixed(2)} | P&L: ₹${pnl.toFixed(2)}`);
+        const lastCandleTime = this.formatTime(lastCandle.date);
+        this.log(state, `📊 (Catch-up) Position remains OPEN | Last candle: ${lastCandleTime} | Symbol: ${state.optionSymbol || state.config.symbol} | Entry: ₹${state.entryPrice?.toFixed(2)} | Target: ₹${state.targetPrice?.toFixed(2)} | SL: ₹${state.stopLossPrice?.toFixed(2)} | Close Price: ₹${lastCandle.close.toFixed(2)} | P&L: ₹${pnl.toFixed(2)}. Live monitoring will take over.`);
       }
       if (!state.entryTriggered) this.log(state, `✅ Catch-up complete. No past signals found.`);
       await this.persistLogs(state);
@@ -426,6 +457,11 @@ export class EmaVwapCrossoverEngine {
       const closedCandles = isClosed ? candles : candles.slice(0, -1);
 
       if (closedCandles.length < 2) return;
+
+      // Don't scan for signals if the last closed candle is from a previous day
+      const lastClosedDate = closedCandles[closedCandles.length - 1].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const todayDate = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      if (lastClosedDate !== todayDate) return;
 
       const emas = this.calculateEMA(closedCandles, config.emaPeriod || 15);
       const vwaps = this.calculateVWAP(closedCandles);
@@ -620,8 +656,8 @@ export class EmaVwapCrossoverEngine {
       const limitPrice = finalSide === 'BUY' ? this.roundTick(entry + 0.20) : this.roundTick(entry - 0.20);
       const entryId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: finalSide, orderType: 'SL', triggerPrice: entry, price: limitPrice });
-      this.log(state, `✅ Entry Order (SL-Limit @ ₹${entry} / Limit ₹${limitPrice}): ${entryId}`);
+        : await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: finalSide, orderType: 'LIMIT', price: limitPrice });
+      this.log(state, `✅ Entry Order (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
 
       // Track order in DB
       await this.trackOrderInDB(state, finalSide, symbol, exchange, config.qty, entry, entryId, triggerTime);
@@ -646,7 +682,7 @@ export class EmaVwapCrossoverEngine {
       state.targetOrderId = targetOrderId;
       state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
 
-      if (!state.isPaperTrade && (!slOrderId || !targetOrderId)) {
+      if (!state.isPaperTrade && !isHistorical && (!slOrderId || !targetOrderId)) {
         this.log(state, `⚠ Warning: Failed to place SL or Target order at broker. Active monitoring will try to exit if needed.`);
       }
     } catch (err) { this.log(state, `❌ Placement failed: ${err.message}`); }
@@ -1063,14 +1099,25 @@ export class EmaVwapCrossoverEngine {
       }
     }
 
-    if (latestCrossover !== null && (idx - crossoverIdx) <= 3) {
-      return {
-        trend: latestCrossover,
-        crossoverIdx,
-        ema: emas[crossoverIdx]!,
-        vwap: vwaps[crossoverIdx]!,
-        crossoverTime: new Date(candles[crossoverIdx].date),
-      };
+    // Return the crossover only if the trend is still valid at the current candle
+    // (i.e. EMA is still on the correct side of VWAP — trend hasn't reversed)
+    if (latestCrossover !== null) {
+      const currentEma = emas[idx], currentVwap = vwaps[idx];
+      if (currentEma === null || currentVwap === null) return null;
+
+      const trendStillValid =
+        (latestCrossover === 'LONG' && currentEma > currentVwap) ||
+        (latestCrossover === 'SHORT' && currentEma < currentVwap);
+
+      if (trendStillValid) {
+        return {
+          trend: latestCrossover,
+          crossoverIdx,
+          ema: emas[crossoverIdx]!,
+          vwap: vwaps[crossoverIdx]!,
+          crossoverTime: new Date(candles[crossoverIdx].date),
+        };
+      }
     }
 
     return null;
