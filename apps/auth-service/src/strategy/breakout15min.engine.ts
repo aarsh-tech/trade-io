@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { Breakout15MinConfig } from './dto/strategy.dto';
-import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { autoSelectStock } from './smart-stock-picker';
 
 interface Candle {

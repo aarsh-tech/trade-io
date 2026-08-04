@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  ChevronLeft, Check, Loader2, Shield, Target, Zap, Info, ArrowLeft, RefreshCw, BarChart2, TrendingUp
+  ChevronLeft, Check, Loader2, Shield, Target, Zap, Info, ArrowLeft, RefreshCw, BarChart2, TrendingUp, Lock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -22,20 +22,19 @@ const LOT_SIZES: Record<string, number> = {
 };
 
 function getLotSize(symbol: string) {
-  const s = (symbol || "").toUpperCase();
-  if (s.includes("BANKNIFTY")) return 30;
-  if (s.includes("NIFTY")) return 65;
-  if (s.includes("SENSEX")) return 20;
-  for (const key in LOT_SIZES) {
-    if (s.includes(key)) return LOT_SIZES[key];
-  }
-  return 1;
+  if (symbol.includes("BANK")) return LOT_SIZES["BANKNIFTY"];
+  if (symbol.includes("SENSEX")) return LOT_SIZES["SENSEX"];
+  if (symbol.includes("FIN")) return LOT_SIZES["FINNIFTY"];
+  if (symbol.includes("MID")) return LOT_SIZES["MIDCPNIFTY"];
+  return LOT_SIZES["NIFTY"];
 }
 
 interface BrokerAccount {
   id: string;
   broker: string;
-  clientId: string;
+  clientId: string | null;
+  isActive: boolean;
+  tokenExpiry: string | null;
 }
 
 export default function EditStrategyPage() {
@@ -58,6 +57,8 @@ export default function EditStrategyPage() {
     maxTradesPerDay: "2",
     minPremium: "100",
     maxPremium: "300",
+    enableProfitFloor: true,
+    profitFloorBufferRs: "100",
     // EMA-VWAP crossover
     emaPeriod: "15",
     isOptionBuyingOnly: true,
@@ -107,6 +108,8 @@ export default function EditStrategyPage() {
           maxTradesPerDay: String(config.maxTradesPerDay || "2"),
           minPremium: String(config.minPremium || "100"),
           maxPremium: String(config.maxPremium || "300"),
+          enableProfitFloor: config.enableProfitFloor !== false,
+          profitFloorBufferRs: String(config.profitFloorBufferRs || "100"),
           // EMA-VWAP crossover
           emaPeriod: String(config.emaPeriod || "15"),
           isOptionBuyingOnly: config.isOptionBuyingOnly !== false,
@@ -189,6 +192,8 @@ export default function EditStrategyPage() {
           qty, lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
           maxTradesPerDay: Number(form.maxTradesPerDay),
+          enableProfitFloor: form.enableProfitFloor,
+          profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
           ...(form.isOptionBuyingOnly && {
             minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
           }),
@@ -579,6 +584,29 @@ export default function EditStrategyPage() {
                   onChange={(e) => set("maxTradesPerDay", e.target.value)}
                 />
               </div>
+
+              {isEmaVwap && (
+                <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5 mt-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Lock className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span className="text-sm font-bold text-[hsl(var(--foreground))]">Profit Floor Locking & Peak Trailing</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.enableProfitFloor}
+                        onChange={(e) => set("enableProfitFloor", e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[hsl(var(--foreground))] opacity-90 leading-relaxed">
+                    Once target profit (<strong>₹{form.targetRs}</strong>) is reached, locks in minimum <strong>₹{form.targetRs}</strong> profit and trails <strong>₹{form.profitFloorBufferRs || 100}</strong> behind peak P&L so you can ride big trends!
+                  </p>
+                </div>
+              )}
             </>
           )}
         </CardContent>

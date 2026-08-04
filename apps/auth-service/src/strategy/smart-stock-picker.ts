@@ -60,7 +60,7 @@ export async function autoSelectStock(
         availableCapital = liveCash;
         logger?.log(`💰 Detected live Zerodha available capital: ₹${liveCash.toLocaleString('en-IN')}`);
       }
-    } catch {}
+    } catch { }
   }
   if (!availableCapital || availableCapital <= 0) {
     availableCapital = 25000; // Fallback capital default if unreadable
@@ -166,7 +166,7 @@ export async function autoSelectStock(
         // Helper to calculate exact capital-constrained quantity with 5x MIS leverage
         const calcCapitalQty = (price: number, riskPerShare: number) => {
           const riskQty = riskPerShare > 0 ? Math.ceil(stopLossRs / riskPerShare) : 1;
-          const maxBuyingPower = (availableCapital || 25000) * 5; // Zerodha 5x MIS leverage
+          const maxBuyingPower = (availableCapital || 20000) * 5; // Zerodha 5x MIS leverage
           const maxCapitalQty = Math.floor(maxBuyingPower / price);
           return Math.max(1, Math.min(riskQty, maxCapitalQty));
         };

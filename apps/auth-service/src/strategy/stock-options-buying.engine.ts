@@ -1076,8 +1076,13 @@ export class StockOptionsBuyingEngine {
             triggerLow = mother.low;
             setupType = 'Inside Candle Pullback';
           } else if (isFreshCrossover && i === details.crossoverIdx) {
-            triggerHigh = crossoverCandle.high;
-            triggerLow = details.trend === 'LONG' ? Math.min(crossoverCandle.low, details.vwap) : Math.max(crossoverCandle.high, details.vwap);
+            if (details.trend === 'LONG') {
+              triggerHigh = crossoverCandle.high;
+              triggerLow = Math.min(crossoverCandle.low, details.vwap);
+            } else {
+              triggerHigh = Math.max(crossoverCandle.high, details.vwap);
+              triggerLow = crossoverCandle.low;
+            }
             setupType = 'Direct Crossover Breakout';
           }
 

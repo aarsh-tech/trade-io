@@ -35,6 +35,8 @@ export interface EmaVwapCrossoverConfig {
   targetRs: number;
   minPremium?: number;
   maxPremium?: number;
+  enableProfitFloor?: boolean;
+  profitFloorBufferRs?: number;
 }
 
 // ─── Stock Options Buying Config ───────────────────────────────────────────────

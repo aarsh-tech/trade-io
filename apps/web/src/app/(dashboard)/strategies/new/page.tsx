@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   BarChart2, TrendingUp, ChevronRight, ChevronLeft,
-  Check, Loader2, Shield, Target, Zap, Info, Flame,
+  Check, Loader2, Shield, Target, Zap, Info, Flame, Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -28,8 +28,6 @@ const LOT_SIZES: Record<string, number> = {
   "NIFTY": 65,
   "BANKNIFTY": 30,
   "SENSEX": 20,
-  "FINNIFTY": 60,
-  "MIDCPNIFTY": 120,
 };
 
 function getLotSize(symbol: string) {
@@ -46,7 +44,7 @@ function getLotSize(symbol: string) {
 interface BrokerAccount {
   id: string;
   broker: string;
-  clientId: string;
+  clientId: string | null;
   isActive: boolean;
   tokenExpiry: string | null;
 }
@@ -72,6 +70,8 @@ export default function NewStrategyPage() {
     maxTradesPerDay: "2",
     minPremium: "100",
     maxPremium: "300",
+    enableProfitFloor: true,
+    profitFloorBufferRs: "100",
     // EMA-VWAP crossover
     emaPeriod: "15",
     isOptionBuyingOnly: true,
@@ -243,6 +243,8 @@ export default function NewStrategyPage() {
           qty, lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
           maxTradesPerDay: Number(form.maxTradesPerDay),
+          enableProfitFloor: form.enableProfitFloor,
+          profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
           ...(form.isOptionBuyingOnly && {
             minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
           }),
@@ -1013,6 +1015,29 @@ export default function NewStrategyPage() {
                       Safety cap strategy stops placing new trades after this limit
                     </p>
                   </div>
+
+                  {form.type === "EMA_VWAP_CROSSOVER" && (
+                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Lock className="h-4 w-4 text-emerald-500 shrink-0" />
+                          <span className="text-sm font-bold text-[hsl(var(--foreground))]">Profit Floor Locking & Peak Trailing</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={form.enableProfitFloor}
+                            onChange={(e) => set("enableProfitFloor", e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                        </label>
+                      </div>
+                      <p className="text-xs text-[hsl(var(--foreground))] opacity-90 leading-relaxed">
+                        Once target profit (<strong>₹{form.targetRs}</strong>) is reached, locks in minimum <strong>₹{form.targetRs}</strong> profit and trails <strong>₹{form.profitFloorBufferRs || 100}</strong> behind peak P&L so you can ride big trends!
+                      </p>
+                    </div>
+                  )}
 
                   {/* Live preview */}
                   <div className="p-4 rounded-xl bg-[hsl(var(--secondary)/0.5)] border border-[hsl(var(--border))] space-y-2">
