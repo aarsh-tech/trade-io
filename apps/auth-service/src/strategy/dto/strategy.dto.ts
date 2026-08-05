@@ -5,6 +5,7 @@ export enum StrategyTypeEnum {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
   STOCK_OPTIONS_BUYING = 'STOCK_OPTIONS_BUYING',
+  NIFTY_OPTIONS_SCALPER = 'NIFTY_OPTIONS_SCALPER',
   CUSTOM = 'CUSTOM',
 }
 
@@ -26,6 +27,7 @@ export interface EmaVwapCrossoverConfig {
   symbol: string;
   exchange: string;
   emaPeriod: number;
+  vwapSource?: 'close' | 'hlc3';
   isOptionBuyingOnly: boolean;
   qty: number;
   lots: number;
@@ -37,6 +39,28 @@ export interface EmaVwapCrossoverConfig {
   maxPremium?: number;
   enableProfitFloor?: boolean;
   profitFloorBufferRs?: number;
+}
+
+export interface NiftyOptionsScalperConfig {
+  symbol: string;
+  exchange: string;
+  emaPeriod: number;
+  vwapSource?: 'close' | 'hlc3';
+  isOptionBuyingOnly: true;
+  qty: number;
+  lots: number;
+  product: 'MIS' | 'NRML';
+  maxTradesPerDay: number;
+  maxWinsPerDay?: number;
+  stopLossPoints: number;
+  targetPoints: number;
+  trailCostAtPoints?: number;
+  stopLossRs: number;
+  targetRs: number;
+  minPremium?: number;
+  maxPremium?: number;
+  enableOrbTrigger?: boolean;
+  enablePullbackTrigger?: boolean;
 }
 
 // ─── Stock Options Buying Config ───────────────────────────────────────────────

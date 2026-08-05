@@ -318,7 +318,9 @@ function StrategyCard({
         {/* Strategy type chip */}
         <div className="flex gap-2 flex-wrap">
           <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.2)]">
-            {s.type === "STOCK_OPTIONS_BUYING" ? (
+            {s.type === "NIFTY_OPTIONS_SCALPER" ? (
+              <><Target className="h-3 w-3 text-purple-500" /> Nifty 10-Pt Scalper</>
+            ) : s.type === "STOCK_OPTIONS_BUYING" ? (
               <><Flame className="h-3 w-3" /> Stock Options Buying</>
             ) : is15Min ? (
               <><BarChart2 className="h-3 w-3" /> 15-Min Breakout</>

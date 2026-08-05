@@ -75,6 +75,16 @@ export class EmaVwapCrossoverEngine {
 
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const todayStart = new Date(`${todayStr}T00:00:00.000+05:30`);
+    const completedOrdersCount = await this.prisma.order.count({
+      where: {
+        execution: { strategyId },
+        createdAt: { gte: todayStart },
+        status: 'COMPLETE'
+      }
+    }).catch(() => 0);
+
     const state: StrategyState = {
       strategyId,
       executionId: execution.id,
@@ -97,7 +107,7 @@ export class EmaVwapCrossoverEngine {
       targetOrderId: null,
       entryTriggered: null,
       optionSymbol: null,
-      tradesPlacedToday: 0,
+      tradesPlacedToday: Math.floor(completedOrdersCount / 2),
       logs: [],
       lastProcessedTimestamp: 0,
     };
@@ -202,7 +212,7 @@ export class EmaVwapCrossoverEngine {
       if (candles.length < emaPeriod + 2) return;
 
       const emas = this.calculateEMA(candles, emaPeriod);
-      const vwaps = this.calculateVWAP(candles);
+      const vwaps = this.calculateVWAP(candles, state.config.vwapSource || 'close');
 
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
       let optionCandles: Candle[] = [];
@@ -567,7 +577,7 @@ export class EmaVwapCrossoverEngine {
       if (lastClosedDate !== todayDate) return;
 
       const emas = this.calculateEMA(closedCandles, config.emaPeriod || 15);
-      const vwaps = this.calculateVWAP(closedCandles);
+      const vwaps = this.calculateVWAP(closedCandles, config.vwapSource || 'close');
 
       const lastIdx = closedCandles.length - 1, prevIdx = closedCandles.length - 2;
       const currEma = emas[lastIdx], prevEma = emas[prevIdx];
@@ -694,6 +704,14 @@ export class EmaVwapCrossoverEngine {
 
   private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date, motherLow?: number, motherHigh?: number) {
     const { config } = state;
+    if (state.entryTriggered) {
+      this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}). Skipping 2nd trade.`);
+      return;
+    }
+    if (state.tradesPlacedToday >= config.maxTradesPerDay) {
+      this.log(state, `⛔ Daily trade limit reached (${state.tradesPlacedToday}/${config.maxTradesPerDay}). Skipping 2nd trade.`);
+      return;
+    }
     const kite = client['kite'];
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
     const product = (config as any).product ?? 'MIS';
@@ -1192,20 +1210,22 @@ export class EmaVwapCrossoverEngine {
     return emas;
   }
 
-  private calculateVWAP(candles: Candle[]) {
+  private calculateVWAP(candles: Candle[], vwapSource: 'close' | 'hlc3' = 'close') {
     const vwaps: (number | null)[] = new Array(candles.length).fill(null);
     let cpv = 0, cv = 0;
     let lastDateStr = '';
     for (let i = 0; i < candles.length; i++) {
-      const dateStr = candles[i].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(candles[i].date);
       if (dateStr !== lastDateStr) {
         // Reset VWAP accumulation at the start of each new day
         cpv = 0;
         cv = 0;
         lastDateStr = dateStr;
       }
-      cpv += ((candles[i].high + candles[i].low + candles[i].close) / 3) * candles[i].volume;
-      cv += candles[i].volume; vwaps[i] = cv === 0 ? candles[i].close : cpv / cv;
+      const price = vwapSource === 'close' ? candles[i].close : (candles[i].high + candles[i].low + candles[i].close) / 3;
+      cpv += price * candles[i].volume;
+      cv += candles[i].volume;
+      vwaps[i] = cv === 0 ? candles[i].close : cpv / cv;
     }
     return vwaps;
   }

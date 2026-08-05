@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
+import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
 
 /**
  * MarketSchedulerService
@@ -36,6 +37,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly breakoutEngine: Breakout15MinEngine,
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
+    private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
   ) {}
 
   onModuleInit() {
@@ -175,6 +177,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
     if (type === 'STOCK_OPTIONS_BUYING') return this.stockOptionsBuyingEngine;
+    if (type === 'NIFTY_OPTIONS_SCALPER') return this.niftyOptionsScalperEngine;
     return null;
   }
 }

@@ -873,18 +873,19 @@ export class StockOptionsBuyingEngine {
     return emas;
   }
 
-  private calculateVWAP(candles: Candle[]) {
+  private calculateVWAP(candles: Candle[], vwapSource: 'close' | 'hlc3' = 'close') {
     const vwaps: (number | null)[] = new Array(candles.length).fill(null);
     let cpv = 0, cv = 0;
     let lastDateStr = '';
     for (let i = 0; i < candles.length; i++) {
-      const dateStr = candles[i].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(candles[i].date);
       if (dateStr !== lastDateStr) {
         cpv = 0;
         cv = 0;
         lastDateStr = dateStr;
       }
-      cpv += ((candles[i].high + candles[i].low + candles[i].close) / 3) * candles[i].volume;
+      const price = vwapSource === 'close' ? candles[i].close : (candles[i].high + candles[i].low + candles[i].close) / 3;
+      cpv += price * candles[i].volume;
       cv += candles[i].volume;
       vwaps[i] = cv === 0 ? candles[i].close : cpv / cv;
     }

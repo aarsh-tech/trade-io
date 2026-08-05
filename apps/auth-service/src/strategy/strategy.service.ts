@@ -304,8 +304,35 @@ export class StrategyService {
         // Implementation for BREAKOUT_15MIN
       }
 
-      if (strategyType === 'EMA_VWAP_CROSSOVER') {
-        // Implementation for EMA_VWAP_CROSSOVER
+      if (strategyType === 'EMA_VWAP_CROSSOVER' || strategyType === 'NIFTY_OPTIONS_SCALPER') {
+        const entryMatch = line.match(/Placed\s+Option\s+Trade:\s+(\S+)\s+—\s+Entry:\s+₹([\d.]+)/i);
+        if (entryMatch) {
+          openTrade = {
+            side: 'BUY',
+            symbol: entryMatch[1],
+            entryPrice: parseFloat(entryMatch[2]),
+            qty: 65
+          };
+        }
+
+        const exitMatch = line.match(/(Target|Stop Loss)\s+Hit\s+.*@\s+₹([\d.]+)/i);
+        if (exitMatch && openTrade) {
+          const exitPrice = parseFloat(exitMatch[2]);
+          const pnlPoints = exitPrice - openTrade.entryPrice;
+          const pnl = pnlPoints * openTrade.qty;
+          trades.push({
+            symbol: openTrade.symbol,
+            entryPrice: openTrade.entryPrice,
+            exitPrice,
+            qty: openTrade.qty,
+            side: openTrade.side,
+            pnl,
+            isWin: pnl > 0,
+            reason: exitMatch[1],
+            source: 'log'
+          });
+          openTrade = null;
+        }
       }
     }
     

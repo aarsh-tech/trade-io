@@ -570,7 +570,7 @@ export default function StrategyDetailPage() {
                 <div className="space-y-3">
                   <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
                     <span className="text-xs text-slate-500">Target Instrument</span>
-                    <span className="text-xs font-bold text-slate-900">{liveState.futureSymbol || "Resolving..."}</span>
+                    <span className="text-xs font-bold text-slate-900">{liveState.futureSymbol || strategy.config.symbol || "Resolving..."}</span>
                   </div>
                   {is15Min && (
                     <>
@@ -584,8 +584,8 @@ export default function StrategyDetailPage() {
                   )}
                   <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
                     <span className="text-xs text-slate-500">Trade Status</span>
-                    <Badge variant={liveState.entryTriggered ? "success" : "secondary"} className="text-[10px]">
-                      {liveState.entryTriggered ? `Position Open (${liveState.entryTriggered})` : "Scanning for Breakout"}
+                    <Badge variant={liveState.entryTriggered ? "success" : liveState.isGoalAchieved ? "warning" : "secondary"} className="text-[10px]">
+                      {liveState.entryTriggered ? `Position Open (${liveState.entryTriggered})` : liveState.isGoalAchieved ? "🎯 Daily Target Win Locked (Completed)" : "Scanning for Signals"}
                     </Badge>
                   </div>
                   {liveState.optionSymbol && (
@@ -594,28 +594,36 @@ export default function StrategyDetailPage() {
                       <span className="text-xs font-black text-blue-700">{liveState.optionSymbol}</span>
                     </div>
                   )}
-                  {/* Daily Scalper specific state */}
-                  {strategy.type === 'DAILY_SCALPER' && (
+                  {/* Nifty Options Scalper specific state */}
+                  {(strategy.type === 'DAILY_SCALPER' || strategy.type === 'NIFTY_OPTIONS_SCALPER') && (
                     <>
                       <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
                         <span className="text-xs text-slate-500">Trades Today</span>
                         <span className="text-xs font-bold text-slate-900">{liveState.tradesToday ?? 0}</span>
                       </div>
-                      <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
-                        <span className="text-xs text-slate-500">Day P&L</span>
-                        <span className={cn("text-xs font-bold", (liveState.pnlToday ?? 0) >= 0 ? "text-green-600" : "text-red-500")}>
-                          {(liveState.pnlToday ?? 0) >= 0 ? '+' : ''}₹{(liveState.pnlToday ?? 0).toFixed(0)}
-                        </span>
-                      </div>
+                      {strategy.type === 'NIFTY_OPTIONS_SCALPER' && (
+                        <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                          <span className="text-xs text-slate-500">Wins Today Goal</span>
+                          <span className="text-xs font-bold text-purple-600">{liveState.winningTradesToday ?? 0} / 1 Target Win</span>
+                        </div>
+                      )}
+                      {liveState.pnlToday !== undefined && (
+                        <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                          <span className="text-xs text-slate-500">Day P&L</span>
+                          <span className={cn("text-xs font-bold", (liveState.pnlToday ?? 0) >= 0 ? "text-green-600" : "text-red-500")}>
+                            {(liveState.pnlToday ?? 0) >= 0 ? '+' : ''}₹{(liveState.pnlToday ?? 0).toFixed(0)}
+                          </span>
+                        </div>
+                      )}
                       {liveState.optionSymbol && (
-                        <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-100 space-y-1.5 mt-2">
+                        <div className="p-2.5 rounded-lg bg-purple-50 border border-purple-100 space-y-1.5 mt-2">
                           <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-bold text-emerald-700">⚡ Active position ({liveState.side})</span>
-                            <span className="text-[10px] font-black text-emerald-900">{liveState.optionSymbol}</span>
+                            <span className="text-[10px] font-bold text-purple-700">⚡ Active Scalp Position</span>
+                            <span className="text-[10px] font-black text-purple-900">{liveState.optionSymbol}</span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span className="text-[9px] text-emerald-600">Entry Avg Price</span>
-                            <span className="text-[11px] font-bold text-emerald-800">₹{liveState.entryPrice?.toFixed(2)}</span>
+                            <span className="text-[9px] text-purple-600">Entry Avg Price</span>
+                            <span className="text-[11px] font-bold text-purple-800">₹{liveState.entryPrice?.toFixed(2)}</span>
                           </div>
                         </div>
                       )}

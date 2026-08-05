@@ -58,7 +58,7 @@ export default function NewStrategyPage() {
 
   const [form, setForm] = useState({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "",
+    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "NIFTY_OPTIONS_SCALPER" | "",
     // Common
     symbol: "NIFTY 50",
     exchange: "NSE",
@@ -74,6 +74,7 @@ export default function NewStrategyPage() {
     profitFloorBufferRs: "100",
     // EMA-VWAP crossover
     emaPeriod: "15",
+    vwapSource: "close" as "close" | "hlc3",
     isOptionBuyingOnly: true,
     // EMA-RSI Options
     emaFast: "9",
@@ -167,6 +168,8 @@ export default function NewStrategyPage() {
     if (step === 0) return !!form.name && !!form.type;
     if (step === 1) return !!form.symbol && Number(form.lots) > 0;
     if (step === 2) {
+      if (form.type === "NIFTY_OPTIONS_SCALPER")
+        return true;
       if (form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS")
         return Number(form.stopLossRs) > 0 && Number(form.targetRs) > 0;
       if (form.type === "STOCK_OPTIONS_BUYING")
@@ -185,7 +188,24 @@ export default function NewStrategyPage() {
       const qty = Number(form.lots) * lotSize;
 
       let config: any;
-      if (form.type === "DAILY_SCALPER") {
+      if (form.type === "NIFTY_OPTIONS_SCALPER") {
+        config = {
+          symbol: form.symbol.trim(), exchange: form.exchange,
+          lots: Number(form.lots), qty,
+          product: form.product,
+          emaPeriod: 15,
+          isOptionBuyingOnly: true,
+          targetPoints: Number(form.dsTargetPoints || 10),
+          stopLossPoints: Number(form.dsStopLossPoints || 7),
+          trailCostAtPoints: 5,
+          stopLossRs: Number(form.dsStopLossPoints || 7) * qty,
+          targetRs: Number(form.dsTargetPoints || 10) * qty,
+          maxTradesPerDay: Number(form.maxTradesPerDay || 3),
+          maxWinsPerDay: 1,
+          enableOrbTrigger: true,
+          enablePullbackTrigger: true,
+        };
+      } else if (form.type === "DAILY_SCALPER") {
         config = {
           symbol: form.symbol.trim(), exchange: form.exchange,
           lots: Number(form.lots),
@@ -239,7 +259,7 @@ export default function NewStrategyPage() {
         config = {
           symbol: form.symbol.trim(), exchange: form.exchange,
           instrumentType: form.instrumentType,
-          emaPeriod: Number(form.emaPeriod), isOptionBuyingOnly: form.isOptionBuyingOnly,
+          emaPeriod: Number(form.emaPeriod), vwapSource: form.vwapSource || 'close', isOptionBuyingOnly: form.isOptionBuyingOnly,
           qty, lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
           maxTradesPerDay: Number(form.maxTradesPerDay),
@@ -378,6 +398,15 @@ export default function NewStrategyPage() {
                       isAutoStockPreset: false,
                     },
                     {
+                      type: "NIFTY_OPTIONS_SCALPER",
+                      label: "Nifty 10-Point Options Scalper",
+                      desc: "Captures 10 option points daily on Nifty CE/PE using 3 triggers (EMA-VWAP Crossover, VWAP Pullback Rejection, 15-Min ORB). Auto-trails SL to COST at +5 pts & stops after 1 win.",
+                      icon: Target,
+                      badge: "Nifty 10-Pts Daily",
+                      badgeColor: "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold",
+                      isAutoStockPreset: false,
+                    },
+                    {
                       type: "STOCK_OPTIONS_BUYING",
                       label: "Stock Options Buying",
                       desc: "Best for 20k-25k capital. Trades ATM stock options using 15-EMA & VWAP crossover on 5/15-min stock charts with dynamic SL & RR Target.",
@@ -401,6 +430,16 @@ export default function NewStrategyPage() {
                           set("targetRs", "500");
                           set("stopLossRs", "500");
                           set("maxTradesPerDay", "2");
+                        } else if (type === "NIFTY_OPTIONS_SCALPER") {
+                          set("name", "Nifty 10-Point Options Scalper");
+                          set("symbol", "NIFTY 50");
+                          set("exchange", "NSE");
+                          set("instrumentType", "INDEX");
+                          set("product", "MIS");
+                          set("lots", "1");
+                          set("dsTargetPoints", "10");
+                          set("dsStopLossPoints", "7");
+                          set("maxTradesPerDay", "3");
                         } else if (type === "STOCK_OPTIONS_BUYING") {
                           set("symbol", "AUTO");
                           set("exchange", "NSE");
@@ -748,6 +787,83 @@ export default function NewStrategyPage() {
 
           {step === 2 && (
             <div className="space-y-5">
+              {form.type === "NIFTY_OPTIONS_SCALPER" && (
+                <>
+                  <div className="p-3 rounded-xl bg-purple-50 border border-purple-100 dark:bg-purple-950/20 dark:border-purple-900">
+                    <p className="text-xs font-semibold text-purple-700 dark:text-purple-300">⚡ Nifty 10-Point Scalper Risk & Target Controls</p>
+                    <p className="text-[11px] text-purple-600 dark:text-purple-400 mt-1">Captures +10 option points per winning trade, automatically trails SL to COST at +5 points, and auto-halts for the day after 1 winning trade.</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                        <Target className="h-4 w-4 text-emerald-500" />
+                        Target Option Points
+                      </label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={form.dsTargetPoints || "10"}
+                        onChange={(e) => set("dsTargetPoints", e.target.value)}
+                        className="border-emerald-200 focus:ring-emerald-300 font-semibold"
+                      />
+                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
+                        Option target in points (default: +10 pts = ₹650 per lot)
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                        <Shield className="h-4 w-4 text-red-500" />
+                        Stop Loss Option Points
+                      </label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={form.dsStopLossPoints || "7"}
+                        onChange={(e) => set("dsStopLossPoints", e.target.value)}
+                        className="border-red-200 focus:ring-red-300 font-semibold"
+                      />
+                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
+                        Initial Stop Loss in option points (default: -7 pts = ₹455 per lot)
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                        <Zap className="h-4 w-4 text-amber-500" />
+                        Max Trades / Day
+                      </label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={form.maxTradesPerDay || "3"}
+                        onChange={(e) => set("maxTradesPerDay", e.target.value)}
+                      />
+                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
+                        Maximum trades allowed per day (auto-halts after 1 win)
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                        <Shield className="h-4 w-4 text-blue-500" />
+                        Breakeven Trail Level
+                      </label>
+                      <Input
+                        type="number"
+                        disabled
+                        value="5"
+                      />
+                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
+                        SL automatically moves to Entry Price (COST) at +5 pts profit
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
+
               {form.type === "DAILY_SCALPER" && (
                 <>
                   <div className="grid grid-cols-2 gap-4">
@@ -1162,13 +1278,20 @@ export default function NewStrategyPage() {
                     else if (form.type === "EMA_RSI_OPTIONS") typeLabel = "EMA + RSI + VWAP";
                     else if (form.type === "DAILY_SCALPER") typeLabel = "Daily Target Scalper";
                     else if (form.type === "STOCK_OPTIONS_BUYING") typeLabel = "Stock Options Buying";
+                    else if (form.type === "NIFTY_OPTIONS_SCALPER") typeLabel = "Nifty 10-Point Options Scalper";
 
                     items.push(["Type", typeLabel]);
                     items.push(["Symbol", `${form.symbol}  ${form.exchange}`]);
-                    items.push(["Order Size", `${form.lots} Lots`]);
+                    items.push(["Order Size", `${form.lots} Lots (${Number(form.lots) * getLotSize(form.symbol)} Qty)`]);
                     items.push(["Product", form.product]);
 
-                    if (form.type === "DAILY_SCALPER") {
+                    if (form.type === "NIFTY_OPTIONS_SCALPER") {
+                      items.push(["Target Points", `+${form.dsTargetPoints || 10} pts (+₹${Number(form.dsTargetPoints || 10) * Number(form.lots) * 65})`]);
+                      items.push(["Stop Loss Points", `-${form.dsStopLossPoints || 7} pts (-₹${Number(form.dsStopLossPoints || 7) * Number(form.lots) * 65})`]);
+                      items.push(["Cost SL Trail", `At +5 pts profit`]);
+                      items.push(["Daily Target Goal", `Auto-stop after 1 win`]);
+                      items.push(["Max Trades", `${form.maxTradesPerDay || 3} / day`]);
+                    } else if (form.type === "DAILY_SCALPER") {
                       items.push(["Capital Budget", `₹${Number(form.dsCapital).toLocaleString("en-IN")}`]);
                       items.push(["Daily Profit Target", `₹${Number(form.dsDailyTargetRs).toLocaleString("en-IN")}`]);
                       items.push(["Daily Loss Limit", `₹${Number(form.dsDailyMaxLossRs).toLocaleString("en-IN")}`]);

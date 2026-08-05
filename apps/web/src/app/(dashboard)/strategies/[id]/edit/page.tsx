@@ -61,6 +61,7 @@ export default function EditStrategyPage() {
     profitFloorBufferRs: "100",
     // EMA-VWAP crossover
     emaPeriod: "15",
+    vwapSource: "close" as "close" | "hlc3",
     isOptionBuyingOnly: true,
     startAfterMin: "25",
     // Stock Options Buying
@@ -112,6 +113,7 @@ export default function EditStrategyPage() {
           profitFloorBufferRs: String(config.profitFloorBufferRs || "100"),
           // EMA-VWAP crossover
           emaPeriod: String(config.emaPeriod || "15"),
+          vwapSource: config.vwapSource || "close",
           isOptionBuyingOnly: config.isOptionBuyingOnly !== false,
           startAfterMin: String(config.startAfterMin || "25"),
           // Stock Options Buying
@@ -188,7 +190,7 @@ export default function EditStrategyPage() {
         config = {
           symbol: form.symbol.trim(), exchange: form.exchange,
           instrumentType: form.instrumentType,
-          emaPeriod: Number(form.emaPeriod), isOptionBuyingOnly: form.isOptionBuyingOnly,
+          emaPeriod: Number(form.emaPeriod), vwapSource: form.vwapSource || "close", isOptionBuyingOnly: form.isOptionBuyingOnly,
           qty, lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
           maxTradesPerDay: Number(form.maxTradesPerDay),

@@ -141,6 +141,7 @@ export interface EmaVwapCrossoverConfig {
   exchange: string;
   qty: number;
   emaPeriod: number;  // default 15
+  vwapSource?: 'close' | 'hlc3';
   interval: '1min' | '5min' | '15min';
   stopLossRs: number;
   targetRs: number;

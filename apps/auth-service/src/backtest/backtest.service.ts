@@ -119,7 +119,7 @@ export class BacktestService {
 
     // Calculate indicators
     const emas = this.calculateEMA(candles, config.emaPeriod || 15);
-    const vwaps = this.calculateVWAP(candles);
+    const vwaps = this.calculateVWAP(candles, config.vwapSource || 'close');
 
     let position: 'LONG' | 'SHORT' | null = null;
     let entryPrice = 0;
@@ -249,22 +249,23 @@ export class BacktestService {
     return emas;
   }
 
-  private calculateVWAP(candles: any[]) {
+  private calculateVWAP(candles: any[], vwapSource: 'close' | 'hlc3' = 'close') {
     const vwaps: (number | null)[] = new Array(candles.length).fill(null);
     let cumulativePV = 0;
     let cumulativeV = 0;
     let lastDate = '';
     for (let i = 0; i < candles.length; i++) {
-      const date = new Date(candles[i].date).toISOString().split('T')[0];
+      const cDate = new Date(candles[i].date);
+      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(cDate);
       if (date !== lastDate) {
         cumulativePV = 0;
         cumulativeV = 0;
         lastDate = date;
       }
-      const typicalPrice = (candles[i].high + candles[i].low + candles[i].close) / 3;
-      cumulativePV += typicalPrice * candles[i].volume;
+      const price = vwapSource === 'close' ? candles[i].close : (candles[i].high + candles[i].low + candles[i].close) / 3;
+      cumulativePV += price * candles[i].volume;
       cumulativeV += candles[i].volume;
-      vwaps[i] = cumulativePV / cumulativeV;
+      vwaps[i] = cumulativeV === 0 ? candles[i].close : cumulativePV / cumulativeV;
     }
     return vwaps;
   }
