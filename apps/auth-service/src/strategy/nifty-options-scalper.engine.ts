@@ -314,6 +314,9 @@ export class NiftyOptionsScalperEngine {
         // ── 3-Trigger Catch-up Scanning ─────────────────────────────────────────
 
         const prevCandle = candles[i - 1];
+        const prevDateStr = prevCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        if (prevDateStr !== todayStr) continue;
+
         const prevEma = emas[i - 1], prevVwap = vwaps[i - 1];
 
         let triggerSide: 'BUY' | 'SELL' | null = null;
@@ -421,6 +424,13 @@ export class NiftyOptionsScalperEngine {
         const currVwap = vwaps[lastIdx], prevVwap = vwaps[lastIdx - 1];
         const currentCandle = closedCandles[lastIdx];
         const prevCandle = closedCandles[lastIdx - 1];
+
+        const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        const currDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        const prevDateStr = prevCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+
+        // Ensure both current candle and previous candle belong strictly to today's trading session
+        if (currDateStr !== todayStr || prevDateStr !== todayStr) return;
 
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';

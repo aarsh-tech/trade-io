@@ -650,7 +650,9 @@ export class EmaVwapCrossoverEngine {
 
           const mother = closedCandles[prevIdx];
           const baby = closedCandles[lastIdx];
-          const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
+          const motherDateStr = mother.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+          const babyDateStr = baby.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+          const isInsideCandle = motherDateStr === todayDate && babyDateStr === todayDate && baby.high <= mother.high && baby.low >= mother.low;
 
           const crossoverDetails = this.getLatestCrossoverTodayDetails(lastIdx, closedCandles, emas, vwaps);
 

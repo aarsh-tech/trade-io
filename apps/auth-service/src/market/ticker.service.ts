@@ -8,6 +8,7 @@ import { BrokerType } from '@prisma/client';
 export class TickerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TickerService.name);
   private tickers = new Map<string, any>();
+  private failedAccounts = new Map<string, { timestamp: number; accessToken: string }>();
   private refreshInterval: NodeJS.Timeout;
   private listeners = new Set<(ticks: Record<string, number>) => void>();
 
@@ -122,7 +123,20 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         }
         this.tickers.delete(accountId);
       }
+      this.failedAccounts.delete(accountId);
       return;
+    }
+
+    const failedInfo = this.failedAccounts.get(accountId);
+    if (failedInfo) {
+      if (failedInfo.accessToken !== account.accessToken) {
+        this.failedAccounts.delete(accountId);
+      } else if (Date.now() - failedInfo.timestamp < 300000) {
+        // Cooldown for 5 minutes before re-attempting connection for failed account
+        return;
+      } else {
+        this.failedAccounts.delete(accountId);
+      }
     }
 
     if (this.tickers.has(accountId)) {
@@ -211,6 +225,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       ticker.on('connect', () => {
         this.logger.log(`Zerodha Ticker connected for account ${account.clientId}`);
+        this.failedAccounts.delete(account.id);
         ticker.subscribe(tokensToSubscribe);
         ticker.setMode(ticker.modeFull, tokensToSubscribe);
       });
@@ -220,6 +235,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`Zerodha Ticker error for account ${account.clientId}: ${errMsg}`);
         if (errMsg.includes('403') || errMsg.includes('Forbidden') || errMsg.includes('TokenException')) {
           this.logger.warn(`Zerodha session/token for account ${account.clientId} is invalid or expired (403 Forbidden). Stopping auto-reconnect.`);
+          this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
           try { ticker.disconnect(); } catch (_) {}
           this.tickers.delete(account.id);
         }
@@ -235,6 +251,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       ticker.on('noreconnect', () => {
         this.logger.error(`Zerodha Ticker reconnection failed for account ${account.clientId}. Cleaning up ticker instance.`);
+        this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
         this.tickers.delete(account.id);
       });
 
@@ -251,6 +268,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
     } catch (err) {
       this.logger.error(`Failed to setup Zerodha Ticker for ${account.id}: ${err.message}`);
+      this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
       this.tickers.delete(account.id);
     }
   }

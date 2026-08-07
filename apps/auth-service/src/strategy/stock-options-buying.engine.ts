@@ -323,7 +323,10 @@ export class StockOptionsBuyingEngine {
 
       const mother = closedCandles[n - 1];
       const baby = closedCandles[n];
-      const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
+      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const motherDateStr = mother.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const babyDateStr = baby.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const isInsideCandle = motherDateStr === todayStr && babyDateStr === todayStr && baby.high <= mother.high && baby.low >= mother.low;
 
       if (isInsideCandle) {
         // Upgrade 1: Calculate Relative Volume (RVOL) against 20-candle Volume SMA

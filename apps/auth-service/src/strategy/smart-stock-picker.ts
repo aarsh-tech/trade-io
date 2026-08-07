@@ -1,47 +1,93 @@
 import { Logger } from '@nestjs/common';
 import { detectIntradayMomentum, detectIntradayMomentumShort, DailyCandle } from '../swing-scanner/vcp.analyzer';
 
-// ─── Nifty 500 + Liquid NSE Stocks Universe (200+ Top Stocks) ────────────────
-const TOP_LIQUID_STOCKS = [
-  // Nifty 50 Heavyweights
-  'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'AXISBANK', 'KOTAKBANK', 'SBIN', 'BAJFINANCE', 'HINDUNILVR',
-  'TATAMOTORS', 'MARUTI', 'WIPRO', 'SUNPHARMA', 'TITAN', 'BHARTIARTL', 'ADANIENT', 'NTPC', 'POWERGRID', 'LT',
-  'HCLTECH', 'TECHM', 'ULTRACEMCO', 'ONGC', 'COALINDIA', 'BPCL', 'GRASIM', 'NESTLEIND', 'DIVISLAB', 'ADANIPORTS',
-  'JSWSTEEL', 'TATASTEEL', 'HINDALCO', 'M&M', 'HEROMOTOCO', 'INDUSINDBK', 'LTIM', 'TATACONSUM', 'APOLLOHOSP', 'DLF',
-  'SHRIRAMFIN', 'TRENT', 'BEL', 'HAL', 'EICHERMOT', 'DRREDDY', 'CIPLA', 'BAJAJFINSV', 'ASIANPAINT', 'JIOFIN',
+// ─── Blacklist of Slow-Moving / Low-Volatility / Low-Beta / Penny Stocks ──────────
+const BLACKLISTED_SLOW_STOCKS = new Set([
+  'MOTHERSON', 'MOTHERSUMI', 'IDEA', 'VODAFONE', 'NMDC', 'NMDCLTD',
+  'SAIL', 'NHPC', 'SJVN', 'IRFC', 'RVNL', 'HUDCO', 'IREDA',
+  'IOB', 'UNIONBANK', 'PNB', 'IDFCFIRSTB', 'BANDHANBNK', 'GMRINFRA',
+  'SUZLON', 'JISLJALEQS', 'AMBUJACEM', 'ACC', 'BERGEPAINT', 'BATAINDIA',
+  'CROMPTON', 'DABUR', 'MARICO', 'COLPAL', 'ICICIPRULI', 'SBICARD',
+  'NATIONALUM', 'OIL', 'PETRONET', 'IOC', 'BPCL', 'HINDPETRO', 'POWERGRID', 'NTPC', 'COALINDIA'
+]);
 
-  // Nifty Next 50 & High Beta Leaders
-  'ZOMATO', 'JINDALSTEL', 'HDFCAMC', 'IOC', 'GAIL', 'VEDL', 'SIEMENS', 'ABB', 'HAVELLS', 'POLYCAB',
-  'SRF', 'PIDILITIND', 'PFC', 'RECLTD', 'RVNL', 'IRFC', 'BHEL', 'HAL', 'MAZDOCK', 'COCHINSHIP',
-  'BEML', 'HUDCO', 'IREDA', 'OIL', 'NMDCLTD', 'NATIONALUM', 'SAIL', 'HINDPETRO', 'GMRINFRA', 'IDEA',
+/**
+ * Calculates Average True Range (ATR) over N periods
+ */
+function calculateATR(candles: DailyCandle[], period: number = 14): number {
+  if (candles.length < period + 1) return 0;
+  let trSum = 0;
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const current = candles[i];
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(
+      current.high - current.low,
+      Math.abs(current.high - prevClose),
+      Math.abs(current.low - prevClose)
+    );
+    trSum += tr;
+  }
+  return trSum / period;
+}
 
-  // Banking & Financials
-  'BANKBARODA', 'CANBK', 'PNB', 'AUBANK', 'FEDERALBNK', 'IDFCFIRSTB', 'BANDHANBNK', 'RBLBANK', 'UNIONBANK', 'IOB',
-  'CHOLAFIN', 'MUTHOOTFIN', 'MANAPPURAM', 'M&MFIN', 'LICHSGFIN', 'CANFINHOME', 'SBICARD', 'ICICIGI', 'ICICIPRULI', 'HDFCLIFE',
+/**
+ * Dynamically fetches the active liquid stock universe directly from Zerodha Kite API.
+ * Uses NFO instruments to extract all 180+ liquid F&O underlying stocks (Nifty 50, Nifty Next 50 & Midcap liquid leaders)
+ * and maps them to their NSE equity instrument tokens.
+ */
+export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promise<{ symbols: string[]; tokenMap: Map<string, number> }> {
+  const tokenMap = new Map<string, number>();
 
-  // Auto & Consumer Goods
-  'BAJAJ-AUTO', 'TATAELXSI', 'ASHOKLEY', 'APOLLOTYRE', 'BALKRISIND', 'BHARATFORG', 'BOSCHLTD', 'EICHERMOT', 'MOTHERSON', 'MRF',
-  'DABUR', 'COLPAL', 'GODREJCP', 'MARICO', 'BRITANNIA', 'BERGEPAINT', 'BATAINDIA', 'CROMPTON', 'VOLTAS', 'HAVELLS',
+  // 1. Fetch NSE Equity instruments
+  let nseInstruments: any[] = [];
+  try {
+    nseInstruments = await kite.getInstruments('NSE');
+  } catch (err) {
+    logger?.warn(`Failed to fetch NSE instruments from Zerodha: ${err.message}`);
+  }
 
-  // IT, Tech & Telecom
-  'COFORGE', 'PERSISTENT', 'MPHASIS', 'LTIM', 'LTS', 'BSOFT', 'OFSS', 'TATACOMM', 'INDUSTOWER', 'NAUKRI',
-  'CYIENT', 'KPITTECH', 'HCLTECH', 'WIPRO', 'TECHM', 'INFY', 'TCS', 'LTIM',
+  const allNseSymbols = new Set<string>();
+  nseInstruments.forEach((i: any) => {
+    if (i.instrument_type === 'EQ' && i.exchange === 'NSE') {
+      const sym = (i.tradingsymbol || '').trim().toUpperCase();
+      if (sym && !sym.includes(' ') && !sym.startsWith('NIFTY') && !sym.startsWith('BANKNIFTY')) {
+        tokenMap.set(sym, i.instrument_token);
+        allNseSymbols.add(sym);
+      }
+    }
+  });
 
-  // Pharma & Healthcare
-  'LUPIN', 'AUROPHARMA', 'BIOCON', 'ALKEM', 'ABBOTINDIA', 'TORNTPHARMA', 'GLENMARK', 'IPCALAB', 'SYNGENE', 'METROPOLIS',
-  'LALPATHLAB', 'GRANULES', 'APOLLOHOSP', 'DIVISLAB', 'CIPLA', 'SUNPHARMA',
+  // 2. Fetch NFO instruments to get Zerodha's official F&O liquid stock universe
+  let fnoSymbols: string[] = [];
+  try {
+    const nfoInstruments = await kite.getInstruments('NFO');
+    const fnoSet = new Set<string>();
+    nfoInstruments.forEach((i: any) => {
+      if (i.name) {
+        const sym = i.name.toUpperCase().trim();
+        if (allNseSymbols.has(sym)) {
+          fnoSet.add(sym);
+        }
+      }
+    });
+    fnoSymbols = Array.from(fnoSet);
+    if (fnoSymbols.length > 0) {
+      logger?.log(`⚡ Loaded ${fnoSymbols.length} liquid F&O stocks dynamically from Zerodha API`);
+    }
+  } catch (err) {
+    logger?.warn(`Could not fetch NFO universe, falling back to NSE equity universe: ${err.message}`);
+  }
 
-  // Energy, Infra, Metals & Real Estate
-  'TATAPOWER', 'ADANIPOWER', 'ADANIGREEN', 'JISLJALEQS', 'SUZLON', 'DLF', 'GODREJPROP', 'OBEROIRLTY', 'PRESTIGE', 'LODHA',
-  'SOBHA', 'AMBUJACEM', 'ACC', 'ASTRAL', 'ATUL', 'DEEPAKNTR', 'SRF', 'UPL', 'CHAMBLFERT', 'COROMANDEL',
+  const rawUniverse = fnoSymbols.length >= 30 ? fnoSymbols : Array.from(allNseSymbols);
 
-  // New Age & High Momentum Midcaps
-  'DMART', 'KALYANKJIL', 'POLICYBAZR', 'PAYTM', 'DIXON', 'KAYNES', 'IRCTC', 'MCX', 'IEX', 'PAGEIND'
-];
+  // Filter blacklisted slow-moving stocks
+  const liquidSymbols = rawUniverse.filter(sym => !BLACKLISTED_SLOW_STOCKS.has(sym));
+  return { symbols: liquidSymbols, tokenMap };
+}
 
 /**
  * Automatically picks the best NSE equity stock for intraday trading
- * based on current momentum and potential for a 3-10% move.
+ * based on current live momentum and potential for a 3-10% move.
  */
 export async function autoSelectStock(
   kite: any,
@@ -66,17 +112,13 @@ export async function autoSelectStock(
     availableCapital = 25000; // Fallback capital default if unreadable
   }
 
-  logger?.log(`🎯 Auto-selecting best stock from ${TOP_LIQUID_STOCKS.length} candidates (Available Capital: ₹${availableCapital.toLocaleString('en-IN')})...`);
+  // 1. Fetch live stock universe dynamically from Zerodha API
+  const { symbols: targetSymbols, tokenMap } = await getDynamicLiquidStocks(kite, logger);
 
-  // 1. Fetch NSE instruments to get tokens
-  const instruments = await kite.getInstruments('NSE');
-  const tokenMap = new Map<string, number>();
-  instruments.forEach((i: any) => {
-    if (i.instrument_type === 'EQ') tokenMap.set(i.tradingsymbol, i.instrument_token);
-  });
+  logger?.log(`🎯 Auto-selecting best stock dynamically from ${targetSymbols.length} live Zerodha liquid stocks (Available Capital: ₹${availableCapital.toLocaleString('en-IN')})...`);
 
   // ── Get Live Quotes (LTP, OHLC, Volume) ────────────────────────────────────────────────
-  const ltpSymbols = TOP_LIQUID_STOCKS.map(s => `NSE:${s}`);
+  const ltpSymbols = targetSymbols.map(s => `NSE:${s}`);
   let liveQuotes: Record<string, any> = {};
   try {
     liveQuotes = await kite.getQuote(ltpSymbols);
@@ -92,10 +134,15 @@ export async function autoSelectStock(
   from.setDate(from.getDate() - 100);
 
   // Use a 3-stock batch with 150ms pause to comply with Zerodha 3 req/sec rate limit
-  for (let i = 0; i < TOP_LIQUID_STOCKS.length; i += 3) {
-    const batch = TOP_LIQUID_STOCKS.slice(i, i + 3);
+  for (let i = 0; i < targetSymbols.length; i += 3) {
+    const batch = targetSymbols.slice(i, i + 3);
     await Promise.allSettled(batch.map(async (symbol) => {
       try {
+        // ── 0. Blacklist Check ──
+        if (BLACKLISTED_SLOW_STOCKS.has(symbol)) {
+          return;
+        }
+
         const token = tokenMap.get(symbol);
         if (!token) return;
 
@@ -139,26 +186,39 @@ export async function autoSelectStock(
           }
         }
 
-        // ── Event / Corporate Action Filter ─────────────────────────────────
-        // Stocks with earnings, AGMs, dividends, splits etc. show abnormal
-        // overnight gaps and/or huge volume spikes. Skip them to avoid
-        // unreliable technical setups.
+        // ── 1. ATR % Volatility Check (Skip Slow Movers) ────────────────────
+        const atr14 = calculateATR(candles, 14);
+        const lastCandle = candles[candles.length - 1];
+        const atrPct = lastCandle.close > 0 ? (atr14 / lastCandle.close) * 100 : 0;
+        if (atrPct < 1.8) {
+          logger?.log(`  🚫 Skipping ${symbol}: Low volatility ATR% (${atrPct.toFixed(2)}% < 1.8% min threshold) — stock moves too slowly`);
+          return;
+        }
+
+        // ── 2. Event / Corporate Action / Earnings Announcement Filters ──────
         if (candles.length >= 22) {
           const todayCandle = candles[candles.length - 1];
           const prevDayCandle = candles[candles.length - 2];
 
-          // 1. Abnormal overnight gap (>3% from prev close to today's open)
+          // A. Tight Overnight Gap Filter (>1.5% gap indicates event/earnings risk)
           const gapPct = Math.abs((todayCandle.open - prevDayCandle.close) / prevDayCandle.close) * 100;
-          if (gapPct > 3.0) {
-            logger?.log(`  🚫 Skipping ${symbol}: Abnormal gap ${gapPct.toFixed(1)}% (likely event/result)`);
+          if (gapPct > 1.5) {
+            logger?.log(`  🚫 Skipping ${symbol}: Abnormal gap ${gapPct.toFixed(1)}% (likely event/earnings result)`);
             return;
           }
 
-          // 2. Abnormal volume spike (>3x the 20-day average volume)
+          // B. Abnormal Volume Spike (>2.0x 20-day avg volume indicates event day activity)
           const recentCandles = candles.slice(-22, -2); // last 20 trading days (excluding today)
           const avgVolume = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
-          if (avgVolume > 0 && todayCandle.volume > avgVolume * 3) {
+          if (avgVolume > 0 && todayCandle.volume > avgVolume * 2.0) {
             logger?.log(`  🚫 Skipping ${symbol}: Volume spike ${(todayCandle.volume / avgVolume).toFixed(1)}x avg (likely event/result)`);
+            return;
+          }
+
+          // C. Intraday Range Expansion Spike (>2.2x ATR indicates pre/post-event volatility spike)
+          const todayRange = todayCandle.high - todayCandle.low;
+          if (atr14 > 0 && todayRange > atr14 * 2.2) {
+            logger?.log(`  🚫 Skipping ${symbol}: Intraday range spike ${(todayRange / atr14).toFixed(1)}x ATR (abnormal event volatility)`);
             return;
           }
         }
@@ -178,8 +238,8 @@ export async function autoSelectStock(
           const riskPerShare = Math.abs(resultLong.entryPrice - resultLong.stopLoss);
           const qty = calcCapitalQty(ltp, riskPerShare);
 
-          candidates.push({ symbol, score: resultLong.score, ltp, qty });
-          logger?.log(`  📈 Momentum candidate (LONG): ${symbol} | Score:${resultLong.score} | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
+          candidates.push({ symbol, score: resultLong.score + Math.round(atrPct * 10), ltp, qty });
+          logger?.log(`  📈 Momentum candidate (LONG): ${symbol} | Score:${resultLong.score} | ATR%:${atrPct.toFixed(2)}% | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
         }
 
         const resultShort = detectIntradayMomentumShort(candles);
@@ -188,8 +248,8 @@ export async function autoSelectStock(
           const riskPerShare = Math.abs(resultShort.entryPrice - resultShort.stopLoss);
           const qty = calcCapitalQty(ltp, riskPerShare);
 
-          candidates.push({ symbol, score: resultShort.score, ltp, qty });
-          logger?.log(`  📉 Momentum candidate (SHORT): ${symbol} | Score:${resultShort.score} | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
+          candidates.push({ symbol, score: resultShort.score + Math.round(atrPct * 10), ltp, qty });
+          logger?.log(`  📉 Momentum candidate (SHORT): ${symbol} | Score:${resultShort.score} | ATR%:${atrPct.toFixed(2)}% | LTP:₹${ltp.toFixed(2)} | Qty:${qty}`);
         }
       } catch (e) {
         // Skip on error
@@ -209,11 +269,12 @@ export async function autoSelectStock(
   }
 
   // ── Smarter fallback: dynamically pick the highest momentum gainer/loser from liveQuotes ──
-  logger?.warn(`⚠ No strict VCP pattern candidates found. Ranking liquid stocks dynamically by momentum & volatility...`);
+  logger?.warn(`⚠ No strict VCP pattern candidates found. Ranking liquid high-beta stocks dynamically...`);
 
   const dynamicRankings: Array<{ symbol: string; score: number; ltp: number; qty: number }> = [];
 
-  for (const sym of TOP_LIQUID_STOCKS) {
+  for (const sym of targetSymbols) {
+    if (BLACKLISTED_SLOW_STOCKS.has(sym)) continue;
     const key = `NSE:${sym}`;
     const quote = liveQuotes[key];
     if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
@@ -223,12 +284,12 @@ export async function autoSelectStock(
       const changePct = Math.abs((ltp - prevClose) / prevClose) * 100;
       const dayRangePct = ((quote.ohlc.high - quote.ohlc.low) / ltp) * 100;
 
-      // Skip stocks with abnormal overnight gap (>3%) — likely event/result
+      // Skip stocks with abnormal overnight gap (>1.5%) — likely event/result
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
-      if (gapPct > 3.0) continue;
+      if (gapPct > 1.5) continue;
 
-      // Exclude slow-moving / low-volatility stocks (less than 1.0% day range / move)
-      if (dayRangePct < 1.0 && changePct < 0.6) continue;
+      // Exclude slow-moving / low-volatility stocks (less than 1.8% day range or 1.0% change)
+      if (dayRangePct < 1.8 && changePct < 1.0) continue;
 
       const score = Math.round((changePct * 50) + (dayRangePct * 30));
       const maxBuyingPower = (availableCapital || 25000) * 5;
@@ -244,10 +305,13 @@ export async function autoSelectStock(
     return { symbol: topDynamic.symbol, exchange: 'NSE', ltp: topDynamic.ltp, qty: topDynamic.qty };
   }
 
-  // Absolute last resort
-  const relQuotes = await kite.getLTP([`NSE:TATAMOTORS`]);
-  const ltp = relQuotes['NSE:TATAMOTORS']?.last_price || 950;
+  // Absolute last resort (High Volatility, High Beta leader)
+  const fallbackSym = 'TRENT';
+  const relQuotes = await kite.getLTP([`NSE:${fallbackSym}`]);
+  const ltp = relQuotes[`NSE:${fallbackSym}`]?.last_price || 6500;
   const qty = Math.ceil(stopLossRs / (ltp * 0.015));
-  logger?.warn(`↩ Fallback to high-momentum stock TATAMOTORS @ ₹${ltp.toFixed(2)}`);
-  return { symbol: 'TATAMOTORS', exchange: 'NSE', ltp, qty };
+  logger?.warn(`↩ Fallback to high-momentum leader ${fallbackSym} @ ₹${ltp.toFixed(2)}`);
+  return { symbol: fallbackSym, exchange: 'NSE', ltp, qty };
 }
+
+
