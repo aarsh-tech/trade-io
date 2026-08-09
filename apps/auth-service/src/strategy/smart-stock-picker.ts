@@ -3,7 +3,7 @@ import { detectIntradayMomentum, detectIntradayMomentumShort, DailyCandle } from
 
 // ─── Blacklist of Slow-Moving / Low-Volatility / Low-Beta / Penny Stocks ──────────
 const BLACKLISTED_SLOW_STOCKS = new Set([
-  'MOTHERSON', 'MOTHERSUMI', 'IDEA', 'VODAFONE', 'NMDC', 'NMDCLTD',
+  'MOTHERSON', 'MOTHERSUMI', 'SAMVARDHANA', 'MSUMI', 'IDEA', 'VODAFONE', 'NMDC', 'NMDCLTD',
   'SAIL', 'NHPC', 'SJVN', 'IRFC', 'RVNL', 'HUDCO', 'IREDA',
   'IOB', 'UNIONBANK', 'PNB', 'IDFCFIRSTB', 'BANDHANBNK', 'GMRINFRA',
   'SUZLON', 'JISLJALEQS', 'AMBUJACEM', 'ACC', 'BERGEPAINT', 'BATAINDIA',
@@ -186,9 +186,14 @@ export async function autoSelectStock(
           }
         }
 
-        // ── 1. ATR % Volatility Check (Skip Slow Movers) ────────────────────
-        const atr14 = calculateATR(candles, 14);
+        // ── 1. Stock Price & ATR % Volatility Check ────────────────────────
         const lastCandle = candles[candles.length - 1];
+        if (lastCandle.close < 250) {
+          logger?.log(`  🚫 Skipping ${symbol}: Price ₹${lastCandle.close.toFixed(2)} < ₹250 min threshold — cheap stocks move too slowly in ₹ terms`);
+          return;
+        }
+
+        const atr14 = calculateATR(candles, 14);
         const atrPct = lastCandle.close > 0 ? (atr14 / lastCandle.close) * 100 : 0;
         if (atrPct < 1.8) {
           logger?.log(`  🚫 Skipping ${symbol}: Low volatility ATR% (${atrPct.toFixed(2)}% < 1.8% min threshold) — stock moves too slowly`);
@@ -268,10 +273,10 @@ export async function autoSelectStock(
     return { symbol: best.symbol, exchange: 'NSE', ltp: best.ltp, qty: best.qty };
   }
 
-  // ── Smarter fallback: dynamically pick the highest momentum gainer/loser from liveQuotes ──
-  logger?.warn(`⚠ No strict VCP pattern candidates found. Ranking liquid high-beta stocks dynamically...`);
+  // ── 3. Dynamic Live Volume & Top Gainers/Losers Ranking across 180+ F&O stocks ──
+  logger?.log(`🚀 Scanning live quotes for all ${targetSymbols.length} F&O stocks for Volume Surge & Intraday Momentum...`);
 
-  const dynamicRankings: Array<{ symbol: string; score: number; ltp: number; qty: number }> = [];
+  const dynamicRankings: Array<{ symbol: string; score: number; ltp: number; qty: number; volumeSpike: number; changePct: number }> = [];
 
   for (const sym of targetSymbols) {
     if (BLACKLISTED_SLOW_STOCKS.has(sym)) continue;
@@ -279,39 +284,109 @@ export async function autoSelectStock(
     const quote = liveQuotes[key];
     if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
       const ltp = quote.last_price;
+      if (ltp < 250) continue; // Minimum stock price threshold (₹250)
+
       const prevClose = quote.ohlc.close;
       const todayOpen = quote.ohlc.open || ltp;
-      const changePct = Math.abs((ltp - prevClose) / prevClose) * 100;
+      const changePct = Math.abs((ltp - todayOpen) / todayOpen) * 100;
       const dayRangePct = ((quote.ohlc.high - quote.ohlc.low) / ltp) * 100;
+      const liveVolume = quote.volume || 0;
 
-      // Skip stocks with abnormal overnight gap (>1.5%) — likely event/result
+      // Skip stocks with abnormal overnight gap (>1.5%) — likely event/earnings risk
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
       if (gapPct > 1.5) continue;
 
-      // Exclude slow-moving / low-volatility stocks (less than 1.8% day range or 1.0% change)
-      if (dayRangePct < 1.8 && changePct < 1.0) continue;
+      // Filter out low momentum / low range stocks (< 0.8% change or < 1.2% day range)
+      if (changePct < 0.8 && dayRangePct < 1.2) continue;
 
-      const score = Math.round((changePct * 50) + (dayRangePct * 30));
+      // Composite momentum score: Intraday Gain/Loss (40%) + Day Range (30%) + Volume Activity (30%)
+      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(liveVolume / 100000, 10) * 30));
+
       const maxBuyingPower = (availableCapital || 25000) * 5;
       const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.015)), Math.floor(maxBuyingPower / ltp)));
-      dynamicRankings.push({ symbol: sym, score, ltp, qty });
+      dynamicRankings.push({ symbol: sym, score, ltp, qty, volumeSpike: liveVolume, changePct });
     }
   }
 
   if (dynamicRankings.length > 0) {
     dynamicRankings.sort((a, b) => b.score - a.score);
     const topDynamic = dynamicRankings[0];
-    logger?.log(`🚀 Dynamic Momentum Pick: ${topDynamic.symbol} (Score: ${topDynamic.score}, LTP: ₹${topDynamic.ltp.toFixed(2)}, Qty: ${topDynamic.qty})`);
+    logger?.log(`✅ Dynamic Top Momentum Pick: ${topDynamic.symbol} (Score: ${topDynamic.score}, LTP: ₹${topDynamic.ltp.toFixed(2)}, Intraday Move: ${topDynamic.changePct.toFixed(2)}%, Qty: ${topDynamic.qty})`);
+    logger?.log(`📋 Top 5 Dynamic Leaders: ${dynamicRankings.slice(0, 5).map(c => `${c.symbol} (${c.changePct.toFixed(1)}%)`).join(', ')}`);
     return { symbol: topDynamic.symbol, exchange: 'NSE', ltp: topDynamic.ltp, qty: topDynamic.qty };
   }
 
-  // Absolute last resort (High Volatility, High Beta leader)
+  // Fallback: Pick top liquid leader
   const fallbackSym = 'TRENT';
   const relQuotes = await kite.getLTP([`NSE:${fallbackSym}`]);
   const ltp = relQuotes[`NSE:${fallbackSym}`]?.last_price || 6500;
   const qty = Math.ceil(stopLossRs / (ltp * 0.015));
   logger?.warn(`↩ Fallback to high-momentum leader ${fallbackSym} @ ₹${ltp.toFixed(2)}`);
   return { symbol: fallbackSym, exchange: 'NSE', ltp, qty };
+}
+
+/**
+ * Returns top N ranked momentum candidate stocks from Zerodha's 180+ liquid F&O universe.
+ */
+export async function getTopCandidateStocks(
+  kite: any,
+  targetRs: number,
+  stopLossRs: number,
+  logger?: Logger,
+  maxCapital?: number,
+  limit: number = 10,
+): Promise<Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number }>> {
+  const result: Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number }> = [];
+
+  let availableCapital = maxCapital;
+  if (!availableCapital || availableCapital <= 0) {
+    try {
+      const margins = await kite.getMargins('equity').catch(() => null);
+      const liveCash = margins?.available?.live_balance ?? margins?.available?.cash ?? 0;
+      if (liveCash > 0) availableCapital = liveCash;
+    } catch { }
+  }
+  if (!availableCapital || availableCapital <= 0) availableCapital = 25000;
+
+  const { symbols: targetSymbols } = await getDynamicLiquidStocks(kite, logger);
+
+  let liveQuotes: Record<string, any> = {};
+  try {
+    const ltpSymbols = targetSymbols.map(s => `NSE:${s}`);
+    liveQuotes = await kite.getQuote(ltpSymbols);
+  } catch (err) {
+    logger?.warn(`Live quotes fetch failed: ${err.message}`);
+  }
+
+  for (const sym of targetSymbols) {
+    if (BLACKLISTED_SLOW_STOCKS.has(sym)) continue;
+    const key = `NSE:${sym}`;
+    const quote = liveQuotes[key];
+    if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
+      const ltp = quote.last_price;
+      if (ltp < 250) continue; // Min price threshold ₹250
+
+      const prevClose = quote.ohlc.close;
+      const todayOpen = quote.ohlc.open || ltp;
+      const changePct = Math.abs((ltp - todayOpen) / todayOpen) * 100;
+      const dayRangePct = ((quote.ohlc.high - quote.ohlc.low) / ltp) * 100;
+      const liveVolume = quote.volume || 0;
+
+      const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
+      if (gapPct > 1.5) continue;
+
+      if (changePct < 0.5 && dayRangePct < 1.0) continue;
+
+      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(liveVolume / 100000, 10) * 30));
+      const maxBuyingPower = availableCapital * 5;
+      const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.015)), Math.floor(maxBuyingPower / ltp)));
+
+      result.push({ symbol: sym, exchange: 'NSE', ltp, qty, score });
+    }
+  }
+
+  result.sort((a, b) => b.score - a.score);
+  return result.slice(0, limit);
 }
 
 
