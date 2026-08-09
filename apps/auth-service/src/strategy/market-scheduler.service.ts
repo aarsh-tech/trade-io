@@ -38,7 +38,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
-  ) {}
+  ) { }
 
   onModuleInit() {
     this.logger.log('Market Scheduler initialised — will auto-start strategies at 09:15 IST');
@@ -70,7 +70,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     const m = ist.getMinutes();
     const hhmm = h * 60 + m;
 
-    const MARKET_OPEN  = 9 * 60 + 15; // 09:15
+    const MARKET_OPEN = 9 * 60 + 15; // 09:15
     const MARKET_CLOSE = 15 * 60 + 30; // 15:30
 
     // ── Auto-start window: 09:15 – 09:16 (or boot mid-session during market hours) ──

@@ -303,6 +303,9 @@ export default function BacktestPage() {
                   <div className="flex items-center gap-2 p-2 rounded-lg bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))] mt-2">
                     <Badge>{form.exchange}</Badge>
                     <span className="text-sm font-bold">{form.symbol}</span>
+                    {form.symbol === 'AUTO' && (
+                      <span className="text-xs text-amber-500 font-medium">(Auto-selects top liquid stock)</span>
+                    )}
                   </div>
                 </div>
 

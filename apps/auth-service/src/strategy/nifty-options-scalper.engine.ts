@@ -72,22 +72,28 @@ export class NiftyOptionsScalperEngine {
     if (!strategy) throw new Error('Strategy not found');
 
     const parsedConfig: Partial<NiftyOptionsScalperConfig> = JSON.parse(strategy.config);
+    const lots = parsedConfig.lots || 1;
+    const qty = parsedConfig.qty || (lots * 65);
+    const stopLossPoints = parsedConfig.stopLossPoints || 7;
+    const targetPoints = parsedConfig.targetPoints || 10;
+    const trailCostAtPoints = parsedConfig.trailCostAtPoints || 5;
+
     const config: NiftyOptionsScalperConfig = {
       symbol: parsedConfig.symbol || 'NIFTY',
       exchange: parsedConfig.exchange || 'NSE',
       emaPeriod: parsedConfig.emaPeriod || 15,
       vwapSource: parsedConfig.vwapSource || 'close',
       isOptionBuyingOnly: true,
-      qty: parsedConfig.qty || 65,
-      lots: parsedConfig.lots || 1,
+      qty,
+      lots,
       product: parsedConfig.product || 'MIS',
       maxTradesPerDay: parsedConfig.maxTradesPerDay || 3,
       maxWinsPerDay: parsedConfig.maxWinsPerDay || 1,
-      stopLossPoints: parsedConfig.stopLossPoints || 7,
-      targetPoints: parsedConfig.targetPoints || 10,
-      trailCostAtPoints: parsedConfig.trailCostAtPoints || 5,
-      stopLossRs: (parsedConfig.stopLossPoints || 7) * (parsedConfig.qty || 65),
-      targetRs: (parsedConfig.targetPoints || 10) * (parsedConfig.qty || 65),
+      stopLossPoints,
+      targetPoints,
+      trailCostAtPoints,
+      stopLossRs: stopLossPoints * qty,
+      targetRs: targetPoints * qty,
       minPremium: parsedConfig.minPremium,
       maxPremium: parsedConfig.maxPremium,
       enableOrbTrigger: parsedConfig.enableOrbTrigger !== undefined ? parsedConfig.enableOrbTrigger : true,
@@ -235,12 +241,19 @@ export class NiftyOptionsScalperEngine {
 
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
 
+      // Determine target trading session date: if today has candles (weekday), use today; otherwise pick the most recent trading date from fetched candles!
+      const lastCandle = candles[candles.length - 1];
+      const latestCandleDateStr = lastCandle ? lastCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) : todayStr;
+
+      const todayCandlesCheck = candles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr);
+      const targetSessionDateStr = todayCandlesCheck.length > 0 ? todayStr : latestCandleDateStr;
+
       // Identify 15-min Opening Range (9:15 - 9:30 AM candles) for ORB Trigger
       let orbHigh: number | null = null;
       let orbLow: number | null = null;
-      const todayCandles = candles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr);
-      if (todayCandles.length >= 3) {
-        const orbCandles = todayCandles.slice(0, 3);
+      const sessionCandles = candles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === targetSessionDateStr);
+      if (sessionCandles.length >= 3) {
+        const orbCandles = sessionCandles.slice(0, 3);
         orbHigh = Math.max(...orbCandles.map(c => c.high));
         orbLow = Math.min(...orbCandles.map(c => c.low));
       }
@@ -248,7 +261,7 @@ export class NiftyOptionsScalperEngine {
       for (let i = emaPeriod + 1; i < candles.length; i++) {
         const currentCandle = candles[i];
         const candleDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-        if (candleDateStr !== todayStr) continue;
+        if (candleDateStr !== targetSessionDateStr) continue;
 
         if (state.winningTradesToday >= (state.config.maxWinsPerDay || 1)) {
           this.log(state, `🎯 Daily target win achieved (${state.winningTradesToday} win). Catch-up complete.`);
@@ -272,11 +285,17 @@ export class NiftyOptionsScalperEngine {
           const optCandle = optCandles.find(c => c.date.getTime() === currentCandle.date.getTime());
 
           if (optCandle) {
-            // Check +5 Points Cost Trail
-            if (optCandle.high >= state.entryPrice! + (state.config.trailCostAtPoints || 5) && !state.isCostSlTrailed) {
+            // Step 1: Check +4 Points Cost Trail
+            if (optCandle.high >= state.entryPrice! + (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
               state.isCostSlTrailed = true;
               state.stopLossPrice = state.entryPrice;
-              this.log(state, `🛡 (Catch-up) Option hit +${state.config.trailCostAtPoints} pts profit! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)})`);
+              this.log(state, `🛡 (Catch-up) Option hit +${state.config.trailCostAtPoints || 4} pts profit! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+            }
+
+            // Step 2: Check +7 Points Profit Lock (+4 Pts locked)
+            if (optCandle.high >= state.entryPrice! + 7 && state.stopLossPrice! < state.entryPrice! + 4) {
+              state.stopLossPrice = state.entryPrice! + 4;
+              this.log(state, `🔒 (Catch-up) Option hit +7 pts profit! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
             }
 
             // Target (+10 Points) Check
@@ -315,7 +334,7 @@ export class NiftyOptionsScalperEngine {
 
         const prevCandle = candles[i - 1];
         const prevDateStr = prevCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-        if (prevDateStr !== todayStr) continue;
+        if (prevDateStr !== targetSessionDateStr) continue;
 
         const prevEma = emas[i - 1], prevVwap = vwaps[i - 1];
 
@@ -332,16 +351,20 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        // Trigger 2: VWAP / 15-EMA Pullback Rejection (Captures PE when price is already below VWAP & EMA)
+        // Trigger 2: VWAP / 15-EMA Pullback Rejection (Captures CE & PE continuation)
         if (!triggerSide && state.config.enablePullbackTrigger) {
           const candleHhmm = this.getIstHhmm(currentCandle.date);
           if (candleHhmm >= 9 * 60 + 35) {
             const isBearishRegime = currentEma < currentVwap && currentCandle.close < currentEma && currentCandle.close < currentVwap;
-            const touchedVwapOrEma = currentCandle.high >= currentEma - 8 && currentCandle.high <= Math.max(currentEma, currentVwap) + 10;
-            const isRedCandle = currentCandle.close < currentCandle.open;
+            const isBullishRegime = currentEma > currentVwap && currentCandle.close > currentEma && currentCandle.close > currentVwap;
+            
+            const touchedVwapOrEmaBearish = currentCandle.high >= currentEma - 8 && currentCandle.high <= Math.max(currentEma, currentVwap) + 10;
+            const touchedVwapOrEmaBullish = currentCandle.low <= currentEma + 8 && currentCandle.low >= Math.min(currentEma, currentVwap) - 10;
 
-            if (isBearishRegime && touchedVwapOrEma && isRedCandle && currentCandle.low < prevCandle.low) {
+            if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
               triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection'; triggerPriceLevel = currentCandle.low;
+            } else if (isBullishRegime && touchedVwapOrEmaBullish && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high) {
+              triggerSide = 'BUY'; setupName = 'VWAP/EMA Pullback CE Rejection'; triggerPriceLevel = currentCandle.high;
             }
           }
         }
@@ -361,7 +384,7 @@ export class NiftyOptionsScalperEngine {
         }
       }
 
-      if (!state.entryTriggered) this.log(state, `✅ Catch-up complete for Nifty 10-Point Scalper.`);
+      if (!state.entryTriggered) this.log(state, `✅ Catch-up complete for Nifty 10-Point Scalper. Evaluated ${sessionCandles.length} 5-min candles for session (${targetSessionDateStr}). Placed ${state.tradesPlacedToday} trades.`);
       await this.persistLogs(state);
     } catch (err) {
       this.log(state, `⚠ Catch-up failed: ${err.message}`);
@@ -444,23 +467,47 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        // 2. VWAP / EMA Pullback Rejection (Captures PE when price is already below VWAP & EMA)
+        // 2. VWAP / 15-EMA Pullback Rejection (Captures CE & PE continuation)
         if (!triggerSide && config.enablePullbackTrigger && currEma !== null && currVwap !== null) {
           const candleHhmm = this.getIstHhmm(currentCandle.date);
           if (candleHhmm >= 9 * 60 + 35) {
             const isBearishRegime = currEma < currVwap && currentCandle.close < currEma && currentCandle.close < currVwap;
-            const touchedVwapOrEma = currentCandle.high >= currEma - 8 && currentCandle.high <= Math.max(currEma, currVwap) + 10;
-            const isRedCandle = currentCandle.close < currentCandle.open;
+            const isBullishRegime = currEma > currVwap && currentCandle.close > currEma && currentCandle.close > currVwap;
 
-            if (isBearishRegime && touchedVwapOrEma && isRedCandle && currentCandle.low < prevCandle.low) {
+            const touchedVwapOrEmaBearish = currentCandle.high >= currEma - 8 && currentCandle.high <= Math.max(currEma, currVwap) + 10;
+            const touchedVwapOrEmaBullish = currentCandle.low <= currEma + 8 && currentCandle.low >= Math.min(currEma, currVwap) - 10;
+
+            if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
               triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection';
+            } else if (isBullishRegime && touchedVwapOrEmaBullish && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high) {
+              triggerSide = 'BUY'; setupName = 'VWAP/EMA Pullback CE Rejection';
             }
+          }
+        }
+
+        // 3. 15-Min Opening Range Breakdown (ORB)
+        let orbHigh: number | null = null;
+        let orbLow: number | null = null;
+        const todayCandles = closedCandles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr);
+        if (todayCandles.length >= 3) {
+          const orbCandles = todayCandles.slice(0, 3);
+          orbHigh = Math.max(...orbCandles.map(c => c.high));
+          orbLow = Math.min(...orbCandles.map(c => c.low));
+        }
+
+        if (!triggerSide && config.enableOrbTrigger && orbLow !== null && orbHigh !== null && lastIdx >= 3) {
+          if (currentCandle.close < orbLow && prevCandle.close >= orbLow) {
+            triggerSide = 'SELL'; setupName = '15-Min ORB Breakdown (PE)';
+          } else if (currentCandle.close > orbHigh && prevCandle.close <= orbHigh) {
+            triggerSide = 'BUY'; setupName = '15-Min ORB Breakout (CE)';
           }
         }
 
         if (triggerSide) {
           this.log(state, `🚀 Triggered ${setupName} at ${this.formatTime(currentCandle.date)}! Placing 10-Point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, currentCandle.close);
+        } else {
+          this.log(state, `👀 Scanned 5-min candle (${this.formatTime(currentCandle.date)}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} (No crossover signal)`);
         }
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
@@ -541,11 +588,17 @@ export class NiftyOptionsScalperEngine {
       const pnlPoints = currentPrice - state.entryPrice!;
       const pnlRs = pnlPoints * state.config.qty;
 
-      // 1. Check +5 Points Breakeven Trail
-      if (pnlPoints >= (state.config.trailCostAtPoints || 5) && !state.isCostSlTrailed) {
+      // 1. Check +4 Points Breakeven Trail (Step 1)
+      if (pnlPoints >= (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
         state.isCostSlTrailed = true;
         state.stopLossPrice = state.entryPrice;
-        this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)})`);
+        this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints || 4} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+      }
+
+      // 2. Check +7 Points Profit Lock (Step 2)
+      if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 4) {
+        state.stopLossPrice = state.entryPrice! + 4;
+        this.log(state, `🔒 Option profit hit +7 pts! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
       }
 
       // 2. Check Target (+10 Points)

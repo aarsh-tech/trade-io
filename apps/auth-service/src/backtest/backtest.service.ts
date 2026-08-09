@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { RunBacktestDto } from './dto/backtest.dto';
 import { StrategyType } from '@prisma/client';
+import { autoSelectStock } from '../strategy/smart-stock-picker';
 
 @Injectable()
 export class BacktestService {
@@ -38,7 +39,7 @@ export class BacktestService {
 
     // Run simulation in background
     this.executeSimulation(backtest.id, dto, strategy).catch((err) => {
-      this.logger.error(`Backtest ${backtest.id} failed: ${err.message}`);
+      this.logger.error(`Backtest ${backtest.id} failed: ${err.message}`, err.stack);
       this.prisma.backtest.update({
         where: { id: backtest.id },
         data: { status: 'FAILED' },
@@ -50,17 +51,9 @@ export class BacktestService {
 
   private async executeSimulation(backtestId: string, dto: RunBacktestDto, strategy: any) {
     try {
-      if (
-        strategy.type !== ('BREAKOUT_15MIN' as any) &&
-        strategy.type !== ('EMA_VWAP_CROSSOVER' as any) &&
-        strategy.type !== ('DAILY_SCALPER' as any)
-      ) {
-        throw new Error('This strategy is not supported for backtesting currently.');
-      }
-
-      const config = JSON.parse(strategy.config);
-      const symbol = dto.symbol || config.symbol;
-      const exchange = dto.exchange || config.exchange;
+      const config = JSON.parse(strategy.config || '{}');
+      let symbol = dto.symbol || config.symbol || 'TATAMOTORS';
+      let exchange = dto.exchange || config.exchange || 'NSE';
 
       const userAccount = await this.prisma.brokerAccount.findFirst({
         where: { userId: strategy.userId, isActive: true },
@@ -71,9 +64,38 @@ export class BacktestService {
       }
 
       const client = this.factory.createClient(userAccount);
-      const interval = strategy.type === ('DAILY_SCALPER' as any) ? '3minute' : '5minute';
 
-      this.logger.log(`Fetching historical data for ${symbol}...`);
+      // Handle AUTO symbol resolution
+      if (!symbol || symbol.toUpperCase().trim() === 'AUTO') {
+        try {
+          const kite = client['kite'];
+          if (kite) {
+            const pick = await autoSelectStock(kite, config.targetRs || 500, config.stopLossRs || 500, this.logger, dto.capital);
+            if (pick && pick.symbol) {
+              symbol = pick.symbol;
+              exchange = pick.exchange || exchange || 'NSE';
+              this.logger.log(`🎯 Auto-selected stock for backtest: ${symbol}`);
+            } else {
+              symbol = 'TATAMOTORS';
+            }
+          } else {
+            symbol = 'TATAMOTORS';
+          }
+        } catch (err: any) {
+          this.logger.warn(`Could not auto-select stock for backtest, falling back to TATAMOTORS: ${err.message}`);
+          symbol = 'TATAMOTORS';
+        }
+
+        // Update backtest record with resolved symbol
+        await this.prisma.backtest.update({
+          where: { id: backtestId },
+          data: { symbol, exchange },
+        }).catch(() => { });
+      }
+
+      const interval = (strategy.type === ('DAILY_SCALPER' as any) || strategy.type === ('NIFTY_OPTIONS_SCALPER' as any)) ? '3minute' : '5minute';
+
+      this.logger.log(`Fetching historical data for ${symbol} (${exchange})...`);
       const candles = await client.getHistoricalData(
         symbol,
         exchange,
@@ -83,16 +105,30 @@ export class BacktestService {
       );
 
       if (!candles || candles.length === 0) {
-        throw new Error('No historical data found for the selected period');
+        throw new Error(`No historical data found for ${symbol} in the selected period`);
       }
 
-      let result;
+      let result: any;
       if (strategy.type === StrategyType.BREAKOUT_15MIN) {
         result = this.simulateBreakout15Min(candles, config, dto.capital);
-      } else if (strategy.type === StrategyType.EMA_VWAP_CROSSOVER) {
+      } else if (
+        strategy.type === StrategyType.EMA_VWAP_CROSSOVER ||
+        strategy.type === StrategyType.STOCK_OPTIONS_BUYING ||
+        strategy.type === StrategyType.EMA_RSI_OPTIONS
+      ) {
         result = this.simulateEmaVwapCrossover(candles, config, dto.capital);
-      } else if (strategy.type === StrategyType.DAILY_SCALPER) {
+      } else if (
+        strategy.type === StrategyType.DAILY_SCALPER ||
+        strategy.type === StrategyType.NIFTY_OPTIONS_SCALPER
+      ) {
         result = this.simulateDailyScalper(candles, config, dto.capital);
+      } else {
+        result = this.simulateEmaVwapCrossover(candles, config, dto.capital);
+      }
+
+      if (result) {
+        result.symbol = symbol;
+        result.exchange = exchange;
       }
 
       await this.prisma.backtest.update({
@@ -108,7 +144,7 @@ export class BacktestService {
       await this.prisma.backtest.update({
         where: { id: backtestId },
         data: { status: 'FAILED' },
-      });
+      }).catch(() => { });
       throw err;
     }
   }
@@ -117,14 +153,23 @@ export class BacktestService {
     const trades: any[] = [];
     let currentCapital = initialCapital;
 
+    const stopLossRs = config.stopLossRs || 500;
+    const targetRs = config.targetRs || 1000;
+    const firstPrice = candles[0]?.close || 100;
+    const qty = (config.qty && config.qty > 0 && (config.qty * firstPrice <= initialCapital * 5))
+      ? config.qty
+      : Math.max(1, Math.floor((initialCapital * 5) / firstPrice));
+
     // Calculate indicators
     const emas = this.calculateEMA(candles, config.emaPeriod || 15);
+    const ema50s = this.calculateEMA(candles, 50);
     const vwaps = this.calculateVWAP(candles, config.vwapSource || 'close');
 
     let position: 'LONG' | 'SHORT' | null = null;
     let entryPrice = 0;
     let stopLoss = 0;
     let target = 0;
+    let profitStage = 0; // 0 = initial, 1 = breakeven, 2 = locked 50%
     let waitingForConfirmation: 'LONG' | 'SHORT' | null = null;
     let confirmationHigh = 0;
     let confirmationLow = 0;
@@ -146,9 +191,10 @@ export class BacktestService {
               if (candle.high > confirmationHigh) {
                 position = 'LONG';
                 entryPrice = confirmationHigh;
-                stopLoss = invalidationPrice || (entryPrice - (config.stopLossRs / config.qty));
+                stopLoss = invalidationPrice || (entryPrice - (stopLossRs / qty));
                 const risk = Math.max(0.50, Math.abs(entryPrice - stopLoss));
-                target = entryPrice + Math.max(risk * 1.5, config.targetRs / config.qty);
+                target = entryPrice + Math.max(risk * 2.0, (targetRs * 1.5) / qty);
+                profitStage = 0;
                 waitingForConfirmation = null;
               } else if (candle.low < invalidationPrice) {
                 waitingForConfirmation = null;
@@ -157,9 +203,10 @@ export class BacktestService {
               if (candle.low < confirmationLow) {
                 position = 'SHORT';
                 entryPrice = confirmationLow;
-                stopLoss = invalidationPrice || (entryPrice + (config.stopLossRs / config.qty));
+                stopLoss = invalidationPrice || (entryPrice + (stopLossRs / qty));
                 const risk = Math.max(0.50, Math.abs(stopLoss - entryPrice));
-                target = entryPrice - Math.max(risk * 1.5, config.targetRs / config.qty);
+                target = entryPrice - Math.max(risk * 2.0, (targetRs * 1.5) / qty);
+                profitStage = 0;
                 waitingForConfirmation = null;
               } else if (candle.high > invalidationPrice) {
                 waitingForConfirmation = null;
@@ -168,23 +215,23 @@ export class BacktestService {
           }
         }
 
-        // Scan for setups
+        // Scan for setups (Direct Crossover or Inside Candle Pullback)
         const mother = candles[i - 1];
         const baby = candles[i];
         const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
+        const trend = this.getLatestCrossoverToday(i, candles, emas, vwaps);
 
-        if (isInsideCandle) {
-          const trend = this.getLatestCrossoverToday(i, candles, emas, vwaps);
-          if (trend !== null) {
+        if (trend !== null) {
+          if (isInsideCandle || (emas[i - 1] && vwaps[i - 1] && ((trend === 'LONG' && emas[i - 1]! <= vwaps[i - 1]! && emas[i]! > vwaps[i]!) || (trend === 'SHORT' && emas[i - 1]! >= vwaps[i - 1]! && emas[i]! < vwaps[i]!)))) {
             if (trend === 'LONG') {
               waitingForConfirmation = 'LONG';
-              confirmationHigh = mother.high;
-              invalidationPrice = mother.low;
+              confirmationHigh = isInsideCandle ? mother.high : baby.high;
+              invalidationPrice = isInsideCandle ? mother.low : baby.low;
               setupIndex = i;
             } else {
               waitingForConfirmation = 'SHORT';
-              confirmationLow = mother.low;
-              invalidationPrice = mother.high;
+              confirmationLow = isInsideCandle ? mother.low : baby.low;
+              invalidationPrice = isInsideCandle ? mother.high : baby.high;
               setupIndex = i;
             }
           }
@@ -192,25 +239,53 @@ export class BacktestService {
       } else {
         // Check for exit
         if (position === 'LONG') {
+          const targetDist = target - entryPrice;
+
+          // Stage 1: Breakeven @ 40% target distance
+          if (profitStage === 0 && candle.high >= entryPrice + targetDist * 0.4) {
+            stopLoss = Math.max(stopLoss, entryPrice);
+            profitStage = 1;
+          }
+          // Stage 2: Lock 40% profit @ 70% target distance
+          else if (profitStage === 1 && candle.high >= entryPrice + targetDist * 0.7) {
+            stopLoss = Math.max(stopLoss, entryPrice + targetDist * 0.4);
+            profitStage = 2;
+          }
+
           if (candle.low <= stopLoss) {
-            const pnl = (stopLoss - entryPrice) * config.qty;
-            trades.push({ date, type: 'LONG', entry: entryPrice, exit: stopLoss, pnl, result: 'SL' });
+            const pnl = (stopLoss - entryPrice) * qty;
+            const resultTag = profitStage === 2 ? 'TRAIL_PROFIT' : (profitStage === 1 ? 'BREAKEVEN' : 'SL');
+            trades.push({ date, type: 'LONG', entry: entryPrice, exit: stopLoss, pnl, result: resultTag });
             currentCapital += pnl;
             position = null;
           } else if (candle.high >= target) {
-            const pnl = (target - entryPrice) * config.qty;
+            const pnl = (target - entryPrice) * qty;
             trades.push({ date, type: 'LONG', entry: entryPrice, exit: target, pnl, result: 'TARGET' });
             currentCapital += pnl;
             position = null;
           }
         } else if (position === 'SHORT') {
+          const targetDist = entryPrice - target;
+
+          // Stage 1: Breakeven @ 40% target distance
+          if (profitStage === 0 && candle.low <= entryPrice - targetDist * 0.4) {
+            stopLoss = Math.min(stopLoss, entryPrice);
+            profitStage = 1;
+          }
+          // Stage 2: Lock 40% profit @ 70% target distance
+          else if (profitStage === 1 && candle.low <= entryPrice - targetDist * 0.7) {
+            stopLoss = Math.min(stopLoss, entryPrice - targetDist * 0.4);
+            profitStage = 2;
+          }
+
           if (candle.high >= stopLoss) {
-            const pnl = (entryPrice - stopLoss) * config.qty;
-            trades.push({ date, type: 'SHORT', entry: entryPrice, exit: stopLoss, pnl, result: 'SL' });
+            const pnl = (entryPrice - stopLoss) * qty;
+            const resultTag = profitStage === 2 ? 'TRAIL_PROFIT' : (profitStage === 1 ? 'BREAKEVEN' : 'SL');
+            trades.push({ date, type: 'SHORT', entry: entryPrice, exit: stopLoss, pnl, result: resultTag });
             currentCapital += pnl;
             position = null;
           } else if (candle.low <= target) {
-            const pnl = (entryPrice - target) * config.qty;
+            const pnl = (entryPrice - target) * qty;
             trades.push({ date, type: 'SHORT', entry: entryPrice, exit: target, pnl, result: 'TARGET' });
             currentCapital += pnl;
             position = null;
@@ -432,6 +507,7 @@ export class BacktestService {
       let stopLoss = 0;
       let target = 0;
       let isStopLossTrailed = false;
+      let profitStage = 0;
       let dailyPnl = 0;
       let tradesCount = 0;
 
@@ -478,53 +554,69 @@ export class BacktestService {
           const high = candle.high;
           const low = candle.low;
 
-          const currentSL = isStopLossTrailed ? entryPrice : stopLoss;
-
           if (position === 'LONG') {
-            const targetPts = config.targetPoints || (config.symbol.toUpperCase().includes('BANK') ? 20 : 10);
-            const stopLossPts = config.stopLossPoints || (config.symbol.toUpperCase().includes('BANK') ? 15 : 7);
+            const targetPts = config.targetPoints || 10;
+            const stopLossPts = config.stopLossPoints || 5;
+            const trailCostPts = config.trailCostAtPoints || 4;
+            const lots = config.lots || (initialCapital >= 18000 ? 2 : 1);
+            const qty = config.qty || (lots * 65);
             
             const futTargetPts = targetPts * 2;
             const futStopLossPts = stopLossPts * 2;
-            const breakevenTrigger = futTargetPts / 2;
+            const breakevenTrigger = trailCostPts * 2;
+            const lockProfitTrigger = 7 * 2;
 
-            if (!isStopLossTrailed && (high - entryPrice) >= breakevenTrigger) {
-              isStopLossTrailed = true;
+            if (profitStage === 0 && (high - entryPrice) >= breakevenTrigger) {
+              profitStage = 1;
+            } else if (profitStage === 1 && (high - entryPrice) >= lockProfitTrigger) {
+              profitStage = 2;
             }
 
-            if (low <= currentSL) {
-              const pnl = (currentSL - entryPrice) * config.qty;
-              trades.push({ date, type: 'LONG', entry: entryPrice, exit: currentSL, pnl, result: 'SL' });
+            const activeSL = profitStage === 2 ? entryPrice + 8 : (profitStage === 1 ? entryPrice : stopLoss);
+
+            if (low <= activeSL) {
+              const pnl = (activeSL - entryPrice) * qty;
+              const resultTag = profitStage === 2 ? 'LOCKED_PROFIT' : (profitStage === 1 ? 'BREAKEVEN' : 'SL');
+              trades.push({ date, type: 'LONG', entry: entryPrice, exit: activeSL, pnl, result: resultTag });
               currentCapital += pnl;
               dailyPnl += pnl;
               position = null;
             } else if (high >= target) {
-              const pnl = (target - entryPrice) * config.qty;
+              const pnl = (target - entryPrice) * qty;
               trades.push({ date, type: 'LONG', entry: entryPrice, exit: target, pnl, result: 'TARGET' });
               currentCapital += pnl;
               dailyPnl += pnl;
               position = null;
             }
           } else if (position === 'SHORT') {
-            const targetPts = config.targetPoints || (config.symbol.toUpperCase().includes('BANK') ? 20 : 10);
-            const stopLossPts = config.stopLossPoints || (config.symbol.toUpperCase().includes('BANK') ? 15 : 7);
+            const targetPts = config.targetPoints || 10;
+            const stopLossPts = config.stopLossPoints || 5;
+            const trailCostPts = config.trailCostAtPoints || 4;
+            const lots = config.lots || (initialCapital >= 18000 ? 2 : 1);
+            const qty = config.qty || (lots * 65);
             
             const futTargetPts = targetPts * 2;
             const futStopLossPts = stopLossPts * 2;
-            const breakevenTrigger = futTargetPts / 2;
+            const breakevenTrigger = trailCostPts * 2;
+            const lockProfitTrigger = 7 * 2;
 
-            if (!isStopLossTrailed && (entryPrice - low) >= breakevenTrigger) {
-              isStopLossTrailed = true;
+            if (profitStage === 0 && (entryPrice - low) >= breakevenTrigger) {
+              profitStage = 1;
+            } else if (profitStage === 1 && (entryPrice - low) >= lockProfitTrigger) {
+              profitStage = 2;
             }
 
-            if (high >= currentSL) {
-              const pnl = (entryPrice - currentSL) * config.qty;
-              trades.push({ date, type: 'SHORT', entry: entryPrice, exit: currentSL, pnl, result: 'SL' });
+            const activeSL = profitStage === 2 ? entryPrice - 8 : (profitStage === 1 ? entryPrice : stopLoss);
+
+            if (high >= activeSL) {
+              const pnl = (entryPrice - activeSL) * qty;
+              const resultTag = profitStage === 2 ? 'LOCKED_PROFIT' : (profitStage === 1 ? 'BREAKEVEN' : 'SL');
+              trades.push({ date, type: 'SHORT', entry: entryPrice, exit: activeSL, pnl, result: resultTag });
               currentCapital += pnl;
               dailyPnl += pnl;
               position = null;
             } else if (low <= target) {
-              const pnl = (entryPrice - target) * config.qty;
+              const pnl = (entryPrice - target) * qty;
               trades.push({ date, type: 'SHORT', entry: entryPrice, exit: target, pnl, result: 'TARGET' });
               currentCapital += pnl;
               dailyPnl += pnl;
@@ -566,6 +658,7 @@ export class BacktestService {
               stopLoss = entryPrice - futStopLossPts;
               target = entryPrice + futTargetPts;
               isStopLossTrailed = false;
+              profitStage = 0;
               tradesCount++;
             } else if (bearishCrossover && rsi < 45) {
               position = 'SHORT';
@@ -573,6 +666,7 @@ export class BacktestService {
               stopLoss = entryPrice + futStopLossPts;
               target = entryPrice - futStopLossPts;
               isStopLossTrailed = false;
+              profitStage = 0;
               tradesCount++;
             }
           }
