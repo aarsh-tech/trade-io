@@ -243,16 +243,19 @@ export class EmaVwapCrossoverEngine {
         }
       }
 
-      const upper = state.config.symbol.toUpperCase().trim();
+      const activeSym = state.activeSymbol || state.config.symbol;
+      const scanConfig = { ...state.config, symbol: activeSym };
+
+      const upper = activeSym.toUpperCase().trim();
       const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
       if (isIndex && !state.futureSymbol) {
-        const res = await this.findFutureSymbol(client, state.config.symbol);
+        const res = await this.findFutureSymbol(client, activeSym);
         state.futureSymbol = res.symbol;
         state.futureExchange = res.exchange;
         this.log(state, `Resolved future contract for index: ${state.futureExchange}:${state.futureSymbol}`);
       }
 
-      const candles = await this.fetchCandles(client, state.config, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
+      const candles = await this.fetchCandles(client, scanConfig, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
       const emaPeriod = state.config.emaPeriod || 15;
       if (candles.length < emaPeriod + 2) return;
 
