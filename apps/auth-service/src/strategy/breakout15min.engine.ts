@@ -405,7 +405,8 @@ export class Breakout15MinEngine {
       if (!target) { await this.persistLogs(state); return; }
 
       if (hhmm % 5 === 0 && !state.logs.some(l => l.includes(`Scanning for breakout`) && l.includes(`LTP: ₹${currentPrice}`))) {
-        this.log(state, `👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ${state.refLow} to ${state.refHigh}`);
+        const activeSym = state.futureSymbol || config.symbol;
+        this.log(state, `[${activeSym}] 👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ₹${state.refLow} to ₹${state.refHigh}`);
       }
 
       if (target.close > state.refHigh!) {

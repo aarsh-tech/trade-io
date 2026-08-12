@@ -544,9 +544,8 @@ export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResu
 
   const currentPrice = candles[n].close;
 
-  // Must be below SMA50 (downtrend)
+  // Optional SMA50 reference calculation for context
   const sma50v = sma(candles, 50)[n];
-  if (currentPrice > sma50v) return null;
 
   // Volume pace (RVOL) prorated against elapsed market time
   const recentVol = candles[n].volume;

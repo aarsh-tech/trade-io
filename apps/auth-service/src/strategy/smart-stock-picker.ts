@@ -3,7 +3,7 @@ import { detectIntradayMomentum, detectIntradayMomentumShort, DailyCandle } from
 
 // ─── Blacklist of Slow-Moving / Low-Volatility / Low-Beta / Penny Stocks ──────────
 const BLACKLISTED_SLOW_STOCKS = new Set([
-  'MOTHERSON', 'MOTHERSUMI', 'SAMVARDHANA', 'MSUMI', 'IDEA', 'VODAFONE', 'NMDC', 'NMDCLTD',
+  'PGEL', 'PGELTECH', 'MOTHERSON', 'MOTHERSUMI', 'SAMVARDHANA', 'MSUMI', 'IDEA', 'VODAFONE', 'NMDC', 'NMDCLTD',
   'SAIL', 'NHPC', 'SJVN', 'IRFC', 'RVNL', 'HUDCO', 'IREDA',
   'IOB', 'UNIONBANK', 'PNB', 'IDFCFIRSTB', 'BANDHANBNK', 'GMRINFRA',
   'SUZLON', 'JISLJALEQS', 'AMBUJACEM', 'ACC', 'BERGEPAINT', 'BATAINDIA',
@@ -291,16 +291,17 @@ export async function autoSelectStock(
       const changePct = Math.abs((ltp - todayOpen) / todayOpen) * 100;
       const dayRangePct = ((quote.ohlc.high - quote.ohlc.low) / ltp) * 100;
       const liveVolume = quote.volume || 0;
+      const turnoverCr = (liveVolume * ltp) / 10000000; // Rupee Turnover in Crores
 
-      // Skip stocks with abnormal overnight gap (>1.5%) — likely event/earnings risk
+      // Skip stocks with extreme overnight gap (>3.5%) — likely event/earnings risk
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
-      if (gapPct > 1.5) continue;
+      if (gapPct > 3.5) continue;
 
-      // Filter out low momentum / low range stocks (< 0.8% change or < 1.2% day range)
-      if (changePct < 0.8 && dayRangePct < 1.2) continue;
+      // Filter out low momentum / low range stocks (< 0.5% change or < 1.0% day range)
+      if (changePct < 0.5 && dayRangePct < 1.0) continue;
 
-      // Composite momentum score: Intraday Gain/Loss (40%) + Day Range (30%) + Volume Activity (30%)
-      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(liveVolume / 100000, 10) * 30));
+      // Composite momentum score: Intraday Gain/Loss (40%) + Day Range (30%) + Rupee Turnover in Crores (30%)
+      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
 
       const maxBuyingPower = (availableCapital || 25000) * 5;
       const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.015)), Math.floor(maxBuyingPower / ltp)));
@@ -371,13 +372,14 @@ export async function getTopCandidateStocks(
       const changePct = Math.abs((ltp - todayOpen) / todayOpen) * 100;
       const dayRangePct = ((quote.ohlc.high - quote.ohlc.low) / ltp) * 100;
       const liveVolume = quote.volume || 0;
+      const turnoverCr = (liveVolume * ltp) / 10000000;
 
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
-      if (gapPct > 1.5) continue;
+      if (gapPct > 3.5) continue;
 
-      if (changePct < 0.5 && dayRangePct < 1.0) continue;
+      if (changePct < 0.3 && dayRangePct < 0.8) continue;
 
-      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(liveVolume / 100000, 10) * 30));
+      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
       const maxBuyingPower = availableCapital * 5;
       const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.015)), Math.floor(maxBuyingPower / ltp)));
 

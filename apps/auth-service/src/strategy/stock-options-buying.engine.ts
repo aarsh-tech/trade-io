@@ -319,7 +319,9 @@ export class StockOptionsBuyingEngine {
       const timeStr = new Date(lastClosedCandleTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
       const currEma = emas[n];
       const currVwap = vwaps[n];
-      this.log(state, `🔍 Scanning candle closed at ${timeStr} | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
+      const targetSym = (state as any).activeSymbol || state.config.symbol;
+      const closedCandle = closedCandles[n];
+      this.log(state, `[${targetSym}] 🔍 5m Candle closed at ${timeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
 
       const mother = closedCandles[n - 1];
       const baby = closedCandles[n];
