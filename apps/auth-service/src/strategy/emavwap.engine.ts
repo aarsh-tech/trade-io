@@ -881,7 +881,7 @@ export class EmaVwapCrossoverEngine {
     let sl: number;
     let tgt: number;
 
-    if (config.isOptionBuyingOnly) {
+    if (config.isOptionBuyingOnly && state.optionSymbol) {
       sl = optionMotherLow !== null ? this.roundTick(optionMotherLow) : this.roundTick(entry - (config.stopLossRs / config.qty));
       const optionRisk = Math.max(0.50, Math.abs(entry - sl));
       tgt = this.roundTick(entry + optionRisk * 1.5);
@@ -1211,9 +1211,9 @@ export class EmaVwapCrossoverEngine {
 
   private async exitPosition(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE') {
     const { config } = state;
-    const symbol = state.optionSymbol!;
+    const symbol = state.optionSymbol || state.activeSymbol || config.symbol;
     const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : config.exchange;
-    const exitSide = config.isOptionBuyingOnly ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
+    const exitSide = (config.isOptionBuyingOnly && state.optionSymbol) ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
     const qty = config.qty;
 
     // Stop WebSocket monitoring before exit
@@ -1258,9 +1258,9 @@ export class EmaVwapCrossoverEngine {
 
   private async exitPositionHistorical(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET', timestamp: Date) {
     const { config } = state;
-    const symbol = state.optionSymbol || config.symbol;
+    const symbol = state.optionSymbol || state.activeSymbol || config.symbol;
     const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : config.exchange;
-    const exitSide = config.isOptionBuyingOnly ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
+    const exitSide = (config.isOptionBuyingOnly && state.optionSymbol) ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
     const qty = config.qty;
 
     // Stop WebSocket monitoring if active
