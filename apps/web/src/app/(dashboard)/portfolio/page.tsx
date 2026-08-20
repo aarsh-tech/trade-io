@@ -827,43 +827,51 @@ export default function PortfolioPage() {
 
       {/* Renew Session Modal */}
       <Dialog open={showRenewModal} onOpenChange={setShowRenewModal}>
-        <DialogContent className="max-w-md p-0 overflow-hidden border-border bg-card">
-          <DialogHeader className="px-6 pt-6 pb-2">
-            <div className="h-12 w-12 rounded-full bg-amber-500/10 flex items-center justify-center mb-3">
-              <Zap className="h-6 w-6 text-amber-500" />
+        <DialogContent className="max-w-md p-0 overflow-hidden bg-white text-slate-900 border border-slate-200 shadow-2xl">
+          <div className="p-6 pb-2 bg-white">
+            <div className="flex items-start gap-3.5 mb-1">
+              <div className="h-10 w-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
+                <Zap className="h-5 w-5 text-amber-600" />
+              </div>
+              <div className="pr-6">
+                <DialogTitle className="text-lg font-bold text-slate-900">
+                  Broker Daily Login
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  Brokers require a fresh daily authentication token. Follow these quick steps to sync your account:
+                </DialogDescription>
+              </div>
             </div>
-            <DialogTitle className="text-xl font-bold text-foreground">Broker Daily Login</DialogTitle>
-            <DialogDescription className="text-xs font-medium text-muted-foreground leading-relaxed">
-              Brokers require a fresh daily authentication token. Follow these quick steps to sync your account:
-            </DialogDescription>
-          </DialogHeader>
+          </div>
 
-          <div className="px-6 py-4 space-y-4">
-            <div className="space-y-2">
-              <div className="flex gap-2.5 items-center">
-                <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-foreground shrink-0">
+          <div className="px-6 py-3 space-y-3.5 bg-white">
+            {/* Step 1 Card */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
                   1
-                </div>
-                <p className="text-xs text-foreground font-medium">
-                  Launch the official broker authentication page
-                </p>
+                </span>
+                <span className="text-xs font-semibold text-slate-900">
+                  Authenticate on Broker Portal
+                </span>
               </div>
               <Button
                 onClick={handleOpenLogin}
-                className="w-full h-10 bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs gap-1.5 shadow-sm"
+                className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs gap-1.5 shadow-sm"
               >
                 <ExternalLink className="h-3.5 w-3.5" /> Open Broker Login Page
               </Button>
             </div>
 
-            <div className="space-y-3 pt-2">
-              <div className="flex gap-2.5 items-center">
-                <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-foreground shrink-0">
+            {/* Step 2 Card */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">
                   2
-                </div>
-                <p className="text-xs text-foreground font-medium leading-relaxed">
-                  Run automated login or paste your session token:
-                </p>
+                </span>
+                <span className="text-xs font-semibold text-slate-900">
+                  Sync Session Token
+                </span>
               </div>
 
               <form onSubmit={handleRenewSession} className="space-y-3">
@@ -871,7 +879,7 @@ export default function PortfolioPage() {
                   type="button"
                   onClick={() => handleRenewSession({ preventDefault: () => {} } as any)}
                   disabled={isRenewing}
-                  className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
+                  className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
                 >
                   {isRenewing ? (
                     <>
@@ -884,25 +892,25 @@ export default function PortfolioPage() {
                   )}
                 </Button>
 
-                <div className="flex items-center gap-2 py-1">
-                  <div className="h-px flex-1 bg-border" />
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                <div className="flex items-center gap-2 py-0.5">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                     OR PASTE MANUALLY
                   </span>
-                  <div className="h-px flex-1 bg-border" />
+                  <div className="h-px flex-1 bg-slate-200" />
                 </div>
 
                 <Input
                   value={requestToken}
                   onChange={(e) => setRequestToken(e.target.value)}
                   placeholder="Paste token or session ID here..."
-                  className="h-10 border-border text-xs focus:ring-amber-500 focus:border-amber-500"
+                  className="h-9 border-slate-200 bg-white text-slate-900 text-xs focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
                 />
 
                 <Button
                   type="submit"
                   disabled={isRenewing || !requestToken}
-                  className="w-full h-10 bg-primary text-primary-foreground font-semibold text-xs"
+                  className="w-full h-9 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs disabled:opacity-50 shadow-sm"
                 >
                   {isRenewing ? "Activating..." : "Activate Manual Session"}
                 </Button>
@@ -910,11 +918,11 @@ export default function PortfolioPage() {
             </div>
           </div>
 
-          <div className="bg-muted/40 p-4 border-t border-border flex justify-end">
+          <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 flex justify-end">
             <Button
               type="button"
               variant="ghost"
-              className="text-muted-foreground text-xs"
+              className="text-slate-500 hover:text-slate-800 text-xs h-8"
               onClick={() => setShowRenewModal(false)}
             >
               Cancel

@@ -73,8 +73,13 @@ export function usePortfolio(brokerId?: string | null) {
     refreshPositions: () => positionsQuery.refetch(),
     getLoginUrl: async () => {
       if (!brokerId) return null;
-      const res = await brokerApi.loginUrl(brokerId);
-      return res.data.url;
+      try {
+        const res = await brokerApi.loginUrl(brokerId);
+        return res.data?.url || (res.data as any)?.data?.url || null;
+      } catch (err: any) {
+        toast.error(err?.response?.data?.message || "Failed to retrieve broker login URL. Please check broker credentials in Settings.");
+        return null;
+      }
     },
     renewSession: renewSessionMutation.mutateAsync,
     isRenewing: renewSessionMutation.isPending,

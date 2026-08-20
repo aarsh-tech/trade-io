@@ -11,7 +11,7 @@ export class BrokersService {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
-  ) {}
+  ) { }
 
   async getHoldings(userId: string, accountId: string) {
     const acc = await this.prisma.brokerAccount.findUnique({
@@ -51,13 +51,16 @@ export class BrokersService {
 
     const apiKey = decrypt(acc.apiKeyEnc);
 
+    if (!apiKey) {
+      throw new BadRequestException('API Key not found for this broker account. Please reconnect the broker.');
+    }
+
     switch (acc.broker) {
       case BrokerType.ZERODHA:
-        return { url: `https://kite.trade/connect/login?v=3&api_key=${apiKey}` };
+        return { url: `https://kite.zerodha.com/connect/login?v=3&api_key=${apiKey}` };
       default:
         throw new BadRequestException('Login URL not available for this broker');
     }
-
   }
 
   async placeOrder(userId: string, accountId: string, orderData: any) {
@@ -68,7 +71,7 @@ export class BrokersService {
 
     const client = this.factory.createClient(acc);
     let orderId: string;
-    
+
     try {
       orderId = await client.placeOrder(orderData);
     } catch (err: any) {
@@ -77,20 +80,20 @@ export class BrokersService {
 
     // Track order in DB asynchronously (non-blocking for ultra-fast response)
     this.prisma.order.create({
-        data: {
-            userId,
-            brokerAccountId: accountId,
-            symbol: orderData.symbol,
-            exchange: orderData.exchange,
-            side: orderData.side,
-            orderType: orderData.orderType,
-            productType: orderData.product,
-            qty: Number(orderData.qty),
-            price: orderData.price ? Number(orderData.price) : null,
-            triggerPrice: orderData.triggerPrice ? Number(orderData.triggerPrice) : null,
-            brokerOrderId: orderId,
-            status: 'OPEN',
-        }
+      data: {
+        userId,
+        brokerAccountId: accountId,
+        symbol: orderData.symbol,
+        exchange: orderData.exchange,
+        side: orderData.side,
+        orderType: orderData.orderType,
+        productType: orderData.product,
+        qty: Number(orderData.qty),
+        price: orderData.price ? Number(orderData.price) : null,
+        triggerPrice: orderData.triggerPrice ? Number(orderData.triggerPrice) : null,
+        brokerOrderId: orderId,
+        status: 'OPEN',
+      }
     }).catch(err => console.error('Async DB order tracking error:', err));
 
     return { orderId };
@@ -104,7 +107,7 @@ export class BrokersService {
 
     const client = this.factory.createClient(acc);
     let triggerId: string;
-    
+
     try {
       triggerId = await client.placeGtt(orderData);
     } catch (err: any) {
@@ -132,23 +135,23 @@ export class BrokersService {
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
 
     if (acc.broker !== BrokerType.ZERODHA) {
-        throw new BadRequestException('Session refresh logic not implemented for this broker');
+      throw new BadRequestException('Session refresh logic not implemented for this broker');
     }
 
     const { KiteConnect } = require('kiteconnect');
     const apiKey = decrypt(acc.apiKeyEnc);
     const apiSecret = decrypt(acc.apiSecretEnc);
-    
+
     const kite = new KiteConnect({ api_key: apiKey });
     const session = await kite.generateSession(requestToken, apiSecret);
-    
+
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + 1);
     expiry.setHours(6, 0, 0, 0);
 
     await this.prisma.brokerAccount.update({
-        where: { id: accountId },
-        data: { accessToken: session.access_token, tokenExpiry: expiry },
+      where: { id: accountId },
+      data: { accessToken: session.access_token, tokenExpiry: expiry },
     });
     this.factory.invalidateClient(accountId);
     return { success: true };
@@ -214,8 +217,8 @@ export class BrokersService {
     });
 
     if (!account || !account.accessToken) {
-      return { 
-        connected: false, 
+      return {
+        connected: false,
         indices: [
           { symbol: 'NIFTY 50', price: 22419.55, change: 0.85, changeAbs: 189.4 },
           { symbol: 'NIFTY BANK', price: 48494.95, change: -0.12, changeAbs: -58.2 },
@@ -231,7 +234,7 @@ export class BrokersService {
         'NSE:RELIANCE', 'NSE:TCS', 'NSE:HDFCBANK', 'NSE:INFY'
       ];
       const ltp = await client.getLTP(symbols);
-      
+
       // Mock changes for now as Kite LTP API only gives current price
       // In a real app, we would fetch quotes to get prev close
       return {
