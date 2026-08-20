@@ -65,7 +65,16 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   private async checkAndAct() {
     const now = new Date();
-    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    // Deterministic IST calculation using UTC offset (UTC+5:30 = 330 mins)
+    const utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const ist = new Date(utcMs + (330 * 60000));
+    const day = ist.getDay(); // 0 = Sunday, 6 = Saturday
+
+    // Skip auto-start/auto-stop on weekends when Indian markets are closed
+    if (day === 0 || day === 6) {
+      return;
+    }
+
     const h = ist.getHours();
     const m = ist.getMinutes();
     const hhmm = h * 60 + m;

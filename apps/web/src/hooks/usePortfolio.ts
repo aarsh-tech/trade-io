@@ -70,6 +70,7 @@ export function usePortfolio(brokerId?: string | null) {
     isMarginsLoading: marginsQuery.isLoading,
     error: holdingsQuery.error || positionsQuery.error || marginsQuery.error,
     refreshHoldings: () => holdingsQuery.refetch(),
+    refreshPositions: () => positionsQuery.refetch(),
     getLoginUrl: async () => {
       if (!brokerId) return null;
       const res = await brokerApi.loginUrl(brokerId);

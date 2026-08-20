@@ -22,7 +22,27 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   async subscribeSymbol(accountId: string, symbol: string) {
     if (!this.tickers.has(accountId)) return;
     const tickerData = this.tickers.get(accountId);
-    const token = tickerData.symbolToToken.get(symbol);
+    let token = tickerData.symbolToToken.get(symbol);
+    if (!token) {
+      // Dynamic fallback instrument lookup for newly generated options contracts
+      try {
+        const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
+        if (account?.accessToken) {
+          const client = this.brokerFactory.createClient(account);
+          const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : 'NSE';
+          const instruments = await client.getInstruments(exchange).catch(() => []);
+          const match = instruments.find((i: any) => i.tradingsymbol === symbol);
+          if (match?.instrument_token) {
+            token = match.instrument_token;
+            tickerData.symbolToToken.set(symbol, token);
+            tickerData.tokenToSymbol.set(token, symbol);
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`Dynamic token resolution failed for ${symbol}: ${err?.message || err}`);
+      }
+    }
+
     if (token) {
       if (!tickerData.tokens.includes(token)) {
         tickerData.tokens.push(token);
@@ -177,10 +197,12 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       const client = this.brokerFactory.createClient(account);
       const kite = (client as any)['kite'];
       
-      // Fetch instruments to map symbol <-> token
-      const instruments = await kite.getInstruments('NSE').catch(() => []);
-      const bseInstruments = await kite.getInstruments('BSE').catch(() => []);
-      const nfoInstruments = await kite.getInstruments('NFO').catch(() => []);
+      // Fetch instruments in parallel to map symbol <-> token faster
+      const [instruments, bseInstruments, nfoInstruments] = await Promise.all([
+        client.getInstruments('NSE').catch(() => []),
+        client.getInstruments('BSE').catch(() => []),
+        client.getInstruments('NFO').catch(() => []),
+      ]);
       
       const allInst = [...instruments, ...bseInstruments, ...nfoInstruments];
       const tokenToSymbol = new Map<number, string>();

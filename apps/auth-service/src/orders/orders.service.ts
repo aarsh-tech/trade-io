@@ -17,7 +17,7 @@ export class OrdersService {
     });
 
     for (const account of accounts) {
-      if (account.accessToken && account.tokenExpiry && new Date(account.tokenExpiry) > new Date()) {
+      if (account.accessToken && (!account.tokenExpiry || new Date(account.tokenExpiry) > new Date())) {
         try {
           const client = this.factory.createClient(account);
           const brokerOrders = await client.getOrders();

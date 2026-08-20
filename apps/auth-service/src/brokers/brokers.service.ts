@@ -75,8 +75,8 @@ export class BrokersService {
       throw new BadRequestException(err.message || 'Broker failed to place order');
     }
 
-    // Track order in our DB
-    await this.prisma.order.create({
+    // Track order in DB asynchronously (non-blocking for ultra-fast response)
+    this.prisma.order.create({
         data: {
             userId,
             brokerAccountId: accountId,
@@ -91,7 +91,7 @@ export class BrokersService {
             brokerOrderId: orderId,
             status: 'OPEN',
         }
-    });
+    }).catch(err => console.error('Async DB order tracking error:', err));
 
     return { orderId };
   }
@@ -150,11 +150,8 @@ export class BrokersService {
         where: { id: accountId },
         data: { accessToken: session.access_token, tokenExpiry: expiry },
     });
+    this.factory.invalidateClient(accountId);
     return { success: true };
-    
-    throw new BadRequestException('Session refresh logic not implemented for this broker');
-
-
   }
 
   async list(userId: string) {

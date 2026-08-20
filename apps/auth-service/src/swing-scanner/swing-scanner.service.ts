@@ -118,16 +118,19 @@ export class SwingScannerService {
     });
 
     // ── Get Live Quotes (LTP) for the entire universe ────────────────────────
-    // We filter for liquid stocks to avoid scanning thousands of illiquid ones
-    // For now, let's use the top 750 most liquid or simply those in dynamicUniverse
-    const ltpBatch = dynamicUniverse.slice(0, 1000); // Limit to top 1000 for efficiency
+    // Kite LTP accepts max 500 symbols per request, so chunk in batches of 400
+    const ltpBatch = dynamicUniverse.slice(0, 1000);
     const ltpSymbols = ltpBatch.map(s => `NSE:${s}`);
     let liveQuotes: Record<string, { last_price: number }> = {};
-    try {
-      // Kite LTP can handle up to 500 symbols
-      liveQuotes = await kite.getLTP(ltpSymbols);
-    } catch (err) {
-      this.logger.warn(`Live quotes fetch failed: ${err.message}`);
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < ltpSymbols.length; i += CHUNK_SIZE) {
+      const chunk = ltpSymbols.slice(i, i + CHUNK_SIZE);
+      try {
+        const chunkQuotes = await kite.getLTP(chunk);
+        Object.assign(liveQuotes, chunkQuotes);
+      } catch (err: any) {
+        this.logger.warn(`Live quotes chunk ${Math.floor(i / CHUNK_SIZE) + 1} fetch failed: ${err.message}`);
+      }
     }
 
     const results: ScanResult[] = [];

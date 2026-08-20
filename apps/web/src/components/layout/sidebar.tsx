@@ -16,6 +16,7 @@ import {
   Wallet,
   ScanSearch,
   Layers,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -26,6 +27,8 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/positions", label: "Positions", icon: Activity },
+  { href: "/orders", label: "Orders", icon: ClipboardList },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
   { href: "/fo-stocks", label: "F&O Stocks", icon: Layers },
   { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },

@@ -1,141 +1,194 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { useState, useMemo, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Briefcase, TrendingUp, TrendingDown, RefreshCcw, Zap, Search,
   ShoppingCart, Plus, Minus, Info, Box, Settings2, Calculator,
-  ChevronDown, MousePointer2, LayoutGrid, BarChart3, Clock, Wallet, X
+  ChevronDown, MousePointer2, LayoutGrid, BarChart3, Clock, Wallet,
+  ArrowUpRight, ArrowDownRight, Layers, Activity, Loader2, CheckCircle2,
+  ShieldCheck, AlertCircle, Sparkles, ExternalLink
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { marketApi } from "@/lib/api";
 import { toast } from "sonner";
 import { OrderWindow } from "@/components/dashboard/OrderWindow";
+import Link from "next/link";
+
+interface Holding {
+  symbol: string;
+  qty: number;
+  avgPrice: number;
+  ltp: number;
+  pnl?: number;
+  pnlPct?: number;
+  exchange?: string;
+  isin?: string;
+  closePrice?: number;
+}
+
+interface Position {
+  symbol: string;
+  qty: number;
+  avgPrice: number;
+  ltp: number;
+  pnl: number;
+  side: "BUY" | "SELL";
+  product: string;
+}
 
 export default function PortfolioPage() {
   const { brokers = [], isLoading: brokersLoading } = useBrokers();
   const [selectedBroker, setSelectedBroker] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"holdings" | "positions">("holdings");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<"ALL" | "PROFIT" | "LOSS">("ALL");
   const [showRenewModal, setShowRenewModal] = useState(false);
   const [requestToken, setRequestToken] = useState("");
 
-  // Trade Modal State
-  const [showTradeModal, setShowTradeModal] = useState(false);
-  const [tradeSearch, setTradeSearch] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [selectedSymbol, setSelectedSymbol] = useState<any | null>(null);
-  const [orderSide, setOrderSide] = useState<"BUY" | "SELL">("BUY");
-  const [qty, setQty] = useState(1);
-  const [price, setPrice] = useState<number | "">("");
-  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT">("MARKET");
-  const [productType, setProductType] = useState<"CNC" | "MIS" | "NRML">("CNC");
-  const [isSearching, setIsSearching] = useState(false);
-  const [selectedExchange, setSelectedExchange] = useState<"NSE" | "BSE">("NSE");
+  // Automatically select the active broker if none manually chosen
+  const activeBrokerId = useMemo(() => {
+    if (selectedBroker) return selectedBroker;
+    const active =
+      (brokers as any[]).find((b) => b.isActive && b.broker === "ZERODHA") ||
+      (brokers as any[]).find((b) => b.isActive) ||
+      brokers[0];
+    return active?.id || null;
+  }, [brokers, selectedBroker]);
 
-  // Order Window State
+  const currentBroker = useMemo(() => {
+    return (brokers as any[]).find((b) => b.id === activeBrokerId);
+  }, [brokers, activeBrokerId]);
+
+  // Order Window State (Zerodha Kite Style)
   const [orderState, setOrderState] = useState<{
     isOpen: boolean;
-    type: 'BUY' | 'SELL';
+    type: "BUY" | "SELL";
     symbol: string;
     ltp: number;
   }>({
     isOpen: false,
-    type: 'BUY',
-    symbol: '',
-    ltp: 0
+    type: "BUY",
+    symbol: "",
+    ltp: 0,
   });
 
   const {
     holdings = [],
     positions = [],
     margins,
-    isLoading: holdingsLoading,
+    isHoldingsLoading,
     isPositionsLoading,
     refreshHoldings,
+    refreshPositions,
     renewSession,
     isRenewing,
     getLoginUrl,
-    placeOrder
-  } = usePortfolio(selectedBroker);
+  } = usePortfolio(activeBrokerId);
 
-  // Debounced Search
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-      if (tradeSearch.length >= 2 && !selectedSymbol) {
-        try {
-          setIsSearching(true);
-          const res = await marketApi.search(tradeSearch, selectedBroker);
-          setSearchResults(res.data.data);
-        } catch {
-          setSearchResults([]);
-        } finally {
+  // Portfolio metrics calculations
+  const metrics = useMemo(() => {
+    let totalCurrentValue = 0;
+    let totalInvested = 0;
+    let profitableHoldings = 0;
+    let losingHoldings = 0;
 
-          setIsSearching(false);
-        }
-      } else {
-        setSearchResults([]);
-      }
-    }, 500);
+    (holdings as Holding[]).forEach((h) => {
+      const curr = (h.ltp || 0) * (h.qty || 0);
+      const inv = (h.avgPrice || 0) * (h.qty || 0);
+      totalCurrentValue += curr;
+      totalInvested += inv;
 
-    return () => clearTimeout(timer);
-  }, [tradeSearch, selectedSymbol]);
+      const pnl = h.pnl !== undefined ? h.pnl : curr - inv;
+      if (pnl > 0) profitableHoldings++;
+      else if (pnl < 0) losingHoldings++;
+    });
+
+    const totalHoldingPnl = totalCurrentValue - totalInvested;
+    const totalHoldingPnlPct = totalInvested > 0 ? (totalHoldingPnl / totalInvested) * 100 : 0;
+
+    let totalPosPnl = 0;
+    (positions as Position[]).forEach((p) => {
+      totalPosPnl += p.pnl || 0;
+    });
+
+    const availableCash =
+      margins?.equity?.available?.live_balance ??
+      margins?.equity?.available?.cash ??
+      margins?.equity?.net ??
+      0;
+
+    return {
+      totalCurrentValue,
+      totalInvested,
+      totalHoldingPnl,
+      totalHoldingPnlPct,
+      profitableHoldings,
+      losingHoldings,
+      totalPosPnl,
+      availableCash,
+    };
+  }, [holdings, positions, margins]);
+
+  // Filtered Holdings
+  const filteredHoldings = useMemo(() => {
+    return (holdings as Holding[]).filter((h) => {
+      const matchesSearch =
+        searchQuery.trim() === ""
+          ? true
+          : h.symbol.toLowerCase().includes(searchQuery.toLowerCase());
+
+      const curr = (h.ltp || 0) * (h.qty || 0);
+      const inv = (h.avgPrice || 0) * (h.qty || 0);
+      const pnl = h.pnl !== undefined ? h.pnl : curr - inv;
+
+      const matchesFilter =
+        filterType === "ALL"
+          ? true
+          : filterType === "PROFIT"
+          ? pnl > 0
+          : pnl < 0;
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [holdings, searchQuery, filterType]);
+
+  // Filtered Positions
+  const filteredPositions = useMemo(() => {
+    return (positions as Position[]).filter((p) => {
+      const matchesSearch =
+        searchQuery.trim() === ""
+          ? true
+          : p.symbol.toLowerCase().includes(searchQuery.toLowerCase());
+
+      const matchesFilter =
+        filterType === "ALL"
+          ? true
+          : filterType === "PROFIT"
+          ? p.pnl > 0
+          : p.pnl < 0;
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [positions, searchQuery, filterType]);
 
   const openTrade = (item?: any, side: "BUY" | "SELL" = "BUY") => {
-    if (!selectedBroker) {
-      toast.error("Please select a broker account first");
+    if (!activeBrokerId) {
+      toast.error("Please connect and select a broker account first");
       return;
     }
-    if (item) {
-      setOrderState({
-        isOpen: true,
-        type: side,
-        symbol: item.symbol,
-        ltp: item.ltpNSE || item.ltpBSE || item.ltp || item.avgPrice || 0
-      });
-    } else {
-      setSelectedSymbol(null);
-      setTradeSearch("");
-      setOrderSide(side);
-      setShowTradeModal(true);
-    }
+    setOrderState({
+      isOpen: true,
+      type: side,
+      symbol: item ? item.symbol : "",
+      ltp: item ? item.ltp || item.avgPrice || 0 : 0,
+    });
   };
-
-  const handlePlaceOrder = async () => {
-    if (!selectedSymbol) return;
-    if (!qty || qty <= 0) {
-      toast.error("Please enter a valid quantity");
-      return;
-    }
-    if (orderType === "LIMIT" && (!price || Number(price) <= 0)) {
-      toast.error("Please enter a valid price for Limit order");
-      return;
-    }
-
-    try {
-      await placeOrder({
-        symbol: selectedSymbol.symbol,
-        exchange: selectedExchange,
-        side: orderSide,
-        qty: Number(qty),
-        orderType: orderType,
-        product: productType,
-        price: orderType === "LIMIT" ? Number(price) : undefined,
-      });
-      setShowTradeModal(false);
-      setSelectedSymbol(null);
-      setTradeSearch("");
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || err.message || "Failed to place order");
-    }
-  };
-
-
 
   const handleOpenLogin = async () => {
     const url = await getLoginUrl();
@@ -148,630 +201,739 @@ export default function PortfolioPage() {
       await renewSession(requestToken);
       setShowRenewModal(false);
       setRequestToken("");
-    } catch { }
+    } catch {}
   };
 
-  const getLTP = () => {
-    if (!selectedSymbol) return 0;
-    return selectedExchange === "NSE" ? selectedSymbol.ltpNSE : selectedSymbol.ltpBSE;
+  const isDataLoading = isHoldingsLoading || isPositionsLoading;
+
+  const handleRefresh = () => {
+    if (activeTab === "holdings") {
+      refreshHoldings();
+    } else {
+      refreshPositions();
+    }
+    toast.success("Refreshing portfolio data...");
   };
 
   return (
-    <div className="space-y-6 animate-[fade-up_0.4s_ease_both]">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-6 animate-[fade-up_0.3s_ease_both]">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Portfolio</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Monitor your holdings and open positions across brokers
+          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            <Briefcase className="h-6 w-6 text-blue-500" />
+            Portfolio & Holdings
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Real-time holdings breakdown, intraday positions, valuation, and capital allocation
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center flex-wrap gap-2.5">
+          {/* Broker Selector */}
           <select
-            className="h-10 px-3 rounded-lg border border-slate-200 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px]"
-            value={selectedBroker || ""}
+            className="h-9 px-3 rounded-lg border border-border bg-card text-foreground text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm"
+            value={activeBrokerId || ""}
             onChange={(e) => setSelectedBroker(e.target.value)}
           >
-            <option value="" disabled>Select Broker Account</option>
-            {brokers?.map((b: any) => (
-              <option key={b.id} value={b.id}>{b.broker} ({b.clientId})</option>
+            <option value="" disabled>
+              Select Broker Account
+            </option>
+            {(brokers as any[])?.map((b: any) => (
+              <option key={b.id} value={b.id}>
+                {b.broker} ({b.clientId}) {b.isActive ? "● Active" : ""}
+              </option>
             ))}
-            {brokers?.length === 0 && !brokersLoading && <option disabled>No brokers connected</option>}
+            {brokers?.length === 0 && !brokersLoading && (
+              <option disabled>No brokers connected</option>
+            )}
           </select>
 
+          {activeBrokerId && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-amber-500/30 text-amber-500 bg-amber-500/10 hover:bg-amber-500/20 text-xs h-9"
+              onClick={() => setShowRenewModal(true)}
+            >
+              <Zap className="h-3.5 w-3.5" /> Daily Login
+            </Button>
+          )}
+
           <Button
-            className="gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold"
+            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs h-9 shadow-sm"
             size="sm"
             onClick={() => openTrade()}
           >
-            <ShoppingCart className="h-4 w-4" /> Place Order
+            <ShoppingCart className="h-3.5 w-3.5" /> Place Order
           </Button>
 
-          {selectedBroker && (
-            <Button variant="outline" size="sm" className="gap-2 border-orange-200 text-orange-700 bg-orange-50 hover:bg-orange-100" onClick={() => setShowRenewModal(true)}>
-              <Zap className="h-4 w-4" /> Daily Login
-            </Button>
-          )}
           <Button
             variant="outline"
             size="icon"
-            className="border-slate-200 h-10 w-10 flex items-center justify-center p-0"
-            onClick={() => refreshHoldings()}
-            disabled={holdingsLoading}
+            className="h-9 w-9 border-border"
+            onClick={handleRefresh}
+            disabled={isDataLoading}
           >
-            <RefreshCcw className={cn("h-4 w-4 text-slate-500", holdingsLoading && "animate-spin")} />
+            <RefreshCcw
+              className={cn("h-4 w-4 text-muted-foreground", isDataLoading && "animate-spin text-blue-500")}
+            />
           </Button>
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="bg-white border-slate-100 shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 opacity-70">Total Equity</p>
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight">₹{holdings.reduce((sum: number, h: any) => sum + (h.ltp * h.qty || 0), 0).toLocaleString()}</h3>
-            <p className="text-[10px] font-bold text-slate-400 mt-1">INVESTED: ₹{holdings.reduce((sum: number, h: any) => sum + (h.avgPrice * h.qty || 0), 0).toLocaleString()}</p>
-          </CardContent>
-        </Card>
-        <Card className="bg-white border-slate-100 shadow-sm border-l-4 border-l-blue-500">
-          <CardContent className="pt-6">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 opacity-70">Total P&L</p>
-            <div className="flex items-center gap-2">
-              <h3 className={cn("text-2xl font-black tracking-tight", holdings.reduce((sum: number, h: any) => sum + (h.pnl || 0), 0) >= 0 ? "text-green-600" : "text-red-500")}>
-                {holdings.reduce((sum: number, h: any) => sum + (h.pnl || 0), 0) >= 0 ? "+" : ""}₹{Math.abs(holdings.reduce((sum: number, h: any) => sum + (h.pnl || 0), 0)).toLocaleString()}
-              </h3>
+      {/* Summary Stat Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Total Portfolio Value */}
+        <Card className="border-border bg-card/60 backdrop-blur">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+              <span>Total Portfolio Value</span>
+              <Wallet className="h-4 w-4 text-muted-foreground/60" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold font-mono text-foreground tracking-tight">
+              ₹{metrics.totalCurrentValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
+              <span>Invested:</span>
+              <span className="font-mono font-medium text-foreground">
+                ₹{metrics.totalInvested.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-white border-slate-100 shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 opacity-70">Connection Status</p>
-            <div className="flex items-center gap-2">
-              <div className={cn("h-2.5 w-2.5 rounded-full", selectedBroker ? "bg-green-500 animate-pulse" : "bg-slate-300")} />
-              <span className="text-sm font-bold text-slate-700">{selectedBroker ? "Active Session" : "Disconnected"}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      {/* Tabs */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden min-h-[400px]">
-        <div className="flex border-b border-slate-100 bg-slate-50/30">
-          <button
-            onClick={() => setActiveTab("holdings")}
-            className={cn(
-              "px-8 py-4 text-xs font-bold uppercase tracking-widest transition-all border-b-2",
-              activeTab === "holdings"
-                ? "border-blue-600 text-blue-600 bg-white"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            )}
-          >
-            Holdings ({holdings?.length || 0})
-          </button>
-          <button
-            onClick={() => setActiveTab("positions")}
-            className={cn(
-              "px-8 py-4 text-xs font-black uppercase tracking-widest transition-all border-b-2",
-              activeTab === "positions"
-                ? "border-blue-600 text-blue-600 bg-white"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            )}
-          >
-            Positions ({positions?.length || 0})
-          </button>
-        </div>
-
-        <div className="p-0 overflow-x-auto">
-          {!selectedBroker ? (
-            <div className="py-32 text-center">
-              <div className="h-16 w-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-100">
-                <Briefcase className="h-8 w-8 text-slate-200" />
-              </div>
-              <h3 className="text-base font-bold text-slate-900">Select a broker account</h3>
-              <p className="text-xs text-slate-400 max-w-[200px] mx-auto mt-1">Connect your trading account to see live data</p>
-            </div>
-          ) : (
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Instrument</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Qty</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Avg. Cost</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">LTP</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Returns</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {activeTab === "holdings" && holdings?.map((h: any) => (
-                  <tr key={h.symbol} className="hover:bg-slate-50/50 transition-colors group">
-                    <td className="px-6 py-5">
-                      <div>
-                        <p className="text-sm font-black text-slate-900 group-hover:text-blue-600 transition-colors">{h.symbol}</p>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">NSE: Equity</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-5 text-sm font-bold text-slate-600">{h.qty}</td>
-                    <td className="px-6 py-5 text-sm font-bold text-slate-600 text-right">₹{h.avgPrice?.toLocaleString()}</td>
-                    <td className="px-6 py-5 text-sm font-black text-slate-900 text-right">₹{h.ltp?.toLocaleString()}</td>
-                    <td className="px-6 py-5 text-right">
-                      <p className={cn("text-sm font-bold", (h.pnl || 0) >= 0 ? "text-green-600" : "text-red-500")}>
-                        {(h.pnl || 0) >= 0 ? "+" : ""}₹{Math.abs(h.pnl || 0).toLocaleString()}
-                      </p>
-                      <p className={cn("text-[10px] font-bold opacity-70", (h.pnl || 0) >= 0 ? "text-green-500" : "text-red-400")}>
-                        {(h.pnl || 0) >= 0 ? "+" : ""}{h.pnlPct || 0}%
-                      </p>
-                    </td>
-                    <td className="px-6 py-5 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <Button size="sm" className="h-8 px-4 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px] tracking-tight" onClick={() => openTrade(h, "BUY")}>BUY</Button>
-                        <Button size="sm" className="h-8 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] tracking-tight" onClick={() => openTrade(h, "SELL")}>SELL</Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {(activeTab === "holdings" && holdings?.length === 0 && !holdingsLoading) && (
-                  <tr>
-                    <td colSpan={6} className="py-32 text-center text-slate-400 italic text-xs font-bold">
-                      Holdings not loaded. Please perform a Daily Login.
-                    </td>
-                  </tr>
-                )}
-                {activeTab === "positions" && positions?.map((p: any) => (
-                  <tr key={p.symbol} className="hover:bg-slate-50/50 transition-colors group">
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-2">
-                        <div>
-                          <p className="text-sm font-black text-slate-900 group-hover:text-blue-600 transition-colors">{p.symbol}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className={cn("text-[9px] px-1.5 py-0.5 rounded font-black text-white", p.side === "BUY" ? "bg-blue-500" : "bg-orange-500")}>
-                              {p.side}
-                            </span>
-                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1.5 py-0.5 rounded">{p.product}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-5 text-sm font-bold text-slate-600">{p.qty}</td>
-                    <td className="px-6 py-5 text-sm font-bold text-slate-600 text-right">₹{p.avgPrice?.toLocaleString()}</td>
-                    <td className="px-6 py-5 text-sm font-black text-slate-900 text-right">₹{p.ltp?.toLocaleString()}</td>
-                    <td className="px-6 py-5 text-right">
-                      <p className={cn("text-sm font-black", (p.pnl || 0) >= 0 ? "text-green-600" : "text-red-500")}>
-                        {(p.pnl || 0) >= 0 ? "+" : ""}₹{Math.abs(p.pnl || 0).toLocaleString()}
-                      </p>
-                    </td>
-                    <td className="px-6 py-5 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <Button size="sm" className="h-8 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-tight" onClick={() => openTrade(p, "BUY")}>BUY More</Button>
-                        <Button size="sm" className="h-8 px-4 bg-orange-600 hover:bg-orange-700 text-white font-bold text-[10px] tracking-tight" onClick={() => openTrade(p, "SELL")}>Exit</Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {(activeTab === "positions" && positions?.length === 0 && !isPositionsLoading) && (
-                  <tr>
-                    <td colSpan={6} className="py-32 text-center text-slate-400 italic text-xs font-bold font-medium">No open positions</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      {/* Trade Modal */}
-      <Dialog open={showTradeModal} onOpenChange={setShowTradeModal}>
-        <DialogContent className="max-w-[800px] p-0 overflow-hidden border-none shadow-2xl rounded-xl">
-          <div className={cn("px-8 py-6 flex items-center justify-between", orderSide === "BUY" ? "bg-blue-600" : "bg-orange-600")}>
-            <div className="flex items-center gap-4">
-              <div className="bg-white/10 p-2.5 rounded-lg backdrop-blur-md">
-                <TrendingUp className="h-6 w-6 text-white" />
-              </div>
-              <div className="flex flex-col">
-                <h2 className="text-white font-bold text-2xl tracking-tight leading-none mb-1">
-                  {orderSide} {selectedSymbol?.symbol || "Select Asset"}
-                </h2>
-                <div className="flex gap-2 items-center text-[11px] font-semibold text-white/70 uppercase tracking-widest">
-                  <span className="bg-white/20 px-1.5 py-0.5 rounded">{selectedExchange}</span>
-                  <span>•</span>
-                  <span>{selectedSymbol?.name || "Search and select from NSE/BSE"}</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-col items-end">
-              <span className="text-white font-bold text-3xl tracking-tighter tabular-nums leading-none">₹{getLTP()?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              <div className="flex items-center gap-1.5 mt-1">
-                <div className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-white/60 text-[10px] font-bold uppercase tracking-widest">Live Market Price</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex h-[480px]">
-            {/* Left Panel: Search & Instrument Selection */}
-            <div className="w-[340px] border-r border-slate-100 p-6 bg-slate-50/50">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Instrument Search</span>
-                  {selectedSymbol && (
-                    <button
-                      onClick={() => { setSelectedSymbol(null); setTradeSearch(""); }}
-                      className="text-[10px] font-bold text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded"
-                    >
-                      CHANGE
-                    </button>
-                  )}
-                </div>
-
-                {!selectedSymbol ? (
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
-                      autoFocus
-                      placeholder="Search Stocks..."
-                      className="pl-10 h-12 border-slate-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-bold bg-white"
-                      value={tradeSearch}
-                      onChange={(e) => setTradeSearch(e.target.value)}
-                    />
-
-                    {searchResults.length > 0 && (
-                      <div className="absolute top-full left-0 right-0 z-50 mt-2 bg-white border border-slate-200 rounded-lg shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 scale-100">
-                        {/* Table Headers */}
-                        <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                          <div className="w-24">Symbol</div>
-                          <div className="flex-1">Description</div>
-                          <div className="w-16 text-right">Exch.</div>
-                        </div>
-
-                        <div className="max-h-[340px] overflow-y-auto">
-                          {searchResults.map((item: any) => {
-                            const highlightMatch = (text: string) => {
-                              if (!tradeSearch) return text;
-                              const parts = text.split(new RegExp(`(${tradeSearch})`, 'gi'));
-                              return parts.map((part, i) =>
-                                part.toLowerCase() === tradeSearch.toLowerCase()
-                                  ? <span key={i} className="text-blue-600 font-black">{part.toUpperCase()}</span>
-                                  : part.toUpperCase()
-                              );
-                            };
-
-                            return (
-                              <button
-                                key={item.symbol + item.exchange}
-                                className="w-full px-5 py-3.5 text-left hover:bg-blue-50/50 flex items-center group border-b border-slate-50 last:border-0 transition-colors"
-                                onClick={() => {
-                                  setShowTradeModal(false);
-                                  setOrderState({
-                                    isOpen: true,
-                                    type: orderSide,
-                                    symbol: item.symbol,
-                                    ltp: item.price || item.ltpNSE || item.ltpBSE || 0
-                                  });
-                                }}
-                              >
-                                <div className="w-24 font-bold text-slate-900 group-hover:text-blue-700 text-xs">
-                                  {highlightMatch(item.symbol || "")}
-                                </div>
-                                <div className="flex-1 text-[10px] font-semibold text-slate-500 uppercase tracking-tight truncate pr-4">
-                                  {highlightMatch(item.name || "")}
-                                </div>
-                                <div className="w-16 text-right">
-                                  <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-600">{item.exchange}</span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 text-center">
-                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter italic">Simply select a row to populate the trade engine</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {isSearching && (
-                      <div className="absolute top-full left-0 right-0 p-8 text-center bg-white border border-slate-100 shadow-xl z-50 rounded-lg">
-                        <RefreshCcw className="h-6 w-6 animate-spin mx-auto text-blue-500 opacity-50" />
-                        <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase">Scanning Markets...</p>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="bg-white p-5 rounded-xl border border-blue-100 shadow-sm space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-blue-50 flex items-center justify-center font-bold text-blue-600">
-                        {selectedSymbol.symbol[0]}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900 leading-none">{selectedSymbol.symbol}</p>
-                        <p className="text-[10px] font-semibold text-slate-400 mt-1 uppercase">{selectedSymbol.name}</p>
-                      </div>
-                    </div>
-                    <div className="pt-4 border-t border-slate-50 flex justify-between">
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase">Avg. Vol</span>
-                        <span className="text-xs font-bold text-slate-700">1.2M</span>
-                      </div>
-                      <div className="flex flex-col items-end">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase">Day Range</span>
-                        <span className="text-xs font-bold text-slate-700">₹1,240 - ₹1,290</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="h-px flex-1 bg-slate-200" />
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Exchange Toggles</span>
-                    <div className="h-px flex-1 bg-slate-200" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {['NSE', 'BSE'].map(ex => (
-                      <button
-                        key={ex}
-                        onClick={() => setSelectedExchange(ex as any)}
-                        className={cn(
-                          "px-4 py-3 rounded-lg border text-center transition-all",
-                          selectedExchange === ex
-                            ? "border-blue-500 bg-blue-600 text-white shadow-lg shadow-blue-100"
-                            : "border-slate-200 text-slate-500 hover:border-slate-300 bg-white"
-                        )}
-                      >
-                        <span className="font-bold text-xs">{ex}</span>
-                        <p className={cn("text-[8px] font-bold mt-0.5", selectedExchange === ex ? "text-white/70" : "text-slate-400")}>
-                          ₹{ex === 'NSE' ? selectedSymbol?.ltpNSE || '0.00' : selectedSymbol?.ltpBSE || '0.00'}
-                        </p>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Panel: Order Parameters */}
-            <div className="flex-1 p-8 overflow-y-auto">
-              {!selectedSymbol ? (
-                <div className="h-full flex flex-col items-center justify-center text-center opacity-50 grayscale">
-                  <div className="bg-slate-100 p-8 rounded-full mb-6">
-                    <MousePointer2 className="h-12 w-12 text-slate-400 mx-auto" />
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900">Select an instrument</h3>
-                  <p className="text-sm font-medium text-slate-500 max-w-[200px] mt-1">Please search and select a stock to start placing orders.</p>
-                </div>
+        {/* Card 2: Total Unrealized P&L */}
+        <Card className="border-border bg-card/60 backdrop-blur">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+              <span>Overall Holdings P&L</span>
+              {metrics.totalHoldingPnl >= 0 ? (
+                <TrendingUp className="h-4 w-4 text-emerald-500" />
               ) : (
-                <div className="space-y-8 animate-in fade-in duration-500">
-                  {/* Product & Order Type Sections */}
-                  <div className="grid grid-cols-2 gap-12">
-                    <div className="space-y-4">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                        <Box className="h-3 w-3" /> Product Type
-                      </label>
-                      <div className="flex p-1 bg-slate-100 rounded-xl">
-                        {[
-                          { id: 'CNC', label: 'Longterm', sub: 'CNC' },
-                          { id: 'MIS', label: 'Intraday', sub: 'MIS' }
-                        ].map(p => (
-                          <button
-                            key={p.id}
-                            onClick={() => setProductType(p.id as any)}
-                            className={cn(
-                              "flex-1 py-3 px-2 rounded-lg text-center transition-all",
-                              productType === p.id
-                                ? "bg-white text-blue-600 shadow-md font-bold"
-                                : "text-slate-500 font-semibold hover:text-slate-700"
-                            )}
-                          >
-                            <div className="text-xs">{p.label}</div>
-                            <div className="text-[8px] opacity-70 uppercase tracking-tighter mt-0.5">{p.sub}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                        <Settings2 className="h-3 w-3" /> Variety
-                      </label>
-                      <div className="flex p-1 bg-slate-100 rounded-xl">
-                        {["MARKET", "LIMIT"].map((t: any) => (
-                          <button
-                            key={t}
-                            onClick={() => setOrderType(t)}
-                            className={cn(
-                              "flex-1 py-3 rounded-lg text-center transition-all text-xs",
-                              orderType === t
-                                ? "bg-white text-slate-900 shadow-md font-bold"
-                                : "text-slate-500 font-semibold hover:text-slate-700"
-                            )}
-                          >
-                            {t}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Input Fields */}
-                  <div className="grid grid-cols-2 gap-8 pt-4">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Quantity</label>
-                        <span className="text-[10px] font-bold text-slate-300">Min: 1</span>
-                      </div>
-                      <div className="relative group">
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 font-bold group-focus-within:text-blue-500 transition-colors">#</div>
-                        <Input
-                          type="number"
-                          value={qty}
-                          onChange={(e) => setQty(Number(e.target.value))}
-                          className="pl-10 h-16 border-slate-200 bg-slate-50/50 font-bold text-xl rounded-2xl focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 transition-all"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Price (₹)</label>
-                        <span className="text-[10px] font-bold text-slate-300">{orderType === "MARKET" ? "CURRENT PRICE" : "SET LIMIT"}</span>
-                      </div>
-                      <div className="relative group">
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 font-bold group-focus-within:text-blue-500 transition-colors">₹</div>
-                        <Input
-                          type="number"
-                          disabled={orderType === "MARKET"}
-                          placeholder={orderType === "MARKET" ? "Market" : "0.00"}
-                          value={price}
-                          onChange={(e) => setPrice(e.target.value === "" ? "" : Number(e.target.value))}
-                          className="pl-10 h-16 border-slate-200 bg-slate-50/50 font-bold text-xl rounded-2xl focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 disabled:opacity-50 transition-all"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100/50 mt-10">
-                    <div className="flex items-start gap-3">
-                      <div className="bg-blue-100 p-2 rounded-lg">
-                        <Calculator className="h-5 w-5 text-blue-600" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-baseline justify-between mb-2">
-                          <span className="text-xs font-bold text-slate-600">Total Capital Required</span>
-                          <span className="text-xl font-bold text-blue-700 tracking-tighter">
-                            ₹{(Number(qty) * (Number(price) || getLTP())).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <p className="text-[10px] font-semibold text-slate-400 border-t border-slate-200 pt-2 leading-relaxed uppercase tracking-tighter">
-                          Final margin amount is calculated based on current market depth and selected leverage.
-                          Broker charges apply.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <TrendingDown className="h-4 w-4 text-rose-500" />
               )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              className={cn(
+                "text-2xl font-bold font-mono flex items-center gap-1.5 tracking-tight",
+                metrics.totalHoldingPnl > 0
+                  ? "text-emerald-500"
+                  : metrics.totalHoldingPnl < 0
+                  ? "text-rose-500"
+                  : "text-foreground"
+              )}
+            >
+              {metrics.totalHoldingPnl > 0 ? "+" : ""}
+              ₹{metrics.totalHoldingPnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {metrics.totalHoldingPnl > 0 ? (
+                <ArrowUpRight className="h-5 w-5 text-emerald-500" />
+              ) : metrics.totalHoldingPnl < 0 ? (
+                <ArrowDownRight className="h-5 w-5 text-rose-500" />
+              ) : null}
             </div>
+            <div className="flex items-center gap-2 mt-1">
+              <Badge
+                variant={metrics.totalHoldingPnl >= 0 ? "success" : "destructive"}
+                className="text-[10px] font-mono py-0 px-1.5"
+              >
+                {metrics.totalHoldingPnl >= 0 ? "+" : ""}
+                {metrics.totalHoldingPnlPct.toFixed(2)}%
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {metrics.profitableHoldings} Up / {metrics.losingHoldings} Down
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Card 3: Available Margin */}
+        <Card className="border-border bg-card/60 backdrop-blur">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+              <span>Available Cash / Margin</span>
+              <ShieldCheck className="h-4 w-4 text-blue-500/60" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold font-mono text-foreground tracking-tight">
+              ₹{metrics.availableCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Live equity trading balance
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Card 4: Broker Session Status */}
+        <Card className="border-border bg-card/60 backdrop-blur">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+              <span>Broker Session</span>
+              <Activity className="h-4 w-4 text-muted-foreground/60" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <div
+                className={cn(
+                  "h-3 w-3 rounded-full",
+                  activeBrokerId ? "bg-emerald-500 animate-pulse" : "bg-muted"
+                )}
+              />
+              <span className="text-lg font-bold text-foreground truncate">
+                {currentBroker ? `${currentBroker.broker}` : "Disconnected"}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1 truncate">
+              {currentBroker
+                ? `ID: ${currentBroker.clientId} (${holdings.length} Holdings)`
+                : "No active trading account"}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Content Table Card */}
+      <Card className="border-border bg-card shadow-sm overflow-hidden">
+        {/* Table Controls & Tabs Bar */}
+        <CardHeader className="border-b border-border py-4 px-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          {/* Tabs */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab("holdings")}
+              className={cn(
+                "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-2",
+                activeTab === "holdings"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              <span>Holdings</span>
+              <Badge
+                variant={activeTab === "holdings" ? "secondary" : "outline"}
+                className={cn(
+                  "text-[10px] px-1.5 py-0 font-mono",
+                  activeTab === "holdings" ? "bg-blue-700 text-white border-transparent" : ""
+                )}
+              >
+                {holdings?.length || 0}
+              </Badge>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("positions")}
+              className={cn(
+                "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-2",
+                activeTab === "positions"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              <Activity className="h-3.5 w-3.5" />
+              <span>Positions</span>
+              <Badge
+                variant={activeTab === "positions" ? "secondary" : "outline"}
+                className={cn(
+                  "text-[10px] px-1.5 py-0 font-mono",
+                  activeTab === "positions" ? "bg-blue-700 text-white border-transparent" : ""
+                )}
+              >
+                {positions?.length || 0}
+              </Badge>
+            </button>
           </div>
 
-          <div className="px-8 py-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2 group cursor-help">
-                <div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm group-hover:border-blue-200 transition-all">
-                  <Zap className="h-4 w-4 text-orange-500" />
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-slate-400 leading-none">MODE</span>
-                  <span className="text-xs font-bold text-slate-700 mt-1">{productType === "CNC" ? "INVESTMENT" : "INTRADAY"}</span>
-                </div>
-              </div>
-              <div className="h-8 w-px bg-slate-200" />
-              <button className="flex items-center gap-2 group opacity-60 hover:opacity-100 transition-opacity">
-                <span className="text-[10px] font-bold text-slate-400 tracking-widest leading-none">ADVANCED OPTIONS</span>
-                <ChevronDown className="h-3 w-3 text-slate-400 group-hover:translate-y-0.5 transition-transform" />
+          {/* Search and Profit/Loss Filters */}
+          <div className="flex items-center flex-wrap gap-2.5">
+            {/* Filter Pills */}
+            <div className="flex items-center rounded-lg bg-muted/40 p-0.5 border border-border">
+              <button
+                onClick={() => setFilterType("ALL")}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                  filterType === "ALL"
+                    ? "bg-card text-foreground font-semibold shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setFilterType("PROFIT")}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                  filterType === "PROFIT"
+                    ? "bg-emerald-500/10 text-emerald-500 font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Profit
+              </button>
+              <button
+                onClick={() => setFilterType("LOSS")}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                  filterType === "LOSS"
+                    ? "bg-rose-500/10 text-rose-500 font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Loss
               </button>
             </div>
 
-            <div className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                className="font-bold text-slate-400 hover:text-red-500 hover:bg-red-50 text-xs tracking-tight px-6 h-12"
-                onClick={() => setShowTradeModal(false)}
-              >
-                DISCARD
-              </Button>
-              <Button
-                disabled={!selectedSymbol}
-                onClick={handlePlaceOrder}
-                className={cn(
-                  "h-14 px-16 font-bold text-base tracking-tight rounded-xl shadow-2xl transition-all active:scale-95",
-                  orderSide === "BUY"
-                    ? "bg-blue-600 hover:bg-blue-700 shadow-blue-500/20"
-                    : "bg-orange-600 hover:bg-orange-700 shadow-orange-500/20"
-                )}
-              >
-                {orderSide === "BUY" ? "BUY NOW" : "SELL NOW"}
-              </Button>
+            {/* Search Input */}
+            <div className="relative min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search symbol..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-8 text-xs bg-card border-border focus:ring-1 focus:ring-blue-500"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </CardHeader>
 
+        {/* Table Content */}
+        <CardContent className="p-0">
+          {!activeBrokerId ? (
+            <div className="py-24 text-center px-4">
+              <div className="mx-auto w-12 h-12 rounded-full bg-muted/60 flex items-center justify-center mb-3">
+                <Briefcase className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <h3 className="text-base font-semibold text-foreground">Select a Broker Account</h3>
+              <p className="text-sm text-muted-foreground max-w-sm mx-auto mt-1 mb-5">
+                Connect your trading account to monitor your live holdings, asset valuation, and open positions.
+              </p>
+              <Link href="/brokers">
+                <Button size="sm" variant="default" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
+                  <Zap className="h-4 w-4" /> Manage Brokers
+                </Button>
+              </Link>
+            </div>
+          ) : isDataLoading && ((activeTab === "holdings" && holdings.length === 0) || (activeTab === "positions" && positions.length === 0)) ? (
+            <div className="py-24 flex flex-col items-center justify-center gap-3">
+              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+              <p className="text-sm text-muted-foreground">Fetching portfolio data from broker...</p>
+            </div>
+          ) : activeTab === "holdings" ? (
+            filteredHoldings.length === 0 ? (
+              <div className="py-24 text-center px-4">
+                <div className="mx-auto w-12 h-12 rounded-full bg-muted/60 flex items-center justify-center mb-3">
+                  <Layers className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <h3 className="text-base font-semibold text-foreground">No Holdings Found</h3>
+                <p className="text-sm text-muted-foreground max-w-sm mx-auto mt-1 mb-5">
+                  {searchQuery || filterType !== "ALL"
+                    ? "No holdings match the current filter or search criteria."
+                    : "You currently have no equity delivery holdings in this broker account, or a daily login is required."}
+                </p>
+                <div className="flex items-center justify-center gap-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => setShowRenewModal(true)}
+                  >
+                    <Zap className="h-4 w-4 text-amber-500" />
+                    Broker Daily Login
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="gap-1.5 bg-blue-600 hover:bg-blue-700"
+                    onClick={() => openTrade()}
+                  >
+                    <ShoppingCart className="h-4 w-4" />
+                    Place New Order
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                      <th className="py-3 px-4">Instrument</th>
+                      <th className="py-3 px-4 text-right font-mono">Qty</th>
+                      <th className="py-3 px-4 text-right font-mono">Avg Price</th>
+                      <th className="py-3 px-4 text-right font-mono">LTP</th>
+                      <th className="py-3 px-4 text-right font-mono">Current Value</th>
+                      <th className="py-3 px-4 text-right font-mono">P&L / Returns</th>
+                      <th className="py-3 px-4 text-center">Quick Trade</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {filteredHoldings.map((h: Holding, idx: number) => {
+                      const currValue = (h.ltp || 0) * (h.qty || 0);
+                      const invValue = (h.avgPrice || 0) * (h.qty || 0);
+                      const pnl = h.pnl !== undefined ? h.pnl : currValue - invValue;
+                      const pnlPct =
+                        h.pnlPct !== undefined
+                          ? h.pnlPct
+                          : invValue > 0
+                          ? (pnl / invValue) * 100
+                          : 0;
+                      const isProfit = pnl >= 0;
 
+                      return (
+                        <tr
+                          key={h.symbol + idx}
+                          className="hover:bg-muted/30 transition-colors group"
+                        >
+                          {/* Instrument */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2">
+                              <div className="font-semibold text-foreground text-sm group-hover:text-blue-500 transition-colors">
+                                {h.symbol}
+                              </div>
+                              <Badge variant="outline" className="text-[10px] font-medium py-0 px-1">
+                                {h.exchange || "NSE"}
+                              </Badge>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                              Invested: ₹{invValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </td>
 
-      {/* Renew Session Modal */}
+                          {/* Qty */}
+                          <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
+                            {h.qty}
+                          </td>
 
+                          {/* Avg Price */}
+                          <td className="py-3.5 px-4 text-right font-mono text-muted-foreground">
+                            ₹{(h.avgPrice || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+
+                          {/* LTP */}
+                          <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
+                            ₹{(h.ltp || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+
+                          {/* Current Value */}
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-foreground">
+                            ₹{currValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+
+                          {/* P&L */}
+                          <td className="py-3.5 px-4 text-right">
+                            <div
+                              className={cn(
+                                "font-mono font-bold flex items-center justify-end gap-1",
+                                isProfit ? "text-emerald-500" : "text-rose-500"
+                              )}
+                            >
+                              {isProfit ? "+" : ""}₹{pnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isProfit ? (
+                                <ArrowUpRight className="h-3.5 w-3.5" />
+                              ) : (
+                                <ArrowDownRight className="h-3.5 w-3.5" />
+                              )}
+                            </div>
+                            <div
+                              className={cn(
+                                "text-[11px] font-mono mt-0.5",
+                                isProfit ? "text-emerald-500/80" : "text-rose-500/80"
+                              )}
+                            >
+                              {isProfit ? "+" : ""}
+                              {pnlPct.toFixed(2)}%
+                            </div>
+                          </td>
+
+                          {/* Quick Actions */}
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 hover:border-emerald-500/50"
+                                onClick={() => openTrade(h, "BUY")}
+                              >
+                                BUY
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-rose-500/30 text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/50"
+                                onClick={() => openTrade(h, "SELL")}
+                              >
+                                SELL
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          ) : (
+            // Positions Tab Table
+            filteredPositions.length === 0 ? (
+              <div className="py-24 text-center px-4">
+                <div className="mx-auto w-12 h-12 rounded-full bg-muted/60 flex items-center justify-center mb-3">
+                  <Activity className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <h3 className="text-base font-semibold text-foreground">No Open Positions</h3>
+                <p className="text-sm text-muted-foreground max-w-sm mx-auto mt-1 mb-5">
+                  {searchQuery || filterType !== "ALL"
+                    ? "No positions match the current filter or search criteria."
+                    : "You currently have no open intraday or derivative positions in this account."}
+                </p>
+                <div className="flex items-center justify-center gap-3">
+                  <Link href="/fo-stocks">
+                    <Button size="sm" variant="default" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
+                      <Zap className="h-4 w-4" /> Browse F&O Stocks
+                    </Button>
+                  </Link>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => openTrade()}
+                  >
+                    <ShoppingCart className="h-4 w-4" /> Place Order
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                      <th className="py-3 px-4">Product / Side</th>
+                      <th className="py-3 px-4">Instrument</th>
+                      <th className="py-3 px-4 text-right font-mono">Net Qty</th>
+                      <th className="py-3 px-4 text-right font-mono">Avg Price</th>
+                      <th className="py-3 px-4 text-right font-mono">LTP</th>
+                      <th className="py-3 px-4 text-right font-mono">Unrealized P&L</th>
+                      <th className="py-3 px-4 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {filteredPositions.map((pos: Position, idx: number) => {
+                      const isLong = pos.qty > 0;
+                      const isProfit = (pos.pnl || 0) >= 0;
+
+                      return (
+                        <tr
+                          key={pos.symbol + idx}
+                          className="hover:bg-muted/30 transition-colors group"
+                        >
+                          <td className="py-3.5 px-4 font-mono text-xs">
+                            <div className="flex items-center gap-1.5">
+                              <Badge
+                                variant={isLong ? "default" : "destructive"}
+                                className={cn(
+                                  "text-[10px] font-bold py-0 px-1.5",
+                                  isLong
+                                    ? "bg-blue-500/10 text-blue-500 border-blue-500/30"
+                                    : "bg-orange-500/10 text-orange-500 border-orange-500/30"
+                                )}
+                              >
+                                {isLong ? "BUY" : "SELL"}
+                              </Badge>
+                              <Badge variant="outline" className="text-[10px] font-bold">
+                                {pos.product || "MIS"}
+                              </Badge>
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-4 font-semibold text-foreground">
+                            {pos.symbol}
+                          </td>
+
+                          <td
+                            className={cn(
+                              "py-3.5 px-4 text-right font-mono font-semibold",
+                              isLong ? "text-emerald-500" : "text-rose-500"
+                            )}
+                          >
+                            {pos.qty > 0 ? `+${pos.qty}` : pos.qty}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-mono text-foreground">
+                            ₹{(pos.avgPrice || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-foreground">
+                            ₹{(pos.ltp || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right">
+                            <div
+                              className={cn(
+                                "font-mono font-bold flex items-center justify-end gap-1",
+                                isProfit ? "text-emerald-500" : "text-rose-500"
+                              )}
+                            >
+                              {isProfit ? "+" : ""}₹{(pos.pnl || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isProfit ? (
+                                <ArrowUpRight className="h-3.5 w-3.5" />
+                              ) : (
+                                <ArrowDownRight className="h-3.5 w-3.5" />
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-blue-500/30 text-blue-500 hover:bg-blue-500/10"
+                                onClick={() => openTrade(pos, "BUY")}
+                              >
+                                Add
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-rose-500/30 text-rose-500 hover:bg-rose-500/10"
+                                onClick={() => openTrade(pos, "SELL")}
+                              >
+                                Exit
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </CardContent>
+      </Card>
 
       {/* Renew Session Modal */}
       <Dialog open={showRenewModal} onOpenChange={setShowRenewModal}>
-        <DialogContent className="max-w-md p-0 overflow-hidden border-orange-100">
+        <DialogContent className="max-w-md p-0 overflow-hidden border-border bg-card">
           <DialogHeader className="px-6 pt-6 pb-2">
-            <div className="h-12 w-12 rounded-full bg-orange-50 flex items-center justify-center mb-3">
-              <Zap className="h-6 w-6 text-orange-500" />
+            <div className="h-12 w-12 rounded-full bg-amber-500/10 flex items-center justify-center mb-3">
+              <Zap className="h-6 w-6 text-amber-500" />
             </div>
-            <DialogTitle className="text-xl font-bold">Broker Daily Login</DialogTitle>
-            <DialogDescription className="text-xs font-medium text-slate-500 leading-relaxed">
-              Your broker requires a fresh session every day. Follow these steps:
+            <DialogTitle className="text-xl font-bold text-foreground">Broker Daily Login</DialogTitle>
+            <DialogDescription className="text-xs font-medium text-muted-foreground leading-relaxed">
+              Brokers require a fresh daily authentication token. Follow these quick steps to sync your account:
             </DialogDescription>
           </DialogHeader>
 
           <div className="px-6 py-4 space-y-4">
-            <div className="space-y-3">
-              <div className="flex gap-3">
-                <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0 mt-0.5">1</div>
-                <p className="text-[12.5px] text-slate-600 font-medium">Click the button below to open the broker login page.</p>
+            <div className="space-y-2">
+              <div className="flex gap-2.5 items-center">
+                <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-foreground shrink-0">
+                  1
+                </div>
+                <p className="text-xs text-foreground font-medium">
+                  Launch the official broker authentication page
+                </p>
               </div>
-              <Button onClick={handleOpenLogin} className="w-full h-11 bg-orange-500 hover:bg-orange-600 text-white font-bold shadow-sm">
-                Open Broker Login Page
+              <Button
+                onClick={handleOpenLogin}
+                className="w-full h-10 bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs gap-1.5 shadow-sm"
+              >
+                <ExternalLink className="h-3.5 w-3.5" /> Open Broker Login Page
               </Button>
             </div>
 
-            <div className="space-y-3">
-              <div className="flex gap-3">
-                <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0 mt-0.5">2</div>
-                <p className="text-[12.5px] text-slate-600 font-medium leading-relaxed">
-                  After logging in, copy any session token/code provided by the broker and paste it below.
+            <div className="space-y-3 pt-2">
+              <div className="flex gap-2.5 items-center">
+                <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-foreground shrink-0">
+                  2
+                </div>
+                <p className="text-xs text-foreground font-medium leading-relaxed">
+                  Run automated login or paste your session token:
                 </p>
               </div>
-              <form onSubmit={handleRenewSession} className="space-y-3 pt-1">
-                <Button type="button" onClick={() => handleRenewSession({ preventDefault: () => { } } as any)} disabled={isRenewing} className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md">
-                  {isRenewing ? "Logging in..." : "Run Automated Login"}
+
+              <form onSubmit={handleRenewSession} className="space-y-3">
+                <Button
+                  type="button"
+                  onClick={() => handleRenewSession({ preventDefault: () => {} } as any)}
+                  disabled={isRenewing}
+                  className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
+                >
+                  {isRenewing ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Logging in...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5" /> Run Automated Login
+                    </>
+                  )}
                 </Button>
-                <div className="flex items-center gap-2 py-2">
-                  <div className="h-px flex-1 bg-slate-200" />
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">OR PASTE MANUALLY</span>
-                  <div className="h-px flex-1 bg-slate-200" />
+
+                <div className="flex items-center gap-2 py-1">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                    OR PASTE MANUALLY
+                  </span>
+                  <div className="h-px flex-1 bg-border" />
                 </div>
+
                 <Input
                   value={requestToken}
                   onChange={(e) => setRequestToken(e.target.value)}
-                  placeholder="Paste token or session ID here"
-                  className="h-11 border-slate-200 focus:ring-orange-500 focus:border-orange-500"
+                  placeholder="Paste token or session ID here..."
+                  className="h-10 border-border text-xs focus:ring-amber-500 focus:border-amber-500"
                 />
-                <Button type="submit" disabled={isRenewing || !requestToken} className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold">
-                  {isRenewing ? "Activating..." : "2. Activate Manual Session"}
+
+                <Button
+                  type="submit"
+                  disabled={isRenewing || !requestToken}
+                  className="w-full h-10 bg-primary text-primary-foreground font-semibold text-xs"
+                >
+                  {isRenewing ? "Activating..." : "Activate Manual Session"}
                 </Button>
               </form>
             </div>
           </div>
 
-          <div className="bg-slate-50 p-6 flex justify-end">
-            <Button type="button" variant="ghost" className="text-slate-500 font-semibold" onClick={() => setShowRenewModal(false)}>Cancel</Button>
+          <div className="bg-muted/40 p-4 border-t border-border flex justify-end">
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-muted-foreground text-xs"
+              onClick={() => setShowRenewModal(false)}
+            >
+              Cancel
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Kite Order Window */}
+      {/* Zerodha Kite Style Order Window */}
       <OrderWindow
         isOpen={orderState.isOpen}
-        onClose={() => setOrderState(prev => ({ ...prev, isOpen: false }))}
+        onClose={() => setOrderState((prev) => ({ ...prev, isOpen: false }))}
         symbol={orderState.symbol}
         type={orderState.type}
         ltp={orderState.ltp}
-        availableMargin={margins?.equity?.available?.live_balance ?? margins?.equity?.available?.cash ?? 0}
-        brokerId={selectedBroker || undefined}
-        onTypeChange={(newType) => setOrderState(prev => ({ ...prev, type: newType }))}
+        availableMargin={metrics.availableCash}
+        brokerId={activeBrokerId || undefined}
+        onTypeChange={(newType) => setOrderState((prev) => ({ ...prev, type: newType }))}
       />
     </div>
   );
 }
-

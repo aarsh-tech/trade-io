@@ -92,7 +92,7 @@ export default function StrategiesPage() {
         }),
       });
 
-      const newStrategyId = res.data?.id;
+      const newStrategyId = res.data?.data?.id || res.data?.id;
       if (newStrategyId) {
         await strategyApi.setAutoStart(newStrategyId, true);
         await strategyApi.start(newStrategyId);

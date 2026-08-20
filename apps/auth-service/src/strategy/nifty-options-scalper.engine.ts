@@ -550,13 +550,18 @@ export class NiftyOptionsScalperEngine {
 
     this.log(state, `📋 Placed Option Trade: ${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+10 pts): ₹${tgt.toFixed(2)} | Initial SL (-7 pts): ₹${sl.toFixed(2)}`);
 
+    const tStart = performance.now();
     try {
       const isHistorical = !!triggerTime;
       const orderId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
         : await client.placeOrder({ symbol: optSym, exchange: 'NFO', product: config.product, qty: config.qty, side: 'BUY', orderType: 'MARKET' });
 
-      await this.trackOrderInDB(state, 'BUY', optSym, 'NFO', config.qty, entry, orderId, triggerTime);
+      const elapsed = (performance.now() - tStart).toFixed(2);
+      this.log(state, `⚡ Order punched in ${elapsed} ms [${state.isPaperTrade ? 'Paper Trade' : 'Live Broker Execution'}] (Order ID: ${orderId})`);
+
+      // Track order in DB asynchronously (non-blocking for ultra-fast tick startup)
+      this.trackOrderInDB(state, 'BUY', optSym, 'NFO', config.qty, entry, orderId, triggerTime).catch(() => {});
 
       if (!isHistorical) {
         await this.startRealtimeMonitor(state, client);

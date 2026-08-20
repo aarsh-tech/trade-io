@@ -9,6 +9,7 @@ const badgeVariants = cva(
       variant: {
         default:    "bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border border-[hsl(var(--primary)/0.3)]",
         secondary:  "bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] border border-[hsl(var(--border))]",
+        outline:    "text-[hsl(var(--foreground))] border border-[hsl(var(--border))]",
         running:    "badge-running",
         stopped:    "badge-stopped",
         error:      "badge-error",

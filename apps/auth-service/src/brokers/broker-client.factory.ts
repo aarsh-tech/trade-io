@@ -2,20 +2,69 @@ import { Injectable } from '@nestjs/common';
 import { BrokerType, BrokerAccount } from '@prisma/client';
 import { IBrokerClient, OrderParams, Holding, Position, Order as IOrder } from './interfaces/broker-client.interface';
 import { decrypt } from '../common/utils/crypto';
+import * as https from 'https';
+import * as http from 'http';
+
+import axios from 'axios';
+
+// Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
+export const keepAliveHttpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10000,
+  maxSockets: 100,
+  maxFreeSockets: 25,
+  timeout: 5000,
+});
+export const keepAliveHttpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10000,
+  maxSockets: 100,
+  maxFreeSockets: 25,
+  timeout: 5000,
+});
+
+axios.defaults.httpsAgent = keepAliveHttpsAgent;
+axios.defaults.httpAgent = keepAliveHttpAgent;
 
 @Injectable()
 export class BrokerClientFactory {
+  private clientCache = new Map<string, { client: IBrokerClient; accessToken: string | null; keyEnc: string }>();
+
   createClient(account: BrokerAccount): IBrokerClient {
+    const cacheKey = account.id;
+    const cached = this.clientCache.get(cacheKey);
+
+    if (
+      cached &&
+      cached.accessToken === account.accessToken &&
+      cached.keyEnc === account.apiKeyEnc
+    ) {
+      return cached.client;
+    }
+
     const apiKey = decrypt(account.apiKeyEnc);
-    const apiSecret = decrypt(account.apiSecretEnc);
     const accessToken = account.accessToken;
 
+    let client: IBrokerClient;
     switch (account.broker) {
       case BrokerType.ZERODHA:
-        return new ZerodhaClient(apiKey, accessToken);
+        client = new ZerodhaClient(apiKey, accessToken);
+        break;
       default:
         throw new Error('Broker not supported yet');
     }
+
+    this.clientCache.set(cacheKey, {
+      client,
+      accessToken,
+      keyEnc: account.apiKeyEnc,
+    });
+
+    return client;
+  }
+
+  invalidateClient(accountId: string) {
+    this.clientCache.delete(accountId);
   }
 }
 
@@ -32,7 +81,11 @@ class ZerodhaClient implements IBrokerClient {
     this.apiKey = apiKey;
     this.accessToken = accessToken;
     const { KiteConnect } = require('kiteconnect');
-    this.kite = new KiteConnect({ api_key: apiKey });
+    this.kite = new KiteConnect({ api_key: apiKey, timeout: 5000 });
+    if (this.kite.requestInstance?.defaults) {
+      this.kite.requestInstance.defaults.httpsAgent = keepAliveHttpsAgent;
+      this.kite.requestInstance.defaults.httpAgent = keepAliveHttpAgent;
+    }
     if (accessToken) {
       this.kite.setAccessToken(accessToken);
     }

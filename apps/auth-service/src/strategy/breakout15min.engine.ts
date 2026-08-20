@@ -28,6 +28,9 @@ interface StrategyState {
   entryOrderId: string | null;
   slOrderId: string | null;
   targetOrderId: string | null;
+  stopLossPrice?: number | null;
+  targetPrice?: number | null;
+  entryFilled?: boolean;
   setupTimestamp: number | null;
   tradesPlacedToday: number;
   logs: string[];
@@ -245,6 +248,16 @@ export class Breakout15MinEngine {
     }
   }
 
+  private async cancelBrokerOrderSafe(client: any, orderId: string | null) {
+    if (!orderId || orderId.startsWith('PAPER_') || orderId === 'FAILED') return;
+    try {
+      await client.cancelOrder(orderId);
+      this.logger.log(`Cancelled order: ${orderId}`);
+    } catch (err: any) {
+      this.logger.debug?.(`Cancel order ${orderId} notice: ${err?.message || err}`);
+    }
+  }
+
   async stop(strategyId: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
@@ -252,6 +265,19 @@ export class Breakout15MinEngine {
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
       this.log(state, '⏹ Strategy stopped by user');
+
+      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) {
+            const client = this.factory.createClient(account);
+            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          }
+        } catch {}
+      }
+
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
         data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
@@ -267,6 +293,19 @@ export class Breakout15MinEngine {
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
       this.log(state, logReason);
+
+      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) {
+            const client = this.factory.createClient(account);
+            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          }
+        } catch {}
+      }
+
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
@@ -462,41 +501,94 @@ export class Breakout15MinEngine {
     if (!state.entryTriggered) return;
 
     try {
-      const orders = await this.prisma.order.findMany({
-        where: { executionId: state.executionId, isPaperTrade: false, status: 'OPEN' }
-      });
-      if (orders.length === 0) return;
-
-      for (const order of orders) {
-        if (order.brokerOrderId.includes('PAPER')) continue;
-        
-        const brokerOrder = await client.getOrder(order.brokerOrderId);
-        if (brokerOrder.status === 'COMPLETE') {
-          const reason = order.orderType === 'SL' ? 'SL HIT' : 'TARGET HIT';
-          const sideEmoji = order.orderType === 'SL' ? '🔴' : '🟢';
-          const fillPrice = brokerOrder.average_price || brokerOrder.price;
-          
-          this.log(state, `${sideEmoji} REAL TRADE EXIT: ${reason} at ₹${fillPrice}`);
-          
-          // Update order in DB
-          await this.prisma.order.update({
-            where: { id: order.id },
+      // 1. If entry order has not yet filled, check entry order status
+      if (!state.entryFilled && state.entryOrderId) {
+        const entryOrder = await client.getOrder(state.entryOrderId);
+        if (entryOrder.status === 'COMPLETE') {
+          state.entryFilled = true;
+          const fillPrice = entryOrder.average_price || entryOrder.price;
+          this.log(state, `🛒 Entry Order FILLED at ₹${fillPrice}. Now placing SL & Target orders...`);
+          await this.prisma.order.updateMany({
+            where: { executionId: state.executionId, brokerOrderId: state.entryOrderId },
             data: { status: 'COMPLETE', price: fillPrice }
           });
 
-          // Cancel other pending orders (SL or Target)
-          const otherOrders = orders.filter(o => o.id !== order.id);
-          for (const other of otherOrders) {
-            await client.cancelOrder(other.brokerOrderId).catch(() => {});
-            await this.prisma.order.update({ where: { id: other.id }, data: { status: 'CANCELLED' } });
-          }
+          // Place SL and Target now that entry is filled!
+          const { config, executionId } = state;
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          const symbol = state.optionSymbol!;
+          const exchange = state.futureExchange;
+          const exitSide = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
+          const sl = state.stopLossPrice!;
+          const tgt = state.targetPrice!;
 
+          const slId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(e => 'FAILED');
+          state.slOrderId = slId;
+          await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, state.executionId);
+
+          const tgtId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(e => 'FAILED');
+          state.targetOrderId = tgtId;
+          await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, state.executionId);
+          this.log(state, `🛡 Placed Bracket Protection: SL (${slId}) & Target (${tgtId})`);
+          return;
+        } else if (entryOrder.status === 'REJECTED' || entryOrder.status === 'CANCELLED') {
+          this.log(state, `❌ Entry order was ${entryOrder.status}. Reason: ${entryOrder.status_message || 'N/A'}`);
+          await this.prisma.order.updateMany({
+            where: { executionId: state.executionId, brokerOrderId: state.entryOrderId },
+            data: { status: entryOrder.status }
+          });
           state.entryTriggered = null;
-          this.log(state, `🏁 Trade cycle complete.`);
-          break;
-        } else if (brokerOrder.status === 'REJECTED' || brokerOrder.status === 'CANCELLED') {
-          this.log(state, `⚠ Order ${order.brokerOrderId} was ${brokerOrder.status}`);
-          await this.prisma.order.update({ where: { id: order.id }, data: { status: brokerOrder.status } });
+          state.entryOrderId = null;
+          return;
+        }
+      }
+
+      // 2. If entry is filled, monitor exit SL and Target orders for execution (strict OCO)
+      if (state.entryFilled) {
+        if (state.slOrderId && state.slOrderId !== 'FAILED') {
+          const slOrder = await client.getOrder(state.slOrderId);
+          if (slOrder.status === 'COMPLETE') {
+            const fillPrice = slOrder.average_price || slOrder.price;
+            this.log(state, `🔴 Stop Loss Hit at ₹${fillPrice}!`);
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+            await this.prisma.order.updateMany({
+              where: { executionId: state.executionId, brokerOrderId: state.slOrderId },
+              data: { status: 'COMPLETE', price: fillPrice }
+            });
+            await this.prisma.order.updateMany({
+              where: { executionId: state.executionId, brokerOrderId: state.targetOrderId! },
+              data: { status: 'CANCELLED' }
+            });
+            state.entryTriggered = null;
+            state.entryFilled = false;
+            state.slOrderId = null;
+            state.targetOrderId = null;
+            this.log(state, `🏁 Trade cycle complete (SL exit).`);
+            return;
+          }
+        }
+
+        if (state.targetOrderId && state.targetOrderId !== 'FAILED') {
+          const tgtOrder = await client.getOrder(state.targetOrderId);
+          if (tgtOrder.status === 'COMPLETE') {
+            const fillPrice = tgtOrder.average_price || tgtOrder.price;
+            this.log(state, `🟢 Target Hit at ₹${fillPrice}!`);
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+            await this.prisma.order.updateMany({
+              where: { executionId: state.executionId, brokerOrderId: state.targetOrderId },
+              data: { status: 'COMPLETE', price: fillPrice }
+            });
+            await this.prisma.order.updateMany({
+              where: { executionId: state.executionId, brokerOrderId: state.slOrderId! },
+              data: { status: 'CANCELLED' }
+            });
+            state.entryTriggered = null;
+            state.entryFilled = false;
+            state.slOrderId = null;
+            state.targetOrderId = null;
+            this.log(state, `🏁 Trade cycle complete (Target exit).`);
+            return;
+          }
         }
       }
     } catch (err) {
@@ -614,22 +706,37 @@ export class Breakout15MinEngine {
     const { config, executionId } = state;
     this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL (Ref Low/High): ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
 
-    const limitPrice = side === 'BUY' ? this.roundTick(entry + 0.20) : this.roundTick(entry - 0.20);
-    const entryId = state.isPaperTrade ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry });
-    this.log(state, `✅ Entry Order (SL-Limit @ ₹${entry} / Limit ₹${limitPrice}): ${entryId}`);
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry }, entryId, strategyId, triggerTime);
-
-    const exitSide = side === 'BUY' ? 'SELL' : 'BUY';
-    const slId = state.isPaperTrade ? `PAPER_SL_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(e => 'FAILED');
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, strategyId, triggerTime);
-
-    const tgtId = state.isPaperTrade ? `PAPER_TARGET_${Math.random().toString(36).substring(7).toUpperCase()}` : await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(e => 'FAILED');
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, strategyId, triggerTime);
-
+    state.stopLossPrice = sl;
+    state.targetPrice = tgt;
     state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
     state.optionSymbol = symbol;
     state.tradesPlacedToday += 1;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
+
+    if (state.isPaperTrade) {
+      const entryId = `PAPER_ENTRY_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      state.entryOrderId = entryId;
+      state.entryFilled = true;
+      const exitSide = side === 'BUY' ? 'SELL' : 'BUY';
+      const slId = `PAPER_SL_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      const tgtId = `PAPER_TARGET_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      state.slOrderId = slId;
+      state.targetOrderId = tgtId;
+
+      this.log(state, `✅ Paper Entry Order (Simulated @ ₹${entry.toFixed(2)}): ${entryId}`);
+      await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: entry, triggerPrice: entry }, entryId, strategyId, triggerTime);
+      await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, strategyId, triggerTime);
+      await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, strategyId, triggerTime);
+      return;
+    }
+
+    // LIVE ORDER EXECUTION:
+    const limitPrice = side === 'BUY' ? this.roundTick(entry + 0.20) : this.roundTick(entry - 0.20);
+    const entryId = await client.placeOrder({ symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry });
+    state.entryOrderId = entryId;
+    state.entryFilled = false;
+    this.log(state, `✅ Live Entry Order placed (SL-Limit @ Trigger: ₹${entry.toFixed(2)} / Limit: ₹${limitPrice.toFixed(2)}): ${entryId}`);
+    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry }, entryId, strategyId, triggerTime);
   }
 
   private async getHistoricalOptionPrice(client: any, symbol: string, exchange: string, timestamp: Date): Promise<number | null> {

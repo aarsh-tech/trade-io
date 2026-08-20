@@ -260,8 +260,8 @@ export async function autoSelectStock(
         // Skip on error
       }
     }));
-    // 150ms pause for Zerodha rate limits (3 req/sec)
-    await new Promise(r => setTimeout(r, 150));
+    // 350ms pause for strict Zerodha rate limits (3 req/sec)
+    await new Promise(r => setTimeout(r, 350));
   }
 
   if (candidates.length > 0) {

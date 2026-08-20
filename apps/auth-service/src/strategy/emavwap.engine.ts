@@ -133,6 +133,16 @@ export class EmaVwapCrossoverEngine {
     return { executionId: execution.id };
   }
 
+  private async cancelBrokerOrderSafe(client: any, orderId: string | null) {
+    if (!orderId || orderId.startsWith('PAPER_') || orderId === 'FAILED') return;
+    try {
+      await client.cancelOrder(orderId);
+      this.logger.log(`Cancelled opposing/stray order: ${orderId}`);
+    } catch (err: any) {
+      this.logger.debug?.(`Cancel order ${orderId} notice: ${err?.message || err}`);
+    }
+  }
+
   async stop(strategyId: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
@@ -141,6 +151,18 @@ export class EmaVwapCrossoverEngine {
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
       this.log(state, '⏹ Strategy stopped by user');
+
+      if (!state.isPaperTrade && (state.slOrderId || state.targetOrderId)) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) {
+            const client = this.factory.createClient(account);
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          }
+        } catch {}
+      }
+
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
         data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
@@ -157,6 +179,18 @@ export class EmaVwapCrossoverEngine {
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
       this.log(state, logReason);
+
+      if (!state.isPaperTrade && (state.slOrderId || state.targetOrderId)) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) {
+            const client = this.factory.createClient(account);
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          }
+        } catch {}
+      }
+
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
@@ -1225,10 +1259,19 @@ export class EmaVwapCrossoverEngine {
         exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
       } else {
         if (reason === 'FORCE_CLOSE') {
+          // Cancel both pending SL and Target orders before forcing exit
+          await this.cancelBrokerOrderSafe(client, state.slOrderId);
+          await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           exitOrderId = await client.placeOrder({ symbol, exchange, product: config.product ?? 'MIS', qty, side: exitSide, orderType: 'MARKET' });
           this.log(state, `✅ Live Force Exit Order placed: ${exitOrderId}`);
-        } else {
-          exitOrderId = reason === 'SL' ? state.slOrderId! : state.targetOrderId!;
+        } else if (reason === 'SL') {
+          // SL hit -> cancel target order to avoid reverse/stray trade
+          await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          exitOrderId = state.slOrderId || `SL_EXIT_${Date.now()}`;
+        } else if (reason === 'TARGET') {
+          // Target hit -> cancel SL order to avoid reverse/stray trade
+          await this.cancelBrokerOrderSafe(client, state.slOrderId);
+          exitOrderId = state.targetOrderId || `TARGET_EXIT_${Date.now()}`;
         }
       }
 
