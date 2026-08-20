@@ -35,8 +35,21 @@ interface StrategyState {
   setupTimestamp: number | null;
   tradesPlacedToday: number;
   logs: string[];
-}
 
+  // Dynamic & Adaptive Upgrades State
+  dynamicAtr?: number;
+  initialRiskPoints?: number;
+  isBreakevenTrailed?: boolean;
+  highestPriceReached?: number;
+  lowestPriceReached?: number;
+  lastBreakoutAttempt?: {
+    side: 'LONG' | 'SHORT';
+    timestamp: number;
+    failed: boolean;
+    breakoutPrice: number;
+  } | null;
+  isReversalTrade?: boolean;
+}
 
 @Injectable()
 export class Breakout15MinEngine {
@@ -77,7 +90,6 @@ export class Breakout15MinEngine {
       config,
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: (strategy as any).isPaperTrade,
-      // For STOCK type, we trade the equity directly — no future needed
       futureSymbol: config.instrumentType === 'STOCK' ? config.symbol : null,
       futureExchange: config.instrumentType === 'STOCK' ? config.exchange : 'NFO',
       refHigh: null,
@@ -91,10 +103,13 @@ export class Breakout15MinEngine {
       setupTimestamp: null,
       tradesPlacedToday: 0,
       logs: [],
+      isBreakevenTrailed: false,
+      lastBreakoutAttempt: null,
+      isReversalTrade: false,
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange}`);
+    this.log(state, `▶ Dynamic 15-Min Breakout Strategy started — Symbol: ${config.symbol}:${config.exchange} | Mode: ${state.isPaperTrade ? 'PAPER' : 'LIVE'} | Moneyness: ${config.moneyness ?? 'ITM'} | Dynamic ATR: ${config.enableDynamicAtr !== false ? 'ON' : 'OFF'} | Fakeout Reversal: ${config.enableFakeoutReversal !== false ? 'ON' : 'OFF'}`);
     await this.persistLogs(state);
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
@@ -130,7 +145,7 @@ export class Breakout15MinEngine {
     const kite = client['kite'];
 
     try {
-      // 1. Resolve Tradable Asset (Index Future or Equity Stock)
+      // 1. Resolve Tradable Asset
       if (!state.futureSymbol) {
         if (state.config.instrumentType === 'INDEX' || state.config.symbol.toUpperCase().includes('NIFTY')) {
           const res = await this.findFutureSymbol(client, state.config.symbol);
@@ -140,7 +155,7 @@ export class Breakout15MinEngine {
           const pick = await autoSelectStock(kite, state.config.targetRs, state.config.stopLossRs, this.logger);
           state.futureSymbol = pick.symbol;
           state.futureExchange = pick.exchange;
-          state.config.qty = pick.qty; // Update quantity
+          state.config.qty = pick.qty;
           this.log(state, `🎯 Auto-Selected Stock: ${state.futureSymbol} (via Smart Pick) - Qty: ${state.config.qty}`);
         } else {
           state.futureSymbol = state.config.symbol;
@@ -162,16 +177,27 @@ export class Breakout15MinEngine {
       const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
       const breakoutCandidates = candles5.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
 
+      const atrs = this.calculateATR(candles5, state.config.atrPeriod ?? 14);
+      const currentAtr = atrs[atrs.length - 1] || Math.max(1, (state.refHigh - state.refLow) * 0.5);
+      state.dynamicAtr = currentAtr;
+
+      const buffer = (state.config.enableDynamicAtr !== false) ? Math.max(0.05, currentAtr * (state.config.atrBufferMultiplier ?? 0.15)) : 0;
+      const vwaps = this.calculateVWAP(candles5);
+      const ema9 = this.calculateEMA(candles5, 9);
+      const ema21 = this.calculateEMA(candles5, 21);
+
       let optionCandles: Candle[] = [];
       let optionCandleSymbol = '';
 
       for (let k = 0; k < breakoutCandidates.length; k++) {
         const currentCandle = breakoutCandidates[k];
+        const candleIdxInFull = candles5.findIndex(c => c.date.getTime() === new Date(currentCandle.date).getTime());
 
         if (state.entryTriggered) {
           const candleTimeMs = new Date(currentCandle.date).getTime();
           let currentOptionPriceLow = 0;
           let currentOptionPriceHigh = 0;
+          let currentOptionPriceClose = 0;
           let hasOptionData = false;
 
           if (state.optionSymbol) {
@@ -193,30 +219,56 @@ export class Breakout15MinEngine {
             if (optCandle) {
               currentOptionPriceLow = optCandle.low;
               currentOptionPriceHigh = optCandle.high;
+              currentOptionPriceClose = optCandle.close;
               hasOptionData = true;
             }
           } else {
             currentOptionPriceLow = currentCandle.low;
             currentOptionPriceHigh = currentCandle.high;
+            currentOptionPriceClose = currentCandle.close;
             hasOptionData = true;
           }
 
           if (hasOptionData) {
+            // Check Dynamic Breakeven Ratchet (+1R -> SL to Cost)
+            const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
+            const evalPrice = currentOptionPriceHigh;
+            const currentPnlPoints = isLong ? (evalPrice - state.entryPrice!) : (state.entryPrice! - currentOptionPriceLow);
+            const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+
+            if (!state.isBreakevenTrailed && currentPnlPoints >= breakevenPoints && state.entryPrice) {
+              state.stopLossPrice = state.entryPrice;
+              state.isBreakevenTrailed = true;
+              this.log(state, `🛡 (Catch-up Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
+            }
+
             const orders = await this.prisma.order.findMany({
               where: { executionId: state.executionId, status: 'OPEN' }
             });
             const slOrder = orders.find(o => o.orderType === 'SL');
             const targetOrder = orders.find(o => o.orderType === 'LIMIT' && o.brokerOrderId.includes('TARGET'));
 
-            if (slOrder && currentOptionPriceLow <= slOrder.price!) {
-              this.log(state, `🔴 (Catch-up) PAPER SL HIT! ${state.optionSymbol || state.futureSymbol} at ₹${slOrder.price} (Trigger: ₹${slOrder.price})`);
-              await this.closePaperTradeHistorical(state, 'SL_HIT', slOrder.price!, new Date(currentCandle.date));
+            const effectiveSl = state.stopLossPrice || (slOrder ? slOrder.price! : 0);
+
+            if (effectiveSl && currentOptionPriceLow <= effectiveSl) {
+              this.log(state, `🔴 (Catch-up) PAPER SL HIT! ${state.optionSymbol || state.futureSymbol} at ₹${effectiveSl}`);
+              await this.closePaperTradeHistorical(state, 'SL_HIT', effectiveSl, new Date(currentCandle.date));
+              
+              // Record failed breakout for Fakeout Reversal monitoring
+              state.lastBreakoutAttempt = {
+                side: state.entryTriggered,
+                timestamp: new Date(currentCandle.date).getTime(),
+                failed: true,
+                breakoutPrice: state.entryPrice || 0
+              };
+              this.log(state, `⚠ (Catch-up) Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
+
               optionCandles = [];
               optionCandleSymbol = '';
               continue;
             }
             if (targetOrder && currentOptionPriceHigh >= targetOrder.price!) {
-              this.log(state, `🟢 (Catch-up) PAPER TARGET HIT! ${state.optionSymbol || state.futureSymbol} at ₹${targetOrder.price} (Target: ₹${targetOrder.price})`);
+              this.log(state, `🟢 (Catch-up) PAPER TARGET HIT! ${state.optionSymbol || state.futureSymbol} at ₹${targetOrder.price}`);
               await this.closePaperTradeHistorical(state, 'TARGET_HIT', targetOrder.price!, new Date(currentCandle.date));
               optionCandles = [];
               optionCandleSymbol = '';
@@ -230,12 +282,44 @@ export class Breakout15MinEngine {
         const candleStart = new Date(currentCandle.date).getTime();
         if ((now.getTime() - candleStart) < 5 * 60 * 1000) continue;
 
-        if (currentCandle.close > state.refHigh!) {
-          this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${state.refHigh}`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
-        } else if (currentCandle.close < state.refLow!) {
-          this.log(state, `🚀 (Catch-up) Found past BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${state.refLow}`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+        // ─── Fakeout Reversal Check in Catch-up ──────────────────────────────
+        if (state.config.enableFakeoutReversal !== false && state.lastBreakoutAttempt?.failed && !state.entryTriggered) {
+          if (state.lastBreakoutAttempt.side === 'LONG' && currentCandle.close < state.refLow!) {
+            this.log(state, `⚡ (Catch-up) BULL TRAP DETECTED! Long breakout failed and price plunged below ₹${state.refLow}. Triggering SHORT Reversal Trade!`);
+            state.lastBreakoutAttempt = null;
+            state.isReversalTrade = true;
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+            continue;
+          } else if (state.lastBreakoutAttempt.side === 'SHORT' && currentCandle.close > state.refHigh!) {
+            this.log(state, `⚡ (Catch-up) BEAR TRAP DETECTED! Short breakdown failed and price broke above ₹${state.refHigh}. Triggering LONG Reversal Trade!`);
+            state.lastBreakoutAttempt = null;
+            state.isReversalTrade = true;
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+            continue;
+          }
+        }
+
+        // ─── Regular Dynamic Breakout Check ─────────────────────────────────
+        const curVwap = candleIdxInFull >= 0 ? vwaps[candleIdxInFull] : null;
+        const curEma9 = candleIdxInFull >= 0 ? ema9[candleIdxInFull] : null;
+        const curEma21 = candleIdxInFull >= 0 ? ema21[candleIdxInFull] : null;
+
+        if (currentCandle.close > (state.refHigh + buffer)) {
+          const isVwapOk = state.config.enableVwapFilter === false || !curVwap || currentCandle.close >= curVwap;
+          const isEmaOk = !curEma9 || !curEma21 || curEma9 >= curEma21;
+
+          if (isVwapOk && isEmaOk) {
+            this.log(state, `🚀 (Catch-up) Dynamic BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${(state.refHigh + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+          }
+        } else if (currentCandle.close < (state.refLow - buffer)) {
+          const isVwapOk = state.config.enableVwapFilter === false || !curVwap || currentCandle.close <= curVwap;
+          const isEmaOk = !curEma9 || !curEma21 || curEma9 <= curEma21;
+
+          if (isVwapOk && isEmaOk) {
+            this.log(state, `🚀 (Catch-up) Dynamic BREAKDOWN! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${(state.refLow - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+          }
         }
       }
 
@@ -333,6 +417,8 @@ export class Breakout15MinEngine {
       optionSymbol: s.optionSymbol,
       futureSymbol: s.futureSymbol,
       tradesToday: s.tradesPlacedToday,
+      dynamicAtr: s.dynamicAtr,
+      isBreakevenTrailed: s.isBreakevenTrailed,
     };
   }
 
@@ -372,7 +458,7 @@ export class Breakout15MinEngine {
           const pick = await autoSelectStock(kite, config.targetRs, config.stopLossRs, this.logger);
           state.futureSymbol = pick.symbol;
           state.futureExchange = pick.exchange;
-          state.config.qty = pick.qty; // Update quantity
+          state.config.qty = pick.qty;
           this.log(state, `🎯 Auto-Selected Stock: ${state.futureExchange}:${state.futureSymbol} - Qty: ${state.config.qty}`);
         } catch (err) {
           this.log(state, `❌ Auto-Select Error: ${err.message}`);
@@ -399,7 +485,7 @@ export class Breakout15MinEngine {
           state.refHigh = ref.high;
           state.refLow = ref.low;
           state.refCandleSet = true;
-          this.log(state, `📊 FUTURE Range Set — H: ₹${ref.high} | L: ₹${ref.low}`);
+          this.log(state, `📊 FUTURE Range Set — H: ₹${ref.high} | L: ₹${ref.low} (Range: ₹${(ref.high - ref.low).toFixed(2)})`);
         }
       } catch (err) {
         this.log(state, `❌ 15-min error: ${err.message}`);
@@ -476,17 +562,87 @@ export class Breakout15MinEngine {
       const target = isClosed ? lastCandle : (breakoutCandidates.length > 1 ? breakoutCandidates[breakoutCandidates.length - 2] : null);
       if (!target) { await this.persistLogs(state); return; }
 
+      // ─── Dynamic Indicator Computations (ATR, VWAP, EMA) ───────────────────
+      const atrs = this.calculateATR(candles5, config.atrPeriod ?? 14);
+      const currentAtr = atrs[atrs.length - 1] || Math.max(1, (state.refHigh! - state.refLow!) * 0.5);
+      state.dynamicAtr = currentAtr;
+
+      const buffer = (config.enableDynamicAtr !== false) ? Math.max(0.05, currentAtr * (config.atrBufferMultiplier ?? 0.15)) : 0;
+      const vwaps = this.calculateVWAP(candles5);
+      const currentVwap = vwaps[vwaps.length - 1];
+      const ema9 = this.calculateEMA(candles5, 9);
+      const ema21 = this.calculateEMA(candles5, 21);
+      const curEma9 = ema9[ema9.length - 1];
+      const curEma21 = ema21[ema21.length - 1];
+
+      // Periodic scanning heartbeat
       if (hhmm % 5 === 0 && !state.logs.some(l => l.includes(`Scanning for breakout`) && l.includes(`LTP: ₹${currentPrice}`))) {
         const activeSym = state.futureSymbol || config.symbol;
-        this.log(state, `[${activeSym}] 👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ₹${state.refLow} to ₹${state.refHigh}`);
+        this.log(state, `[${activeSym}] 👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ₹${state.refLow} to ₹${state.refHigh} | ATR: ₹${currentAtr.toFixed(2)} | Buffer: ±₹${buffer.toFixed(2)}`);
       }
 
-      if (target.close > state.refHigh!) {
-        this.log(state, `🚀 BREAKOUT! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} > ₹${state.refHigh}`);
-        await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh);
-      } else if (target.close < state.refLow!) {
-        this.log(state, `🚀 BREAKOUT! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} < ₹${state.refLow}`);
-        await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh);
+      // ─── 1. DYNAMIC FAKEOUT REVERSAL (LIQUIDITY TRAP CAPTURE) ──────────────
+      if (config.enableFakeoutReversal !== false && state.lastBreakoutAttempt?.failed && !state.entryTriggered) {
+        if (state.lastBreakoutAttempt.side === 'LONG' && target.close < state.refLow!) {
+          this.log(state, `⚡ BULL TRAP DETECTED! Long breakout failed and price plunged below 15-min low (₹${state.refLow}). Reversing to SHORT to capture trapped buyer liquidations!`);
+          state.lastBreakoutAttempt = null;
+          state.isReversalTrade = true;
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh);
+          await this.persistLogs(state);
+          return;
+        } else if (state.lastBreakoutAttempt.side === 'SHORT' && target.close > state.refHigh!) {
+          this.log(state, `⚡ BEAR TRAP DETECTED! Short breakdown failed and price surged above 15-min high (₹${state.refHigh}). Reversing to LONG to capture trapped short-covering!`);
+          state.lastBreakoutAttempt = null;
+          state.isReversalTrade = true;
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh);
+          await this.persistLogs(state);
+          return;
+        }
+      }
+
+      // ─── 2. VOLUME & CANDLE STRENGTH VALIDATION ────────────────────────────
+      let isVolumeConfirmed = true;
+      if (config.enableVolumeFilter !== false && breakoutCandidates.length > 1) {
+        const totalVol = breakoutCandidates.reduce((acc, c) => acc + c.volume, 0);
+        const avgVol = totalVol / breakoutCandidates.length;
+        isVolumeConfirmed = target.volume >= (avgVol * (config.minRvol ?? 1.2));
+      }
+
+      const candleRange = Math.max(0.01, target.high - target.low);
+      const isStrongBull = (target.close - target.low) / candleRange >= 0.60;
+      const isStrongBear = (target.high - target.close) / candleRange >= 0.60;
+
+      // ─── 3. DYNAMIC LONG BREAKOUT ──────────────────────────────────────────
+      if (target.close > (state.refHigh! + buffer)) {
+        const isVwapOk = config.enableVwapFilter === false || !currentVwap || target.close >= currentVwap;
+        const isEmaOk = !curEma9 || !curEma21 || curEma9 >= curEma21;
+
+        if (!isVolumeConfirmed) {
+          this.log(state, `⏳ Breakout above ₹${state.refHigh} detected, but volume (${target.volume}) is below required ${(config.minRvol ?? 1.2)}x threshold. Skipping weak breakout.`);
+        } else if (!isStrongBull) {
+          this.log(state, `⏳ Breakout candle closed with long upper wick (weak close). Skipping potential false breakout.`);
+        } else if (!isVwapOk || !isEmaOk) {
+          this.log(state, `⏳ Breakout above ₹${state.refHigh} conflicts with VWAP/EMA trend. Skipping counter-trend trade.`);
+        } else {
+          this.log(state, `🚀 DYNAMIC BREAKOUT! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} > ₹${(state.refHigh! + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, Vol: ${target.volume})`);
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh);
+        }
+      }
+      // ─── 4. DYNAMIC SHORT BREAKDOWN ────────────────────────────────────────
+      else if (target.close < (state.refLow! - buffer)) {
+        const isVwapOk = config.enableVwapFilter === false || !currentVwap || target.close <= currentVwap;
+        const isEmaOk = !curEma9 || !curEma21 || curEma9 <= curEma21;
+
+        if (!isVolumeConfirmed) {
+          this.log(state, `⏳ Breakdown below ₹${state.refLow} detected, but volume (${target.volume}) is below required ${(config.minRvol ?? 1.2)}x threshold. Skipping weak breakdown.`);
+        } else if (!isStrongBear) {
+          this.log(state, `⏳ Breakdown candle closed with long lower wick (weak close). Skipping potential false breakdown.`);
+        } else if (!isVwapOk || !isEmaOk) {
+          this.log(state, `⏳ Breakdown below ₹${state.refLow} conflicts with VWAP/EMA trend. Skipping counter-trend trade.`);
+        } else {
+          this.log(state, `🚀 DYNAMIC BREAKDOWN! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} < ₹${(state.refLow! - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, Vol: ${target.volume})`);
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh);
+        }
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
 
@@ -508,12 +664,54 @@ export class Breakout15MinEngine {
       const ltp = quotes[`${exchange}:${symbol}`]?.last_price;
       if (!ltp) return;
 
+      const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
+      const currentPnlPoints = isLong ? (ltp - state.entryPrice!) : (state.entryPrice! - ltp);
+      const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+
+      // ─── Dynamic Breakeven Shield (+1R -> SL to Cost) ──────────────────────
+      if (state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && currentPnlPoints >= breakevenPoints && state.entryPrice) {
+        state.stopLossPrice = state.entryPrice;
+        state.isBreakevenTrailed = true;
+        await this.prisma.order.updateMany({
+          where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
+          data: { price: state.entryPrice, triggerPrice: state.entryPrice }
+        });
+        this.log(state, `🛡 (Dynamic Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit (+₹${currentPnlPoints.toFixed(2)} pts)! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free Trade!`);
+      }
+
+      // ─── Dynamic Trailing SL ───────────────────────────────────────────────
+      if (state.config.enableTrailingSl !== false && state.isBreakevenTrailed) {
+        if (isLong) {
+          state.highestPriceReached = Math.max(state.highestPriceReached || ltp, ltp);
+          const trailDist = (state.initialRiskPoints ?? 5) * 0.8;
+          const newSl = this.roundTick(state.highestPriceReached - trailDist);
+          if (newSl > (state.stopLossPrice || 0)) {
+            state.stopLossPrice = newSl;
+            await this.prisma.order.updateMany({
+              where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
+              data: { price: newSl, triggerPrice: newSl }
+            });
+            this.log(state, `📈 (Dynamic Trailing) High ₹${state.highestPriceReached.toFixed(2)}. Trailed SL to ₹${newSl.toFixed(2)} to lock in gains.`);
+          }
+        }
+      }
+
       for (const order of orders) {
         if (order.orderType === 'SL') {
-          const hit = order.side === 'SELL' ? (ltp <= order.triggerPrice!) : (ltp >= order.triggerPrice!);
+          const hit = order.side === 'SELL' ? (ltp <= (state.stopLossPrice || order.triggerPrice!)) : (ltp >= (state.stopLossPrice || order.triggerPrice!));
           if (hit) {
-            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp} (Trigger: ₹${order.triggerPrice})`);
+            const exitP = state.stopLossPrice || order.triggerPrice!;
+            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp} (Trigger: ₹${exitP})`);
             await this.closePaperTrade(state, 'SL_HIT', ltp);
+
+            // Record failed breakout for Fakeout Reversal monitoring
+            state.lastBreakoutAttempt = {
+              side: state.entryTriggered,
+              timestamp: Date.now(),
+              failed: true,
+              breakoutPrice: state.entryPrice || 0
+            };
+            this.log(state, `⚠ Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
             break;
           }
         } else if (order.orderType === 'LIMIT' && order.brokerOrderId.includes('TARGET')) {
@@ -521,6 +719,7 @@ export class Breakout15MinEngine {
           if (hit) {
             this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp} (Target: ₹${order.price})`);
             await this.closePaperTrade(state, 'TARGET_HIT', ltp);
+            state.lastBreakoutAttempt = null;
             break;
           }
         }
@@ -555,14 +754,14 @@ export class Breakout15MinEngine {
           const sl = state.stopLossPrice!;
           const tgt = state.targetPrice!;
 
-          const slId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(e => 'FAILED');
+          const slId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(() => 'FAILED');
           state.slOrderId = slId;
           await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, state.executionId);
 
-          const tgtId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(e => 'FAILED');
+          const tgtId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(() => 'FAILED');
           state.targetOrderId = tgtId;
           await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, state.executionId);
-          this.log(state, `🛡 Placed Bracket Protection: SL (${slId}) & Target (${tgtId})`);
+          this.log(state, `🛡 Placed Bracket Protection: SL (${slId} @ ₹${sl}) & Target (${tgtId} @ ₹${tgt})`);
           return;
         } else if (entryOrder.status === 'REJECTED' || entryOrder.status === 'CANCELLED') {
           this.log(state, `❌ Entry order was ${entryOrder.status}. Reason: ${entryOrder.status_message || 'N/A'}`);
@@ -578,6 +777,31 @@ export class Breakout15MinEngine {
 
       // 2. If entry is filled, monitor exit SL and Target orders for execution (strict OCO)
       if (state.entryFilled) {
+        // Real-time Breakeven Ratchet for live orders
+        if (state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && state.entryPrice) {
+          const kite = client['kite'];
+          const quotes = await kite.getLTP([`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]).catch(() => ({}));
+          const ltp = quotes[`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]?.last_price;
+          const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
+          const currentPnlPoints = ltp ? (isLong ? (ltp - state.entryPrice) : (state.entryPrice - ltp)) : 0;
+          const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+
+          if (ltp && currentPnlPoints >= breakevenPoints) {
+            state.stopLossPrice = state.entryPrice;
+            state.isBreakevenTrailed = true;
+            if (client.modifyOrder && state.slOrderId && state.slOrderId !== 'FAILED') {
+              await client.modifyOrder(state.slOrderId, { price: state.entryPrice, triggerPrice: state.entryPrice }).catch((e: any) => {
+                this.log(state, `⚠ Live SL modify notice: ${e.message}`);
+              });
+            }
+            await this.prisma.order.updateMany({
+              where: { executionId: state.executionId, brokerOrderId: state.slOrderId! },
+              data: { price: state.entryPrice, triggerPrice: state.entryPrice }
+            });
+            this.log(state, `🛡 (Live Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
+          }
+        }
+
         if (state.slOrderId && state.slOrderId !== 'FAILED') {
           const slOrder = await client.getOrder(state.slOrderId);
           if (slOrder.status === 'COMPLETE') {
@@ -592,6 +816,16 @@ export class Breakout15MinEngine {
               where: { executionId: state.executionId, brokerOrderId: state.targetOrderId! },
               data: { status: 'CANCELLED' }
             });
+
+            // Record failed breakout for Fakeout Reversal monitoring
+            state.lastBreakoutAttempt = {
+              side: state.entryTriggered!,
+              timestamp: Date.now(),
+              failed: true,
+              breakoutPrice: state.entryPrice || 0
+            };
+            this.log(state, `⚠ Live Trade stopped out. Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
+
             state.entryTriggered = null;
             state.entryFilled = false;
             state.slOrderId = null;
@@ -619,6 +853,7 @@ export class Breakout15MinEngine {
             state.entryFilled = false;
             state.slOrderId = null;
             state.targetOrderId = null;
+            state.lastBreakoutAttempt = null;
             this.log(state, `🏁 Trade cycle complete (Target exit).`);
             return;
           }
@@ -635,9 +870,10 @@ export class Breakout15MinEngine {
       data: { status: 'COMPLETE', price }
     });
     this.log(state, `🏁 Paper trade closed (${reason}) at ₹${price}`);
-    state.entryTriggered = null; // Allow more trades if maxTradesPerDay not reached
+    state.entryTriggered = null;
     state.entryPrice = null;
     state.setupTimestamp = null;
+    state.isBreakevenTrailed = false;
   }
 
   private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
@@ -657,6 +893,7 @@ export class Breakout15MinEngine {
   private async fetchCandlesForSymbol(client: any, symbol: string, interval: string, now: Date, exchange = 'NFO'): Promise<Candle[]> {
     const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
     const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
+    from.setDate(from.getDate() - 5);
     const data = await client.getHistoricalData(symbol, exchange, interval, from, now);
     return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
@@ -675,8 +912,9 @@ export class Breakout15MinEngine {
     const stopLow = refLow ?? state.refLow;
     const stopHigh = refHigh ?? state.refHigh;
 
-    // Try to find an option ONLY for INDEX or NIFTY symbols (User wants equity for stocks)
     const isIndex = config.instrumentType === 'INDEX' || config.symbol.toUpperCase().includes('NIFTY') || config.symbol.toUpperCase().includes('SENSEX');
+    const dynamicAtr = state.dynamicAtr || (Math.abs((stopHigh || 0) - (stopLow || 0)) * 0.5) || 20;
+    const rr = config.riskRewardRatio ?? 2.0;
 
     if (isIndex) {
       try {
@@ -704,10 +942,15 @@ export class Breakout15MinEngine {
 
           if (ltp) {
             const entry = this.roundTick(ltp);
-            // Option SL: default to 15% or config stopLossRs
-            const sl = this.roundTick(Math.max(entry * 0.85, entry - (config.stopLossRs / config.qty)));
+            // Option Dynamic Risk (Default to 12% of premium or ATR-based)
+            const optionRisk = config.enableDynamicAtr !== false
+              ? this.roundTick(Math.max(2.0, entry * 0.12))
+              : this.roundTick(Math.max(entry * 0.85, entry - (config.stopLossRs / config.qty)));
+            const sl = this.roundTick(Math.max(1.0, entry - optionRisk));
             const risk = Math.max(0.50, entry - sl);
-            const tgt = this.roundTick(entry + Math.max(risk * 1.5, config.targetRs / config.qty));
+            const tgt = this.roundTick(entry + (risk * rr));
+            state.initialRiskPoints = risk;
+
             await this.executeOrders(strategyId, state, client, account, symbol, exchange, finalSide, entry, sl, tgt, triggerTime);
             return;
           }
@@ -720,14 +963,24 @@ export class Breakout15MinEngine {
     let sl: number;
     let tgt: number;
 
+    const dynamicRisk = config.enableDynamicAtr !== false
+      ? Math.max(0.50, dynamicAtr * (config.atrSlMultiplier ?? 1.0))
+      : (config.stopLossRs / config.qty);
+
     if (side === 'BUY') {
-      sl = stopLow ? this.roundTick(stopLow) : this.roundTick(entry - config.stopLossRs / config.qty);
+      sl = config.enableDynamicAtr !== false
+        ? this.roundTick(entry - dynamicRisk)
+        : (stopLow ? this.roundTick(stopLow) : this.roundTick(entry - config.stopLossRs / config.qty));
       const risk = Math.max(0.50, Math.abs(entry - sl));
-      tgt = this.roundTick(entry + Math.max(risk * 1.5, config.targetRs / config.qty));
+      tgt = this.roundTick(entry + (risk * rr));
+      state.initialRiskPoints = risk;
     } else {
-      sl = stopHigh ? this.roundTick(stopHigh) : this.roundTick(entry + config.stopLossRs / config.qty);
+      sl = config.enableDynamicAtr !== false
+        ? this.roundTick(entry + dynamicRisk)
+        : (stopHigh ? this.roundTick(stopHigh) : this.roundTick(entry + config.stopLossRs / config.qty));
       const risk = Math.max(0.50, Math.abs(sl - entry));
-      tgt = this.roundTick(entry - Math.max(risk * 1.5, config.targetRs / config.qty));
+      tgt = this.roundTick(entry - (risk * rr));
+      state.initialRiskPoints = risk;
     }
 
     if (isIndex) {
@@ -738,7 +991,7 @@ export class Breakout15MinEngine {
 
   private async executeOrders(strategyId: string, state: StrategyState, client: any, account: any, symbol: string, exchange: string, side: 'BUY' | 'SELL', entry: number, sl: number, tgt: number, triggerTime?: Date) {
     const { config, executionId } = state;
-    this.log(state, `📋 Placing: ${symbol} — Entry: ₹${entry.toFixed(2)} | SL (Ref Low/High): ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
+    this.log(state, `📋 Placing ${state.isReversalTrade ? '⚡ REVERSAL' : '🚀 BREAKOUT'}: ${symbol} — Entry: ₹${entry.toFixed(2)} | Dynamic SL: ₹${sl.toFixed(2)} | Dynamic Target (1:${(config.riskRewardRatio ?? 2.0).toFixed(1)} RR): ₹${tgt.toFixed(2)}`);
 
     state.stopLossPrice = sl;
     state.targetPrice = tgt;
@@ -747,6 +1000,9 @@ export class Breakout15MinEngine {
     state.optionSymbol = symbol;
     state.tradesPlacedToday += 1;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
+    state.isBreakevenTrailed = false;
+    state.highestPriceReached = entry;
+    state.lowestPriceReached = entry;
 
     if (state.isPaperTrade) {
       const entryId = `PAPER_ENTRY_${Math.random().toString(36).substring(7).toUpperCase()}`;
@@ -783,9 +1039,7 @@ export class Breakout15MinEngine {
 
       const targetTimeMs = timestamp.getTime();
       const match = data.find((c: any) => new Date(c.date).getTime() === targetTimeMs);
-      if (match) {
-        return match.close;
-      }
+      if (match) return match.close;
 
       let closest = data[0];
       let minDiff = Math.abs(new Date(closest.date).getTime() - targetTimeMs);
@@ -797,7 +1051,7 @@ export class Breakout15MinEngine {
         }
       }
       return closest.close;
-    } catch (e) {
+    } catch (e: any) {
       this.logger.error(`Error getting historical option price for ${symbol} at ${timestamp.toISOString()}: ${e.message}`);
       return null;
     }
@@ -814,7 +1068,7 @@ export class Breakout15MinEngine {
     else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
     else if (upper.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
     else if (upper.includes('SENSEX')) underlying = 'SENSEX';
-    else underlying = upper; // For stocks, use the symbol directly (e.g. RELIANCE, TCS)
+    else underlying = upper;
 
     const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
     const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
@@ -823,37 +1077,33 @@ export class Breakout15MinEngine {
     const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && i.segment === segment);
 
     if (options.length === 0) {
-      this.log(state, `⚠ No ${type} options found for ${underlying} on ${exchange}. Check if stock options are available.`);
+      this.log(state, `⚠ No ${type} options found for ${underlying} on ${exchange}.`);
       return null;
     }
 
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); // "YYYY-MM-DD"
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
     const allExpiries = Array.from(new Set(options.map((i: any) => {
       const exp = i.expiry ? i.expiry.toString().substring(0, 10) : '';
       return exp;
     }))).filter(exp => exp !== '');
 
-    const sortedExpiries = allExpiries
-      .filter(exp => exp >= todayStr)
-      .sort();
-
+    const sortedExpiries = allExpiries.filter(exp => exp >= todayStr).sort();
     if (sortedExpiries.length === 0) {
       this.log(state, `❌ No future expiries found for ${underlying}.`);
       return null;
     }
 
     const nearestExpiry = sortedExpiries[0];
-
     const filteredOptions = options.filter((i: any) => i.expiry && i.expiry.toString().substring(0, 10) === nearestExpiry);
     this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiry})`);
 
-    // ─── Option 1: Premium Range Selection (batched LTP calls or historical check) ─
+    // ─── Option 1: Premium Range Selection ──────────────────────────────────
     if (config.minPremium && config.maxPremium) {
       this.log(state, `🔍 Searching for ${type} option in premium range ₹${config.minPremium} - ₹${config.maxPremium}...`);
       const step = ['NIFTY', 'FINNIFTY'].includes(underlying) ? 50 : underlying === 'MIDCPNIFTY' ? 25 : 100;
       const atm = Math.round(spotPrice / step) * step;
-      const candidateStrikes = [atm, atm + step, atm - step, atm + 2 * step, atm - 2 * step, atm + 3 * step, atm - 3 * step, atm + 4 * step, atm - 4 * step];
+      const candidateStrikes = [atm, atm + step, atm - step, atm + 2 * step, atm - 2 * step, atm + 3 * step, atm - 3 * step];
 
       if (triggerTime) {
         for (const strike of candidateStrikes) {
@@ -866,9 +1116,7 @@ export class Breakout15MinEngine {
             return opt.tradingsymbol;
           }
         }
-        this.log(state, `⚠ No option found in range ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ATM.`);
       } else {
-        // ── Batch in chunks of 200 to avoid Zerodha's 500-symbol silent limit ──
         const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
         const CHUNK = 200;
         const quotes: Record<string, any> = {};
@@ -877,8 +1125,8 @@ export class Breakout15MinEngine {
           try {
             const res = await client.getLTP(chunk);
             Object.assign(quotes, res);
-          } catch (e) {
-            this.log(state, `⚠ LTP batch ${Math.floor(i / CHUNK) + 1} failed: ${e.message}`);
+          } catch (e: any) {
+            this.log(state, `⚠ LTP batch failed: ${e.message}`);
           }
         }
 
@@ -893,24 +1141,29 @@ export class Breakout15MinEngine {
             return opt.tradingsymbol;
           }
         }
-        this.log(state, `⚠ No option found in range ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ATM.`);
       }
     }
 
-    // ─── Option 2: Default ATM Strike ────────────────────────────────────────
-    // Strike step: NIFTY/FINNIFTY=50, MIDCPNIFTY=25, BANKNIFTY/stocks=100 (stocks vary — round to nearest)
+    // ─── Option 2: Default ATM / ITM Strike Selection ───────────────────────
     const isIndex = ['NIFTY', 'FINNIFTY'].includes(underlying);
     const isMid = underlying === 'MIDCPNIFTY';
     const step = isIndex ? 50 : isMid ? 25 : 100;
     const atmStrike = Math.round(spotPrice / step) * step;
-    const match = filteredOptions.find((i: any) => Number(i.strike) === atmStrike);
+
+    const moneyness = config.moneyness ?? 'ITM';
+    const desiredStrike = moneyness === 'ITM' 
+      ? (type === 'CE' ? atmStrike - step : atmStrike + step)
+      : atmStrike;
+
+    const match = filteredOptions.find((i: any) => Number(i.strike) === desiredStrike)
+      || filteredOptions.find((i: any) => Number(i.strike) === atmStrike);
 
     if (match) {
-      this.log(state, `🎯 Selected ATM Strike: ${match.tradingsymbol} (Strike: ${match.strike})`);
+      this.log(state, `🎯 Selected ${moneyness} Strike: ${match.tradingsymbol} (Strike: ${match.strike})`);
       return match.tradingsymbol;
     }
 
-    // ─── Option 3: Closest available strike (handles stock options with odd steps) ─
+    // ─── Option 3: Closest available strike fallback ────────────────────────
     let closestOpt: any = null;
     let closestDiff = Infinity;
     for (const opt of filteredOptions) {
@@ -918,17 +1171,83 @@ export class Breakout15MinEngine {
       if (diff < closestDiff) { closestDiff = diff; closestOpt = opt; }
     }
     if (closestOpt) {
-      this.log(state, `🎯 Using closest strike: ${closestOpt.tradingsymbol} (Strike: ${closestOpt.strike}, diff: ₹${closestDiff.toFixed(0)})`);
+      this.log(state, `🎯 Using closest strike: ${closestOpt.tradingsymbol} (Strike: ${closestOpt.strike})`);
       return closestOpt.tradingsymbol;
     }
 
     return null;
   }
 
+  // ─── TECHNICAL INDICATORS (ATR, VWAP, EMA) ──────────────────────────────────
+  private calculateATR(candles: Candle[], period = 14): number[] {
+    const atrs: number[] = new Array(candles.length).fill(0);
+    if (candles.length === 0) return atrs;
+    const trs: number[] = [];
+    for (let i = 0; i < candles.length; i++) {
+      if (i === 0) {
+        trs.push(candles[i].high - candles[i].low);
+      } else {
+        const prevClose = candles[i - 1].close;
+        const tr = Math.max(
+          candles[i].high - candles[i].low,
+          Math.abs(candles[i].high - prevClose),
+          Math.abs(candles[i].low - prevClose)
+        );
+        trs.push(tr);
+      }
+    }
+
+    let sum = 0;
+    for (let i = 0; i < Math.min(period, trs.length); i++) {
+      sum += trs[i];
+      atrs[i] = sum / (i + 1);
+    }
+    for (let i = period; i < trs.length; i++) {
+      atrs[i] = (atrs[i - 1] * (period - 1) + trs[i]) / period;
+    }
+    return atrs;
+  }
+
+  private calculateVWAP(candles: Candle[], vwapSource: 'close' | 'hlc3' = 'close'): (number | null)[] {
+    const vwaps: (number | null)[] = new Array(candles.length).fill(null);
+    let cpv = 0, cv = 0;
+    let lastDateStr = '';
+    for (let i = 0; i < candles.length; i++) {
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(candles[i].date);
+      if (dateStr !== lastDateStr) {
+        cpv = 0;
+        cv = 0;
+        lastDateStr = dateStr;
+      }
+      const price = vwapSource === 'close' ? candles[i].close : (candles[i].high + candles[i].low + candles[i].close) / 3;
+      cpv += price * candles[i].volume;
+      cv += candles[i].volume;
+      vwaps[i] = cv === 0 ? candles[i].close : cpv / cv;
+    }
+    return vwaps;
+  }
+
+  private calculateEMA(candles: Candle[], period: number): (number | null)[] {
+    const emas: (number | null)[] = new Array(candles.length).fill(null);
+    if (candles.length < period) return emas;
+    const mult = 2 / (period + 1);
+    let sum = 0;
+    for (let i = 0; i < period; i++) sum += candles[i].close;
+    let prev = sum / period;
+    emas[period - 1] = prev;
+    for (let i = period; i < candles.length; i++) {
+      const ema = (candles[i].close - prev) * mult + prev;
+      emas[i] = ema;
+      prev = ema;
+    }
+    return emas;
+  }
+
   private roundTick(price: number, tick = 0.05) { return Math.round(price / tick) * tick; }
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
+  
   private async closePaperTradeHistorical(state: StrategyState, reason: string, price: number, timestamp: Date) {
     await this.prisma.order.updateMany({
       where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
@@ -938,6 +1257,7 @@ export class Breakout15MinEngine {
     state.entryTriggered = null;
     state.entryPrice = null;
     state.setupTimestamp = null;
+    state.isBreakevenTrailed = false;
   }
 
   private async trackOrder(state: StrategyState, account: any, executionId: string, params: any, brokerOrderId: string, strategyId: string, createdAt?: Date) {
@@ -962,7 +1282,24 @@ export class Breakout15MinEngine {
           ...(createdAt ? { createdAt } : {})
         } as any
       });
-    } catch (err) { this.log(state, `⚠ DB track failed: ${err.message}`); }
+    } catch (err: any) { this.log(state, `⚠ DB track failed: ${err.message}`); }
   }
-  private resetDailyState(state: StrategyState) { state.refHigh = null; state.refLow = null; state.refCandleSet = false; state.entryTriggered = null; state.optionSymbol = null; state.tradesPlacedToday = 0; state.setupTimestamp = null; state.entryPrice = null; }
+
+  private resetDailyState(state: StrategyState) {
+    state.refHigh = null;
+    state.refLow = null;
+    state.refCandleSet = false;
+    state.entryTriggered = null;
+    state.optionSymbol = null;
+    state.tradesPlacedToday = 0;
+    state.setupTimestamp = null;
+    state.entryPrice = null;
+    state.dynamicAtr = undefined;
+    state.initialRiskPoints = undefined;
+    state.isBreakevenTrailed = false;
+    state.highestPriceReached = undefined;
+    state.lowestPriceReached = undefined;
+    state.lastBreakoutAttempt = null;
+    state.isReversalTrade = false;
+  }
 }

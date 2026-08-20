@@ -100,6 +100,13 @@ export default function NewStrategyPage() {
     sMaxCapital: "25000",
     sTriggerOffset: "0.50",
     sProtectionBufferPct: "10",
+    // Breakout 15-Min Dynamic Upgrades
+    b15EnableDynamicAtr: true,
+    b15RiskRewardRatio: "2.0",
+    b15EnableFakeoutReversal: true,
+    b15EnableVwapFilter: true,
+    b15EnableBreakevenTrail: true,
+    b15Moneyness: "ITM" as "ITM" | "ATM",
     // Broker
     brokerAccountId: "",
     isPaperTrade: true,
@@ -239,6 +246,12 @@ export default function NewStrategyPage() {
           lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
           maxTradesPerDay: Number(form.maxTradesPerDay),
+          enableDynamicAtr: form.b15EnableDynamicAtr,
+          riskRewardRatio: Number(form.b15RiskRewardRatio),
+          enableFakeoutReversal: form.b15EnableFakeoutReversal,
+          enableVwapFilter: form.b15EnableVwapFilter,
+          enableBreakevenTrail: form.b15EnableBreakevenTrail,
+          moneyness: form.b15Moneyness,
           ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
             minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
           }),
@@ -1038,6 +1051,109 @@ export default function NewStrategyPage() {
                     </div>
                   </div>
                 </>
+              )}
+
+              {form.type === "BREAKOUT_15MIN" && (
+                <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-indigo-600" />
+                      <span className="text-sm font-bold text-indigo-950">Dynamic Volatility & Trap Reversal</span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                      High Accuracy Mode
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 pt-1">
+                    <div>
+                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-slate-700">
+                        <Target className="h-3.5 w-3.5 text-green-600" />
+                        Risk : Reward Ratio
+                      </label>
+                      <Input
+                        type="number"
+                        step={0.5}
+                        min={1}
+                        max={5}
+                        value={form.b15RiskRewardRatio}
+                        onChange={(e) => set("b15RiskRewardRatio", e.target.value)}
+                        className="bg-white border-indigo-200 font-semibold text-xs"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Default 1:2.0 RR (Target = 2x ATR Risk)</p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-slate-700">
+                        <TrendingUp className="h-3.5 w-3.5 text-blue-600" />
+                        Strike Moneyness
+                      </label>
+                      <select
+                        value={form.b15Moneyness}
+                        onChange={(e) => set("b15Moneyness", e.target.value)}
+                        className="w-full h-9 rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="ITM">1-Strike ITM (Recommended - High Delta)</option>
+                        <option value="ATM">ATM (At-The-Money)</option>
+                      </select>
+                      <p className="text-[10px] text-slate-500 mt-1">ITM options reduce theta decay drag</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-indigo-100">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.b15EnableDynamicAtr}
+                        onChange={(e) => set("b15EnableDynamicAtr", e.target.checked)}
+                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">Dynamic ATR Scaling</span>
+                        <span className="text-[9px] text-slate-500">Auto-calibrates buffer & SL to volatility</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.b15EnableFakeoutReversal}
+                        onChange={(e) => set("b15EnableFakeoutReversal", e.target.checked)}
+                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">⚡ Fakeout Trap Reversal</span>
+                        <span className="text-[9px] text-slate-500">Auto-flips trade on failed breakout traps</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.b15EnableBreakevenTrail}
+                        onChange={(e) => set("b15EnableBreakevenTrail", e.target.checked)}
+                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">🛡 Breakeven Lock (+1R)</span>
+                        <span className="text-[9px] text-slate-500">Trails SL to Cost once in profit</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.b15EnableVwapFilter}
+                        onChange={(e) => set("b15EnableVwapFilter", e.target.checked)}
+                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">VWAP / EMA Filter</span>
+                        <span className="text-[9px] text-slate-500">Only trades with macro trend</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
               )}
 
               {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (

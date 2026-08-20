@@ -21,6 +21,21 @@ export interface Breakout15MinConfig {
   maxTradesPerDay: number;
   minPremium?: number;
   maxPremium?: number;
+
+  // Dynamic & High-Accuracy Volatility Upgrades
+  enableDynamicAtr?: boolean;       // Enable live ATR(14) scaling (default: true)
+  atrPeriod?: number;              // ATR calculation period (default: 14)
+  atrBufferMultiplier?: number;    // Breakout buffer threshold = ATR * multiplier (default: 0.15)
+  atrSlMultiplier?: number;        // Stop loss distance = ATR * multiplier (default: 1.0)
+  riskRewardRatio?: number;        // Dynamic Risk:Reward target (default: 2.0)
+  enableVwapFilter?: boolean;      // Confirm breakout direction with VWAP & 9/21 EMA (default: true)
+  enableVolumeFilter?: boolean;    // Require volume confirmation (default: true)
+  minRvol?: number;                // Relative volume threshold (default: 1.2)
+  enableFakeoutReversal?: boolean; // Capitalize on failed breakouts / liquidity traps (default: true)
+  enableBreakevenTrail?: boolean;  // Trail SL to cost upon reaching +1R profit (default: true)
+  breakevenTriggerR?: number;      // R-multiple to trigger breakeven (default: 1.0)
+  enableTrailingSl?: boolean;      // Dynamic candle-by-candle trailing (default: true)
+  moneyness?: 'ATM' | 'ITM';       // Option strike moneyness (default: 'ITM')
 }
 
 export interface EmaVwapCrossoverConfig {

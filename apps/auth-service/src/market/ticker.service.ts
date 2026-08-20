@@ -300,7 +300,12 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         if (errMsg.includes('403') || errMsg.includes('Forbidden') || errMsg.includes('TokenException')) {
           this.logger.warn(`Zerodha session/token for account ${account.clientId} is invalid or expired (403 Forbidden). Stopping auto-reconnect.`);
           this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
-          try { ticker.disconnect(); } catch (_) {}
+          try {
+            if (typeof ticker.autoReconnect === 'function') {
+              ticker.autoReconnect(false);
+            }
+            ticker.disconnect();
+          } catch (_) {}
           this.tickers.delete(account.id);
         }
       });

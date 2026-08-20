@@ -580,6 +580,20 @@ export default function StrategyDetailPage() {
                           {liveState.refLow ? `₹${liveState.refLow} — ₹${liveState.refHigh}` : "Waiting for 9:30 AM"}
                         </span>
                       </div>
+                      {liveState.dynamicAtr !== undefined && (
+                        <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                          <span className="text-xs text-slate-500">Dynamic ATR(14)</span>
+                          <span className="text-xs font-bold text-indigo-700">
+                            ₹{Number(liveState.dynamicAtr).toFixed(2)} (Buffer: ±₹{(Number(liveState.dynamicAtr) * 0.15).toFixed(2)})
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
+                        <span className="text-xs text-slate-500">Protection Shield</span>
+                        <span className="text-xs font-bold text-emerald-600">
+                          {liveState.isBreakevenTrailed ? "🛡 Trailed to Cost (Risk-Free)" : "Active Dynamic ATR Shield"}
+                        </span>
+                      </div>
                     </>
                   )}
                   <div className="flex justify-between items-center py-1.5 border-b border-blue-100/50">
@@ -779,6 +793,40 @@ export default function StrategyDetailPage() {
                   onChange={(v) => setEditConfig((e) => ({ ...e, maxTradesPerDay: Number(v) }))}
                   type="number"
                 />
+                <Field
+                  label="Risk:Reward Ratio"
+                  editing={editing}
+                  value={editing ? String(editConfig.riskRewardRatio ?? cfg.riskRewardRatio ?? 2.0) : `1:${Number(cfg.riskRewardRatio ?? 2.0).toFixed(1)}`}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, riskRewardRatio: Number(v) }))}
+                  type="number"
+                />
+                <div>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Moneyness</p>
+                  {editing ? (
+                    <select
+                      value={editConfig.moneyness ?? cfg.moneyness ?? "ITM"}
+                      onChange={(e) => setEditConfig((ec) => ({ ...ec, moneyness: e.target.value }))}
+                      className="flex h-9 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                    >
+                      <option value="ITM">1-Strike ITM (High Delta)</option>
+                      <option value="ATM">ATM (At-The-Money)</option>
+                    </select>
+                  ) : (
+                    <p className="text-sm font-semibold">{cfg.moneyness ?? "ITM"}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Dynamic ATR</p>
+                  <p className="text-sm font-semibold text-indigo-600">{cfg.enableDynamicAtr !== false ? "Active Scaling" : "Fixed Mode"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Fakeout Trap Reversal</p>
+                  <p className="text-sm font-semibold text-indigo-600">{cfg.enableFakeoutReversal !== false ? "⚡ Enabled" : "Disabled"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Breakeven Shield</p>
+                  <p className="text-sm font-semibold text-emerald-600">{cfg.enableBreakevenTrail !== false ? "🛡 Active (+1R)" : "Disabled"}</p>
+                </div>
                 <div>
                   <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Product</p>
                   {editing ? (
@@ -793,10 +841,6 @@ export default function StrategyDetailPage() {
                   ) : (
                     <p className="text-sm font-semibold">{cfg.product}</p>
                   )}
-                </div>
-                <div>
-                  <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Order Mode</p>
-                  <p className="text-sm font-semibold text-[hsl(var(--primary))]">LIMIT only</p>
                 </div>
               </>
             )}
