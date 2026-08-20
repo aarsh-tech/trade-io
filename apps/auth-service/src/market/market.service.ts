@@ -243,10 +243,19 @@ export class MarketService {
 
   // ── F&O Stocks List with Official Lot Sizes & Prices ──────────────────────
 
-  async getFoStocks(userId: string) {
-    const account = await this.prisma.brokerAccount.findFirst({
-      where: { userId, isActive: true, accessToken: { not: null } },
-    });
+  async getFoStocks(userId?: string) {
+    let account = null;
+    if (userId) {
+      account = await this.prisma.brokerAccount.findFirst({
+        where: { userId, isActive: true, accessToken: { not: null } },
+      });
+    }
+
+    if (!account || !account.accessToken) {
+      account = await this.prisma.brokerAccount.findFirst({
+        where: { isActive: true, accessToken: { not: null } },
+      });
+    }
 
     const foStocks = FO_STOCKS_LIST.map(s => ({
       ...s,
@@ -264,34 +273,43 @@ export class MarketService {
       try {
         const client = this.factory.createClient(account);
         const kite = (client as any)['kite'];
-        const keys = FO_STOCKS_LIST.map(s => `NSE:${s.symbol}`);
+        
+        // Chunk keys into batches of 100 for Kite API
+        const chunkSize = 100;
+        for (let i = 0; i < FO_STOCKS_LIST.length; i += chunkSize) {
+          const chunk = FO_STOCKS_LIST.slice(i, i + chunkSize);
+          const keys = chunk.map(s => `${s.exchange || 'NSE'}:${s.symbol}`);
+          const quotes = await kite.getOHLC(keys).catch(() => kite.getLTP(keys).catch(() => ({})));
 
-        const quotes = await kite.getOHLC(keys).catch(() => kite.getLTP(keys).catch(() => ({})));
-
-        let nfoInstruments: any[] = [];
-        try {
-          nfoInstruments = await kite.getInstruments(['NFO']).catch(() => []);
-        } catch {}
-
-        foStocks.forEach(stock => {
-          const key = `NSE:${stock.symbol}`;
-          const q = quotes[key];
-          if (q) {
-            stock.ltp = q.last_price || 0;
-            const close = q.ohlc?.close || q.close_price || stock.ltp;
-            stock.close = close;
-            stock.change = Number((stock.ltp - close).toFixed(2));
-            stock.changePercent = close > 0 ? Number((((stock.ltp - close) / close) * 100).toFixed(2)) : 0;
-          }
-
-          if (nfoInstruments.length > 0) {
-            const match = nfoInstruments.find(inst => inst.name === stock.symbol || inst.tradingsymbol === stock.symbol);
-            if (match && match.lot_size > 0) {
-              stock.lotSize = match.lot_size;
+          chunk.forEach(s => {
+            const stock = foStocks.find(st => st.symbol === s.symbol);
+            if (!stock) return;
+            const q = quotes[`${s.exchange || 'NSE'}:${s.symbol}`] || quotes[`NSE:${s.symbol}`] || quotes[s.symbol];
+            if (q) {
+              stock.ltp = q.last_price || 0;
+              const close = q.ohlc?.close || q.close_price || stock.ltp;
+              stock.close = close;
+              stock.open = q.ohlc?.open || stock.ltp;
+              stock.high = q.ohlc?.high || stock.ltp;
+              stock.low = q.ohlc?.low || stock.ltp;
+              stock.change = Number((stock.ltp - close).toFixed(2));
+              stock.changePercent = close > 0 ? Number((((stock.ltp - close) / close) * 100).toFixed(2)) : 0;
             }
+          });
+        }
+
+        try {
+          const nfoInstruments = await kite.getInstruments(['NFO']).catch(() => []);
+          if (nfoInstruments.length > 0) {
+            foStocks.forEach(stock => {
+              const match = nfoInstruments.find((inst: any) => inst.name === stock.symbol || inst.tradingsymbol === stock.symbol);
+              if (match && match.lot_size > 0) {
+                stock.lotSize = match.lot_size;
+              }
+            });
           }
-        });
-      } catch (e) {
+        } catch {}
+      } catch (e: any) {
         this.logger.warn(`Failed to fetch live quotes for F&O stocks: ${e.message}`);
       }
     }

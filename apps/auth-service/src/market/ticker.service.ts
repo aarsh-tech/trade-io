@@ -22,7 +22,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   async subscribeSymbol(accountId: string, symbol: string) {
     if (!this.tickers.has(accountId)) return;
     const tickerData = this.tickers.get(accountId);
-    let token = tickerData.symbolToToken.get(symbol);
+    let token = tickerData.resolveToken ? tickerData.resolveToken(symbol) : tickerData.symbolToToken.get(symbol);
+    
     if (!token) {
       // Dynamic fallback instrument lookup for newly generated options contracts
       try {
@@ -35,6 +36,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           if (match?.instrument_token) {
             token = match.instrument_token;
             tickerData.symbolToToken.set(symbol, token);
+            tickerData.symbolToToken.set(`${exchange}:${symbol}`, token);
             tickerData.tokenToSymbol.set(token, symbol);
           }
         }
@@ -70,11 +72,13 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if (this.refreshInterval) clearInterval(this.refreshInterval);
-    this.tickers.forEach((ticker) => ticker.disconnect());
+    this.tickers.forEach((ticker) => {
+      try { ticker.disconnect(); } catch (_) {}
+    });
   }
 
   /**
-   * Sync tickers based on active strategies and connected brokers
+   * Sync tickers based on active strategies, connected brokers, and dashboard subscriptions
    */
   async syncTickers() {
     try {
@@ -100,8 +104,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           if (config.symbol) {
             symbolsByAccount.get(s.brokerAccountId).add(config.symbol);
           }
-          if (config.futureSymbol) { // Also subscribe to resolved futures if present
-             symbolsByAccount.get(s.brokerAccountId).add(config.futureSymbol);
+          if (config.futureSymbol) {
+            symbolsByAccount.get(s.brokerAccountId).add(config.futureSymbol);
           }
         } catch (e) {
           this.logger.error(`Error parsing strategy config for ticker: ${e.message}`);
@@ -111,15 +115,19 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       // Add symbols subscribed by dashboard clients
       const dashboardSymbols = this.marketGateway.getSubscribedSymbols();
       
-      // If no active strategies, we still want to provide dashboard ticks for the first available account
+      // Default account for dashboard feeds if no strategies
       let defaultAccount = activeStrategies[0]?.brokerAccountId;
-      if (!defaultAccount && dashboardSymbols.length > 0) {
-        const firstActive = await this.prisma.brokerAccount.findFirst({ where: { isActive: true, accessToken: { not: null } }});
+      if (!defaultAccount) {
+        const firstActive = await this.prisma.brokerAccount.findFirst({
+          where: { isActive: true, accessToken: { not: null } }
+        });
         if (firstActive) defaultAccount = firstActive.id;
       }
 
-      if (defaultAccount && dashboardSymbols.length > 0) {
-        if (!symbolsByAccount.has(defaultAccount)) symbolsByAccount.set(defaultAccount, new Set());
+      if (defaultAccount) {
+        if (!symbolsByAccount.has(defaultAccount)) {
+          symbolsByAccount.set(defaultAccount, new Set());
+        }
         dashboardSymbols.forEach(sym => symbolsByAccount.get(defaultAccount).add(sym));
       }
 
@@ -151,8 +159,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     if (failedInfo) {
       if (failedInfo.accessToken !== account.accessToken) {
         this.failedAccounts.delete(accountId);
-      } else if (Date.now() - failedInfo.timestamp < 300000) {
-        // Cooldown for 5 minutes before re-attempting connection for failed account
+      } else if (Date.now() - failedInfo.timestamp < 120000) {
+        // Cooldown for 2 minutes before re-attempting connection for failed account
         return;
       } else {
         this.failedAccounts.delete(accountId);
@@ -169,15 +177,18 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         }
         this.tickers.delete(accountId);
       } else {
-        const currentTokens = new Set(tickerData.tokens || []);
-        const newTokens = symbols.map(s => tickerData.symbolToToken.get(s)).filter(Boolean) as number[];
+        const currentTokens = new Set<number>(tickerData.tokens || []);
+        const requestedTokens = symbols
+          .map(s => tickerData.resolveToken(s))
+          .filter(Boolean) as number[];
         
-        const tokensToSubscribe = newTokens.filter(t => !currentTokens.has(t));
+        const tokensToSubscribe = requestedTokens.filter(t => !currentTokens.has(t));
         if (tokensToSubscribe.length > 0 && tickerData.instance) {
-          this.logger.log(`Subscribing to ${tokensToSubscribe.length} new tokens for account ${accountId}`);
+          this.logger.log(`Subscribing to ${tokensToSubscribe.length} new tokens for account ${account.clientId}`);
           tickerData.instance.subscribe(tokensToSubscribe);
           tickerData.instance.setMode(tickerData.instance.modeFull, tokensToSubscribe);
-          tickerData.tokens = newTokens;
+          tokensToSubscribe.forEach(t => currentTokens.add(t));
+          tickerData.tokens = Array.from(currentTokens);
         }
         return;
       }
@@ -186,7 +197,6 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     if (account.broker === BrokerType.ZERODHA) {
       await this.setupZerodhaTicker(account, symbols);
     }
-    // Add other brokers here...
   }
 
   private async setupZerodhaTicker(account: any, symbols: string[]) {
@@ -195,8 +205,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       const apiKey = require('../common/utils/crypto').decrypt(account.apiKeyEnc);
 
       const client = this.brokerFactory.createClient(account);
-      const kite = (client as any)['kite'];
-      
+
       // Fetch instruments in parallel to map symbol <-> token faster
       const [instruments, bseInstruments, nfoInstruments] = await Promise.all([
         client.getInstruments('NSE').catch(() => []),
@@ -208,21 +217,51 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       const tokenToSymbol = new Map<number, string>();
       const symbolToToken = new Map<string, number>();
       
-      // Add standard index tokens manually since they might be missing in some listings
-      const indexMap: Record<string, number> = { 'NIFTY 50': 256265, 'BANKNIFTY': 260105, 'SENSEX': 265 };
+      // Standard index tokens
+      const indexMap: Record<string, number> = {
+        'NIFTY 50': 256265, 'NSE:NIFTY 50': 256265,
+        'NIFTY BANK': 260105, 'BANKNIFTY': 260105, 'NSE:BANKNIFTY': 260105,
+        'SENSEX': 265, 'BSE:SENSEX': 265,
+        'FINNIFTY': 257801, 'NSE:FINNIFTY': 257801,
+        'MIDCPNIFTY': 288009, 'NSE:MIDCPNIFTY': 288009,
+        'NIFTY IT': 257545, 'NSE:NIFTY IT': 257545,
+      };
       Object.entries(indexMap).forEach(([sym, tok]) => {
          tokenToSymbol.set(tok, sym);
          symbolToToken.set(sym, tok);
       });
 
       allInst.forEach((i: any) => {
-        tokenToSymbol.set(i.instrument_token, i.tradingsymbol);
-        symbolToToken.set(i.tradingsymbol, i.instrument_token);
+        const sym = i.tradingsymbol;
+        const tok = i.instrument_token;
+        const exch = i.exchange || 'NSE';
+        
+        tokenToSymbol.set(tok, sym);
+        symbolToToken.set(sym, tok);
+        symbolToToken.set(`${exch}:${sym}`, tok);
+        if (exch === 'NSE') {
+          symbolToToken.set(`NSE:${sym}`, tok);
+        } else if (exch === 'BSE') {
+          symbolToToken.set(`BSE:${sym}`, tok);
+        } else if (exch === 'NFO') {
+          symbolToToken.set(`NFO:${sym}`, tok);
+        }
       });
 
-      const tokensToSubscribe = symbols.map(s => symbolToToken.get(s)).filter(Boolean) as number[];
+      const resolveToken = (sym: string): number | undefined => {
+        if (symbolToToken.has(sym)) return symbolToToken.get(sym);
+        const withoutPrefix = sym.includes(':') ? sym.split(':')[1] : sym;
+        if (symbolToToken.has(withoutPrefix)) return symbolToToken.get(withoutPrefix);
+        const withNse = `NSE:${withoutPrefix}`;
+        if (symbolToToken.has(withNse)) return symbolToToken.get(withNse);
+        const withNfo = `NFO:${withoutPrefix}`;
+        if (symbolToToken.has(withNfo)) return symbolToToken.get(withNfo);
+        const withBse = `BSE:${withoutPrefix}`;
+        if (symbolToToken.has(withBse)) return symbolToToken.get(withBse);
+        return undefined;
+      };
 
-      if (tokensToSubscribe.length === 0) return;
+      const tokensToSubscribe = symbols.map(s => resolveToken(s)).filter(Boolean) as number[];
 
       const ticker = new KiteTicker({
         api_key: apiKey,
@@ -235,6 +274,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           const sym = tokenToSymbol.get(tick.instrument_token);
           if (sym && tick.last_price) {
             mappedTicks[sym] = tick.last_price;
+            mappedTicks[`NSE:${sym}`] = tick.last_price;
           }
         });
         if (Object.keys(mappedTicks).length > 0) {
@@ -248,8 +288,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       ticker.on('connect', () => {
         this.logger.log(`Zerodha Ticker connected for account ${account.clientId}`);
         this.failedAccounts.delete(account.id);
-        ticker.subscribe(tokensToSubscribe);
-        ticker.setMode(ticker.modeFull, tokensToSubscribe);
+        if (tokensToSubscribe.length > 0) {
+          ticker.subscribe(tokensToSubscribe);
+          ticker.setMode(ticker.modeFull, tokensToSubscribe);
+        }
       });
 
       ticker.on('error', (err: any) => {
@@ -286,6 +328,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         tokens: tokensToSubscribe,
         symbolToToken,
         tokenToSymbol,
+        resolveToken,
         accessToken: account.accessToken,
       });
     } catch (err) {

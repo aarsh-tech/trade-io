@@ -85,7 +85,13 @@ export default function FoStocksPage() {
 
   // Extract keys for WebSocket live subscription
   const symbolsToSubscribe = useMemo(() => {
-    return stocksList.map((s) => `${s.exchange}:${s.symbol}`);
+    const list: string[] = [];
+    stocksList.forEach((s) => {
+      list.push(s.symbol);
+      list.push(`${s.exchange}:${s.symbol}`);
+      list.push(`NSE:${s.symbol}`);
+    });
+    return list;
   }, [stocksList]);
 
   // Connect to Zerodha WebSocket live market ticker
@@ -135,8 +141,8 @@ export default function FoStocksPage() {
           valA = a.lotSize;
           valB = b.lotSize;
         } else if (sortBy === "price") {
-          valA = prices[`${a.exchange}:${a.symbol}`] || a.basePrice;
-          valB = prices[`${b.exchange}:${b.symbol}`] || b.basePrice;
+          valA = prices[a.symbol] || prices[`${a.exchange}:${a.symbol}`] || prices[`NSE:${a.symbol}`] || a.basePrice;
+          valB = prices[b.symbol] || prices[`${b.exchange}:${b.symbol}`] || prices[`NSE:${b.symbol}`] || b.basePrice;
         }
 
         if (valA < valB) return sortOrder === "asc" ? -1 : 1;
@@ -337,8 +343,8 @@ export default function FoStocksPage() {
               <tbody className="divide-y divide-slate-100">
                 {paginatedStocks.map((stock, idx) => {
                   const wsKey = `${stock.exchange}:${stock.symbol}`;
-                  const livePrice = prices[wsKey] || stock.basePrice;
-                  const flash = flashStates[wsKey];
+                  const livePrice = prices[stock.symbol] || prices[wsKey] || prices[`NSE:${stock.symbol}`] || stock.basePrice;
+                  const flash = flashStates[stock.symbol] || flashStates[wsKey] || flashStates[`NSE:${stock.symbol}`];
                   const globalIdx = (page - 1) * (pageSize === -1 ? 0 : pageSize) + idx + 1;
 
                   return (
@@ -413,8 +419,8 @@ export default function FoStocksPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {paginatedStocks.map((stock) => {
             const wsKey = `${stock.exchange}:${stock.symbol}`;
-            const livePrice = prices[wsKey] || stock.basePrice;
-            const flash = flashStates[wsKey];
+            const livePrice = prices[stock.symbol] || prices[wsKey] || prices[`NSE:${stock.symbol}`] || stock.basePrice;
+            const flash = flashStates[stock.symbol] || flashStates[wsKey] || flashStates[`NSE:${stock.symbol}`];
 
             return (
               <Card

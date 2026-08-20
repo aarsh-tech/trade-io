@@ -32,8 +32,8 @@ export default function LoginPage() {
     } catch (err: any) {
       toast.error(
         err?.response?.data?.message ||
-          err?.response?.data?.error ||
-          "Login failed. Please check your credentials."
+        err?.response?.data?.error ||
+        "Login failed. Please check your credentials."
       );
     }
   }
@@ -50,7 +50,7 @@ export default function LoginPage() {
       <form onSubmit={handleSubmit} className="space-y-4">
         {!show2fa ? (
           <>
-            {/* Phone number or User ID / Email Input */}
+            {/* Email ID / Email Input */}
             <div className="relative">
               <input
                 id="email"
@@ -66,7 +66,7 @@ export default function LoginPage() {
                 htmlFor="email"
                 className="absolute left-2.5 -top-2.5 px-1 bg-white text-xs text-[#888888] transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:text-[#999999] peer-placeholder-shown:top-3 peer-placeholder-shown:left-3.5 peer-focus:-top-2.5 peer-focus:left-2.5 peer-focus:text-xs peer-focus:text-blue-600 pointer-events-none"
               >
-                Phone number or User ID
+                Enter Email
               </label>
             </div>
 
@@ -135,8 +135,8 @@ export default function LoginPage() {
           {isLoggingIn
             ? "Logging in..."
             : show2fa
-            ? "Continue"
-            : "Login"}
+              ? "Continue"
+              : "Login"}
         </Button>
 
         {/* Forgot user ID or password link */}
