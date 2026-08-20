@@ -237,8 +237,8 @@ export class StockOptionsBuyingEngine {
       return;
     }
 
-    // Auto close positions at 15:15 IST
-    if (hhmm >= 15 * 60 + 15 && state.stateType !== 'SCANNING') {
+    // Auto close positions at 15:10 IST (NSE CAS settlement compliance)
+    if (hhmm >= 15 * 60 + 10 && state.stateType !== 'SCANNING') {
       await this.forceExit(state);
       await this.persistLogs(state);
       return;
@@ -726,7 +726,7 @@ export class StockOptionsBuyingEngine {
   private async forceExit(state: StrategyState) {
     if (state.stateType === 'SCANNING') return;
     
-    this.log(state, `⏰ Market closing hour (15:15 IST). Closing triggers and positions.`);
+    this.log(state, `⏰ Market CAS closing cutoff (15:10 IST). Closing triggers and positions.`);
     
     if (!state.optionSymbol) {
       this.resetStateToScanning(state);

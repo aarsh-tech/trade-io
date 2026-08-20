@@ -624,7 +624,7 @@ export class BacktestService {
             }
           }
 
-          if (position && hhmm >= 15 * 60 + 15) {
+          if (position && hhmm >= 15 * 60 + 10) {
             const exitPrice = candle.close;
             const pnl = position === 'LONG' ? (exitPrice - entryPrice) * config.qty : (entryPrice - exitPrice) * config.qty;
             trades.push({ date, type: position, entry: entryPrice, exit: exitPrice, pnl, result: 'EOD' });

@@ -30,6 +30,7 @@ interface StrategyState {
   targetOrderId: string | null;
   stopLossPrice?: number | null;
   targetPrice?: number | null;
+  entryPrice?: number | null;
   entryFilled?: boolean;
   setupTimestamp: number | null;
   tradesPlacedToday: number;
@@ -275,7 +276,7 @@ export class Breakout15MinEngine {
             await this.cancelBrokerOrderSafe(client, state.slOrderId);
             await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           }
-        } catch {}
+        } catch { }
       }
 
       await this.prisma.strategyExecution.update({
@@ -303,7 +304,7 @@ export class Breakout15MinEngine {
             await this.cancelBrokerOrderSafe(client, state.slOrderId);
             await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           }
-        } catch {}
+        } catch { }
       }
 
       await this.prisma.strategyExecution.update({
@@ -405,6 +406,38 @@ export class Breakout15MinEngine {
         await this.persistLogs(state);
         return;
       }
+    }
+
+    // ─── 3:10 PM EOD Auto Square Off (NSE CAS Settlement Rule) ─────────────
+    if (hhmm >= 15 * 60 + 10) {
+      if (state.entryTriggered) {
+        this.log(state, `⏰ 3:10 PM CAS settlement cutoff reached! Auto-squaring off position.`);
+        if (state.isPaperTrade) {
+          const quotes = await kite.getLTP([`${state.futureExchange}:${state.futureSymbol}`]).catch(() => ({}));
+          const ltp = quotes[`${state.futureExchange}:${state.futureSymbol}`]?.last_price || state.entryPrice || 0;
+          await this.closePaperTrade(state, 'CAS_CUTOFF_3_10_PM', ltp);
+        } else {
+          await this.cancelBrokerOrderSafe(client, state.slOrderId);
+          await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          if (state.entryFilled && state.optionSymbol) {
+            const exitSide = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
+            await client.placeOrder({
+              symbol: state.optionSymbol,
+              exchange: state.futureExchange,
+              side: exitSide,
+              orderType: 'MARKET',
+              product: state.config.product,
+              qty: state.config.qty,
+            }).catch(() => null);
+          }
+          state.entryTriggered = null;
+          state.entryFilled = false;
+          state.slOrderId = null;
+          state.targetOrderId = null;
+        }
+      }
+      await this.persistLogs(state);
+      return;
     }
 
     // ─── Paper/Real Trade Monitoring (runs every tick while a trade is open) ────
@@ -603,6 +636,7 @@ export class Breakout15MinEngine {
     });
     this.log(state, `🏁 Paper trade closed (${reason}) at ₹${price}`);
     state.entryTriggered = null; // Allow more trades if maxTradesPerDay not reached
+    state.entryPrice = null;
     state.setupTimestamp = null;
   }
 
@@ -708,6 +742,7 @@ export class Breakout15MinEngine {
 
     state.stopLossPrice = sl;
     state.targetPrice = tgt;
+    state.entryPrice = entry;
     state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
     state.optionSymbol = symbol;
     state.tradesPlacedToday += 1;
@@ -751,7 +786,7 @@ export class Breakout15MinEngine {
       if (match) {
         return match.close;
       }
-      
+
       let closest = data[0];
       let minDiff = Math.abs(new Date(closest.date).getTime() - targetTimeMs);
       for (const c of data) {
@@ -901,6 +936,7 @@ export class Breakout15MinEngine {
     });
     this.log(state, `🏁 (Catch-up) Paper trade closed (${reason}) at ₹${price}`);
     state.entryTriggered = null;
+    state.entryPrice = null;
     state.setupTimestamp = null;
   }
 
@@ -928,5 +964,5 @@ export class Breakout15MinEngine {
       });
     } catch (err) { this.log(state, `⚠ DB track failed: ${err.message}`); }
   }
-  private resetDailyState(state: StrategyState) { state.refHigh = null; state.refLow = null; state.refCandleSet = false; state.entryTriggered = null; state.optionSymbol = null; state.tradesPlacedToday = 0; state.setupTimestamp = null; }
+  private resetDailyState(state: StrategyState) { state.refHigh = null; state.refLow = null; state.refCandleSet = false; state.entryTriggered = null; state.optionSymbol = null; state.tradesPlacedToday = 0; state.setupTimestamp = null; state.entryPrice = null; }
 }
