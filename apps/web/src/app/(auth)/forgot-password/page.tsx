@@ -1,11 +1,11 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Zap, ArrowLeft, Mail } from "lucide-react";
+import { ArrowLeft, Mail } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { toast } from "sonner";
+import { AuthLayout } from "@/components/auth/AuthLayout";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -27,75 +27,88 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-      <div className="w-full max-w-[400px] bg-white p-8 rounded-2xl shadow-sm border border-slate-100 animate-[fade-up_0.5s_ease_both]">
-        <div className="flex items-center gap-2 mb-8 justify-center">
-          <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-md">
-            <Zap className="h-5 w-5 text-white" strokeWidth={2.5} />
+    <AuthLayout
+      title={!sent ? "Forgot user ID or password?" : undefined}
+      subtitle={
+        !sent
+          ? "Enter your registered email address to receive password reset instructions."
+          : undefined
+      }
+      footerLink={{
+        text: "Remember your password?",
+        actionText: "Login to TradeIO",
+        href: "/login",
+      }}
+    >
+      {!sent ? (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="relative">
+            <input
+              id="email"
+              type="email"
+              placeholder=" "
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="peer w-full h-[46px] px-3.5 pt-1 text-sm bg-white text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors"
+            />
+            <label
+              htmlFor="email"
+              className="absolute left-2.5 -top-2.5 px-1 bg-white text-xs text-[#888888] transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:text-[#999999] peer-placeholder-shown:top-3 peer-placeholder-shown:left-3.5 peer-focus:-top-2.5 peer-focus:left-2.5 peer-focus:text-xs peer-focus:text-blue-600 pointer-events-none"
+            >
+              Registered Email ID
+            </label>
           </div>
-          <span className="text-2xl font-extrabold text-slate-900">TradeIO</span>
+
+          <Button
+            type="submit"
+            className="w-full h-[42px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium rounded-[3px] shadow-none cursor-pointer transition-colors mt-2"
+            disabled={loading}
+          >
+            {loading ? "Sending..." : "Reset"}
+          </Button>
+
+          <div className="text-center pt-2">
+            <Link
+              href="/login"
+              className="text-xs text-[#777777] hover:text-blue-600 transition-colors"
+            >
+              Back to login
+            </Link>
+          </div>
+        </form>
+      ) : (
+        <div className="text-center py-2 space-y-4">
+          <div className="h-12 w-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+            <Mail className="h-6 w-6" />
+          </div>
+
+          <div>
+            <h2 className="text-base font-medium text-[#424242]">Check your email</h2>
+            <p className="text-xs text-[#777777] mt-1 leading-relaxed">
+              We&apos;ve sent password reset instructions to{" "}
+              <span className="font-medium text-[#444444]">{email}</span>.
+            </p>
+          </div>
+
+          <div className="pt-2 space-y-3">
+            <Button
+              variant="outline"
+              className="w-full h-[40px] border-[#dcdcdc] text-[#555555] font-medium rounded-[3px] text-xs hover:bg-[#f5f5f5] cursor-pointer"
+              onClick={() => setSent(false)}
+            >
+              Resend email
+            </Button>
+
+            <Link
+              href="/login"
+              className="flex items-center justify-center gap-1.5 text-xs text-[#777777] hover:text-blue-600 transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to login
+            </Link>
+          </div>
         </div>
-
-        {!sent ? (
-          <>
-            <div className="mb-8 text-center">
-              <h1 className="text-2xl font-bold text-slate-900">Forgot password?</h1>
-              <p className="text-sm text-slate-500 mt-2">
-                No worries, we'll send you reset instructions.
-              </p>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-slate-700 block">Email Address</label>
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full h-11 px-3 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-400"
-                />
-              </div>
-
-              <Button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg" disabled={loading}>
-                {loading ? "Sending link..." : "Reset password"}
-              </Button>
-
-              <Link 
-                href="/login" 
-                className="flex items-center justify-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors pt-2"
-              >
-                <ArrowLeft className="h-4 w-4" /> Back to log in
-              </Link>
-            </form>
-          </>
-        ) : (
-          <div className="text-center py-4">
-             <div className="h-16 w-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                <Mail className="h-8 w-8" />
-             </div>
-             <h1 className="text-2xl font-bold text-slate-900 mb-2">Check your email</h1>
-             <p className="text-sm text-slate-500 mb-8 leading-relaxed">
-               We've sent a password reset link to <span className="font-semibold text-slate-900">{email}</span>. Please check your inbox.
-             </p>
-             <Button 
-                variant="outline" 
-                className="w-full h-11 border-slate-200 text-slate-700 font-medium rounded-lg mb-4"
-                onClick={() => setSent(false)}
-             >
-               Resend email
-             </Button>
-             <Link 
-                href="/login" 
-                className="flex items-center justify-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <ArrowLeft className="h-4 w-4" /> Back to log in
-              </Link>
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </AuthLayout>
   );
 }
-

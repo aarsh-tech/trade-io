@@ -9,7 +9,7 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "bg-white rounded-xl p-6 border border-slate-200 shadow-sm transition-all duration-300",
+      "bg-white rounded-xl p-4 border border-slate-200 shadow-sm transition-all duration-300",
       glow === "blue" && "shadow-[0_0_20px_rgba(37,99,235,0.1)]",
       glow === "green" && "shadow-[0_0_20px_rgba(34,197,94,0.1)]",
       glow === "red" && "shadow-[0_0_20px_rgba(239,68,68,0.1)]",

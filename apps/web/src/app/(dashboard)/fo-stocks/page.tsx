@@ -2,24 +2,26 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Search,
   Zap,
-  TrendingUp,
-  TrendingDown,
   Layers,
-  Sparkles,
   Wifi,
-  Activity,
   Flame,
   LayoutGrid,
   Table as TableIcon,
   ChevronLeft,
   ChevronRight,
   ArrowUpDown,
+  TrendingUp,
+  TrendingDown,
+  ArrowUpRight,
+  SlidersHorizontal,
+  RefreshCcw
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMarketData } from "@/hooks/use-market-data";
@@ -55,7 +57,7 @@ export default function FoStocksPage() {
   const [pageSize, setPageSize] = useState<number>(25);
 
   // Fetch F&O stocks list from backend API
-  const { data: apiResponse } = useQuery({
+  const { data: apiResponse, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["fo-stocks"],
     queryFn: async () => {
       try {
@@ -165,52 +167,62 @@ export default function FoStocksPage() {
     }
   };
 
-  const totalCount = stocksList.length;
-
   return (
-    <div className="space-y-6 animate-[fade-up_0.4s_ease_both] pb-10">
-      {/* Header Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 rounded-2xl border border-indigo-500/20 shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-gradient-to-l from-indigo-500/10 to-transparent pointer-events-none" />
-        <div className="relative z-10 space-y-1">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600/30 border border-indigo-400/30 text-indigo-400">
-              <Layers className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">NSE F&O Securities Master</h1>
-              <p className="text-sm text-slate-300">
-                180+ liquid stock futures & indices with verified Zerodha WebSocket streaming
-              </p>
-            </div>
-          </div>
+    <div className="space-y-6 animate-[fade-up_0.3s_ease_both] pb-12 font-sans">
+      {/* ── 1. Header ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+            <Flame className="h-6 w-6 text-blue-600" />
+            NSE F&O Securities Master
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            180+ liquid stock futures & indices with live Zerodha WebSocket streaming
+          </p>
         </div>
 
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold shadow-inner">
+        <div className="flex items-center flex-wrap gap-2.5">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 shadow-2xs">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <Wifi className="h-3.5 w-3.5" /> Live Tick Stream
+            <Wifi className="h-3.5 w-3.5 text-emerald-600" />
+            <span>Live Ticks</span>
           </div>
+
+          <Badge variant="secondary" className="h-9 px-3 text-xs font-mono font-bold bg-slate-100 text-slate-800 border-slate-200">
+            {stocksList.length} F&O Contracts
+          </Badge>
+
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 border-slate-200 bg-white hover:bg-slate-50 shadow-2xs"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
+            <RefreshCcw className={cn("h-4 w-4 text-slate-500", isFetching && "animate-spin text-blue-600")} />
+          </Button>
         </div>
       </div>
 
-      {/* Alphabetical Index Bar (Dhan Style) */}
-      <Card className="border-border">
+      {/* ── 2. Alphabetical Filter Bar (A-Z) ── */}
+      <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden">
         <CardContent className="p-3">
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
-            <span className="text-xs font-semibold text-muted-foreground mr-2 whitespace-nowrap">Filter A-Z:</span>
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-hide">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-2 whitespace-nowrap shrink-0">
+              Filter A-Z:
+            </span>
             {ALPHABETS.map((letter) => (
               <button
                 key={letter}
                 onClick={() => setSelectedAlphabet(letter)}
                 className={cn(
-                  "min-w-[28px] h-7 px-2 rounded-md text-xs font-semibold transition-all flex items-center justify-center",
+                  "min-w-[28px] h-7 px-2 rounded-md text-xs font-semibold transition-all flex items-center justify-center shrink-0",
                   selectedAlphabet === letter
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    ? "bg-blue-600 text-white shadow-sm font-bold"
+                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
                 )}
               >
                 {letter}
@@ -220,21 +232,21 @@ export default function FoStocksPage() {
         </CardContent>
       </Card>
 
-      {/* Filter & View Switcher Bar */}
-      <Card className="border-border">
-        <CardContent className="p-4 space-y-4">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-            {/* Category Filter Tabs */}
-            <div className="flex flex-wrap gap-1.5 p-1 rounded-xl bg-muted/60 border border-border w-full md:w-auto">
+      {/* ── 3. Category Filter & View Toolbar ── */}
+      <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl">
+        <CardContent className="p-4">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+            {/* Category Pills */}
+            <div className="flex flex-wrap gap-1 p-1 rounded-lg bg-slate-50 border border-slate-200/80">
               {CATEGORIES.map((cat) => (
                 <button
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
                   className={cn(
-                    "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                    "px-3 py-1.5 rounded-md text-xs font-semibold transition-all",
                     selectedCategory === cat
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      ? "bg-white text-blue-600 shadow-2xs font-bold"
+                      : "text-slate-500 hover:text-slate-800"
                   )}
                 >
                   {cat}
@@ -242,25 +254,26 @@ export default function FoStocksPage() {
               ))}
             </div>
 
-            {/* Controls: Search, View Mode & Rows per Page */}
-            <div className="flex items-center gap-3 w-full md:w-auto ml-auto">
-              <div className="relative flex-1 md:w-56">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <input
-                  placeholder="Search stock..."
+            {/* Right Controls: Search, View Mode, Rows per page */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Search */}
+              <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                <Input
+                  placeholder="Search stock symbol..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="h-9 w-full pl-9 pr-3 rounded-lg bg-background border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                  className="h-9 pl-8 pr-3 text-xs bg-white border-slate-200 text-slate-900 focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 
-              {/* View Switcher Buttons */}
-              <div className="flex items-center gap-1 p-1 rounded-lg bg-muted border border-border">
+              {/* View Switcher */}
+              <div className="flex items-center p-1 rounded-lg bg-slate-50 border border-slate-200/80">
                 <button
                   onClick={() => setViewMode("table")}
                   className={cn(
                     "p-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1",
-                    viewMode === "table" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                    viewMode === "table" ? "bg-white text-blue-600 shadow-2xs font-bold" : "text-slate-500 hover:text-slate-800"
                   )}
                   title="Table View"
                 >
@@ -270,7 +283,7 @@ export default function FoStocksPage() {
                   onClick={() => setViewMode("grid")}
                   className={cn(
                     "p-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1",
-                    viewMode === "grid" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                    viewMode === "grid" ? "bg-white text-blue-600 shadow-2xs font-bold" : "text-slate-500 hover:text-slate-800"
                   )}
                   title="Grid View"
                 >
@@ -278,11 +291,11 @@ export default function FoStocksPage() {
                 </button>
               </div>
 
-              {/* Page Size Selector */}
+              {/* Rows Per Page */}
               <select
                 value={pageSize}
                 onChange={(e) => setPageSize(Number(e.target.value))}
-                className="h-9 px-2 rounded-lg bg-background border border-border text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                className="h-9 px-2.5 rounded-lg bg-white border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs"
               >
                 <option value={25}>25 / page</option>
                 <option value={50}>50 / page</option>
@@ -294,34 +307,34 @@ export default function FoStocksPage() {
         </CardContent>
       </Card>
 
-      {/* Main Content Area: Table View vs Grid View */}
+      {/* ── 4. Main Content: Table or Grid ── */}
       {viewMode === "table" ? (
-        <Card className="border-border overflow-hidden">
+        <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-muted/80 border-b border-border text-xs uppercase font-semibold text-muted-foreground">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-slate-50/80 border-b border-slate-100 text-[10.5px] uppercase font-bold text-slate-400 tracking-wider">
                 <tr>
                   <th className="py-3 px-4 w-12 text-center">#</th>
-                  <th className="py-3 px-4 cursor-pointer hover:text-foreground" onClick={() => toggleSort("symbol")}>
+                  <th className="py-3 px-4 cursor-pointer hover:text-slate-700 transition-colors" onClick={() => toggleSort("symbol")}>
                     <div className="flex items-center gap-1">
-                      Symbol & Company <ArrowUpDown className="h-3 w-3" />
+                      Symbol & Name <ArrowUpDown className="h-3 w-3" />
                     </div>
                   </th>
                   <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4 text-right cursor-pointer hover:text-foreground" onClick={() => toggleSort("lotSize")}>
+                  <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-700 transition-colors" onClick={() => toggleSort("lotSize")}>
                     <div className="flex items-center justify-end gap-1">
                       F&O Lot Size <ArrowUpDown className="h-3 w-3" />
                     </div>
                   </th>
-                  <th className="py-3 px-4 text-right cursor-pointer hover:text-foreground" onClick={() => toggleSort("price")}>
+                  <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-700 transition-colors" onClick={() => toggleSort("price")}>
                     <div className="flex items-center justify-end gap-1">
-                      Live Price (LTP) <ArrowUpDown className="h-3 w-3" />
+                      Live LTP (₹) <ArrowUpDown className="h-3 w-3" />
                     </div>
                   </th>
-                  <th className="py-3 px-4 text-center">Action</th>
+                  <th className="py-3 px-4 text-center">Strategy Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/60">
+              <tbody className="divide-y divide-slate-100">
                 {paginatedStocks.map((stock, idx) => {
                   const wsKey = `${stock.exchange}:${stock.symbol}`;
                   const livePrice = prices[wsKey] || stock.basePrice;
@@ -332,46 +345,42 @@ export default function FoStocksPage() {
                     <tr
                       key={stock.symbol}
                       className={cn(
-                        "hover:bg-muted/40 transition-colors group",
-                        flash === "up" && "bg-emerald-500/10",
-                        flash === "down" && "bg-rose-500/10"
+                        "hover:bg-slate-50/80 transition-colors group",
+                        flash === "up" && "bg-emerald-50/60",
+                        flash === "down" && "bg-rose-50/60"
                       )}
                     >
-                      <td className="py-3 px-4 text-center text-xs text-muted-foreground font-mono">{globalIdx}</td>
+                      <td className="py-3 px-4 text-center text-slate-400 font-mono">{globalIdx}</td>
 
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-foreground group-hover:text-indigo-400 transition-colors">
-                                {stock.symbol}
-                              </span>
-                              <Badge variant="secondary" className="text-[10px] px-1 py-0 border-indigo-500/30 text-indigo-400">
-                                {stock.exchange}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground">{stock.name}</p>
-                          </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900 text-sm group-hover:text-blue-600 transition-colors">
+                            {stock.symbol}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1 text-slate-500">
+                            {stock.exchange}
+                          </Badge>
                         </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{stock.name}</p>
                       </td>
 
                       <td className="py-3 px-4">
-                        <Badge className="bg-slate-800 text-slate-300 border-slate-700 text-[10px]">
+                        <Badge variant="secondary" className="bg-slate-100 text-slate-700 text-[10px] font-medium">
                           {stock.category}
                         </Badge>
                       </td>
 
                       <td className="py-3 px-4 text-right font-mono">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-extrabold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                          {stock.lotSize.toLocaleString("en-IN")}
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                          {stock.lotSize.toLocaleString("en-IN")} Shares
                         </span>
                       </td>
 
                       <td className="py-3 px-4 text-right font-mono">
                         <span
                           className={cn(
-                            "text-sm font-extrabold transition-colors duration-300",
-                            flash === "up" ? "text-emerald-400" : flash === "down" ? "text-rose-400" : "text-foreground"
+                            "text-sm font-bold transition-colors duration-300",
+                            flash === "up" ? "text-emerald-600" : flash === "down" ? "text-rose-600" : "text-slate-900"
                           )}
                         >
                           ₹{livePrice.toFixed(2)}
@@ -381,15 +390,15 @@ export default function FoStocksPage() {
                       <td className="py-3 px-4 text-center">
                         <Button
                           size="sm"
-                          variant="ghost"
+                          variant="outline"
                           onClick={() => {
                             router.push(
                               `/strategies/new?symbol=${encodeURIComponent(stock.symbol)}&lotSize=${stock.lotSize}&type=STOCK_OPTIONS_BUYING`
                             );
                           }}
-                          className="h-8 px-3 bg-indigo-600/10 text-indigo-400 hover:bg-indigo-600 hover:text-white text-xs font-semibold gap-1.5 transition-all"
+                          className="h-7 px-3 border-blue-200 text-blue-600 hover:bg-blue-50 text-[11px] font-semibold gap-1 transition-all"
                         >
-                          <Zap className="h-3.5 w-3.5" /> Trade Option
+                          <Zap className="h-3 w-3" /> Trade Option
                         </Button>
                       </td>
                     </tr>
@@ -400,7 +409,7 @@ export default function FoStocksPage() {
           </div>
         </Card>
       ) : (
-        /* Grid Card View */
+        /* Grid View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {paginatedStocks.map((stock) => {
             const wsKey = `${stock.exchange}:${stock.symbol}`;
@@ -411,45 +420,43 @@ export default function FoStocksPage() {
               <Card
                 key={stock.symbol}
                 className={cn(
-                  "group relative overflow-hidden transition-all duration-300 hover:border-indigo-500/50 hover:shadow-lg hover:shadow-indigo-500/10",
-                  flash === "up" && "bg-emerald-500/10 border-emerald-500/50",
-                  flash === "down" && "bg-rose-500/10 border-rose-500/50"
+                  "border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-blue-300 hover:shadow-sm transition-all group",
+                  flash === "up" && "bg-emerald-50/40 border-emerald-300",
+                  flash === "down" && "bg-rose-50/40 border-rose-300"
                 )}
               >
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-bold text-foreground group-hover:text-indigo-400 transition-colors">
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-base font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
                           {stock.symbol}
                         </h3>
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 border-indigo-500/30 text-indigo-400">
+                        <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1">
                           {stock.exchange}
                         </Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{stock.name}</p>
+                      <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">{stock.name}</p>
                     </div>
-                    <Badge className="bg-slate-800 text-slate-300 border-slate-700 text-[10px]">
+                    <Badge variant="secondary" className="text-[10px] bg-slate-100 text-slate-700">
                       {stock.category}
                     </Badge>
                   </div>
 
-                  <div className="flex items-end justify-between pt-2 border-t border-border/50">
+                  <div className="flex items-end justify-between pt-2 border-t border-slate-100">
                     <div>
-                      <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">F&O Lot Size</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                          {stock.lotSize.toLocaleString("en-IN")} Shares
-                        </span>
-                      </div>
+                      <p className="text-[10px] uppercase font-semibold text-slate-400">Lot Size</p>
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono font-bold bg-blue-50 text-blue-700 border border-blue-100 mt-0.5">
+                        {stock.lotSize.toLocaleString("en-IN")}
+                      </span>
                     </div>
 
                     <div className="text-right">
-                      <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Live Price</p>
+                      <p className="text-[10px] uppercase font-semibold text-slate-400">Live Price</p>
                       <div
                         className={cn(
-                          "text-lg font-extrabold tracking-tight transition-colors duration-300",
-                          flash === "up" ? "text-emerald-400" : flash === "down" ? "text-rose-400" : "text-foreground"
+                          "text-base font-bold font-mono transition-colors",
+                          flash === "up" ? "text-emerald-600" : flash === "down" ? "text-rose-600" : "text-slate-900"
                         )}
                       >
                         ₹{livePrice.toFixed(2)}
@@ -457,19 +464,17 @@ export default function FoStocksPage() {
                     </div>
                   </div>
 
-                  <div className="pt-2">
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        router.push(
-                          `/strategies/new?symbol=${encodeURIComponent(stock.symbol)}&lotSize=${stock.lotSize}&type=STOCK_OPTIONS_BUYING`
-                        );
-                      }}
-                      className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-md shadow-indigo-600/20 gap-2 text-xs font-semibold rounded-lg"
-                    >
-                      <Zap className="h-3.5 w-3.5" /> Trade Option Strategy
-                    </Button>
-                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      router.push(
+                        `/strategies/new?symbol=${encodeURIComponent(stock.symbol)}&lotSize=${stock.lotSize}&type=STOCK_OPTIONS_BUYING`
+                      );
+                    }}
+                    className="w-full h-8 bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs font-semibold rounded-lg shadow-2xs"
+                  >
+                    <Zap className="h-3.5 w-3.5" /> Trade Option Strategy
+                  </Button>
                 </CardContent>
               </Card>
             );
@@ -477,10 +482,10 @@ export default function FoStocksPage() {
         </div>
       )}
 
-      {/* Pagination Footer */}
+      {/* ── 5. Pagination ── */}
       {pageSize !== -1 && totalPages > 1 && (
-        <div className="flex items-center justify-between pt-4 border-t border-border">
-          <p className="text-xs text-muted-foreground">
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+          <p className="text-xs text-slate-500 font-medium">
             Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, filteredStocks.length)} of {filteredStocks.length} F&O securities
           </p>
 
@@ -490,11 +495,11 @@ export default function FoStocksPage() {
               variant="outline"
               disabled={page === 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="h-8 px-2 text-xs gap-1"
+              className="h-8 px-2.5 text-xs gap-1"
             >
               <ChevronLeft className="h-3.5 w-3.5" /> Previous
             </Button>
-            <span className="text-xs font-semibold px-2">
+            <span className="text-xs font-mono font-semibold px-2">
               Page {page} of {totalPages}
             </span>
             <Button
@@ -502,7 +507,7 @@ export default function FoStocksPage() {
               variant="outline"
               disabled={page === totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="h-8 px-2 text-xs gap-1"
+              className="h-8 px-2.5 text-xs gap-1"
             >
               Next <ChevronRight className="h-3.5 w-3.5" />
             </Button>
@@ -511,12 +516,12 @@ export default function FoStocksPage() {
       )}
 
       {filteredStocks.length === 0 && (
-        <Card className="border-border">
+        <Card className="border-slate-200 bg-white">
           <CardContent className="p-12 text-center space-y-3">
-            <Layers className="h-10 w-10 text-muted-foreground mx-auto" />
-            <h3 className="text-lg font-bold">No F&O Securities Found</h3>
-            <p className="text-sm text-muted-foreground">
-              Try selecting another letter or clearing search filters.
+            <Layers className="h-10 w-10 text-slate-400 mx-auto" />
+            <h3 className="text-base font-bold text-slate-900">No F&O Securities Found</h3>
+            <p className="text-xs text-slate-500">
+              Try selecting another letter or clearing your search filters.
             </p>
           </CardContent>
         </Card>

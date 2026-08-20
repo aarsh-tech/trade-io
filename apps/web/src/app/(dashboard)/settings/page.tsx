@@ -194,7 +194,7 @@ export default function SettingsPage() {
                       <Key className="h-4 w-4" /> {isSettingUp ? "Generating..." : "Setup 2FA"}
                     </Button>
                   ) : (
-                    <div className="p-6 border border-slate-200 rounded-xl bg-slate-50 space-y-6">
+                    <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-6">
                       <div className="text-center">
                         <p className="text-sm font-semibold text-slate-900 mb-2">1. Scan this QR Code with your Authenticator App</p>
                         <div className="flex justify-center p-4 bg-white rounded-lg shadow-sm border border-slate-100 mx-auto w-fit">
