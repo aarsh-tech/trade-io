@@ -43,6 +43,8 @@ export interface OrderParams {
   variety?: string;
   validity?: string;
   disclosedQty?: number;
+  marketProtection?: number;
+  autoslice?: boolean;
   tag?: string;
 }
 

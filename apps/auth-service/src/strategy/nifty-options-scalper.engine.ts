@@ -728,7 +728,17 @@ export class NiftyOptionsScalperEngine {
     }
   }
 
-  private async trackOrderInDB(state: ScalperStrategyState, side: 'BUY' | 'SELL', symbol: string, exchange: string, qty: number, price: number, orderId: string, createdAt?: Date) {
+  private async trackOrderInDB(
+    state: ScalperStrategyState,
+    side: 'BUY' | 'SELL',
+    symbol: string,
+    exchange: string,
+    qty: number,
+    price: number,
+    orderId: string,
+    createdAt?: Date,
+    orderType: 'MARKET' | 'LIMIT' | 'SL' = 'LIMIT'
+  ) {
     try {
       const exec = await this.prisma.strategyExecution.findUnique({
         where: { id: state.executionId },
@@ -740,14 +750,17 @@ export class NiftyOptionsScalperEngine {
         data: {
           userId: exec.strategy.userId,
           brokerAccountId: state.brokerAccountId,
+          strategyId: exec.strategyId,
           executionId: state.executionId,
           symbol,
           exchange,
           side: side as any,
-          orderType: 'LIMIT',
+          orderType: orderType as any,
           productType: state.config.product,
           qty,
+          filledQty: qty,
           price,
+          avgPrice: price,
           status: 'COMPLETE',
           brokerOrderId: orderId,
           isPaperTrade: state.isPaperTrade,

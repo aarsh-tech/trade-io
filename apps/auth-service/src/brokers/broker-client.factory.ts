@@ -172,12 +172,13 @@ class ZerodhaClient implements IBrokerClient {
         symbol: params.symbol,
         side: params.side,
         qty: params.qty,
-        product: params.product,
         orderType: params.orderType,
-        price: params.price
+        price: params.price,
+        triggerPrice: params.triggerPrice,
+        marketProtection: params.marketProtection ?? (params.orderType === 'MARKET' || params.orderType === 'SL-M' ? -1 : undefined)
       });
 
-      const response = await this.kite.placeOrder(variety, {
+      const orderPayload: any = {
         exchange: params.exchange,
         tradingsymbol: params.symbol,
         transaction_type: params.side,
@@ -186,10 +187,21 @@ class ZerodhaClient implements IBrokerClient {
         order_type: params.orderType,
         price: params.price ? Number(params.price) : undefined,
         trigger_price: params.triggerPrice ? Number(params.triggerPrice) : undefined,
-        validity: params.validity,
+        validity: params.validity || 'DAY',
         disclosed_quantity: params.disclosedQty ? Number(params.disclosedQty) : undefined,
         tag: params.tag,
-      });
+      };
+
+      // Apply market_protection for MARKET and SL-M orders (-1 is Auto Protection)
+      if (params.orderType === 'MARKET' || params.orderType === 'SL-M') {
+        orderPayload.market_protection = params.marketProtection !== undefined ? params.marketProtection : -1;
+      }
+
+      if (params.autoslice !== undefined) {
+        orderPayload.autoslice = params.autoslice;
+      }
+
+      const response = await this.kite.placeOrder(variety, orderPayload);
 
       console.log('Zerodha Order Success:', response.order_id);
       return response.order_id;

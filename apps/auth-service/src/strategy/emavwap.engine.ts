@@ -978,15 +978,29 @@ export class EmaVwapCrossoverEngine {
       const exitSide = finalSide === 'BUY' ? 'SELL' : 'BUY';
       let slOrderId: string | null = null;
       let targetOrderId: string | null = null;
-
       if (!state.isPaperTrade && !isHistorical) {
-        slOrderId = await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'SL', price: sl, triggerPrice: sl })
-          .catch((e: any) => { this.log(state, `❌ SL Failed: ${e.message}`); return null; });
+        // For SL Limit orders:
+        // BUY SL (short exit): limit price must be >= trigger price
+        // SELL SL (long exit): limit price must be <= trigger price
+        const slLimitPrice = exitSide === 'BUY'
+          ? this.roundTick(isOption ? sl * 1.02 : sl + 0.30)
+          : this.roundTick(isOption ? sl * 0.98 : sl - 0.30);
+
+        slOrderId = await client.placeOrder({
+          symbol,
+          exchange,
+          product,
+          qty: config.qty,
+          side: exitSide,
+          orderType: 'SL',
+          price: slLimitPrice,
+          triggerPrice: sl
+        }).catch((e: any) => { this.log(state, `❌ SL Failed: ${e.message}`); return null; });
         if (config.enableProfitFloor === false) {
           targetOrderId = await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt })
             .catch((e: any) => { this.log(state, `❌ Target Failed: ${e.message}`); return null; });
         } else {
-          this.log(state, `💡 Trend Trailing Mode active — SL placed at broker, Target 1 (₹${tgt.toFixed(2)}) will activate dynamic 15-EMA Trailing SL to ride full trend.`);
+          this.log(state, `💡 Trend Trailing Mode active — SL placed at broker (Trigger: ₹${sl.toFixed(2)}, Limit: ₹${slLimitPrice.toFixed(2)}), Target 1 (₹${tgt.toFixed(2)}) will activate dynamic 15-EMA Trailing SL to ride full trend.`);
         }
       }
 
@@ -999,8 +1013,8 @@ export class EmaVwapCrossoverEngine {
       state.targetOrderId = targetOrderId;
       state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
 
-      if (!state.isPaperTrade && !isHistorical && (!slOrderId || !targetOrderId)) {
-        this.log(state, `⚠ Warning: Failed to place SL or Target order at broker. Active monitoring will try to exit if needed.`);
+      if (!state.isPaperTrade && !isHistorical && !slOrderId) {
+        this.log(state, `⚠ Warning: Failed to place SL order at broker. Active monitoring will try to exit if needed.`);
       }
 
       // Start real-time WebSocket monitoring for live trades (not historical catch-up)
@@ -1302,27 +1316,31 @@ export class EmaVwapCrossoverEngine {
 
     try {
       let exitOrderId = '';
+      let exitOrderType: 'MARKET' | 'LIMIT' | 'SL' = 'MARKET';
       if (state.isPaperTrade) {
         exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
       } else {
-        if (reason === 'FORCE_CLOSE') {
-          // Cancel both pending SL and Target orders before forcing exit
+        if (reason === 'FORCE_CLOSE' || (reason === 'TARGET' && !state.targetOrderId)) {
+          // Cancel both pending SL and Target orders before placing market exit
           await this.cancelBrokerOrderSafe(client, state.slOrderId);
           await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           exitOrderId = await client.placeOrder({ symbol, exchange, product: config.product ?? 'MIS', qty, side: exitSide, orderType: 'MARKET' });
-          this.log(state, `✅ Live Force Exit Order placed: ${exitOrderId}`);
+          exitOrderType = 'MARKET';
+          this.log(state, `✅ Live Exit Order placed (${reason}): ${exitOrderId}`);
         } else if (reason === 'SL') {
           // SL hit -> cancel target order to avoid reverse/stray trade
           await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           exitOrderId = state.slOrderId || `SL_EXIT_${Date.now()}`;
+          exitOrderType = 'SL';
         } else if (reason === 'TARGET') {
-          // Target hit -> cancel SL order to avoid reverse/stray trade
+          // Fixed target hit -> cancel SL order to avoid reverse/stray trade
           await this.cancelBrokerOrderSafe(client, state.slOrderId);
           exitOrderId = state.targetOrderId || `TARGET_EXIT_${Date.now()}`;
+          exitOrderType = 'LIMIT';
         }
       }
 
-      await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, exitPrice, exitOrderId);
+      await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, exitPrice, exitOrderId, undefined, exitOrderType);
       state.tradesPlacedToday++;
 
       state.entryTriggered = null;
@@ -1385,7 +1403,17 @@ export class EmaVwapCrossoverEngine {
     }
   }
 
-  private async trackOrderInDB(state: StrategyState, side: 'BUY' | 'SELL', symbol: string, exchange: string, qty: number, price: number, orderId: string, createdAt?: Date) {
+  private async trackOrderInDB(
+    state: StrategyState,
+    side: 'BUY' | 'SELL',
+    symbol: string,
+    exchange: string,
+    qty: number,
+    price: number,
+    orderId: string,
+    createdAt?: Date,
+    orderType: 'MARKET' | 'LIMIT' | 'SL' = 'LIMIT'
+  ) {
     try {
       const exec = await this.prisma.strategyExecution.findUnique({
         where: { id: state.executionId },
@@ -1397,14 +1425,17 @@ export class EmaVwapCrossoverEngine {
         data: {
           userId: exec.strategy.userId,
           brokerAccountId: state.brokerAccountId,
+          strategyId: exec.strategyId,
           executionId: state.executionId,
           symbol,
           exchange,
           side: side as any,
-          orderType: 'LIMIT',
+          orderType: orderType as any,
           productType: (state.config as any).product ?? 'MIS',
           qty,
+          filledQty: qty,
           price,
+          avgPrice: price,
           status: 'COMPLETE',
           brokerOrderId: orderId,
           isPaperTrade: state.isPaperTrade,
