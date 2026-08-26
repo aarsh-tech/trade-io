@@ -231,7 +231,8 @@ export class Breakout15MinEngine {
 
           if (hasOptionData) {
             // Check Dynamic Breakeven Ratchet (+1R -> SL to Cost)
-            const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
+            const isOption = !!state.optionSymbol;
+            const isLong = isOption || state.entryTriggered === 'LONG';
             const evalPrice = currentOptionPriceHigh;
             const currentPnlPoints = isLong ? (evalPrice - state.entryPrice!) : (state.entryPrice! - currentOptionPriceLow);
             const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
@@ -250,8 +251,16 @@ export class Breakout15MinEngine {
 
             const effectiveSl = state.stopLossPrice || (slOrder ? slOrder.price! : 0);
 
-            if (effectiveSl && currentOptionPriceLow <= effectiveSl) {
-              this.log(state, `🔴 (Catch-up) PAPER SL HIT! ${state.optionSymbol || state.futureSymbol} at ₹${effectiveSl}`);
+            const isHitSL = isLong
+              ? (effectiveSl && currentOptionPriceLow <= effectiveSl)
+              : (effectiveSl && currentOptionPriceHigh >= effectiveSl);
+
+            const isHitTarget = isLong
+              ? (targetOrder && currentOptionPriceHigh >= targetOrder.price!)
+              : (targetOrder && currentOptionPriceLow <= targetOrder.price!);
+
+            if (isHitSL) {
+              this.log(state, `🔴 (Catch-up) PAPER SL HIT! ${state.optionSymbol || state.futureSymbol || state.config.symbol} at ₹${effectiveSl}`);
               await this.closePaperTradeHistorical(state, 'SL_HIT', effectiveSl, new Date(currentCandle.date));
               
               // Record failed breakout for Fakeout Reversal monitoring
@@ -267,9 +276,9 @@ export class Breakout15MinEngine {
               optionCandleSymbol = '';
               continue;
             }
-            if (targetOrder && currentOptionPriceHigh >= targetOrder.price!) {
-              this.log(state, `🟢 (Catch-up) PAPER TARGET HIT! ${state.optionSymbol || state.futureSymbol} at ₹${targetOrder.price}`);
-              await this.closePaperTradeHistorical(state, 'TARGET_HIT', targetOrder.price!, new Date(currentCandle.date));
+            if (isHitTarget) {
+              this.log(state, `🟢 (Catch-up) PAPER TARGET HIT! ${state.optionSymbol || state.futureSymbol || state.config.symbol} at ₹${targetOrder!.price}`);
+              await this.closePaperTradeHistorical(state, 'TARGET_HIT', targetOrder!.price!, new Date(currentCandle.date));
               optionCandles = [];
               optionCandleSymbol = '';
               continue;
@@ -997,7 +1006,8 @@ export class Breakout15MinEngine {
     state.targetPrice = tgt;
     state.entryPrice = entry;
     state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
-    state.optionSymbol = symbol;
+    const isOption = exchange === 'NFO' || symbol.endsWith('CE') || symbol.endsWith('PE');
+    state.optionSymbol = isOption ? symbol : null;
     state.tradesPlacedToday += 1;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
     state.isBreakevenTrailed = false;

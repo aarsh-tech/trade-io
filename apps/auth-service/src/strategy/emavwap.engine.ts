@@ -160,7 +160,7 @@ export class EmaVwapCrossoverEngine {
             await this.cancelBrokerOrderSafe(client, state.slOrderId);
             await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           }
-        } catch {}
+        } catch { }
       }
 
       await this.prisma.strategyExecution.update({
@@ -188,7 +188,7 @@ export class EmaVwapCrossoverEngine {
             await this.cancelBrokerOrderSafe(client, state.slOrderId);
             await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           }
-        } catch {}
+        } catch { }
       }
 
       await this.prisma.strategyExecution.update({
@@ -213,7 +213,7 @@ export class EmaVwapCrossoverEngine {
     return {
       entryTriggered: s.entryTriggered,
       tradesToday: s.tradesPlacedToday,
-      optionSymbol: s.optionSymbol,
+      optionSymbol: s.optionSymbol || s.activeSymbol || s.config.symbol,
     };
   }
 
@@ -346,60 +346,64 @@ export class EmaVwapCrossoverEngine {
           }
 
           if (hasOptionData) {
-            const isShortPosition = state.entryTriggered === 'SHORT' && !state.config.isOptionBuyingOnly;
+            const isOptionTrade = !!(state.config.isOptionBuyingOnly && state.optionSymbol);
+            const isShortPosition = state.entryTriggered === 'SHORT' && !isOptionTrade;
             const isLong = !isShortPosition;
             const currentEma = emas[i];
+            const isTrailingEnabled = state.config.enableProfitFloor !== false;
 
             // P&L based on current option candle close (or index candle close if trading equity/futures)
             const currentEvalClose = (state.optionSymbol && optCandle) ? optCandle.close : currentCandle.close;
-            const pnlPoints = (state.config.isOptionBuyingOnly || isLong)
+            const pnlPoints = isLong
               ? (currentEvalClose - state.entryPrice!)
               : (state.entryPrice! - currentEvalClose);
             const pnlRs = pnlPoints * state.config.qty;
             const targetThresholdRs = state.config.targetRs || 500;
 
+            const isHitTarget = isOptionTrade
+              ? (currentOptionPriceHigh >= state.targetPrice!)
+              : (isLong ? (currentCandle.high >= state.targetPrice!) : (currentCandle.low <= state.targetPrice!));
+
+            const isHitSL = isOptionTrade
+              ? (currentOptionPriceLow <= state.stopLossPrice!)
+              : (isLong ? (currentCandle.low <= state.stopLossPrice!) : (currentCandle.high >= state.stopLossPrice!));
+
             // 1. Check if Target 1 reached -> Activate EMA(15) Line Trailing SL
-            if (pnlRs >= targetThresholdRs && !state.isTrailingEma) {
+            if ((pnlRs >= targetThresholdRs || isHitTarget) && !state.isTrailingEma && isTrailingEnabled) {
               state.isTrailingEma = true;
-              this.log(state, `📈 (Catch-up) Target 1 reached on ${this.formatTime(currentCandle.date)} (P&L: ₹${pnlRs.toFixed(2)})! Activated EMA(15) Line Trailing SL @ ₹${currentEma.toFixed(2)} — riding trend...`);
+              state.stopLossPrice = currentEma;
+              this.log(state, `📈 (Catch-up) Target 1 reached on ${this.formatTime(currentCandle.date)} (Target: ₹${state.targetPrice?.toFixed(2)}, P&L: ₹${pnlRs.toFixed(2)})! Activated EMA(15) Line Trailing SL @ ₹${currentEma.toFixed(2)} — riding trend...`);
             }
 
             // 2. If EMA Trailing is Active: Exit ONLY when candle CLOSE crosses EMA(15) line
             if (state.isTrailingEma) {
+              state.stopLossPrice = currentEma;
               const isCrossedEma = (state.entryTriggered === 'LONG') ? (currentCandle.close < currentEma) : (currentCandle.close > currentEma);
 
               if (isCrossedEma) {
                 const exitPrice = (state.optionSymbol && optCandle) ? optCandle.close : currentCandle.close;
-                const finalPnl = (state.config.isOptionBuyingOnly || isLong ? (exitPrice - state.entryPrice!) : (state.entryPrice! - exitPrice)) * state.config.qty;
+                const finalPnl = (isLong ? (exitPrice - state.entryPrice!) : (state.entryPrice! - exitPrice)) * state.config.qty;
                 this.log(state, `📈 (Catch-up) Candle closed across EMA(15) line @ ₹${exitPrice.toFixed(2)} (EMA: ₹${currentEma.toFixed(2)}) on ${this.formatTime(currentCandle.date)} | Final Realized P&L: ₹${finalPnl.toFixed(2)}`);
                 await this.exitPositionHistorical(state, client, exitPrice, 'TARGET', currentCandle.date);
                 optionCandles = []; optionCandleSymbol = '';
                 continue;
               }
             } else {
-              // 3. Before Target 1: Target & Standard SL Check
-              const isHitTarget = state.optionSymbol
-                ? (currentOptionPriceHigh >= state.targetPrice!)
-                : (isLong ? (currentCandle.high >= state.targetPrice!) : (currentCandle.low <= state.targetPrice!));
-
-              const isHitSL = state.optionSymbol
-                ? (currentOptionPriceLow <= state.stopLossPrice!)
-                : (isLong ? (currentCandle.low <= state.stopLossPrice!) : (currentCandle.high >= state.stopLossPrice!));
-
-              if (isHitTarget) {
-                const exitPrice = (state.optionSymbol && optCandle) ? state.targetPrice! : state.targetPrice!;
-                const finalPnl = (exitPrice - state.entryPrice!) * state.config.qty;
-                this.log(state, `🎯 (Catch-up) Target Hit at ₹${exitPrice.toFixed(2)} on ${this.formatTime(currentCandle.date)} | Final P&L: ₹${finalPnl.toFixed(2)}`);
-                await this.exitPositionHistorical(state, client, exitPrice, 'TARGET', currentCandle.date);
+              // 3. Before Target 1: Check Standard Initial SL or Fixed Target (if trailing disabled)
+              if (isHitSL) {
+                const exitPrice = (state.optionSymbol && optCandle) ? state.stopLossPrice! : state.stopLossPrice!;
+                const finalPnl = (isLong ? (exitPrice - state.entryPrice!) : (state.entryPrice! - exitPrice)) * state.config.qty;
+                this.log(state, `🛑 (Catch-up) Stop Loss Hit at ₹${exitPrice.toFixed(2)} on ${this.formatTime(currentCandle.date)} | Final P&L: ₹${finalPnl.toFixed(2)}`);
+                await this.exitPositionHistorical(state, client, exitPrice, 'SL', currentCandle.date);
                 optionCandles = []; optionCandleSymbol = '';
                 continue;
               }
 
-              if (isHitSL) {
-                const exitPrice = (state.optionSymbol && optCandle) ? state.stopLossPrice! : state.stopLossPrice!;
-                const finalPnl = (exitPrice - state.entryPrice!) * state.config.qty;
-                this.log(state, `🛑 (Catch-up) Stop Loss Hit at ₹${exitPrice.toFixed(2)} on ${this.formatTime(currentCandle.date)} | Final P&L: ₹${finalPnl.toFixed(2)}`);
-                await this.exitPositionHistorical(state, client, exitPrice, 'SL', currentCandle.date);
+              if (isHitTarget && !isTrailingEnabled) {
+                const exitPrice = (state.optionSymbol && optCandle) ? state.targetPrice! : state.targetPrice!;
+                const finalPnl = (isLong ? (exitPrice - state.entryPrice!) : (state.entryPrice! - exitPrice)) * state.config.qty;
+                this.log(state, `🎯 (Catch-up) Target Hit at ₹${exitPrice.toFixed(2)} on ${this.formatTime(currentCandle.date)} | Final P&L: ₹${finalPnl.toFixed(2)}`);
+                await this.exitPositionHistorical(state, client, exitPrice, 'TARGET', currentCandle.date);
                 optionCandles = []; optionCandleSymbol = '';
                 continue;
               }
@@ -409,8 +413,8 @@ export class EmaVwapCrossoverEngine {
             const candleHhmm = this.getIstHhmm(currentCandle.date);
             if (candleHhmm >= 15 * 60 + 10) {
               const exitPrice = (state.optionSymbol && optCandle) ? optCandle.close : currentCandle.close;
-              const finalPnl = (state.config.isOptionBuyingOnly || isLong ? (exitPrice - state.entryPrice!) : (state.entryPrice! - exitPrice)) * state.config.qty;
-              this.log(state, `⏰ (Catch-up) 3:10 PM EOD Cutoff reached on ${this.formatTime(currentCandle.date)}! Position squared off at ₹${exitPrice.toFixed(2)} | Final P&L: ₹${finalPnl.toFixed(2)}`);
+              const finalPnl = (isLong ? (exitPrice - state.entryPrice!) : (state.entryPrice! - exitPrice)) * state.config.qty;
+              this.log(state, `⏰ (Catch-up) 3:10 PM EOD Cutoff reached on ${this.formatTime(currentCandle.date)}! Position squared off at ₹${exitPrice.toFixed(2)} | Final Realized P&L: ₹${finalPnl.toFixed(2)}`);
               await this.exitPositionHistorical(state, client, exitPrice, 'TARGET', currentCandle.date);
               optionCandles = []; optionCandleSymbol = '';
               continue;
@@ -579,11 +583,13 @@ export class EmaVwapCrossoverEngine {
         const lastOptClose = (state.optionSymbol && optionCandles.length > 0)
           ? optionCandles[optionCandles.length - 1].close
           : lastCandle.close;
-        const pnl = (state.config.isOptionBuyingOnly || state.entryTriggered === 'LONG'
+        const isOptionTrade = !!(state.config.isOptionBuyingOnly && state.optionSymbol);
+        const isLong = isOptionTrade || state.entryTriggered === 'LONG';
+        const pnl = (isLong
           ? (lastOptClose - state.entryPrice!)
           : (state.entryPrice! - lastOptClose)) * state.config.qty;
         const lastCandleTime = this.formatTime(lastCandle.date);
-        this.log(state, `📊 (Catch-up) Position remains OPEN | Last candle: ${lastCandleTime} | Symbol: ${state.optionSymbol || state.config.symbol} | Entry: ₹${state.entryPrice?.toFixed(2)} | Target: ₹${state.targetPrice?.toFixed(2)} | SL: ₹${state.stopLossPrice?.toFixed(2)} | Close Price: ₹${lastOptClose.toFixed(2)} | P&L: ₹${pnl.toFixed(2)}. Live monitoring will take over.`);
+        this.log(state, `📊 (Catch-up) Position remains OPEN | Last candle: ${lastCandleTime} | Symbol: ${state.optionSymbol || state.activeSymbol || state.config.symbol} | Entry: ₹${state.entryPrice?.toFixed(2)} | Target: ₹${state.targetPrice?.toFixed(2)} | SL: ₹${state.stopLossPrice?.toFixed(2)} | Close Price: ₹${lastOptClose.toFixed(2)} | P&L: ₹${pnl.toFixed(2)}. Live monitoring will take over.`);
       }
       if (!state.entryTriggered) this.log(state, `✅ Catch-up complete. No past signals found.`);
 
@@ -648,6 +654,17 @@ export class EmaVwapCrossoverEngine {
 
     // ── Phase 3: Monitor Active Position ─────────────────────────────────────
     if (state.entryTriggered) {
+      try {
+        const candleSymbol = state.activeSymbol || config.symbol;
+        const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
+        const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
+        const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
+        if (cCandles && cCandles.length >= (config.emaPeriod || 15) + 2) {
+          const cEmas = this.calculateEMA(cCandles, config.emaPeriod || 15);
+          state.lastEma = cEmas[cCandles.length - 1];
+        }
+      } catch (e) { }
+
       await this.monitorPosition(state, client, kite);
       await this.persistLogs(state);
       return;
@@ -877,11 +894,13 @@ export class EmaVwapCrossoverEngine {
     let symbol = state.activeSymbol || config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
     const product = (config as any).product ?? 'MIS';
     let optionMotherLow: number | null = null;
+    let isOption = false;
 
     if (config.isOptionBuyingOnly) {
       const type = side === 'BUY' ? 'CE' : 'PE';
       const optSym = await this.findOptionSymbol(client, state, triggerPrice, type, triggerTime);
       if (optSym) {
+        isOption = true;
         symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
         if (triggerTime && motherTime) {
           try {
@@ -915,7 +934,7 @@ export class EmaVwapCrossoverEngine {
     let sl: number;
     let tgt: number;
 
-    if (config.isOptionBuyingOnly && state.optionSymbol) {
+    if (isOption) {
       sl = optionMotherLow !== null ? this.roundTick(optionMotherLow) : this.roundTick(entry - (config.stopLossRs / config.qty));
       const optionRisk = Math.max(0.50, Math.abs(entry - sl));
       tgt = this.roundTick(entry + optionRisk * 1.5);
@@ -963,12 +982,16 @@ export class EmaVwapCrossoverEngine {
       if (!state.isPaperTrade && !isHistorical) {
         slOrderId = await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'SL', price: sl, triggerPrice: sl })
           .catch((e: any) => { this.log(state, `❌ SL Failed: ${e.message}`); return null; });
-        targetOrderId = await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt })
-          .catch((e: any) => { this.log(state, `❌ Target Failed: ${e.message}`); return null; });
+        if (config.enableProfitFloor === false) {
+          targetOrderId = await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: exitSide, orderType: 'LIMIT', price: tgt })
+            .catch((e: any) => { this.log(state, `❌ Target Failed: ${e.message}`); return null; });
+        } else {
+          this.log(state, `💡 Trend Trailing Mode active — SL placed at broker, Target 1 (₹${tgt.toFixed(2)}) will activate dynamic 15-EMA Trailing SL to ride full trend.`);
+        }
       }
 
       state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
-      state.optionSymbol = symbol;
+      state.optionSymbol = isOption ? symbol : null;
       state.entryPrice = entry;
       state.stopLossPrice = sl;
       state.targetPrice = tgt;
@@ -990,10 +1013,10 @@ export class EmaVwapCrossoverEngine {
   // ── Real-Time WebSocket Position Monitoring ────────────────────────────────
 
   private async startRealtimeMonitor(state: StrategyState, client: any) {
-    if (!state.optionSymbol || !state.entryTriggered) return;
+    if (!state.entryTriggered) return;
 
-    const symbol = state.optionSymbol;
-    const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : state.config.exchange;
+    const symbol = state.optionSymbol || state.activeSymbol || state.config.symbol;
+    const exchange = state.optionSymbol ? 'NFO' : (state.futureSymbol ? state.futureExchange : state.config.exchange);
     const kite = client['kite'];
 
     // Dynamically subscribe the traded symbol to the WebSocket
@@ -1015,7 +1038,8 @@ export class EmaVwapCrossoverEngine {
       if (!currentPrice || !state.entryTriggered || isExiting) return;
 
       const now = Date.now();
-      const isLong = state.entryTriggered === 'LONG' || state.config.isOptionBuyingOnly;
+      const isOptionTrade = !!(state.config.isOptionBuyingOnly && state.optionSymbol);
+      const isLong = isOptionTrade || state.entryTriggered === 'LONG';
       const pnlPoints = isLong ? (currentPrice - state.entryPrice!) : (state.entryPrice! - currentPrice);
       const pnlRs = pnlPoints * state.config.qty;
 
@@ -1033,12 +1057,19 @@ export class EmaVwapCrossoverEngine {
 
       // ── EMA(15) Line Trailing Check (Live Real-time Ticks) ───────────────────
       const targetThresholdRs = state.config.targetRs || 500;
-      if (pnlRs >= targetThresholdRs && !state.isTrailingEma) {
+      const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
+      const isTrailingEnabled = state.config.enableProfitFloor !== false;
+
+      if ((pnlRs >= targetThresholdRs || isTarget1Reached) && !state.isTrailingEma && isTrailingEnabled) {
         state.isTrailingEma = true;
-        this.log(state, `📈 [RT] Target 1 reached (P&L: ₹${pnlRs.toFixed(2)})! Activated EMA(15) Line Trailing SL — riding trend...`);
+        this.log(state, `📈 [RT] Target 1 reached (Target: ₹${state.targetPrice?.toFixed(2)}, P&L: ₹${pnlRs.toFixed(2)})! Activated EMA(15) Line Trailing SL — riding trend...`);
+        if (state.targetOrderId) {
+          await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          state.targetOrderId = null;
+        }
       }
 
-      if (state.isTrailingEma && state.lastEma && !state.config.isOptionBuyingOnly) {
+      if (state.isTrailingEma && state.lastEma && !isOptionTrade) {
         state.stopLossPrice = state.lastEma;
         const isCrossedEma = isLong ? (currentPrice < state.lastEma) : (currentPrice > state.lastEma);
         if (isCrossedEma) {
@@ -1055,9 +1086,8 @@ export class EmaVwapCrossoverEngine {
       // ── Check SL / Target ──────────────────────────────────────────────
       if (state.isPaperTrade) {
         const isHitSL = isLong ? (currentPrice <= state.stopLossPrice!) : (currentPrice >= state.stopLossPrice!);
-        const isHitTarget = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
 
-        if (isHitSL) {
+        if (!state.isTrailingEma && isHitSL) {
           if (isExiting) return;
           isExiting = true;
           this.log(state, `🛑 [RT] Stop Loss Hit at ₹${currentPrice.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)}`);
@@ -1066,10 +1096,10 @@ export class EmaVwapCrossoverEngine {
           await this.persistLogs(state);
           return;
         }
-        if (isHitTarget) {
+        if (!isTrailingEnabled && isTarget1Reached) {
           if (isExiting) return;
           isExiting = true;
-          this.log(state, `🎯 [RT] Target Hit at ₹${currentPrice.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)}`);
+          this.log(state, `🎯 [RT] Fixed Target Hit at ₹${currentPrice.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)}`);
           this.stopRealtimeMonitor(state);
           await this.exitPosition(state, client, currentPrice, 'TARGET');
           await this.persistLogs(state);
@@ -1151,11 +1181,14 @@ export class EmaVwapCrossoverEngine {
   // ── Fallback: Poll-based monitor (runs every 60s as safety net) ──────────
 
   private async monitorPosition(state: StrategyState, client: any, kite: any) {
-    if (!state.optionSymbol) return;
+    if (!state.entryTriggered) return;
+
+    const symbol = state.optionSymbol || state.activeSymbol || state.config.symbol;
+    const exchange = state.optionSymbol ? 'NFO' : (state.futureSymbol ? state.futureExchange : state.config.exchange);
 
     // If WebSocket real-time monitor is active, just log a heartbeat
     if (state.realtimeActive) {
-      this.log(state, `💓 Heartbeat — WebSocket monitoring active for ${state.optionSymbol}`);
+      this.log(state, `💓 Heartbeat — WebSocket monitoring active for ${symbol}`);
       return;
     }
 
@@ -1164,14 +1197,13 @@ export class EmaVwapCrossoverEngine {
 
     try {
       if (state.isPaperTrade) {
-        const symbol = state.optionSymbol;
-        const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : state.config.exchange;
         const key = `${exchange}:${symbol}`;
         const ltpData = await kite.getLTP([key]);
         const currentPrice = ltpData[key]?.last_price;
         if (!currentPrice) return;
 
-        const isLong = state.entryTriggered === 'LONG' || state.config.isOptionBuyingOnly;
+        const isOptionTrade = !!(state.config.isOptionBuyingOnly && state.optionSymbol);
+        const isLong = isOptionTrade || state.entryTriggered === 'LONG';
         const pnlPoints = isLong ? (currentPrice - state.entryPrice!) : (state.entryPrice! - currentPrice);
         const pnlRs = pnlPoints * state.config.qty;
 
@@ -1183,17 +1215,36 @@ export class EmaVwapCrossoverEngine {
           return;
         }
 
-        this.log(state, `👀 Price ${symbol}: ₹${currentPrice.toFixed(2)} | Target: ₹${state.targetPrice!.toFixed(2)} | SL: ₹${state.stopLossPrice!.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)}`);
+        const targetThresholdRs = state.config.targetRs || 500;
+        const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
+        const isTrailingEnabled = state.config.enableProfitFloor !== false;
 
-        const isHitSL = isLong ? (currentPrice <= state.stopLossPrice!) : (currentPrice >= state.stopLossPrice!);
-        const isHitTarget = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
+        if ((pnlRs >= targetThresholdRs || isTarget1Reached) && !state.isTrailingEma && isTrailingEnabled) {
+          state.isTrailingEma = true;
+          this.log(state, `📈 Target 1 reached (Target: ₹${state.targetPrice?.toFixed(2)}, P&L: ₹${pnlRs.toFixed(2)})! Activated EMA(15) Line Trailing SL — riding trend...`);
+        }
 
-        if (isHitSL) {
-          this.log(state, `🛑 Stop Loss Hit at ₹${currentPrice.toFixed(2)}`);
-          await this.exitPosition(state, client, currentPrice, 'SL');
-        } else if (isHitTarget) {
-          this.log(state, `🎯 Target Hit at ₹${currentPrice.toFixed(2)}`);
-          await this.exitPosition(state, client, currentPrice, 'TARGET');
+        this.log(state, `👀 Price ${symbol}: ₹${currentPrice.toFixed(2)} | Target: ₹${state.targetPrice!.toFixed(2)} | SL: ₹${state.stopLossPrice!.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)}${state.isTrailingEma ? ' (EMA Trailing Active)' : ''}`);
+
+        if (state.isTrailingEma && state.lastEma && !isOptionTrade) {
+          state.stopLossPrice = state.lastEma;
+          const isCrossedEma = isLong ? (currentPrice < state.lastEma) : (currentPrice > state.lastEma);
+          if (isCrossedEma) {
+            this.log(state, `📈 Price crossed EMA(15) line @ ₹${currentPrice.toFixed(2)} (EMA: ₹${state.lastEma.toFixed(2)}) | Realized P&L: ₹${pnlRs.toFixed(2)}`);
+            await this.exitPosition(state, client, currentPrice, 'TARGET');
+            return;
+          }
+        } else {
+          const isHitSL = isLong ? (currentPrice <= state.stopLossPrice!) : (currentPrice >= state.stopLossPrice!);
+          if (isHitSL) {
+            this.log(state, `🛑 Stop Loss Hit at ₹${currentPrice.toFixed(2)}`);
+            await this.exitPosition(state, client, currentPrice, 'SL');
+            return;
+          } else if (!isTrailingEnabled && isTarget1Reached) {
+            this.log(state, `🎯 Fixed Target Hit at ₹${currentPrice.toFixed(2)}`);
+            await this.exitPosition(state, client, currentPrice, 'TARGET');
+            return;
+          }
         }
       } else {
         const orders = await kite.getOrders();
@@ -1219,8 +1270,6 @@ export class EmaVwapCrossoverEngine {
           if (state.targetOrderId) {
             await client.cancelOrder(state.targetOrderId).catch(() => { });
           }
-          const symbol = state.optionSymbol;
-          const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : state.config.exchange;
           const key = `${exchange}:${symbol}`;
           const ltpData = await kite.getLTP([key]);
           const currentPrice = ltpData[key]?.last_price || state.stopLossPrice!;
@@ -1230,8 +1279,6 @@ export class EmaVwapCrossoverEngine {
           if (state.slOrderId) {
             await client.cancelOrder(state.slOrderId).catch(() => { });
           }
-          const symbol = state.optionSymbol;
-          const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : state.config.exchange;
           const key = `${exchange}:${symbol}`;
           const ltpData = await kite.getLTP([key]);
           const currentPrice = ltpData[key]?.last_price || state.targetPrice!;
@@ -1246,7 +1293,7 @@ export class EmaVwapCrossoverEngine {
   private async exitPosition(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE') {
     const { config } = state;
     const symbol = state.optionSymbol || state.activeSymbol || config.symbol;
-    const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : config.exchange;
+    const exchange = state.optionSymbol ? 'NFO' : (state.futureSymbol ? state.futureExchange : config.exchange);
     const exitSide = (config.isOptionBuyingOnly && state.optionSymbol) ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
     const qty = config.qty;
 
@@ -1302,7 +1349,7 @@ export class EmaVwapCrossoverEngine {
   private async exitPositionHistorical(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET', timestamp: Date) {
     const { config } = state;
     const symbol = state.optionSymbol || state.activeSymbol || config.symbol;
-    const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : config.exchange;
+    const exchange = state.optionSymbol ? 'NFO' : (state.futureSymbol ? state.futureExchange : config.exchange);
     const exitSide = (config.isOptionBuyingOnly && state.optionSymbol) ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
     const qty = config.qty;
 

@@ -8,7 +8,7 @@ import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 
 @Injectable()
 export class StrategyService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async list(userId: string) {
     const strategies = await this.prisma.strategy.findMany({
@@ -63,8 +63,8 @@ export class StrategyService {
 
     const performance = this.calculatePerformance(strategy.executions, strategy.type);
 
-    return { 
-      ...strategy, 
+    return {
+      ...strategy,
       config: this.parseConfig(strategy.config),
       performance
     };
@@ -280,7 +280,7 @@ export class StrategyService {
             qty: parseInt(entryMatch[3])
           };
         }
-        
+
         const exitMatch = line.match(/Exiting\s+Position\s+—\s+Reason:\s+(\w+)\s+\|\s+Price:\s+₹([\d.]+)\s+\|\s+P&L:\s*([+-]?)\s*₹?\s*([\d.]+)/i);
         if (exitMatch && openTrade) {
           const sign = exitMatch[3] === '-' ? -1 : 1;
@@ -301,25 +301,23 @@ export class StrategyService {
       }
 
       if (strategyType === 'BREAKOUT_15MIN') {
-        // Implementation for BREAKOUT_15MIN
-      }
-
-      if (strategyType === 'EMA_VWAP_CROSSOVER' || strategyType === 'NIFTY_OPTIONS_SCALPER') {
-        const entryMatch = line.match(/Placed\s+Option\s+Trade:\s+(\S+)\s+—\s+Entry:\s+₹([\d.]+)/i);
+        const entryMatch = line.match(/Placing\s+(?:🚀\s+BREAKOUT|⚡\s+REVERSAL)?:\s+(\S+)\s+—\s+Entry:\s+₹([\d.]+)/i);
         if (entryMatch) {
+          const isShort = line.toLowerCase().includes('short') || line.toLowerCase().includes('sell');
           openTrade = {
-            side: 'BUY',
+            side: isShort ? 'SELL' : 'BUY',
             symbol: entryMatch[1],
             entryPrice: parseFloat(entryMatch[2]),
-            qty: 65
+            qty: 1
           };
         }
 
-        const exitMatch = line.match(/(Target|Stop Loss)\s+Hit\s+.*@\s+₹([\d.]+)/i);
+        const exitMatch = line.match(/(?:PAPER\s+TARGET\s+HIT|Target\s+Hit|PAPER\s+SL\s+HIT|Stop\s+Loss\s+Hit|Paper\s+trade\s+closed).*?(?:at|@)\s+₹([\d.]+)/i);
         if (exitMatch && openTrade) {
-          const exitPrice = parseFloat(exitMatch[2]);
-          const pnlPoints = exitPrice - openTrade.entryPrice;
+          const exitPrice = parseFloat(exitMatch[1]);
+          const pnlPoints = openTrade.side === 'BUY' ? (exitPrice - openTrade.entryPrice) : (openTrade.entryPrice - exitPrice);
           const pnl = pnlPoints * openTrade.qty;
+          const isTarget = line.toLowerCase().includes('target');
           trades.push({
             symbol: openTrade.symbol,
             entryPrice: openTrade.entryPrice,
@@ -328,14 +326,64 @@ export class StrategyService {
             side: openTrade.side,
             pnl,
             isWin: pnl > 0,
-            reason: exitMatch[1],
+            reason: isTarget ? 'TARGET' : 'SL',
+            source: 'log'
+          });
+          openTrade = null;
+        }
+      }
+
+      if (strategyType === 'EMA_VWAP_CROSSOVER' || strategyType === 'NIFTY_OPTIONS_SCALPER') {
+        const optionEntryMatch = line.match(/Placed\s+Option\s+Trade:\s+(\S+)\s+—\s+Entry:\s+₹([\d.]+)/i);
+        const equityEntryMatch = line.match(/Placing:\s+(\S+)\s+—\s+Qty:\s+(\d+)\s+\|\s+Entry:\s+₹([\d.]+)/i);
+        const trendMatch = line.match(/(?:Found past|Detected|Triggered!)\s+(LONG|SHORT)/i) || line.match(/Trend:\s*(LONG|SHORT)/i);
+
+        if (optionEntryMatch) {
+          openTrade = {
+            side: 'BUY',
+            symbol: optionEntryMatch[1],
+            entryPrice: parseFloat(optionEntryMatch[2]),
+            qty: 65
+          };
+        } else if (equityEntryMatch) {
+          openTrade = {
+            side: trendMatch && trendMatch[1].toUpperCase() === 'SHORT' ? 'SELL' : 'BUY',
+            symbol: equityEntryMatch[1],
+            qty: parseInt(equityEntryMatch[2]),
+            entryPrice: parseFloat(equityEntryMatch[3]),
+          };
+        }
+
+        const exitMatch = line.match(/(?:Target Hit|Stop Loss Hit|Candle closed across EMA|Paper trade closed|Auto-squaring off position|Price crossed EMA).*?(?:at|@)\s+₹([\d.]+)/i);
+        const pnlExplicitMatch = line.match(/(?:Final P&L|Final Realized P&L|Realized P&L|P&L):\s*₹?([+-]?[\d.]+)/i);
+
+        if (exitMatch && openTrade) {
+          const exitPrice = parseFloat(exitMatch[1]);
+          let pnl = 0;
+          if (pnlExplicitMatch) {
+            pnl = parseFloat(pnlExplicitMatch[1]);
+          } else {
+            const pnlPoints = openTrade.side === 'BUY' ? (exitPrice - openTrade.entryPrice) : (openTrade.entryPrice - exitPrice);
+            pnl = pnlPoints * openTrade.qty;
+          }
+
+          const isTarget = line.toLowerCase().includes('target') || line.toLowerCase().includes('realized');
+          trades.push({
+            symbol: openTrade.symbol,
+            entryPrice: openTrade.entryPrice,
+            exitPrice,
+            qty: openTrade.qty,
+            side: openTrade.side,
+            pnl,
+            isWin: pnl > 0,
+            reason: isTarget ? 'TARGET' : 'SL',
             source: 'log'
           });
           openTrade = null;
         }
       }
     }
-    
+
     return trades;
   }
 }
