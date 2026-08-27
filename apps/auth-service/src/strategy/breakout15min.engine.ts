@@ -4,6 +4,7 @@ import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { Breakout15MinConfig } from './dto/strategy.dto';
 import { autoSelectStock } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
+import { TickerService } from '../market/ticker.service';
 
 interface Candle {
   date: Date;
@@ -55,6 +56,13 @@ interface StrategyState {
   currentPnlRs?: number;
   currentPnlPct?: number;
   peakPnlRs?: number;
+
+  // Real-Time WebSocket & Ticker Tracking State
+  realtimeActive?: boolean;
+  lastTickTime?: number;
+  lastPnlLogTime?: number;
+  lastEmitTime?: number;
+  tickerUnsubscribe?: () => void;
 }
 
 @Injectable()
@@ -64,8 +72,9 @@ export class Breakout15MinEngine {
   private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor(
-    private prisma: PrismaService,
-    private factory: BrokerClientFactory,
+    private readonly prisma: PrismaService,
+    private readonly factory: BrokerClientFactory,
+    private readonly tickerService: TickerService,
   ) { }
 
   async start(strategyId: string): Promise<{ executionId: string }> {
@@ -133,6 +142,7 @@ export class Breakout15MinEngine {
   async stop(strategyId: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
+      this.stopRealtimeMonitor(state);
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
@@ -161,6 +171,7 @@ export class Breakout15MinEngine {
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
+      this.stopRealtimeMonitor(state);
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
@@ -226,14 +237,14 @@ export class Breakout15MinEngine {
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
     const client = account?.accessToken ? this.factory.createClient(account) : null;
     const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
-    const exchange = state.optionSymbol ? 'NFO' : (state.futureExchange || state.config.exchange);
+    const exchange = state.optionSymbol ? (symbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
 
     let exitPrice = state.currentLtp || state.entryPrice || 0;
     if (client && !state.isPaperTrade) {
       try {
         const ltpData = await client['kite'].getLTP([`${exchange}:${symbol}`]);
         exitPrice = ltpData[`${exchange}:${symbol}`]?.last_price || exitPrice;
-      } catch {}
+      } catch { }
       await this.cancelBrokerOrderSafe(client, state.slOrderId);
       await this.cancelBrokerOrderSafe(client, state.targetOrderId);
       const exitSide = (state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY'));
@@ -248,10 +259,15 @@ export class Breakout15MinEngine {
     }
 
     this.log(state, `⚡ Manual Instant Square-Off requested by user @ ₹${exitPrice.toFixed(2)}`);
-    state.entryTriggered = null;
-    state.entryFilled = false;
-    state.slOrderId = null;
-    state.targetOrderId = null;
+    if (state.isPaperTrade) {
+      await this.closePaperTrade(state, 'MANUAL_SQUARE_OFF', exitPrice);
+    } else {
+      state.entryTriggered = null;
+      state.entryFilled = false;
+      state.slOrderId = null;
+      state.targetOrderId = null;
+      this.stopRealtimeMonitor(state);
+    }
     await this.persistLogs(state);
     return { success: true, message: `Position squared off at ₹${exitPrice.toFixed(2)}` };
   }
@@ -278,9 +294,14 @@ export class Breakout15MinEngine {
     const kite = client['kite'];
 
     try {
+      const todayStr = this.getIstDateStr(now);
+
       // 1. Resolve Tradable Asset
       if (!state.futureSymbol) {
-        if (state.config.instrumentType === 'INDEX' || state.config.symbol.toUpperCase().includes('NIFTY')) {
+        const upper = state.config.symbol.toUpperCase().trim();
+        const clean = upper.replace(/:NSE|:BSE|:NFO|:BFO/g, '').trim();
+        const isIndex = (state.config.instrumentType as string) === 'INDEX' || (state.config.instrumentType as string) === 'OPTION' || clean.includes('NIFTY') || clean.includes('SENSEX') || clean.includes('BANKNIFTY') || clean.includes('FINNIFTY') || clean.includes('MIDCPNIFTY');
+        if (isIndex) {
           const res = await this.findFutureSymbol(client, state.config.symbol);
           state.futureSymbol = res.symbol;
           state.futureExchange = res.exchange;
@@ -296,19 +317,25 @@ export class Breakout15MinEngine {
         }
       }
 
-      // 2. Set Reference Range
+      // 2. Set Reference Range (Strictly first 15-minute candle OF TODAY)
       const candles15 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '15minute', now, state.futureExchange);
-      if (candles15.length === 0) return;
+      const today15Candles = candles15.filter(c => this.getIstDateStr(c.date) === todayStr);
+      if (today15Candles.length === 0) {
+        this.log(state, `⏳ No 15-minute candle formed yet today for ${state.futureSymbol}. Catch-up waiting for range.`);
+        await this.persistLogs(state);
+        return;
+      }
 
-      const ref = candles15[0];
+      const ref = today15Candles[0];
       state.refHigh = ref.high;
       state.refLow = ref.low;
       state.refCandleSet = true;
-      this.log(state, `📊 (Catch-up) Reference Range Set — H: ₹${ref.high} | L: ₹${ref.low}`);
+      this.log(state, `📊 (Catch-up) Reference Range Set — H: ₹${ref.high} | L: ₹${ref.low} (Range: ₹${(ref.high - ref.low).toFixed(2)})`);
 
-      // 3. Scan 5-min candles for breakout
+      // 3. Scan 5-min candles for breakout (STRICTLY FROM TODAY after 9:30 AM)
       const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
-      const breakoutCandidates = candles5.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
+      const today5Candles = candles5.filter(c => this.getIstDateStr(c.date) === todayStr);
+      const breakoutCandidates = today5Candles.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
 
       const atrs = this.calculateATR(candles5, state.config.atrPeriod ?? 14);
       const currentAtr = atrs[atrs.length - 1] || Math.max(1, (state.refHigh - state.refLow) * 0.5);
@@ -323,6 +350,11 @@ export class Breakout15MinEngine {
       let optionCandleSymbol = '';
 
       for (let k = 0; k < breakoutCandidates.length; k++) {
+        if (state.tradesPlacedToday >= state.config.maxTradesPerDay) {
+          this.log(state, `⛔ (Catch-up) Max daily trade cap (${state.config.maxTradesPerDay}) reached.`);
+          break;
+        }
+
         const currentCandle = breakoutCandidates[k];
         const candleIdxInFull = candles5.findIndex(c => c.date.getTime() === new Date(currentCandle.date).getTime());
 
@@ -335,7 +367,7 @@ export class Breakout15MinEngine {
 
           if (state.optionSymbol) {
             if (optionCandleSymbol !== state.optionSymbol) {
-              const exchange = state.optionSymbol.includes('-') || state.optionSymbol.startsWith('NIFTY') || state.optionSymbol.startsWith('BANKNIFTY') ? 'NFO' : state.futureExchange;
+              const exchange = state.optionSymbol.includes('-') || state.optionSymbol.startsWith('NIFTY') || state.optionSymbol.startsWith('BANKNIFTY') || state.optionSymbol.startsWith('FINNIFTY') || state.optionSymbol.startsWith('MIDCPNIFTY') || state.optionSymbol.startsWith('SENSEX') ? (state.optionSymbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : state.futureExchange;
               const rawData = await client.getHistoricalData(state.optionSymbol, exchange, '5minute', new Date(state.setupTimestamp || currentCandle.date), now);
               optionCandles = (rawData || []).map((c: any) => ({
                 date: new Date(c.date),
@@ -416,6 +448,17 @@ export class Breakout15MinEngine {
               optionCandleSymbol = '';
               continue;
             }
+
+            // 3:05 PM Intraday EOD Cutoff in Catch-up
+            const candleHhmm = this.getIstHhmm(new Date(currentCandle.date));
+            if (candleHhmm >= 15 * 60 + 5) {
+              const exitPrice = currentOptionPriceClose || currentCandle.close;
+              this.log(state, `⏰ (Catch-up) 3:05 PM EOD Cutoff reached on ${this.formatTime(new Date(currentCandle.date))}! Auto-squaring off position at ₹${exitPrice.toFixed(2)}`);
+              await this.closePaperTradeHistorical(state, 'EOD_CUTOFF_3_05_PM', exitPrice, new Date(currentCandle.date));
+              optionCandles = [];
+              optionCandleSymbol = '';
+              continue;
+            }
           }
           continue;
         }
@@ -446,30 +489,30 @@ export class Breakout15MinEngine {
         const curEma9 = candleIdxInFull >= 0 ? ema9[candleIdxInFull] : null;
         const curEma21 = candleIdxInFull >= 0 ? ema21[candleIdxInFull] : null;
 
-        if (currentCandle.close > (state.refHigh + buffer)) {
+        if (currentCandle.close > (state.refHigh! + buffer)) {
           const isVwapOk = state.config.enableVwapFilter === false || !curVwap || currentCandle.close >= curVwap;
           const isEmaOk = !curEma9 || !curEma21 || curEma9 >= curEma21;
 
           if (isVwapOk && isEmaOk) {
-            this.log(state, `🚀 (Catch-up) Dynamic BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${(state.refHigh + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
+            this.log(state, `🚀 (Catch-up) Dynamic BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${(state.refHigh! + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
             await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
           }
-        } else if (currentCandle.close < (state.refLow - buffer)) {
+        } else if (currentCandle.close < (state.refLow! - buffer)) {
           const isVwapOk = state.config.enableVwapFilter === false || !curVwap || currentCandle.close <= curVwap;
           const isEmaOk = !curEma9 || !curEma21 || curEma9 <= curEma21;
 
           if (isVwapOk && isEmaOk) {
-            this.log(state, `🚀 (Catch-up) Dynamic BREAKDOWN! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${(state.refLow - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
+            this.log(state, `🚀 (Catch-up) Dynamic BREAKDOWN! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${(state.refLow! - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
             await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
           }
         }
       }
 
       if (!state.entryTriggered) {
-        this.log(state, `✅ Catch-up complete. No past breakouts found today.`);
+        this.log(state, `✅ Catch-up complete. No active breakout position at this time.`);
       }
       await this.persistLogs(state);
-    } catch (err) {
+    } catch (err: any) {
       this.log(state, `⚠ Catch-up failed: ${err.message}`);
       await this.persistLogs(state);
     }
@@ -484,8 +527,6 @@ export class Breakout15MinEngine {
       this.logger.debug?.(`Cancel order ${orderId} notice: ${err?.message || err}`);
     }
   }
-
-
 
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
@@ -505,15 +546,19 @@ export class Breakout15MinEngine {
     const client = this.factory.createClient(account);
     const kite = client['kite'];
     const { config } = state;
+    const todayStr = this.getIstDateStr(now);
 
     if (!state.futureSymbol) {
-      if (state.config.instrumentType === 'INDEX' || state.config.symbol.toUpperCase().includes('NIFTY')) {
+      const upper = config.symbol.toUpperCase().trim();
+      const clean = upper.replace(/:NSE|:BSE|:NFO|:BFO/g, '').trim();
+      const isIndex = (config.instrumentType as string) === 'INDEX' || (config.instrumentType as string) === 'OPTION' || clean.includes('NIFTY') || clean.includes('SENSEX') || clean.includes('BANKNIFTY') || clean.includes('FINNIFTY') || clean.includes('MIDCPNIFTY');
+      if (isIndex) {
         try {
           const res = await this.findFutureSymbol(client, config.symbol);
           state.futureSymbol = res.symbol;
           state.futureExchange = res.exchange;
           this.log(state, `🔎 Resolved Future: ${state.futureExchange}:${state.futureSymbol}`);
-        } catch (err) {
+        } catch (err: any) {
           this.log(state, `❌ Resolve Error: ${err.message}`);
           await this.persistLogs(state);
           return;
@@ -525,7 +570,7 @@ export class Breakout15MinEngine {
           state.futureExchange = pick.exchange;
           state.config.qty = pick.qty;
           this.log(state, `🎯 Auto-Selected Stock: ${state.futureExchange}:${state.futureSymbol} - Qty: ${state.config.qty}`);
-        } catch (err) {
+        } catch (err: any) {
           this.log(state, `❌ Auto-Select Error: ${err.message}`);
           await this.persistLogs(state);
           return;
@@ -545,14 +590,15 @@ export class Breakout15MinEngine {
       }
       try {
         const candles15 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '15minute', now, state.futureExchange);
-        if (candles15.length > 0) {
-          const ref = candles15[0];
+        const today15Candles = candles15.filter(c => this.getIstDateStr(c.date) === todayStr);
+        if (today15Candles.length > 0) {
+          const ref = today15Candles[0];
           state.refHigh = ref.high;
           state.refLow = ref.low;
           state.refCandleSet = true;
           this.log(state, `📊 FUTURE Range Set — H: ₹${ref.high} | L: ₹${ref.low} (Range: ₹${(ref.high - ref.low).toFixed(2)})`);
         }
-      } catch (err) {
+      } catch (err: any) {
         this.log(state, `❌ 15-min error: ${err.message}`);
         await this.persistLogs(state);
         return;
@@ -564,14 +610,14 @@ export class Breakout15MinEngine {
       if (state.entryTriggered) {
         this.log(state, `⏰ 3:05 PM Intraday EOD cutoff reached! Auto-squaring off position.`);
         if (state.isPaperTrade) {
-          const quotes = await kite.getLTP([`${state.futureExchange}:${state.futureSymbol}`]).catch(() => ({}));
-          const ltp = quotes[`${state.futureExchange}:${state.futureSymbol}`]?.last_price || state.entryPrice || 0;
-          await this.closePaperTrade(state, 'CAS_CUTOFF_3_10_PM', ltp);
+          const quotes = await kite.getLTP([`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]).catch(() => ({}));
+          const ltp = quotes[`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]?.last_price || state.entryPrice || 0;
+          await this.closePaperTrade(state, 'CAS_CUTOFF_3_05_PM', ltp);
         } else {
           await this.cancelBrokerOrderSafe(client, state.slOrderId);
           await this.cancelBrokerOrderSafe(client, state.targetOrderId);
           const exitSymbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
-          const exitExchange = state.optionSymbol ? 'NFO' : (state.futureExchange || state.config.exchange);
+          const exitExchange = state.optionSymbol ? (exitSymbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
           const exitSide = state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
           await client.placeOrder({
             symbol: exitSymbol,
@@ -585,13 +631,14 @@ export class Breakout15MinEngine {
           state.entryFilled = false;
           state.slOrderId = null;
           state.targetOrderId = null;
+          this.stopRealtimeMonitor(state);
         }
       }
       await this.persistLogs(state);
       return;
     }
 
-    // ─── Paper/Real Trade Monitoring (runs every tick while a trade is open) ────
+    // ─── Paper/Real Trade Monitoring (safety polling loop) ────
     if (state.entryTriggered) {
       try {
         if (state.isPaperTrade) {
@@ -599,7 +646,7 @@ export class Breakout15MinEngine {
         } else {
           await this.monitorRealTrade(state, client);
         }
-      } catch (err) { this.log(state, `❌ Monitor error: ${err.message}`); }
+      } catch (err: any) { this.log(state, `❌ Monitor error: ${err.message}`); }
       await this.persistLogs(state);
       return;
     }
@@ -619,7 +666,8 @@ export class Breakout15MinEngine {
       if (!currentPrice) { await this.persistLogs(state); return; }
 
       const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
-      const breakoutCandidates = candles5.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
+      const today5Candles = candles5.filter(c => this.getIstDateStr(c.date) === todayStr);
+      const breakoutCandidates = today5Candles.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
       if (breakoutCandidates.length === 0) { await this.persistLogs(state); return; }
 
       const lastCandle = breakoutCandidates[breakoutCandidates.length - 1];
@@ -709,9 +757,163 @@ export class Breakout15MinEngine {
           await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh);
         }
       }
-    } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
+    } catch (err: any) { this.log(state, `❌ Tick error: ${err.message}`); }
 
     await this.persistLogs(state);
+  }
+
+  // ─── Real-Time WebSocket Position Monitoring (Sub-Second Ticks) ────────────
+  private async startRealtimeMonitor(state: StrategyState, client: any) {
+    if (!state.entryTriggered) return;
+
+    const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
+    const exchange = state.optionSymbol ? (symbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
+
+    try {
+      await this.tickerService.subscribeSymbol(state.brokerAccountId, symbol);
+      this.log(state, `📡 Live tracking activated for ${exchange}:${symbol}`);
+    } catch (e: any) {
+      this.log(state, `⚠ WebSocket subscribe notice: ${e.message}. Polling active.`);
+    }
+
+    state.realtimeActive = true;
+    let isExiting = false;
+
+    const unsubscribe = this.tickerService.registerListener(async (ticks) => {
+      const currentPrice = ticks[symbol] || ticks[`${exchange}:${symbol}`] || ticks[`NFO:${symbol}`] || ticks[`NSE:${symbol}`] || ticks[`BFO:${symbol}`];
+      if (!currentPrice || !state.entryTriggered || isExiting) return;
+
+      const now = Date.now();
+      state.lastTickTime = now;
+      state.currentLtp = currentPrice;
+
+      const isOption = !!state.optionSymbol;
+      const isLong = isOption || state.entryTriggered === 'LONG';
+      const pnlPoints = isLong ? (currentPrice - state.entryPrice!) : (state.entryPrice! - currentPrice);
+      const pnlRs = pnlPoints * state.config.qty;
+      const pnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
+
+      state.currentPnlRs = pnlRs;
+      state.currentPnlPct = pnlPct;
+      state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
+
+      // ── 1. 3:05 PM Mandatory EOD Cutoff ──
+      const currentHhmm = this.getIstHhmm(new Date());
+      if (currentHhmm >= 15 * 60 + 5 && state.entryTriggered) {
+        if (isExiting) return;
+        isExiting = true;
+        this.log(state, `⏰ 3:05 PM Intraday EOD Cutoff reached! Auto-squaring off position (Current P&L: ₹${pnlRs.toFixed(2)})...`);
+        this.stopRealtimeMonitor(state);
+        await this.squareOff(state.strategyId);
+        await this.persistLogs(state);
+        return;
+      }
+
+      // ── 2. Breakeven Lock (+1R -> SL to Cost) ──
+      const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+      if (state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && pnlPoints >= breakevenPoints && state.entryPrice) {
+        state.stopLossPrice = state.entryPrice;
+        state.isBreakevenTrailed = true;
+        if (state.isPaperTrade) {
+          await this.prisma.order.updateMany({
+            where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
+            data: { price: state.entryPrice, triggerPrice: state.entryPrice }
+          });
+        } else if (client.modifyOrder && state.slOrderId && state.slOrderId !== 'FAILED') {
+          await client.modifyOrder(state.slOrderId, { price: state.entryPrice, triggerPrice: state.entryPrice }).catch((e: any) => {
+            this.log(state, `⚠ Live SL modify notice: ${e.message}`);
+          });
+          await this.prisma.order.updateMany({
+            where: { executionId: state.executionId, brokerOrderId: state.slOrderId! },
+            data: { price: state.entryPrice, triggerPrice: state.entryPrice }
+          });
+        }
+        this.log(state, `🛡 (Dynamic Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
+      }
+
+      // ── 3. Dynamic Trailing SL ──
+      if (state.config.enableTrailingSl !== false && state.isBreakevenTrailed) {
+        if (isLong) {
+          state.highestPriceReached = Math.max(state.highestPriceReached || currentPrice, currentPrice);
+          const trailDist = (state.initialRiskPoints ?? 5) * 0.8;
+          const newSl = this.roundTick(state.highestPriceReached - trailDist);
+          if (newSl > (state.stopLossPrice || 0)) {
+            state.stopLossPrice = newSl;
+            if (state.isPaperTrade) {
+              await this.prisma.order.updateMany({
+                where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
+                data: { price: newSl, triggerPrice: newSl }
+              });
+            }
+            this.log(state, `📈 (Dynamic Trailing) High ₹${state.highestPriceReached.toFixed(2)}. Trailed SL to ₹${newSl.toFixed(2)} to lock in gains.`);
+          }
+        }
+      }
+
+      // ── 4. Check SL & Target Hits for Paper Trade ──
+      if (state.isPaperTrade) {
+        const isHitSL = isLong ? (currentPrice <= (state.stopLossPrice || 0)) : (currentPrice >= (state.stopLossPrice || Infinity));
+        const isHitTarget = isLong ? (state.targetPrice && currentPrice >= state.targetPrice) : (state.targetPrice && currentPrice <= state.targetPrice);
+
+        if (isHitSL) {
+          if (isExiting) return;
+          isExiting = true;
+          this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${currentPrice.toFixed(2)} (Trigger: ₹${(state.stopLossPrice || 0).toFixed(2)}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
+          this.stopRealtimeMonitor(state);
+          await this.closePaperTrade(state, 'SL_HIT', currentPrice);
+          state.lastBreakoutAttempt = {
+            side: state.entryTriggered!,
+            timestamp: Date.now(),
+            failed: true,
+            breakoutPrice: state.entryPrice || 0
+          };
+          this.log(state, `⚠ Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
+          await this.persistLogs(state);
+          return;
+        }
+
+        if (isHitTarget) {
+          if (isExiting) return;
+          isExiting = true;
+          this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${currentPrice.toFixed(2)} (Target: ₹${state.targetPrice!.toFixed(2)}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
+          this.stopRealtimeMonitor(state);
+          await this.closePaperTrade(state, 'TARGET_HIT', currentPrice);
+          state.lastBreakoutAttempt = null;
+          await this.persistLogs(state);
+          return;
+        }
+      }
+
+      // ── Real-Time WebSocket State Broadcast (500ms throttle) ──
+      if (now - (state.lastEmitTime || 0) >= 500) {
+        state.lastEmitTime = now;
+        strategyEvents.emit('strategy.update', {
+          strategyId: state.strategyId,
+          logs: state.logs,
+          state: this.getState(state.strategyId),
+        });
+      }
+
+      // ── Throttled Live P&L Logging (every 15 seconds) ──
+      if (now - (state.lastPnlLogTime || 0) >= 15000) {
+        state.lastPnlLogTime = now;
+        const sign = pnlRs >= 0 ? '+' : '';
+        const pctSign = pnlPct >= 0 ? '+' : '';
+        this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | Entry: ₹${state.entryPrice!.toFixed(2)} | SL: ₹${state.stopLossPrice!.toFixed(2)} | Tgt: ₹${state.targetPrice!.toFixed(2)} | P&L: ${sign}₹${pnlRs.toFixed(2)} (${pctSign}${pnlPct.toFixed(2)}%) | Peak: +₹${(state.peakPnlRs || 0).toFixed(2)}`);
+        await this.persistLogs(state);
+      }
+    });
+
+    state.tickerUnsubscribe = unsubscribe;
+  }
+
+  private stopRealtimeMonitor(state: StrategyState) {
+    if (state.tickerUnsubscribe) {
+      state.tickerUnsubscribe();
+      state.tickerUnsubscribe = undefined;
+      state.realtimeActive = false;
+      this.log(state, `📡 Live tracking stopped`);
+    }
   }
 
   private async monitorPaperTrade(state: StrategyState, kite: any) {
@@ -729,8 +931,15 @@ export class Breakout15MinEngine {
       const ltp = quotes[`${exchange}:${symbol}`]?.last_price;
       if (!ltp) return;
 
+      state.currentLtp = ltp;
       const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
       const currentPnlPoints = isLong ? (ltp - state.entryPrice!) : (state.entryPrice! - ltp);
+      const pnlRs = currentPnlPoints * state.config.qty;
+      const pnlPct = state.entryPrice ? (currentPnlPoints / state.entryPrice) * 100 : 0;
+      state.currentPnlRs = pnlRs;
+      state.currentPnlPct = pnlPct;
+      state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
+
       const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
 
       // ─── Dynamic Breakeven Shield (+1R -> SL to Cost) ──────────────────────
@@ -766,7 +975,7 @@ export class Breakout15MinEngine {
           const hit = order.side === 'SELL' ? (ltp <= (state.stopLossPrice || order.triggerPrice!)) : (ltp >= (state.stopLossPrice || order.triggerPrice!));
           if (hit) {
             const exitP = state.stopLossPrice || order.triggerPrice!;
-            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp} (Trigger: ₹${exitP})`);
+            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp} (Trigger: ₹${exitP}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
             await this.closePaperTrade(state, 'SL_HIT', ltp);
 
             // Record failed breakout for Fakeout Reversal monitoring
@@ -782,14 +991,14 @@ export class Breakout15MinEngine {
         } else if (order.orderType === 'LIMIT' && order.brokerOrderId.includes('TARGET')) {
           const hit = order.side === 'SELL' ? (ltp >= order.price!) : (ltp <= order.price!);
           if (hit) {
-            this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp} (Target: ₹${order.price})`);
+            this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp} (Target: ₹${order.price}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
             await this.closePaperTrade(state, 'TARGET_HIT', ltp);
             state.lastBreakoutAttempt = null;
             break;
           }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error(`Paper monitor error: ${err.message}`);
     }
   }
@@ -814,7 +1023,7 @@ export class Breakout15MinEngine {
           const { config, executionId } = state;
           const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
           const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
-          const exchange = state.optionSymbol ? 'NFO' : (state.futureExchange || state.config.exchange);
+          const exchange = state.optionSymbol ? (symbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
           const exitSide = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
           const sl = state.stopLossPrice!;
           const tgt = state.targetPrice!;
@@ -836,6 +1045,7 @@ export class Breakout15MinEngine {
           });
           state.entryTriggered = null;
           state.entryOrderId = null;
+          this.stopRealtimeMonitor(state);
           return;
         }
       }
@@ -850,6 +1060,13 @@ export class Breakout15MinEngine {
           const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
           const currentPnlPoints = ltp ? (isLong ? (ltp - state.entryPrice) : (state.entryPrice - ltp)) : 0;
           const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+
+          if (ltp) {
+            state.currentLtp = ltp;
+            state.currentPnlRs = currentPnlPoints * state.config.qty;
+            state.currentPnlPct = state.entryPrice ? (currentPnlPoints / state.entryPrice) * 100 : 0;
+            state.peakPnlRs = Math.max(state.peakPnlRs || 0, state.currentPnlRs);
+          }
 
           if (ltp && currentPnlPoints >= breakevenPoints) {
             state.stopLossPrice = state.entryPrice;
@@ -895,6 +1112,7 @@ export class Breakout15MinEngine {
             state.entryFilled = false;
             state.slOrderId = null;
             state.targetOrderId = null;
+            this.stopRealtimeMonitor(state);
             this.log(state, `🏁 Trade cycle complete (SL exit).`);
             return;
           }
@@ -919,12 +1137,13 @@ export class Breakout15MinEngine {
             state.slOrderId = null;
             state.targetOrderId = null;
             state.lastBreakoutAttempt = null;
+            this.stopRealtimeMonitor(state);
             this.log(state, `🏁 Trade cycle complete (Target exit).`);
             return;
           }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error(`Real trade monitor error: ${err.message}`);
     }
   }
@@ -934,30 +1153,52 @@ export class Breakout15MinEngine {
       where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
       data: { status: 'COMPLETE', price }
     });
-    this.log(state, `🏁 Paper trade closed (${reason}) at ₹${price}`);
+    this.log(state, `🏁 Paper trade closed (${reason}) at ₹${price.toFixed(2)}`);
     state.entryTriggered = null;
     state.entryPrice = null;
     state.setupTimestamp = null;
     state.isBreakevenTrailed = false;
+    this.stopRealtimeMonitor(state);
+  }
+
+  private async closePaperTradeHistorical(state: StrategyState, reason: string, price: number, timestamp: Date) {
+    await this.prisma.order.updateMany({
+      where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
+      data: { status: 'COMPLETE', price }
+    });
+    this.log(state, `🏁 (Catch-up) Paper trade closed (${reason}) at ₹${price.toFixed(2)}`);
+    state.entryTriggered = null;
+    state.entryPrice = null;
+    state.setupTimestamp = null;
+    state.isBreakevenTrailed = false;
+    this.stopRealtimeMonitor(state);
   }
 
   private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
     const upperSymbol = baseSymbol.toUpperCase().trim();
-    const isSensex = upperSymbol === 'SENSEX' || upperSymbol === 'BSE SENSEX';
+    const cleanSymbol = upperSymbol.replace(/:NSE|:BSE|:NFO|:BFO/g, '').trim();
+    const isSensex = cleanSymbol.includes('SENSEX');
     const exchange = isSensex ? 'BFO' : 'NFO';
     const segment = isSensex ? 'BFO-FUT' : 'NFO-FUT';
-    let underlying = isSensex ? 'SENSEX' : upperSymbol.includes('BANK') ? 'BANKNIFTY' : (upperSymbol.includes('NIFTY 50') || upperSymbol === 'NIFTY') ? 'NIFTY' : upperSymbol.includes('FIN') ? 'FINNIFTY' : upperSymbol.includes('MID') ? 'MIDCPNIFTY' : upperSymbol;
+    let underlying = isSensex ? 'SENSEX' : cleanSymbol.includes('BANK') ? 'BANKNIFTY' : (cleanSymbol.includes('NIFTY 50') || cleanSymbol.includes('NIFTY') || cleanSymbol === 'NIFTY') ? 'NIFTY' : cleanSymbol.includes('FIN') ? 'FINNIFTY' : cleanSymbol.includes('MID') ? 'MIDCPNIFTY' : cleanSymbol;
 
     const instruments = await client.getInstruments(exchange);
     const futures = instruments.filter((i: any) => i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment);
     if (futures.length === 0) throw new Error(`No ${exchange} future for ${baseSymbol}`);
-    const sorted = futures.sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+    
+    const todayStr = this.getIstDateStr(new Date());
+    const validFutures = futures.filter((i: any) => {
+      const exp = this.getExpiryStr(i.expiry);
+      return exp !== '' && exp >= todayStr;
+    });
+    const targetFutures = validFutures.length > 0 ? validFutures : futures;
+    const sorted = targetFutures.sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
     return { symbol: sorted[0].tradingsymbol, exchange };
   }
 
   private async fetchCandlesForSymbol(client: any, symbol: string, interval: string, now: Date, exchange = 'NFO'): Promise<Candle[]> {
-    const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-    const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
+    const istDateStr = this.getIstDateStr(now);
+    const from = new Date(`${istDateStr}T09:15:00.000+05:30`);
     from.setDate(from.getDate() - 5);
     const data = await client.getHistoricalData(symbol, exchange, interval, from, now);
     return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
@@ -969,6 +1210,25 @@ export class Breakout15MinEngine {
     return istDate.getHours() * 60 + istDate.getMinutes();
   }
 
+  private getIstDateStr(date: Date): string {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
+
+  private getExpiryStr(expiry: any): string {
+    if (!expiry) return '';
+    if (typeof expiry === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(expiry)) {
+      return expiry;
+    }
+    const d = new Date(expiry);
+    if (isNaN(d.getTime())) return '';
+    return this.getIstDateStr(d);
+  }
+
   private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, refLow?: number, refHigh?: number) {
     const { config } = state;
     const kite = client['kite'];
@@ -977,7 +1237,9 @@ export class Breakout15MinEngine {
     const stopLow = refLow ?? state.refLow;
     const stopHigh = refHigh ?? state.refHigh;
 
-    const isIndex = config.instrumentType === 'INDEX' || config.symbol.toUpperCase().includes('NIFTY') || config.symbol.toUpperCase().includes('SENSEX');
+    const upper = config.symbol.toUpperCase().trim();
+    const clean = upper.replace(/:NSE|:BSE|:NFO|:BFO/g, '').trim();
+    const isIndex = (config.instrumentType as string) === 'INDEX' || (config.instrumentType as string) === 'OPTION' || clean.includes('NIFTY') || clean.includes('SENSEX') || clean.includes('BANKNIFTY') || clean.includes('FINNIFTY') || clean.includes('MIDCPNIFTY');
     const dynamicAtr = state.dynamicAtr || (Math.abs((stopHigh || 0) - (stopLow || 0)) * 0.5) || 20;
     const rr = config.riskRewardRatio ?? 2.0;
 
@@ -986,31 +1248,33 @@ export class Breakout15MinEngine {
         const optionType = side === 'BUY' ? 'CE' : 'PE';
         const optSym = await this.findOptionSymbol(client, state, triggerPrice, optionType, triggerTime);
         if (optSym) {
-          symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
+          symbol = optSym;
+          exchange = optSym.startsWith('SENSEX') ? 'BFO' : 'NFO';
+          finalSide = 'BUY';
           let ltp: number | null = null;
           if (triggerTime) {
             ltp = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
             if (ltp !== null) {
-              this.log(state, `💡 Selected Option Historical Price: ₹${ltp} (Underlying: ₹${triggerPrice.toFixed(2)}) at ${this.formatTime(triggerTime)}`);
+              this.log(state, `💡 Selected Option Historical Price: ₹${ltp.toFixed(2)} (Underlying: ₹${triggerPrice.toFixed(2)}) at ${this.formatTime(triggerTime)}`);
             } else {
               this.log(state, `⚠ Could not fetch historical option price for ${symbol} at ${this.formatTime(triggerTime)}. Using current LTP.`);
-              const quotes = await kite.getLTP([`NFO:${symbol}`]);
-              ltp = quotes[`NFO:${symbol}`]?.last_price;
+              const quotes = await kite.getLTP([`${exchange}:${symbol}`]);
+              ltp = quotes[`${exchange}:${symbol}`]?.last_price;
             }
           } else {
-            const quotes = await kite.getLTP([`NFO:${symbol}`]);
-            ltp = quotes[`NFO:${symbol}`]?.last_price;
+            const quotes = await kite.getLTP([`${exchange}:${symbol}`]);
+            ltp = quotes[`${exchange}:${symbol}`]?.last_price;
             if (ltp) {
-              this.log(state, `💡 Selected Option LTP: ₹${ltp} (Underlying: ₹${triggerPrice.toFixed(2)})`);
+              this.log(state, `💡 Selected Option LTP: ₹${ltp.toFixed(2)} (Underlying: ₹${triggerPrice.toFixed(2)})`);
             }
           }
 
           if (ltp) {
             const entry = this.roundTick(ltp);
-            // Option Dynamic Risk (Default to 12% of premium or ATR-based)
+            // Option Dynamic Risk (Default to 12% of premium or stopLossRs)
             const optionRisk = config.enableDynamicAtr !== false
               ? this.roundTick(Math.max(2.0, entry * 0.12))
-              : this.roundTick(Math.max(entry * 0.85, entry - (config.stopLossRs / config.qty)));
+              : this.roundTick(Math.max(2.0, config.stopLossRs ? (config.stopLossRs / config.qty) : (entry * 0.15)));
             const sl = this.roundTick(Math.max(1.0, entry - optionRisk));
             const risk = Math.max(0.50, entry - sl);
             const tgt = this.roundTick(entry + (risk * rr));
@@ -1020,7 +1284,7 @@ export class Breakout15MinEngine {
             return;
           }
         }
-      } catch (err) { this.log(state, `❌ Option error: ${err.message}`); }
+      } catch (err: any) { this.log(state, `❌ Option error: ${err.message}`); }
     }
 
     // Fallback or Equity trade
@@ -1061,8 +1325,12 @@ export class Breakout15MinEngine {
     state.stopLossPrice = sl;
     state.targetPrice = tgt;
     state.entryPrice = entry;
+    state.currentLtp = entry;
+    state.currentPnlRs = 0;
+    state.currentPnlPct = 0;
+    state.peakPnlRs = 0;
     state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
-    const isOption = exchange === 'NFO' || symbol.endsWith('CE') || symbol.endsWith('PE');
+    const isOption = exchange === 'NFO' || exchange === 'BFO' || symbol.endsWith('CE') || symbol.endsWith('PE');
     state.optionSymbol = isOption ? symbol : null;
     state.tradesPlacedToday += 1;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
@@ -1081,25 +1349,34 @@ export class Breakout15MinEngine {
       state.targetOrderId = tgtId;
 
       this.log(state, `✅ Paper Entry Order (Simulated @ ₹${entry.toFixed(2)}): ${entryId}`);
-      await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: entry, triggerPrice: entry }, entryId, strategyId, triggerTime);
+      await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry, triggerPrice: entry }, entryId, strategyId, triggerTime);
       await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, strategyId, triggerTime);
       await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, strategyId, triggerTime);
+
+      // Start real-time tracking if placed live
+      if (!triggerTime) {
+        await this.startRealtimeMonitor(state, client);
+      }
       return;
     }
 
     // LIVE ORDER EXECUTION:
     const limitPrice = side === 'BUY' ? this.roundTick(entry + 0.20) : this.roundTick(entry - 0.20);
-    const entryId = await client.placeOrder({ symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry });
+    const entryId = await client.placeOrder({ symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: limitPrice });
     state.entryOrderId = entryId;
     state.entryFilled = false;
-    this.log(state, `✅ Live Entry Order placed (SL-Limit @ Trigger: ₹${entry.toFixed(2)} / Limit: ₹${limitPrice.toFixed(2)}): ${entryId}`);
-    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'SL', product: config.product, qty: config.qty, price: limitPrice, triggerPrice: entry }, entryId, strategyId, triggerTime);
+    this.log(state, `✅ Live Entry Order placed (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
+    await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: limitPrice }, entryId, strategyId, triggerTime);
+
+    if (!triggerTime) {
+      await this.startRealtimeMonitor(state, client);
+    }
   }
 
   private async getHistoricalOptionPrice(client: any, symbol: string, exchange: string, timestamp: Date): Promise<number | null> {
     try {
-      const from = new Date(timestamp.getTime() - 10 * 60 * 1000);
-      const to = new Date(timestamp.getTime() + 10 * 60 * 1000);
+      const from = new Date(timestamp.getTime() - 15 * 60 * 1000);
+      const to = new Date(timestamp.getTime() + 15 * 60 * 1000);
       const data = await client.getHistoricalData(symbol, exchange, '5minute', from, to);
       if (!data || data.length === 0) return null;
 
@@ -1116,7 +1393,7 @@ export class Breakout15MinEngine {
           closest = c;
         }
       }
-      return closest.close;
+      return closest ? closest.close : null;
     } catch (e: any) {
       this.logger.error(`Error getting historical option price for ${symbol} at ${timestamp.toISOString()}: ${e.message}`);
       return null;
@@ -1126,15 +1403,16 @@ export class Breakout15MinEngine {
   private async findOptionSymbol(client: any, state: StrategyState, spotPrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
+    const clean = upper.replace(/:NSE|:BSE|:NFO|:BFO/g, '').trim();
 
     // ─── Resolve the canonical underlying name for NFO instruments ───────────
     let underlying: string;
-    if (upper.includes('BANKNIFTY') || upper === 'BANKNIFTY') underlying = 'BANKNIFTY';
-    else if (upper === 'NIFTY 50' || upper === 'NIFTY') underlying = 'NIFTY';
-    else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
-    else if (upper.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
-    else if (upper.includes('SENSEX')) underlying = 'SENSEX';
-    else underlying = upper;
+    if (clean.includes('BANKNIFTY') || clean === 'BANKNIFTY') underlying = 'BANKNIFTY';
+    else if (clean.includes('NIFTY 50') || clean.includes('NIFTY') || clean === 'NIFTY') underlying = 'NIFTY';
+    else if (clean.includes('FINNIFTY')) underlying = 'FINNIFTY';
+    else if (clean.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
+    else if (clean.includes('SENSEX')) underlying = 'SENSEX';
+    else underlying = clean;
 
     const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
     const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
@@ -1147,29 +1425,37 @@ export class Breakout15MinEngine {
       return null;
     }
 
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const todayStr = this.getIstDateStr(new Date());
 
-    const allExpiries = Array.from(new Set(options.map((i: any) => {
-      const exp = i.expiry ? i.expiry.toString().substring(0, 10) : '';
-      return exp;
-    }))).filter(exp => exp !== '');
+    const uniqueExpiries = Array.from(new Set(options.map((i: any) => this.getExpiryStr(i.expiry))))
+      .filter(exp => exp !== '' && exp >= todayStr)
+      .sort();
 
-    const sortedExpiries = allExpiries.filter(exp => exp >= todayStr).sort();
-    if (sortedExpiries.length === 0) {
+    if (uniqueExpiries.length === 0) {
       this.log(state, `❌ No future expiries found for ${underlying}.`);
       return null;
     }
 
-    const nearestExpiry = sortedExpiries[0];
-    const filteredOptions = options.filter((i: any) => i.expiry && i.expiry.toString().substring(0, 10) === nearestExpiry);
+    const nearestExpiry = uniqueExpiries[0];
+    const filteredOptions = options.filter((i: any) => this.getExpiryStr(i.expiry) === nearestExpiry);
     this.log(state, `📋 Found ${filteredOptions.length} ${type} options for ${underlying} (expiry: ${nearestExpiry})`);
+
+    const step = ['NIFTY', 'FINNIFTY'].includes(underlying) ? 50 : underlying === 'MIDCPNIFTY' ? 25 : 100;
+    const atmStrike = Math.round(spotPrice / step) * step;
+    const moneyness = config.moneyness ?? 'ITM';
 
     // ─── Option 1: Premium Range Selection ──────────────────────────────────
     if (config.minPremium && config.maxPremium) {
       this.log(state, `🔍 Searching for ${type} option in premium range ₹${config.minPremium} - ₹${config.maxPremium}...`);
-      const step = ['NIFTY', 'FINNIFTY'].includes(underlying) ? 50 : underlying === 'MIDCPNIFTY' ? 25 : 100;
-      const atm = Math.round(spotPrice / step) * step;
-      const candidateStrikes = [atm, atm + step, atm - step, atm + 2 * step, atm - 2 * step, atm + 3 * step, atm - 3 * step];
+      const candidateStrikes = [
+        atmStrike,
+        atmStrike + step, atmStrike - step,
+        atmStrike + 2 * step, atmStrike - 2 * step,
+        atmStrike + 3 * step, atmStrike - 3 * step,
+        atmStrike + 4 * step, atmStrike - 4 * step,
+        atmStrike + 5 * step, atmStrike - 5 * step,
+        atmStrike + 6 * step, atmStrike - 6 * step,
+      ];
 
       if (triggerTime) {
         for (const strike of candidateStrikes) {
@@ -1178,10 +1464,11 @@ export class Breakout15MinEngine {
 
           const price = await this.getHistoricalOptionPrice(client, opt.tradingsymbol, exchange, triggerTime);
           if (price !== null && price >= config.minPremium && price <= config.maxPremium) {
-            this.log(state, `🎯 Found ${opt.tradingsymbol} within premium range (historical check).`);
+            this.log(state, `🎯 Found ${opt.tradingsymbol} within premium range (historical check: ₹${price.toFixed(2)}).`);
             return opt.tradingsymbol;
           }
         }
+        this.log(state, `⚠ No strike found within ₹${config.minPremium}-₹${config.maxPremium} via historical check. Falling back to ${moneyness} strike.`);
       } else {
         const allSymbols = filteredOptions.map((i: any) => `${exchange}:${i.tradingsymbol}`);
         const CHUNK = 200;
@@ -1203,23 +1490,23 @@ export class Breakout15MinEngine {
           const key = `${exchange}:${opt.tradingsymbol}`;
           const ltp = quotes[key]?.last_price;
           if (ltp && ltp >= config.minPremium && ltp <= config.maxPremium) {
-            this.log(state, `🎯 Found ${opt.tradingsymbol} within premium range.`);
+            this.log(state, `🎯 Found ${opt.tradingsymbol} within premium range (LTP: ₹${ltp.toFixed(2)}).`);
             return opt.tradingsymbol;
           }
         }
+        this.log(state, `⚠ No strike found within ₹${config.minPremium}-₹${config.maxPremium}. Falling back to ${moneyness} strike.`);
       }
     }
 
     // ─── Option 2: Default ATM / ITM Strike Selection ───────────────────────
-    const isIndex = ['NIFTY', 'FINNIFTY'].includes(underlying);
-    const isMid = underlying === 'MIDCPNIFTY';
-    const step = isIndex ? 50 : isMid ? 25 : 100;
-    const atmStrike = Math.round(spotPrice / step) * step;
-
-    const moneyness = config.moneyness ?? 'ITM';
-    const desiredStrike = moneyness === 'ITM' 
-      ? (type === 'CE' ? atmStrike - step : atmStrike + step)
-      : atmStrike;
+    let desiredStrike = atmStrike;
+    if (moneyness === 'ITM') {
+      desiredStrike = type === 'CE' ? atmStrike - step : atmStrike + step;
+    } else if ((moneyness as string) === 'OTM') {
+      desiredStrike = type === 'CE' ? atmStrike + step : atmStrike - step;
+    } else {
+      desiredStrike = atmStrike;
+    }
 
     const match = filteredOptions.find((i: any) => Number(i.strike) === desiredStrike)
       || filteredOptions.find((i: any) => Number(i.strike) === atmStrike);
@@ -1279,7 +1566,7 @@ export class Breakout15MinEngine {
     let cpv = 0, cv = 0;
     let lastDateStr = '';
     for (let i = 0; i < candles.length; i++) {
-      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(candles[i].date);
+      const dateStr = this.getIstDateStr(candles[i].date);
       if (dateStr !== lastDateStr) {
         cpv = 0;
         cv = 0;
@@ -1310,7 +1597,7 @@ export class Breakout15MinEngine {
   }
 
   private roundTick(price: number, tick = 0.05) { return Math.round(price / tick) * tick; }
-  private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+  private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: StrategyState) {
     try {
@@ -1324,18 +1611,6 @@ export class Breakout15MinEngine {
         state: this.getState(state.strategyId),
       });
     } catch {}
-  }
-  
-  private async closePaperTradeHistorical(state: StrategyState, reason: string, price: number, timestamp: Date) {
-    await this.prisma.order.updateMany({
-      where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
-      data: { status: 'COMPLETE', price, createdAt: timestamp }
-    });
-    this.log(state, `🏁 (Catch-up) Paper trade closed (${reason}) at ₹${price}`);
-    state.entryTriggered = null;
-    state.entryPrice = null;
-    state.setupTimestamp = null;
-    state.isBreakevenTrailed = false;
   }
 
   private async trackOrder(state: StrategyState, account: any, executionId: string, params: any, brokerOrderId: string, strategyId: string, createdAt?: Date) {
@@ -1379,5 +1654,6 @@ export class Breakout15MinEngine {
     state.lowestPriceReached = undefined;
     state.lastBreakoutAttempt = null;
     state.isReversalTrade = false;
+    this.stopRealtimeMonitor(state);
   }
 }

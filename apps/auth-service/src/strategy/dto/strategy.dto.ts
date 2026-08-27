@@ -13,7 +13,7 @@ export enum StrategyTypeEnum {
 export interface Breakout15MinConfig {
   symbol: string;
   exchange: string;
-  instrumentType: 'INDEX' | 'STOCK';
+  instrumentType: 'INDEX' | 'STOCK' | 'OPTION';
   qty: number;
   product: 'MIS' | 'NRML';
   stopLossRs: number;
