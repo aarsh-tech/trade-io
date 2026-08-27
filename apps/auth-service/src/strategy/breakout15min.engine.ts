@@ -208,17 +208,24 @@ export class Breakout15MinEngine {
   getState(strategyId: string) {
     const s = this.running.get(strategyId);
     if (!s) return null;
+    const isLong = s.entryTriggered === 'LONG' || !!s.optionSymbol;
+    const ltp = s.currentLtp || s.entryPrice || 0;
+    const entry = s.entryPrice || 0;
+    const pnlPoints = entry > 0 && ltp > 0 ? (isLong ? (ltp - entry) : (entry - ltp)) : 0;
+    const calculatedPnlRs = pnlPoints * s.config.qty;
+    const calculatedPnlPct = entry > 0 ? (pnlPoints / entry) * 100 : 0;
+
     return {
       entryTriggered: s.entryTriggered,
       tradesToday: s.tradesPlacedToday,
       optionSymbol: s.optionSymbol,
       futureSymbol: s.futureSymbol || s.config.symbol,
       entryPrice: s.entryPrice,
-      currentLtp: s.currentLtp || s.entryPrice,
+      currentLtp: ltp,
       stopLossPrice: s.stopLossPrice,
       targetPrice: s.targetPrice,
-      pnlRs: s.currentPnlRs ?? 0,
-      pnlPct: s.currentPnlPct ?? 0,
+      pnlRs: s.currentPnlRs !== undefined && s.currentPnlRs !== 0 ? s.currentPnlRs : calculatedPnlRs,
+      pnlPct: s.currentPnlPct !== undefined && s.currentPnlPct !== 0 ? s.currentPnlPct : calculatedPnlPct,
       peakPnlRs: s.peakPnlRs ?? 0,
       qty: s.config.qty,
       refHigh: s.refHigh,
@@ -395,11 +402,18 @@ export class Breakout15MinEngine {
           }
 
           if (hasOptionData) {
-            // Check Dynamic Breakeven Ratchet (+1R -> SL to Cost)
+            const evalClose = currentOptionPriceClose || currentCandle.close;
+            state.currentLtp = evalClose;
             const isOption = !!state.optionSymbol;
             const isLong = isOption || state.entryTriggered === 'LONG';
-            const evalPrice = currentOptionPriceHigh;
-            const currentPnlPoints = isLong ? (evalPrice - state.entryPrice!) : (state.entryPrice! - currentOptionPriceLow);
+            const closePnlPoints = isLong ? (evalClose - state.entryPrice!) : (state.entryPrice! - evalClose);
+            state.currentPnlRs = closePnlPoints * state.config.qty;
+            state.currentPnlPct = state.entryPrice ? (closePnlPoints / state.entryPrice) * 100 : 0;
+            state.peakPnlRs = Math.max(state.peakPnlRs || 0, state.currentPnlRs);
+
+            // Check Dynamic Breakeven Ratchet (+1R -> SL to Cost)
+            const evalHighPrice = isLong ? currentOptionPriceHigh : currentOptionPriceLow;
+            const currentPnlPoints = isLong ? (evalHighPrice - state.entryPrice!) : (state.entryPrice! - evalHighPrice);
             const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
 
             if (!state.isBreakevenTrailed && currentPnlPoints >= breakevenPoints && state.entryPrice) {
@@ -510,6 +524,28 @@ export class Breakout15MinEngine {
 
       if (!state.entryTriggered) {
         this.log(state, `✅ Catch-up complete. No active breakout position at this time.`);
+      } else {
+        const activeSym = state.optionSymbol || state.futureSymbol || state.config.symbol;
+        const activeExch = state.optionSymbol ? (activeSym.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
+        try {
+          const quotes = await kite.getLTP([`${activeExch}:${activeSym}`]);
+          const latestLtp = quotes[`${activeExch}:${activeSym}`]?.last_price;
+          if (latestLtp) {
+            state.currentLtp = latestLtp;
+            const isOption = !!state.optionSymbol;
+            const isLong = isOption || state.entryTriggered === 'LONG';
+            const pnlPoints = isLong ? (latestLtp - state.entryPrice!) : (state.entryPrice! - latestLtp);
+            state.currentPnlRs = pnlPoints * state.config.qty;
+            state.currentPnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
+            state.peakPnlRs = Math.max(state.peakPnlRs || 0, state.currentPnlRs);
+            this.log(state, `📊 Active Position Tracked: ${activeSym} | Entry: ₹${state.entryPrice?.toFixed(2)} | Current LTP: ₹${latestLtp.toFixed(2)} | P&L: ${state.currentPnlRs >= 0 ? '+' : ''}₹${state.currentPnlRs.toFixed(2)} (${state.currentPnlPct >= 0 ? '+' : ''}${state.currentPnlPct.toFixed(2)}%)`);
+          }
+        } catch (e: any) {
+          this.logger.debug?.(`Catch-up latest LTP fetch notice: ${e.message}`);
+        }
+
+        // Always activate real-time tracking if position is open
+        await this.startRealtimeMonitor(state, client);
       }
       await this.persistLogs(state);
     } catch (err: any) {
@@ -537,6 +573,28 @@ export class Breakout15MinEngine {
 
     if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) {
       if (hhmm < 9 * 60 + 15) this.resetDailyState(state);
+      if (state.entryTriggered) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) {
+            const client = this.factory.createClient(account);
+            const kite = client['kite'];
+            const activeSym = state.optionSymbol || state.futureSymbol || state.config.symbol;
+            const activeExch = state.optionSymbol ? (activeSym.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
+            const quotes = await kite.getLTP([`${activeExch}:${activeSym}`]);
+            const latestLtp = quotes[`${activeExch}:${activeSym}`]?.last_price;
+            if (latestLtp) {
+              state.currentLtp = latestLtp;
+              const isOption = !!state.optionSymbol;
+              const isLong = isOption || state.entryTriggered === 'LONG';
+              const pnlPoints = isLong ? (latestLtp - state.entryPrice!) : (state.entryPrice! - latestLtp);
+              state.currentPnlRs = pnlPoints * state.config.qty;
+              state.currentPnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
+              state.peakPnlRs = Math.max(state.peakPnlRs || 0, state.currentPnlRs);
+            }
+          }
+        } catch {}
+      }
       return;
     }
 

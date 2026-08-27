@@ -130,12 +130,11 @@ export default function StrategyDetailPage() {
     calculatedPnlRs = pnlPoints * qty;
     calculatedPnlPct = (pnlPoints / entryPrice) * 100;
   }
-  const displayPnlRs = directLtp ? calculatedPnlRs : (liveState?.pnlRs ?? calculatedPnlRs);
-  const displayPnlPct = directLtp ? calculatedPnlPct : (liveState?.pnlPct ?? calculatedPnlPct);
+  const displayPnlRs = (currentLtp > 0 && entryPrice > 0) ? calculatedPnlRs : (liveState?.pnlRs ?? 0);
+  const displayPnlPct = (currentLtp > 0 && entryPrice > 0) ? calculatedPnlPct : (liveState?.pnlPct ?? 0);
   const displayLtp = currentLtp || liveState?.currentLtp || liveState?.entryPrice || 0;
   const [editConfig, setEditConfig] = useState<Record<string, any>>({});
   const logsRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [testOrderLots, setTestOrderLots] = useState(1);
@@ -188,6 +187,22 @@ export default function StrategyDetailPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Periodic status poll fallback (every 3s) while strategy is actively running
+  useEffect(() => {
+    if (!strategy?.isActive) return;
+    const interval = setInterval(async () => {
+      try {
+        const statusRes = await strategyApi.status(id);
+        if (statusRes.data?.data) {
+          if (statusRes.data.data.logs) setLiveLogs(statusRes.data.data.logs);
+          if (statusRes.data.data.state !== undefined) setLiveState(statusRes.data.data.state);
+          if (statusRes.data.data.orders) setActiveOrders(statusRes.data.data.orders);
+        }
+      } catch { }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [id, strategy?.isActive]);
 
   // Real-time WebSockets for zero-latency strategy updates (replaces HTTP status polling)
   useEffect(() => {
