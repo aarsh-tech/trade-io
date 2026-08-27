@@ -452,37 +452,57 @@ export class BacktestService {
     return 100 - 100 / (1 + gains / losses);
   }
 
+  private getIstDateStr(d: Date): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  }
+
   private getLatestCrossoverToday(idx: number, candles: any[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
     let latestCrossover: 'LONG' | 'SHORT' | null = null;
     let crossoverIdx = -1;
-    const todayStr = new Date(candles[idx].date).toISOString().split('T')[0];
+    const todayStr = this.getIstDateStr(new Date(candles[idx].date));
 
     for (let k = 1; k <= idx; k++) {
-      const candleDateStr = new Date(candles[k].date).toISOString().split('T')[0];
+      const candleDateStr = this.getIstDateStr(new Date(candles[k].date));
       if (candleDateStr !== todayStr) continue;
 
-      const prevDateStr = new Date(candles[k - 1].date).toISOString().split('T')[0];
+      const prevDateStr = this.getIstDateStr(new Date(candles[k - 1].date));
       if (prevDateStr !== todayStr) continue;
 
       const prevEma = emas[k - 1], currEma = emas[k];
       const prevVwap = vwaps[k - 1], currVwap = vwaps[k];
       if (prevEma === null || currEma === null || prevVwap === null || currVwap === null) continue;
 
-      if (prevEma <= prevVwap && currEma > currVwap) {
+      const candle = candles[k];
+
+      // LONG Crossover: 15-EMA crosses ABOVE VWAP + Candle MUST be bullish & close ABOVE VWAP & 15-EMA
+      if (prevEma <= prevVwap && currEma > currVwap && candle.close >= currVwap && candle.close >= currEma && candle.close >= candle.open) {
         latestCrossover = 'LONG';
         crossoverIdx = k;
-      } else if (prevEma >= prevVwap && currEma < currVwap) {
+      }
+      // SHORT Crossover: 15-EMA crosses BELOW VWAP + Candle MUST be bearish & close BELOW VWAP & 15-EMA
+      else if (prevEma >= prevVwap && currEma < currVwap && candle.close <= currVwap && candle.close <= currEma && candle.close <= candle.open) {
         latestCrossover = 'SHORT';
         crossoverIdx = k;
       }
     }
 
-    // Inside candle setup is only valid if crossover occurred recently (within 3 candles / 15 mins)
+    // Setup is only valid if crossover occurred recently (within 3 candles / 15 mins)
     if (latestCrossover !== null && (idx - crossoverIdx) > 3) {
       return null;
     }
 
-    return latestCrossover;
+    if (latestCrossover !== null && crossoverIdx !== -1) {
+      const currentEma = emas[idx], currentVwap = vwaps[idx];
+      const currentCandle = candles[idx];
+      if (currentEma === null || currentVwap === null) return null;
+
+      const longValid = latestCrossover === 'LONG' && currentEma > currentVwap && currentCandle.close >= (currentVwap * 0.998);
+      const shortValid = latestCrossover === 'SHORT' && currentEma < currentVwap && currentCandle.close <= (currentVwap * 1.002);
+
+      if (longValid || shortValid) return latestCrossover;
+    }
+
+    return null;
   }
 
   private simulateDailyScalper(candles: any[], config: any, initialCapital: number) {

@@ -230,10 +230,13 @@ export async function autoSelectStock(
 
         // Helper to calculate exact capital-constrained quantity with 5x MIS leverage
         const calcCapitalQty = (price: number, riskPerShare: number) => {
-          const riskQty = riskPerShare > 0 ? Math.ceil(stopLossRs / riskPerShare) : 1;
+          const targetThresholdRs = targetRs && targetRs > 0 ? targetRs : 500;
+          const expectedPoints = Math.max(0.50, riskPerShare > 0 ? riskPerShare * 1.5 : price * 0.012);
+          const targetQty = Math.ceil(targetThresholdRs / expectedPoints);
+          const maxRiskQty = riskPerShare > 0 ? Math.ceil((stopLossRs || targetThresholdRs) / riskPerShare) : targetQty;
           const maxBuyingPower = (availableCapital || 20000) * 5; // Zerodha 5x MIS leverage
           const maxCapitalQty = Math.floor(maxBuyingPower / price);
-          return Math.max(1, Math.min(riskQty, maxCapitalQty));
+          return Math.max(1, Math.min(Math.max(targetQty, maxRiskQty), maxCapitalQty));
         };
 
         // Use both long and short detectors
@@ -302,9 +305,12 @@ export async function autoSelectStock(
 
       // Composite momentum score: Intraday Gain/Loss (40%) + Day Range (30%) + Rupee Turnover in Crores (30%)
       const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
-
+      const targetThresholdRs = targetRs && targetRs > 0 ? targetRs : 500;
+      const expectedMovePoints = Math.max(0.50, ltp * 0.012);
+      const targetQty = Math.ceil(targetThresholdRs / expectedMovePoints);
       const maxBuyingPower = (availableCapital || 25000) * 5;
-      const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.015)), Math.floor(maxBuyingPower / ltp)));
+      const maxCapitalQty = Math.floor(maxBuyingPower / ltp);
+      const qty = Math.max(1, Math.min(targetQty, maxCapitalQty));
       dynamicRankings.push({ symbol: sym, score, ltp, qty, volumeSpike: liveVolume, changePct });
     }
   }
@@ -380,8 +386,12 @@ export async function getTopCandidateStocks(
       if (changePct < 0.3 && dayRangePct < 0.8) continue;
 
       const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
-      const maxBuyingPower = availableCapital * 5;
-      const qty = Math.max(1, Math.min(Math.ceil(stopLossRs / (ltp * 0.015)), Math.floor(maxBuyingPower / ltp)));
+      const expectedMovePoints = Math.max(0.50, ltp * 0.012); // ~1.2% expected intraday move
+      const targetThresholdRs = targetRs && targetRs > 0 ? targetRs : 500;
+      const targetQty = Math.ceil(targetThresholdRs / expectedMovePoints);
+      const maxBuyingPower = availableCapital * 5; // Zerodha 5x MIS margin
+      const maxCapitalQty = Math.floor(maxBuyingPower / ltp);
+      const qty = Math.max(1, Math.min(targetQty, maxCapitalQty));
 
       result.push({ symbol: sym, exchange: 'NSE', ltp, qty, score });
     }

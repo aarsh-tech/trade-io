@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { Breakout15MinConfig } from './dto/strategy.dto';
 import { autoSelectStock } from './smart-stock-picker';
+import { strategyEvents } from '../common/events';
 
 interface Candle {
   date: Date;
@@ -14,6 +15,7 @@ interface Candle {
 }
 
 interface StrategyState {
+  strategyId: string;
   executionId: string;
   config: Breakout15MinConfig;
   brokerAccountId: string;
@@ -49,6 +51,10 @@ interface StrategyState {
     breakoutPrice: number;
   } | null;
   isReversalTrade?: boolean;
+  currentLtp?: number;
+  currentPnlRs?: number;
+  currentPnlPct?: number;
+  peakPnlRs?: number;
 }
 
 @Injectable()
@@ -86,6 +92,7 @@ export class Breakout15MinEngine {
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
     const state: StrategyState = {
+      strategyId,
       executionId: execution.id,
       config,
       brokerAccountId: strategy.brokerAccountId!,
@@ -121,6 +128,132 @@ export class Breakout15MinEngine {
     }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
 
     return { executionId: execution.id };
+  }
+
+  async stop(strategyId: string): Promise<void> {
+    const state = this.running.get(strategyId);
+    if (state) {
+      clearInterval(this.timers.get(strategyId));
+      this.timers.delete(strategyId);
+      this.running.delete(strategyId);
+      this.log(state, '⏹ Strategy stopped by user');
+
+      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) {
+            const client = this.factory.createClient(account);
+            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          }
+        } catch { }
+      }
+
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+      });
+    }
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+  }
+
+  private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
+    const state = this.running.get(strategyId);
+    if (state) {
+      clearInterval(this.timers.get(strategyId));
+      this.timers.delete(strategyId);
+      this.running.delete(strategyId);
+      this.log(state, logReason);
+
+      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) {
+            const client = this.factory.createClient(account);
+            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          }
+        } catch { }
+      }
+
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+      });
+    }
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+  }
+
+  isRunning(strategyId: string): boolean {
+    return this.running.has(strategyId);
+  }
+
+  getLogs(strategyId: string): string[] {
+    return this.running.get(strategyId)?.logs || [];
+  }
+
+  getState(strategyId: string) {
+    const s = this.running.get(strategyId);
+    if (!s) return null;
+    return {
+      entryTriggered: s.entryTriggered,
+      tradesToday: s.tradesPlacedToday,
+      optionSymbol: s.optionSymbol,
+      futureSymbol: s.futureSymbol || s.config.symbol,
+      entryPrice: s.entryPrice,
+      currentLtp: s.currentLtp || s.entryPrice,
+      stopLossPrice: s.stopLossPrice,
+      targetPrice: s.targetPrice,
+      pnlRs: s.currentPnlRs ?? 0,
+      pnlPct: s.currentPnlPct ?? 0,
+      peakPnlRs: s.peakPnlRs ?? 0,
+      qty: s.config.qty,
+      refHigh: s.refHigh,
+      refLow: s.refLow,
+      dynamicAtr: s.dynamicAtr,
+      isBreakevenTrailed: s.isBreakevenTrailed,
+      isPaperTrade: s.isPaperTrade,
+    };
+  }
+
+  async squareOff(strategyId: string): Promise<{ success: boolean; message: string }> {
+    const state = this.running.get(strategyId);
+    if (!state) return { success: false, message: 'Strategy is not running' };
+    if (!state.entryTriggered) return { success: false, message: 'No active open position to square off' };
+
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+    const client = account?.accessToken ? this.factory.createClient(account) : null;
+    const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
+    const exchange = state.optionSymbol ? 'NFO' : (state.futureExchange || state.config.exchange);
+
+    let exitPrice = state.currentLtp || state.entryPrice || 0;
+    if (client && !state.isPaperTrade) {
+      try {
+        const ltpData = await client['kite'].getLTP([`${exchange}:${symbol}`]);
+        exitPrice = ltpData[`${exchange}:${symbol}`]?.last_price || exitPrice;
+      } catch {}
+      await this.cancelBrokerOrderSafe(client, state.slOrderId);
+      await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+      const exitSide = (state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY'));
+      await client.placeOrder({
+        symbol,
+        exchange,
+        side: exitSide,
+        orderType: 'MARKET',
+        product: state.config.product,
+        qty: state.config.qty,
+      }).catch((e: any) => this.log(state, `❌ Square-Off exit order notice: ${e.message}`));
+    }
+
+    this.log(state, `⚡ Manual Instant Square-Off requested by user @ ₹${exitPrice.toFixed(2)}`);
+    state.entryTriggered = null;
+    state.entryFilled = false;
+    state.slOrderId = null;
+    state.targetOrderId = null;
+    await this.persistLogs(state);
+    return { success: true, message: `Position squared off at ₹${exitPrice.toFixed(2)}` };
   }
 
   /**
@@ -352,84 +485,7 @@ export class Breakout15MinEngine {
     }
   }
 
-  async stop(strategyId: string): Promise<void> {
-    const state = this.running.get(strategyId);
-    if (state) {
-      clearInterval(this.timers.get(strategyId));
-      this.timers.delete(strategyId);
-      this.running.delete(strategyId);
-      this.log(state, '⏹ Strategy stopped by user');
 
-      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
-        try {
-          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-          if (account?.accessToken) {
-            const client = this.factory.createClient(account);
-            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
-            await this.cancelBrokerOrderSafe(client, state.slOrderId);
-            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-          }
-        } catch { }
-      }
-
-      await this.prisma.strategyExecution.update({
-        where: { id: state.executionId },
-        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
-      });
-    }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
-  }
-
-  private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
-    const state = this.running.get(strategyId);
-    if (state) {
-      clearInterval(this.timers.get(strategyId));
-      this.timers.delete(strategyId);
-      this.running.delete(strategyId);
-      this.log(state, logReason);
-
-      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
-        try {
-          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-          if (account?.accessToken) {
-            const client = this.factory.createClient(account);
-            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
-            await this.cancelBrokerOrderSafe(client, state.slOrderId);
-            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-          }
-        } catch { }
-      }
-
-      await this.prisma.strategyExecution.update({
-        where: { id: state.executionId },
-        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
-      });
-    }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
-  }
-
-  isRunning(strategyId: string): boolean {
-    return this.running.has(strategyId);
-  }
-
-  getLogs(strategyId: string): string[] {
-    return this.running.get(strategyId)?.logs || [];
-  }
-
-  getState(strategyId: string) {
-    const s = this.running.get(strategyId);
-    if (!s) return null;
-    return {
-      refHigh: s.refHigh,
-      refLow: s.refLow,
-      entryTriggered: s.entryTriggered,
-      optionSymbol: s.optionSymbol,
-      futureSymbol: s.futureSymbol,
-      tradesToday: s.tradesPlacedToday,
-      dynamicAtr: s.dynamicAtr,
-      isBreakevenTrailed: s.isBreakevenTrailed,
-    };
-  }
 
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
@@ -503,10 +559,10 @@ export class Breakout15MinEngine {
       }
     }
 
-    // ─── 3:10 PM EOD Auto Square Off (NSE CAS Settlement Rule) ─────────────
-    if (hhmm >= 15 * 60 + 10) {
+    // ─── 3:05 PM EOD Auto Square Off (NSE CAS Settlement & Broker Safe Exit) ──
+    if (hhmm >= 15 * 60 + 5) {
       if (state.entryTriggered) {
-        this.log(state, `⏰ 3:10 PM CAS settlement cutoff reached! Auto-squaring off position.`);
+        this.log(state, `⏰ 3:05 PM Intraday EOD cutoff reached! Auto-squaring off position.`);
         if (state.isPaperTrade) {
           const quotes = await kite.getLTP([`${state.futureExchange}:${state.futureSymbol}`]).catch(() => ({}));
           const ltp = quotes[`${state.futureExchange}:${state.futureSymbol}`]?.last_price || state.entryPrice || 0;
@@ -514,17 +570,17 @@ export class Breakout15MinEngine {
         } else {
           await this.cancelBrokerOrderSafe(client, state.slOrderId);
           await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-          if (state.entryFilled && state.optionSymbol) {
-            const exitSide = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
-            await client.placeOrder({
-              symbol: state.optionSymbol,
-              exchange: state.futureExchange,
-              side: exitSide,
-              orderType: 'MARKET',
-              product: state.config.product,
-              qty: state.config.qty,
-            }).catch(() => null);
-          }
+          const exitSymbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
+          const exitExchange = state.optionSymbol ? 'NFO' : (state.futureExchange || state.config.exchange);
+          const exitSide = state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
+          await client.placeOrder({
+            symbol: exitSymbol,
+            exchange: exitExchange,
+            side: exitSide,
+            orderType: 'MARKET',
+            product: state.config.product,
+            qty: state.config.qty,
+          }).catch((e: any) => this.log(state, `❌ 3:05 PM EOD exit order failed: ${e.message}`));
           state.entryTriggered = null;
           state.entryFilled = false;
           state.slOrderId = null;
@@ -757,8 +813,8 @@ export class Breakout15MinEngine {
           // Place SL and Target now that entry is filled!
           const { config, executionId } = state;
           const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-          const symbol = state.optionSymbol!;
-          const exchange = state.futureExchange;
+          const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
+          const exchange = state.optionSymbol ? 'NFO' : (state.futureExchange || state.config.exchange);
           const exitSide = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
           const sl = state.stopLossPrice!;
           const tgt = state.targetPrice!;
@@ -908,9 +964,9 @@ export class Breakout15MinEngine {
   }
 
   private getIstHhmm(date: Date): number {
-    const istStr = date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: false });
-    const parts = istStr.split(':').map(Number);
-    return parts[0] * 60 + (parts[1] || 0);
+    const utcMs = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const istDate = new Date(utcMs + (330 * 60000));
+    return istDate.getHours() * 60 + istDate.getMinutes();
   }
 
   private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, refLow?: number, refHigh?: number) {
@@ -1256,7 +1312,19 @@ export class Breakout15MinEngine {
   private roundTick(price: number, tick = 0.05) { return Math.round(price / tick) * tick; }
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
-  private async persistLogs(state: StrategyState) { await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } }); }
+  private async persistLogs(state: StrategyState) {
+    try {
+      await this.prisma.strategyExecution.update({
+        where: { id: state.executionId },
+        data: { logs: JSON.stringify(state.logs.slice(-200)) },
+      });
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
+    } catch {}
+  }
   
   private async closePaperTradeHistorical(state: StrategyState, reason: string, price: number, timestamp: Date) {
     await this.prisma.order.updateMany({

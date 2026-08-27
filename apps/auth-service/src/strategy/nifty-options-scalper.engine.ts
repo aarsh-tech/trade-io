@@ -47,6 +47,11 @@ interface ScalperStrategyState {
   tickerUnsubscribe?: () => void;
   realtimeActive?: boolean;
   lastPnlLogTime?: number;
+  lastTickTime?: number;
+  currentLtp?: number;
+  currentPnlRs?: number;
+  currentPnlPct?: number;
+  peakPnlRs?: number;
   isCostSlTrailed?: boolean;
 }
 
@@ -205,8 +210,39 @@ export class NiftyOptionsScalperEngine {
       winningTradesToday: s.winningTradesToday,
       optionSymbol: s.optionSymbol,
       futureSymbol: s.futureSymbol || s.config.symbol,
+      entryPrice: s.entryPrice,
+      currentLtp: s.currentLtp || s.entryPrice,
+      stopLossPrice: s.stopLossPrice,
+      targetPrice: s.targetPrice,
+      pnlRs: s.currentPnlRs ?? 0,
+      pnlPct: s.currentPnlPct ?? 0,
+      peakPnlRs: s.peakPnlRs ?? 0,
+      qty: s.config.qty,
       isGoalAchieved: s.winningTradesToday >= (s.config.maxWinsPerDay || 1),
+      isPaperTrade: s.isPaperTrade,
     };
+  }
+
+  async squareOff(strategyId: string): Promise<{ success: boolean; message: string }> {
+    const state = this.running.get(strategyId);
+    if (!state) return { success: false, message: 'Strategy is not running' };
+    if (!state.entryTriggered || !state.optionSymbol) return { success: false, message: 'No active open position to square off' };
+
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+    const client = account?.accessToken ? this.factory.createClient(account) : null;
+
+    let exitPrice = state.currentLtp || state.entryPrice || 0;
+    if (client && !state.isPaperTrade) {
+      try {
+        const ltpData = await client['kite'].getLTP([`NFO:${state.optionSymbol}`]);
+        exitPrice = ltpData[`NFO:${state.optionSymbol}`]?.last_price || exitPrice;
+      } catch {}
+    }
+
+    this.log(state, `⚡ Manual Instant Square-Off requested by user @ ₹${exitPrice.toFixed(2)}`);
+    await this.exitPosition(state, client, exitPrice, 'FORCE_CLOSE');
+    await this.persistLogs(state);
+    return { success: true, message: `Position squared off at ₹${exitPrice.toFixed(2)}` };
   }
 
   private async initialCatchup(strategyId: string) {
@@ -448,9 +484,9 @@ export class NiftyOptionsScalperEngine {
         const currentCandle = closedCandles[lastIdx];
         const prevCandle = closedCandles[lastIdx - 1];
 
-        const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-        const currDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-        const prevDateStr = prevCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        const todayStr = this.getIstDateStr(now);
+        const currDateStr = this.getIstDateStr(currentCandle.date);
+        const prevDateStr = this.getIstDateStr(prevCandle.date);
 
         // Ensure both current candle and previous candle belong strictly to today's trading session
         if (currDateStr !== todayStr || prevDateStr !== todayStr) return;
@@ -458,11 +494,11 @@ export class NiftyOptionsScalperEngine {
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';
 
-        // 1. EMA-VWAP Crossover Trigger
+        // 1. EMA-VWAP Crossover Trigger (requires price confirmation)
         if (prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
-          if (prevEma <= prevVwap && currEma > currVwap) {
+          if (prevEma <= prevVwap && currEma > currVwap && currentCandle.close >= currVwap && currentCandle.close >= currEma && currentCandle.close >= currentCandle.open) {
             triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover';
-          } else if (prevEma >= prevVwap && currEma < currVwap) {
+          } else if (prevEma >= prevVwap && currEma < currVwap && currentCandle.close <= currVwap && currentCandle.close <= currEma && currentCandle.close <= currentCandle.open) {
             triggerSide = 'SELL'; setupName = 'EMA-VWAP Bearish Crossover';
           }
         }
@@ -488,7 +524,7 @@ export class NiftyOptionsScalperEngine {
         // 3. 15-Min Opening Range Breakdown (ORB)
         let orbHigh: number | null = null;
         let orbLow: number | null = null;
-        const todayCandles = closedCandles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr);
+        const todayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) === todayStr);
         if (todayCandles.length >= 3) {
           const orbCandles = todayCandles.slice(0, 3);
           orbHigh = Math.max(...orbCandles.map(c => c.high));
@@ -503,11 +539,14 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
+        const rangeStr = this.formatCandleRange(currentCandle.date, 5);
+        const closeTimeStr = this.formatCandleCloseTime(currentCandle.date, 5);
+
         if (triggerSide) {
-          this.log(state, `🚀 Triggered ${setupName} at ${this.formatTime(currentCandle.date)}! Placing 10-Point Option Trade...`);
+          this.log(state, `🚀 Triggered ${setupName} on 5m candle [${rangeStr}] (closed at ${closeTimeStr})! Placing 10-Point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, currentCandle.close);
         } else {
-          this.log(state, `👀 Scanned 5-min candle (${this.formatTime(currentCandle.date)}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} (No crossover signal)`);
+          this.log(state, `👀 Scanned 5-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} (No crossover signal)`);
         }
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
@@ -586,57 +625,67 @@ export class NiftyOptionsScalperEngine {
     let isExiting = false;
 
     const unsubscribe = this.tickerService.registerListener(async (ticks) => {
-      const currentPrice = ticks[symbol];
+      const currentPrice = ticks[symbol] || ticks[`NFO:${symbol}`];
       if (!currentPrice || !state.entryTriggered || isExiting) return;
 
       const now = Date.now();
+      state.lastTickTime = now;
+      state.currentLtp = currentPrice;
       const pnlPoints = currentPrice - state.entryPrice!;
       const pnlRs = pnlPoints * state.config.qty;
+      const pnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
+      state.currentPnlRs = pnlRs;
+      state.currentPnlPct = pnlPct;
+      state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-      // 1. Check +4 Points Breakeven Trail (Step 1)
+      // 1. 3:05 PM Mandatory Cutoff (Exit safely before Zerodha 3:12 PM RMS cutoff)
+      if (this.getIstHhmm(new Date()) >= 15 * 60 + 5) {
+        isExiting = true;
+        this.log(state, `⏰ 3:05 PM Mandatory Cutoff reached! Auto-squaring off at ₹${currentPrice.toFixed(2)} (P&L: ₹${pnlRs.toFixed(2)})`);
+        this.stopRealtimeMonitor(state);
+        await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
+        await this.persistLogs(state);
+        return;
+      }
+
+      // 2. Check +4 Points Breakeven Trail (Step 1)
       if (pnlPoints >= (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
         state.isCostSlTrailed = true;
         state.stopLossPrice = state.entryPrice;
         this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints || 4} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
       }
 
-      // 2. Check +7 Points Profit Lock (Step 2)
+      // 3. Check +7 Points Profit Lock (Step 2)
       if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 4) {
         state.stopLossPrice = state.entryPrice! + 4;
         this.log(state, `🔒 Option profit hit +7 pts! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
       }
 
-      // 2. Check Target (+10 Points)
+      // 4. Check Target (+10 Points)
       if (currentPrice >= state.targetPrice!) {
         isExiting = true;
         this.log(state, `🎯 Target Hit (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}`);
         state.winningTradesToday++;
         this.stopRealtimeMonitor(state);
         await this.exitPosition(state, client, currentPrice, 'TARGET');
+        await this.persistLogs(state);
         return;
       }
 
-      // 3. Check Stop Loss
+      // 5. Check Stop Loss
       if (currentPrice <= state.stopLossPrice!) {
         isExiting = true;
         this.log(state, `🛑 Stop Loss Hit (${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}`);
         this.stopRealtimeMonitor(state);
         await this.exitPosition(state, client, currentPrice, 'SL');
+        await this.persistLogs(state);
         return;
       }
 
-      // 4. 3:10 PM Mandatory Cutoff
-      if (this.getIstHhmm(new Date()) >= 15 * 60 + 10) {
-        isExiting = true;
-        this.log(state, `⏰ 3:10 PM Cutoff reached! Squaring off at ₹${currentPrice.toFixed(2)}`);
-        this.stopRealtimeMonitor(state);
-        await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
-        return;
-      }
-
-      if (now - (state.lastPnlLogTime || 0) >= 5000) {
+      if (now - (state.lastPnlLogTime || 0) >= 15000) {
         state.lastPnlLogTime = now;
-        this.log(state, `📊 [RT] ${symbol}: ₹${currentPrice.toFixed(2)} | P&L: ${pnlPoints > 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts (₹${pnlRs.toFixed(2)}) | SL: ₹${state.stopLossPrice!.toFixed(2)} | Target: ₹${state.targetPrice!.toFixed(2)}`);
+        const sign = pnlRs >= 0 ? '+' : '';
+        this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | P&L: ${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts (${sign}₹${pnlRs.toFixed(2)}) | SL: ₹${state.stopLossPrice!.toFixed(2)} | Target: ₹${state.targetPrice!.toFixed(2)}`);
         await this.persistLogs(state);
       }
     });
@@ -649,37 +698,73 @@ export class NiftyOptionsScalperEngine {
       state.tickerUnsubscribe();
       state.tickerUnsubscribe = undefined;
       state.realtimeActive = false;
+      this.log(state, `📡 Live tracking stopped`);
     }
   }
 
   private async monitorPosition(state: ScalperStrategyState, client: any, kite: any) {
-    if (!state.optionSymbol) return;
-    if (state.realtimeActive) return;
+    if (!state.optionSymbol || !state.entryTriggered) return;
 
-    try {
-      const symbol = state.optionSymbol;
-      const key = `NFO:${symbol}`;
-      const ltpData = await kite.getLTP([key]);
-      const currentPrice = ltpData[key]?.last_price;
-      if (!currentPrice) return;
+    const symbol = state.optionSymbol;
+    const key = `NFO:${symbol}`;
 
-      const pnlPoints = currentPrice - state.entryPrice!;
-      if (pnlPoints >= (state.config.trailCostAtPoints || 5) && !state.isCostSlTrailed) {
-        state.isCostSlTrailed = true;
-        state.stopLossPrice = state.entryPrice;
-        this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)})`);
+    // 1. 3:05 PM Cutoff
+    if (this.getIstHhmm(new Date()) >= 15 * 60 + 5) {
+      let exitPrice = state.currentLtp || state.entryPrice || 0;
+      try {
+        const ltpData = await kite.getLTP([key]);
+        if (ltpData[key]?.last_price) exitPrice = ltpData[key].last_price;
+      } catch {}
+      this.log(state, `⏰ 3:05 PM Cutoff reached in poll monitor! Squaring off at ₹${exitPrice.toFixed(2)}`);
+      this.stopRealtimeMonitor(state);
+      await this.exitPosition(state, client, exitPrice, 'FORCE_CLOSE');
+      await this.persistLogs(state);
+      return;
+    }
+
+    const isWebSocketStale = !state.lastTickTime || (Date.now() - state.lastTickTime > 3500);
+    let currentPrice = state.currentLtp;
+
+    if (isWebSocketStale || !currentPrice) {
+      try {
+        const ltpData = await kite.getLTP([key]);
+        if (ltpData[key]?.last_price) {
+          currentPrice = ltpData[key].last_price;
+          state.currentLtp = currentPrice;
+          state.lastTickTime = Date.now();
+        }
+      } catch (e) {
+        this.log(state, `⚠ LTP check notice: ${e.message}`);
       }
+    }
 
-      if (currentPrice >= state.targetPrice!) {
-        this.log(state, `🎯 Target Hit at ₹${currentPrice.toFixed(2)}`);
-        state.winningTradesToday++;
-        await this.exitPosition(state, client, currentPrice, 'TARGET');
-      } else if (currentPrice <= state.stopLossPrice!) {
-        this.log(state, `🛑 Stop Loss Hit at ₹${currentPrice.toFixed(2)}`);
-        await this.exitPosition(state, client, currentPrice, 'SL');
-      }
-    } catch (e) {
-      this.log(state, `⚠ Position monitor error: ${e.message}`);
+    if (!currentPrice) return;
+
+    const pnlPoints = currentPrice - state.entryPrice!;
+    const pnlRs = pnlPoints * state.config.qty;
+    const pnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
+    state.currentPnlRs = pnlRs;
+    state.currentPnlPct = pnlPct;
+    state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
+
+    if (pnlPoints >= (state.config.trailCostAtPoints || 5) && !state.isCostSlTrailed) {
+      state.isCostSlTrailed = true;
+      state.stopLossPrice = state.entryPrice;
+      this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)})`);
+    }
+
+    const sign = pnlRs >= 0 ? '+' : '';
+    this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | P&L: ${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts (${sign}₹${pnlRs.toFixed(2)}) | SL: ₹${state.stopLossPrice!.toFixed(2)} | Target: ₹${state.targetPrice!.toFixed(2)}`);
+
+    if (currentPrice >= state.targetPrice!) {
+      this.log(state, `🎯 Target Hit at ₹${currentPrice.toFixed(2)}`);
+      state.winningTradesToday++;
+      await this.exitPosition(state, client, currentPrice, 'TARGET');
+      await this.persistLogs(state);
+    } else if (currentPrice <= state.stopLossPrice!) {
+      this.log(state, `🛑 Stop Loss Hit at ₹${currentPrice.toFixed(2)}`);
+      await this.exitPosition(state, client, currentPrice, 'SL');
+      await this.persistLogs(state);
     }
   }
 
@@ -786,12 +871,28 @@ export class NiftyOptionsScalperEngine {
     return emas;
   }
 
+  private getIstDateStr(d: Date): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  }
+
+  private formatCandleRange(d: Date, intervalMin: number = 5): string {
+    const startStr = d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+    const endDate = new Date(d.getTime() + intervalMin * 60 * 1000);
+    const endStr = endDate.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${startStr} - ${endStr}`;
+  }
+
+  private formatCandleCloseTime(d: Date, intervalMin: number = 5): string {
+    const endDate = new Date(d.getTime() + intervalMin * 60 * 1000);
+    return endDate.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
   private calculateVWAP(candles: Candle[], vwapSource: 'close' | 'hlc3' = 'close') {
     const vwaps: (number | null)[] = new Array(candles.length).fill(null);
     let cpv = 0, cv = 0;
     let lastDateStr = '';
     for (let i = 0; i < candles.length; i++) {
-      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(candles[i].date);
+      const dateStr = this.getIstDateStr(candles[i].date);
       if (dateStr !== lastDateStr) {
         cpv = 0; cv = 0; lastDateStr = dateStr;
       }
@@ -804,8 +905,8 @@ export class NiftyOptionsScalperEngine {
   }
 
   private async fetchCandles(client: any, config: any, interval: string, now: Date, symbol?: string, exchange?: string): Promise<Candle[]> {
-    const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-    const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
+    const istDateStr = this.getIstDateStr(now);
+    const from = new Date(`${istDateStr}T09:15:00.000+05:30`);
     from.setDate(from.getDate() - 5);
     const sym = symbol || config.symbol;
     const exch = exchange || config.exchange;
@@ -866,9 +967,9 @@ export class NiftyOptionsScalperEngine {
   }
 
   private getIstHhmm(date: Date): number {
-    const istStr = date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: false });
-    const parts = istStr.split(':').map(Number);
-    return parts[0] * 60 + (parts[1] || 0);
+    const utcMs = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const istDate = new Date(utcMs + (330 * 60000));
+    return istDate.getHours() * 60 + istDate.getMinutes();
   }
 
   private roundTick(p: number) { return Math.round(p / 0.05) * 0.05; }

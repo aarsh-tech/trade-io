@@ -24,7 +24,7 @@ export class StrategyController {
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
     private readonly scheduler: MarketSchedulerService,
-  ) {}
+  ) { }
 
   @Get()
   @ApiOperation({ summary: 'List all strategies for the user' })

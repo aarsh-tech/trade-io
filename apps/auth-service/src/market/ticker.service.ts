@@ -20,23 +20,33 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async subscribeSymbol(accountId: string, symbol: string) {
-    if (!this.tickers.has(accountId)) return;
+    if (!this.tickers.has(accountId)) {
+      await this.ensureTickerRunning(accountId, [symbol]);
+      if (!this.tickers.has(accountId)) return;
+    }
     const tickerData = this.tickers.get(accountId);
     let token = tickerData.resolveToken ? tickerData.resolveToken(symbol) : tickerData.symbolToToken.get(symbol);
     
     if (!token) {
-      // Dynamic fallback instrument lookup for newly generated options contracts
+      // Dynamic fallback instrument lookup for newly generated options contracts & stocks
       try {
         const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
         if (account?.accessToken) {
           const client = this.brokerFactory.createClient(account);
-          const exchange = symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY') ? 'NFO' : 'NSE';
-          const instruments = await client.getInstruments(exchange).catch(() => []);
-          const match = instruments.find((i: any) => i.tradingsymbol === symbol);
+          const isOptionOrFuture = /CE$|PE$|FUT$/.test(symbol) || symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY');
+          const primaryExchange = isOptionOrFuture ? 'NFO' : 'NSE';
+          let instruments = await client.getInstruments(primaryExchange).catch(() => []);
+          let match = instruments.find((i: any) => i.tradingsymbol === symbol);
+          if (!match && !isOptionOrFuture) {
+            const nfoInstruments = await client.getInstruments('NFO').catch(() => []);
+            match = nfoInstruments.find((i: any) => i.tradingsymbol === symbol);
+          }
           if (match?.instrument_token) {
             token = match.instrument_token;
             tickerData.symbolToToken.set(symbol, token);
-            tickerData.symbolToToken.set(`${exchange}:${symbol}`, token);
+            tickerData.symbolToToken.set(`${match.segment || primaryExchange}:${symbol}`, token);
+            tickerData.symbolToToken.set(`NSE:${symbol}`, token);
+            tickerData.symbolToToken.set(`NFO:${symbol}`, token);
             tickerData.tokenToSymbol.set(token, symbol);
           }
         }
@@ -275,6 +285,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           if (sym && tick.last_price) {
             mappedTicks[sym] = tick.last_price;
             mappedTicks[`NSE:${sym}`] = tick.last_price;
+            mappedTicks[`NFO:${sym}`] = tick.last_price;
+            mappedTicks[`BFO:${sym}`] = tick.last_price;
           }
         });
         if (Object.keys(mappedTicks).length > 0) {

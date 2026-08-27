@@ -96,6 +96,7 @@ export const strategyApi = {
   delete: (id: string) => api.delete(`/strategies/${id}`),
   start: (id: string) => api.post(`/strategies/${id}/start`),
   stop: (id: string) => api.post(`/strategies/${id}/stop`),
+  squareOff: (id: string) => api.post(`/strategies/${id}/square-off`),
   status: (id: string) => api.get(`/strategies/${id}/status`),
   executions: (id: string) => api.get(`/strategies/${id}/executions`),
   setAutoStart: (id: string, autoStart: boolean) =>

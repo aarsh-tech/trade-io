@@ -49,6 +49,10 @@ interface StrategyState {
   lastProcessedTimestamp: number;
   tradesPlacedToday: number;
   logs: string[];
+  currentLtp?: number;
+  currentPnlRs?: number;
+  currentPnlPct?: number;
+  peakPnlRs?: number;
 }
 
 @Injectable()
@@ -176,14 +180,38 @@ export class StockOptionsBuyingEngine {
       optionSymbol: s.optionSymbol,
       stateType: s.stateType,
       signalSide: s.signalSide,
-      entryTrigger: s.entryTriggerPrice,
-      stopLoss: s.stopLossPrice,
-      target: s.targetPrice,
+      entryPrice: s.entryTriggerPrice,
+      currentLtp: s.currentLtp || s.entryTriggerPrice,
+      stopLossPrice: s.stopLossPrice,
+      targetPrice: s.targetPrice,
       lotSize: s.lotSize,
+      qty: s.positionQty,
+      pnlRs: s.currentPnlRs ?? 0,
+      pnlPct: s.currentPnlPct ?? 0,
+      peakPnlRs: s.peakPnlRs ?? 0,
       tradesToday: s.tradesPlacedToday,
       executionLatencyMs: s.executionLatencyMs,
       isSlTrailedToCost: s.isSlTrailedToCost,
+      isPaperTrade: s.isPaperTrade,
     };
+  }
+
+  async squareOff(strategyId: string): Promise<{ success: boolean; message: string }> {
+    const state = this.running.get(strategyId);
+    if (!state) return { success: false, message: 'Strategy is not running' };
+    if (state.stateType !== 'ACTIVE_POSITION' && state.stateType !== 'WAITING_FOR_TRIGGER') {
+      return { success: false, message: 'No active position or pending trigger to square off' };
+    }
+    this.log(state, `⚡ Manual Instant Square-Off requested by user`);
+    await this.forceExit(state, 'Manual Instant Square-Off requested by user');
+    await this.persistLogs(state);
+    return { success: true, message: 'Position squared off successfully' };
+  }
+
+  private getIstHhmm(date: Date): number {
+    const utcMs = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const istDate = new Date(utcMs + (330 * 60000));
+    return istDate.getHours() * 60 + istDate.getMinutes();
   }
 
   // ─── Main tick loop ──────────────────────────────────────────────────────────
@@ -222,10 +250,7 @@ export class StockOptionsBuyingEngine {
     }
 
     const now = new Date();
-    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-    const h = ist.getHours();
-    const m = ist.getMinutes();
-    const hhmm = h * 60 + m;
+    const hhmm = this.getIstHhmm(now);
 
     const MARKET_OPEN = 9 * 60 + 15;
     const MARKET_CLOSE = 15 * 60 + 30;
@@ -237,8 +262,9 @@ export class StockOptionsBuyingEngine {
       return;
     }
 
-    // Auto close positions at 15:10 IST (NSE CAS settlement compliance)
-    if (hhmm >= 15 * 60 + 10 && state.stateType !== 'SCANNING') {
+    // Auto close positions at 15:05 IST (to exit safely before Zerodha 3:12 PM RMS cutoff)
+    if (hhmm >= 15 * 60 + 5 && state.stateType !== 'SCANNING') {
+      this.log(state, `⏰ 3:05 PM Intraday EOD Cutoff reached! Auto-squaring off position...`);
       await this.forceExit(state);
       await this.persistLogs(state);
       return;
@@ -316,18 +342,19 @@ export class StockOptionsBuyingEngine {
       const emas = this.calculateEMA(closedCandles, emaPeriod);
       const vwaps = this.calculateVWAP(closedCandles);
 
-      const timeStr = new Date(lastClosedCandleTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const rangeStr = this.formatCandleRange(closedCandles[n].date, state.config.timeframe === '5min' ? 5 : 15);
+      const closeTimeStr = this.formatCandleCloseTime(closedCandles[n].date, state.config.timeframe === '5min' ? 5 : 15);
       const currEma = emas[n];
       const currVwap = vwaps[n];
       const targetSym = (state as any).activeSymbol || state.config.symbol;
       const closedCandle = closedCandles[n];
-      this.log(state, `[${targetSym}] 🔍 5m Candle closed at ${timeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
+      this.log(state, `[${targetSym}] 🔍 ${state.config.timeframe || '5m'} Candle [${rangeStr}] closed at ${closeTimeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
 
       const mother = closedCandles[n - 1];
       const baby = closedCandles[n];
-      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-      const motherDateStr = mother.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
-      const babyDateStr = baby.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const todayStr = this.getIstDateStr(now);
+      const motherDateStr = this.getIstDateStr(mother.date);
+      const babyDateStr = this.getIstDateStr(baby.date);
       const isInsideCandle = motherDateStr === todayStr && babyDateStr === todayStr && baby.high <= mother.high && baby.low >= mother.low;
 
       if (isInsideCandle) {
@@ -585,11 +612,28 @@ export class StockOptionsBuyingEngine {
 
       const pnlPoints = currentPrice - state.entryTriggerPrice;
       const pnlRs = pnlPoints * state.positionQty;
+      const pnlPct = state.entryTriggerPrice ? (pnlPoints / state.entryTriggerPrice) * 100 : 0;
       const heldMinutes = Math.round((Date.now() - (state.entryTime ?? Date.now())) / 60_000);
 
+      state.currentLtp = currentPrice;
+      state.currentPnlRs = pnlRs;
+      state.currentPnlPct = pnlPct;
+      state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
+
+      // 3:05 PM Cutoff
+      const currentHhmm = this.getIstHhmm(new Date());
+      if (currentHhmm >= 15 * 60 + 5) {
+        this.log(state, `⏰ 3:05 PM Intraday EOD Cutoff reached in position monitor! Auto-squaring off at ₹${currentPrice.toFixed(2)} (P&L: ₹${pnlRs.toFixed(2)})`);
+        await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
+        await this.persistLogs(state);
+        return;
+      }
+
+      const sign = pnlRs >= 0 ? '+' : '';
+      const pctSign = pnlPct >= 0 ? '+' : '';
       this.log(
         state,
-        `👀 ${state.optionSymbol}: ₹${currentPrice.toFixed(2)} | Target: ₹${state.targetPrice.toFixed(2)} | SL: ₹${state.stopLossPrice.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)} | Held: ${heldMinutes}m`,
+        `📊 [LIVE P&L] ${state.optionSymbol}: ₹${currentPrice.toFixed(2)} | Target: ₹${state.targetPrice.toFixed(2)} | SL: ₹${state.stopLossPrice.toFixed(2)} | P&L: ${sign}₹${pnlRs.toFixed(2)} (${pctSign}${pnlPct.toFixed(2)}%) | Held: ${heldMinutes}m`,
       );
 
       // Update highest price peak reached
@@ -672,13 +716,11 @@ export class StockOptionsBuyingEngine {
           } catch {}
         }
 
-        const protectionPrice = this.roundTick(actualExitPrice * 0.90);
         const params: OrderParams = {
           symbol: state.optionSymbol!,
           exchange: 'NFO',
           side: 'SELL',
-          orderType: 'LIMIT',
-          price: protectionPrice,
+          orderType: 'MARKET',
           product: state.config.product ?? 'MIS',
           qty: state.positionQty,
         };
@@ -723,10 +765,10 @@ export class StockOptionsBuyingEngine {
     }
   }
 
-  private async forceExit(state: StrategyState) {
+  private async forceExit(state: StrategyState, reason?: string) {
     if (state.stateType === 'SCANNING') return;
     
-    this.log(state, `⏰ Market CAS closing cutoff (15:10 IST). Closing triggers and positions.`);
+    this.log(state, reason ? `🛑 ${reason}. Closing triggers and positions.` : `⏰ Market closing cutoff. Closing triggers and positions.`);
     
     if (!state.optionSymbol) {
       this.resetStateToScanning(state);
@@ -878,12 +920,28 @@ export class StockOptionsBuyingEngine {
     return emas;
   }
 
+  private getIstDateStr(d: Date): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  }
+
+  private formatCandleRange(d: Date, intervalMin: number = 5): string {
+    const startStr = d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+    const endDate = new Date(d.getTime() + intervalMin * 60 * 1000);
+    const endStr = endDate.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${startStr} - ${endStr}`;
+  }
+
+  private formatCandleCloseTime(d: Date, intervalMin: number = 5): string {
+    const endDate = new Date(d.getTime() + intervalMin * 60 * 1000);
+    return endDate.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
   private calculateVWAP(candles: Candle[], vwapSource: 'close' | 'hlc3' = 'close') {
     const vwaps: (number | null)[] = new Array(candles.length).fill(null);
     let cpv = 0, cv = 0;
     let lastDateStr = '';
     for (let i = 0; i < candles.length; i++) {
-      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(candles[i].date);
+      const dateStr = this.getIstDateStr(candles[i].date);
       if (dateStr !== lastDateStr) {
         cpv = 0;
         cv = 0;
@@ -924,36 +982,50 @@ export class StockOptionsBuyingEngine {
   private getLatestCrossoverTodayDetails(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): { trend: 'LONG' | 'SHORT'; crossoverIdx: number; ema: number; vwap: number; crossoverTime: Date } | null {
     let latestCrossover: 'LONG' | 'SHORT' | null = null;
     let crossoverIdx = -1;
-    const todayStr = candles[idx].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+    const todayStr = this.getIstDateStr(candles[idx].date);
 
     for (let k = 1; k <= idx; k++) {
-      const candleDateStr = candles[k].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const candleDateStr = this.getIstDateStr(candles[k].date);
       if (candleDateStr !== todayStr) continue;
 
-      const prevDateStr = candles[k - 1].date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const prevDateStr = this.getIstDateStr(candles[k - 1].date);
       if (prevDateStr !== todayStr) continue;
 
       const prevEma = emas[k - 1], currEma = emas[k];
       const prevVwap = vwaps[k - 1], currVwap = vwaps[k];
       if (prevEma === null || currEma === null || prevVwap === null || currVwap === null) continue;
 
-      if (prevEma <= prevVwap && currEma > currVwap) {
+      const candle = candles[k];
+
+      // LONG Crossover: 15-EMA crosses ABOVE VWAP + Candle MUST be bullish & close ABOVE VWAP & 15-EMA
+      if (prevEma <= prevVwap && currEma > currVwap && candle.close >= currVwap && candle.close >= currEma && candle.close >= candle.open) {
         latestCrossover = 'LONG';
         crossoverIdx = k;
-      } else if (prevEma >= prevVwap && currEma < currVwap) {
+      }
+      // SHORT Crossover: 15-EMA crosses BELOW VWAP + Candle MUST be bearish & close BELOW VWAP & 15-EMA
+      else if (prevEma >= prevVwap && currEma < currVwap && candle.close <= currVwap && candle.close <= currEma && candle.close <= candle.open) {
         latestCrossover = 'SHORT';
         crossoverIdx = k;
       }
     }
 
-    if (latestCrossover !== null && (idx - crossoverIdx) <= 3) {
-      return {
-        trend: latestCrossover,
-        crossoverIdx,
-        ema: emas[crossoverIdx]!,
-        vwap: vwaps[crossoverIdx]!,
-        crossoverTime: new Date(candles[crossoverIdx].date),
-      };
+    if (latestCrossover !== null && crossoverIdx !== -1 && (idx - crossoverIdx) <= 3) {
+      const currentEma = emas[idx], currentVwap = vwaps[idx];
+      const currentCandle = candles[idx];
+      if (currentEma === null || currentVwap === null) return null;
+
+      const longValid = latestCrossover === 'LONG' && currentEma > currentVwap && currentCandle.close >= (currentVwap * 0.998);
+      const shortValid = latestCrossover === 'SHORT' && currentEma < currentVwap && currentCandle.close <= (currentVwap * 1.002);
+
+      if (longValid || shortValid) {
+        return {
+          trend: latestCrossover,
+          crossoverIdx,
+          ema: emas[crossoverIdx]!,
+          vwap: vwaps[crossoverIdx]!,
+          crossoverTime: new Date(candles[crossoverIdx].date),
+        };
+      }
     }
 
     return null;
@@ -1004,14 +1076,14 @@ export class StockOptionsBuyingEngine {
 
       const emas = this.calculateEMA(candles, emaPeriod);
       const vwaps = this.calculateVWAP(candles);
-      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const todayStr = this.getIstDateStr(now);
 
       let cachedOptCandles: Candle[] = [];
       let cachedOptSymbol = '';
 
       for (let i = emaPeriod + 1; i < candles.length; i++) {
         const currentCandle = candles[i];
-        const candleDateStr = currentCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+        const candleDateStr = this.getIstDateStr(currentCandle.date);
         if (candleDateStr !== todayStr) continue;
 
         if (state.stateType === 'ACTIVE_POSITION' && state.optionSymbol) {
@@ -1065,22 +1137,30 @@ export class StockOptionsBuyingEngine {
 
         const mother = candles[i - 1];
         const baby = candles[i];
-        const isInsideCandle = baby.high <= mother.high && baby.low >= mother.low;
+        const motherDateStr = this.getIstDateStr(mother.date);
+        const babyDateStr = this.getIstDateStr(baby.date);
+        const isInsideCandle = motherDateStr === todayStr && babyDateStr === todayStr && baby.high <= mother.high && baby.low >= mother.low;
         const details = this.getLatestCrossoverTodayDetails(i, candles, emas, vwaps);
 
         if (details !== null) {
           const side = details.trend === 'LONG' ? 'CALL' : 'PUT';
           const crossoverCandle = candles[details.crossoverIdx];
-          const isFreshCrossover = (i - details.crossoverIdx) <= 2;
+          const isFreshCrossover = (i - details.crossoverIdx) <= 1;
 
           let triggerHigh: number | null = null;
           let triggerLow: number | null = null;
           let setupType = '';
 
           if (isInsideCandle) {
-            triggerHigh = mother.high;
-            triggerLow = mother.low;
-            setupType = 'Inside Candle Pullback';
+            if (side === 'CALL' && baby.close >= details.vwap * 0.998) {
+              triggerHigh = mother.high;
+              triggerLow = mother.low;
+              setupType = 'Inside Candle Pullback';
+            } else if (side === 'PUT' && baby.close <= details.vwap * 1.002) {
+              triggerHigh = mother.high;
+              triggerLow = mother.low;
+              setupType = 'Inside Candle Pullback';
+            }
           } else if (isFreshCrossover && i === details.crossoverIdx) {
             if (details.trend === 'LONG') {
               triggerHigh = crossoverCandle.high;

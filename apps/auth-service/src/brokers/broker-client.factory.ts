@@ -10,17 +10,19 @@ import axios from 'axios';
 // Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
 export const keepAliveHttpsAgent = new https.Agent({
   keepAlive: true,
-  keepAliveMsecs: 10000,
-  maxSockets: 100,
-  maxFreeSockets: 25,
-  timeout: 5000,
+  keepAliveMsecs: 120000,
+  maxSockets: 200,
+  maxFreeSockets: 50,
+  timeout: 10000,
+  scheduling: 'fifo',
 });
 export const keepAliveHttpAgent = new http.Agent({
   keepAlive: true,
-  keepAliveMsecs: 10000,
-  maxSockets: 100,
-  maxFreeSockets: 25,
-  timeout: 5000,
+  keepAliveMsecs: 120000,
+  maxSockets: 200,
+  maxFreeSockets: 50,
+  timeout: 10000,
+  scheduling: 'fifo',
 });
 
 axios.defaults.httpsAgent = keepAliveHttpsAgent;
