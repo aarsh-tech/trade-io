@@ -21,7 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import Link from "next/link";
-import { strategyApi, brokerApi, marketApi } from "@/lib/api";
+import { strategyApi, brokerApi, marketApi, getSocketBaseUrl } from "@/lib/api";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription
 } from "@/components/ui/dialog";
@@ -210,8 +210,7 @@ export default function StrategyDetailPage() {
     const token = localStorage.getItem("accessToken");
     if (!token) return;
 
-    const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '') || "http://127.0.0.1:3002";
-    const socket = io(`${SOCKET_URL}/strategy`, {
+    const socket = io(`${getSocketBaseUrl()}/strategy`, {
       transports: ["websocket"],
       auth: { token },
     });

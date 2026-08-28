@@ -14,8 +14,7 @@
 import { useEffect, useRef } from "react";
 import axios from "axios";
 import { useAuthStore } from "@/store";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3002/v1";
+import { getApiBaseUrl } from "@/lib/api";
 
 // Refresh 12 minutes — well before any reasonable access-token expiry
 const REFRESH_INTERVAL_MS = 12 * 60 * 1000;
@@ -35,7 +34,7 @@ export function useTokenRefresh() {
     isRefreshingRef.current = true;
     try {
       const { data } = await axios.post(
-        `${API_BASE}/auth/refresh`,
+        `${getApiBaseUrl()}/auth/refresh`,
         { refreshToken },
         { withCredentials: true }
       );

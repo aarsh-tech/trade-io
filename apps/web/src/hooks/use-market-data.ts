@@ -1,11 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-
-const SOCKET_URL =
-  process.env.NEXT_PUBLIC_WS_URL ||
-  (process.env.NEXT_PUBLIC_API_URL
-    ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/v1\/?$/, '')}/market`
-    : 'http://127.0.0.1:3002/market');
+import { getSocketBaseUrl } from '@/lib/api';
 
 export interface MarketTick {
   symbol: string;
@@ -24,7 +19,7 @@ export function useMarketData(symbols: string[]) {
     if (symbols.length === 0) return;
 
     // Connect to market namespace
-    const socket = io(SOCKET_URL, {
+    const socket = io(`${getSocketBaseUrl()}/market`, {
       withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,

@@ -1,9 +1,30 @@
 import axios from "axios";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3002/v1";
+export function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== "undefined" && window.location.hostname) {
+    return `http://${window.location.hostname}:3002/v1`;
+  }
+  return "http://127.0.0.1:3002/v1";
+}
+
+export function getSocketBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL;
+  }
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/v1\/?$/, "");
+  }
+  if (typeof window !== "undefined" && window.location.hostname) {
+    return `http://${window.location.hostname}:3002`;
+  }
+  return "http://127.0.0.1:3002";
+}
 
 export const api = axios.create({
-  baseURL: API_BASE,
+  baseURL: getApiBaseUrl(),
   withCredentials: true,
   headers: { "Content-Type": "application/json" },
 });
@@ -11,6 +32,9 @@ export const api = axios.create({
 // Request interceptor — attach JWT
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
+    if (!process.env.NEXT_PUBLIC_API_URL && config.baseURL?.includes("127.0.0.1")) {
+      config.baseURL = getApiBaseUrl();
+    }
     const token = localStorage.getItem("accessToken");
     if (token) config.headers.Authorization = `Bearer ${token}`;
   }
@@ -33,7 +57,7 @@ api.interceptors.response.use(
         const refreshToken = localStorage.getItem("refreshToken");
         if (!refreshToken) throw new Error("No refresh token");
 
-        const { data } = await axios.post(`${API_BASE}/auth/refresh`, { refreshToken });
+        const { data } = await axios.post(`${getApiBaseUrl()}/auth/refresh`, { refreshToken });
         const newAccess = data.data.accessToken;
         const newRefresh = data.data.refreshToken;
 

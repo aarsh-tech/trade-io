@@ -21,6 +21,12 @@ model User {
   twoFaEnabled Boolean  @default(false)
   resetToken   String?  @unique
   resetExpires DateTime?
+  whatsappNumber        String?
+  whatsappGroupId       String?
+  whatsappAlertsEnabled Boolean  @default(false)
+  whatsappAlertTime     String   @default("09:20")
+  whatsappUniverse      String   @default("fno")
+  whatsappTolerance     Float    @default(0.05)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

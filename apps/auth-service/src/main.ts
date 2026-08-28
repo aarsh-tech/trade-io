@@ -18,10 +18,27 @@ async function bootstrap() {
 
   // CORS
   app.enableCors({
-    origin: [
-      process.env.FRONTEND_URL || 'http://localhost:3000',
-      'http://127.0.0.1:3000',
-    ],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server)
+      if (!origin) return callback(null, true);
+
+      const frontendUrl = process.env.FRONTEND_URL;
+      if (frontendUrl && origin === frontendUrl) {
+        return callback(null, true);
+      }
+
+      // Check localhost, 127.0.0.1, or private LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+      const isLocalOrLan =
+        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
+          origin,
+        );
+
+      if (isLocalOrLan) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`Blocked by CORS: ${origin}`), false);
+    },
     credentials: true,
   });
 

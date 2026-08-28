@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { marketApi } from "@/lib/api";
+import { marketApi, getSocketBaseUrl } from "@/lib/api";
 import { useEffect, useState } from "react";
 import { io, Socket } from "socket.io-client";
 
@@ -7,8 +7,6 @@ export const DASHBOARD_KEYS = {
   overview: ["dashboard", "overview"] as const,
   stats: ["dashboard", "stats"] as const,
 };
-
-const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '') || "http://127.0.0.1:3002";
 
 export function useDashboard() {
   const queryClient = useQueryClient();
@@ -46,7 +44,7 @@ export function useDashboard() {
       ...data.stocks.map((s: any) => s.symbol),
     ];
 
-    const socketInstance = io(`${SOCKET_URL}/market`, {
+    const socketInstance = io(`${getSocketBaseUrl()}/market`, {
       transports: ['websocket'],
     });
 
