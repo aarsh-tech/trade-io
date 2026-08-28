@@ -418,7 +418,7 @@ export default function StrategyDetailPage() {
                 Test Order
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[480px] p-6">
+            <DialogContent className="w-[calc(100%-2rem)] sm:max-w-[480px] p-4 sm:p-6 rounded-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="text-xl font-bold">Place Test Order</DialogTitle>
                 <DialogDescription className="text-sm text-[hsl(var(--muted-foreground))]">

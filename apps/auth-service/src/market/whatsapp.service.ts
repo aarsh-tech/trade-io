@@ -287,45 +287,72 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
   ): string {
     const dateStr = new Date().toLocaleDateString('en-IN', {
       timeZone: 'Asia/Kolkata',
+      weekday: 'short',
       day: '2-digit',
       month: 'short',
       year: 'numeric',
     });
 
-    let msg = `📊 *TradeIO Morning OHL Scanner Alert (${alertTime} IST)*\n`;
-    msg += `📅 *Date:* ${dateStr}\n\n`;
+    let msg = `━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `⚡ *TRADEIO INSTITUTIONAL SCANNER*\n`;
+    msg += `🎯 *Morning Opening Drive (${alertTime} IST)*\n`;
+    msg += `📅 *Date:* ${dateStr}\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     // 🟢 BULLISH — OPEN = LOW
-    msg += `🟢 *BULLISH — OPEN = LOW (Buyers in Control)*\n`;
+    msg += `🟢 *BULLISH MOMENTUM — OPEN = LOW*\n`;
+    msg += `_(Institutional Accumulation • Zero Below Open)_\n\n`;
+
     if (openLowStocks.length === 0) {
-      msg += `_No pure Open=Low setups detected today._\n`;
+      msg += `_No pure Open=Low candidates identified in this scan._\n\n`;
     } else {
-      openLowStocks.slice(0, 12).forEach((s) => {
-        const changeSign = s.changePct >= 0 ? '+' : '';
-        msg += `• *${s.symbol}* | LTP: ₹${s.ltp.toFixed(2)} (${changeSign}${s.changePct.toFixed(2)}%) | Open: ₹${s.open.toFixed(2)}\n`;
+      openLowStocks.slice(0, 8).forEach((s, idx) => {
+        const sign = s.changePct >= 0 ? '+' : '';
+        const fnoBadge = s.isFnO ? ` [Lot ${s.lotSize}]` : '';
+        msg += `${idx + 1}️⃣ *${s.symbol}*${fnoBadge}\n`;
+        msg += `   ▸ LTP: *₹${s.ltp.toFixed(2)}* (${sign}${s.changePct.toFixed(2)}%)\n`;
+        msg += `   ▸ Open=Low: *₹${s.open.toFixed(2)}*\n`;
+        if (s.suggestedSL && s.suggestedTarget1) {
+          msg += `   ▸ SL: *₹${s.suggestedSL.toFixed(2)}* | T1: *₹${s.suggestedTarget1.toFixed(2)}*\n`;
+        }
+        msg += `\n`;
       });
-      if (openLowStocks.length > 12) {
-        msg += `_...and ${openLowStocks.length - 12} more Open=Low stocks._\n`;
+      if (openLowStocks.length > 8) {
+        msg += `_...and ${openLowStocks.length - 8} more bullish setups on dashboard._\n\n`;
       }
     }
 
-    msg += `\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     // 🔴 BEARISH — OPEN = HIGH
-    msg += `🔴 *BEARISH — OPEN = HIGH (Sellers in Control)*\n`;
+    msg += `🔴 *BEARISH MOMENTUM — OPEN = HIGH*\n`;
+    msg += `_(Institutional Distribution • Zero Above Open)_\n\n`;
+
     if (openHighStocks.length === 0) {
-      msg += `_No pure Open=High setups detected today._\n`;
+      msg += `_No pure Open=High candidates identified in this scan._\n\n`;
     } else {
-      openHighStocks.slice(0, 12).forEach((s) => {
-        const changeSign = s.changePct >= 0 ? '+' : '';
-        msg += `• *${s.symbol}* | LTP: ₹${s.ltp.toFixed(2)} (${changeSign}${s.changePct.toFixed(2)}%) | Open: ₹${s.open.toFixed(2)}\n`;
+      openHighStocks.slice(0, 8).forEach((s, idx) => {
+        const sign = s.changePct >= 0 ? '+' : '';
+        const fnoBadge = s.isFnO ? ` [Lot ${s.lotSize}]` : '';
+        msg += `${idx + 1}️⃣ *${s.symbol}*${fnoBadge}\n`;
+        msg += `   ▸ LTP: *₹${s.ltp.toFixed(2)}* (${sign}${s.changePct.toFixed(2)}%)\n`;
+        msg += `   ▸ Open=High: *₹${s.open.toFixed(2)}*\n`;
+        if (s.suggestedSL && s.suggestedTarget1) {
+          msg += `   ▸ SL: *₹${s.suggestedSL.toFixed(2)}* | T1: *₹${s.suggestedTarget1.toFixed(2)}*\n`;
+        }
+        msg += `\n`;
       });
-      if (openHighStocks.length > 12) {
-        msg += `_...and ${openHighStocks.length - 12} more Open=High stocks._\n`;
+      if (openHighStocks.length > 8) {
+        msg += `_...and ${openHighStocks.length - 8} more bearish setups on dashboard._\n\n`;
       }
     }
 
-    msg += `\n⚡ _Sent automatically by TradeIO Algorithmic Platform_`;
+    msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `💡 *Execution Guidance:*\n`;
+    msg += `• Bullish: Buy on 5-min breakout with Stop-Loss @ Day Low\n`;
+    msg += `• Bearish: Short on 5-min breakdown with Stop-Loss @ Day High\n`;
+    msg += `• Target 1:1 to 1:2 Risk-Reward ratio\n\n`;
+    msg += `🚀 _TradeIO Algorithmic Trading Systems_`;
 
     return msg;
   }

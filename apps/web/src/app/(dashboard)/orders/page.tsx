@@ -477,111 +477,32 @@ export default function OrdersPage() {
               </div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-muted/40 text-xs font-semibold text-muted-foreground border-b border-border">
-                  <tr>
-                    <th className="py-3 px-4">Time (IST)</th>
-                    <th className="py-3 px-4">Side</th>
-                    <th className="py-3 px-4">Instrument</th>
-                    <th className="py-3 px-4">Product</th>
-                    <th className="py-3 px-4">Type</th>
-                    <th className="py-3 px-4 text-right">Qty</th>
-                    <th className="py-3 px-4 text-right">Price / Trigger</th>
-                    <th className="py-3 px-4 text-right">Avg. Executed</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center">Broker ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredOrders.map((ord) => {
-                    const isBuy = ord.side === "BUY";
-                    const isOpen = ord.status === "OPEN" || ord.status === "PENDING";
-                    const { date, time } = formatDateTime(ord.createdAt);
-                    const formatted = formatTradingSymbol(ord.symbol);
+            <>
+              {/* ─── Mobile Order Cards (< md) ─── */}
+              <div className="block md:hidden divide-y divide-border">
+                {filteredOrders.map((ord) => {
+                  const isBuy = ord.side === "BUY";
+                  const isOpen = ord.status === "OPEN" || ord.status === "PENDING";
+                  const { date, time } = formatDateTime(ord.createdAt);
+                  const formatted = formatTradingSymbol(ord.symbol);
 
-                    return (
-                      <tr key={ord.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="font-mono text-xs font-medium text-foreground">{time}</div>
-                          <div className="text-[10px] text-muted-foreground">{date}</div>
-                        </td>
-                        <td className="py-3 px-4">
+                  return (
+                    <div key={ord.id} className="p-4 space-y-3 bg-card hover:bg-muted/20 transition-colors">
+                      {/* Top Row: Side Badge, Status, and Time */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
                           <Badge
                             className={cn(
-                              "text-[10.5px] font-bold px-2.5 py-0.5 border-0 shadow-2xs",
-                              isBuy
-                                ? "bg-blue-600 text-white"
-                                : "bg-rose-600 text-white"
+                              "text-[10.5px] font-bold px-2 py-0.5 border-0 shadow-2xs",
+                              isBuy ? "bg-blue-600 text-white" : "bg-rose-600 text-white"
                             )}
                           >
                             {ord.side}
                           </Badge>
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="font-bold text-foreground flex items-center gap-1.5">
-                            <span>{formatted.displayName}</span>
-                            <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
-                              {ord.exchange || (formatted.isDerivative ? "NFO" : "NSE")}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            {formatted.isDerivative && (
-                              <span className="text-[10px] text-muted-foreground font-mono">
-                                {ord.symbol}
-                              </span>
-                            )}
-                            {ord.execution?.strategy?.name ? (
-                              <span className="text-[11px] text-blue-500 font-medium truncate max-w-[180px]">
-                                • {ord.execution.strategy.name}
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-muted-foreground">
-                                • Discretionary / Kite Trade
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 font-mono text-xs">
-                          <Badge variant="outline" className="text-[10.5px] font-bold bg-muted/30">
-                            {ord.productType || "MIS"}
-                          </Badge>
-                        </td>
-                        <td className="py-3 px-4 font-mono text-xs text-muted-foreground">
-                          {ord.orderType}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-semibold text-foreground">
-                          {ord.filledQty > 0 ? (
-                            <span>
-                              <span className="text-emerald-500 font-bold">{ord.filledQty}</span>
-                              <span className="text-muted-foreground text-[11px]">/{ord.qty}</span>
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">0/{ord.qty}</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-xs">
-                          <div className="font-semibold text-foreground">
-                            {ord.price && ord.price > 0 ? `₹${ord.price.toFixed(2)}` : "MARKET"}
-                          </div>
-                          {ord.triggerPrice && ord.triggerPrice > 0 && (
-                            <div className="text-[10px] text-amber-500 font-mono">
-                              Trig: ₹{ord.triggerPrice.toFixed(2)}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-semibold text-foreground">
-                          {ord.avgPrice && ord.avgPrice > 0 ? (
-                            `₹${ord.avgPrice.toFixed(2)}`
-                          ) : (
-                            <span className="text-muted-foreground text-xs">-</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-center">
                           <Badge
                             variant="secondary"
                             className={cn(
-                              "text-[11px] font-semibold inline-flex items-center gap-1 px-2.5 py-0.5",
+                              "text-[10px] font-bold px-2 py-0.5 inline-flex items-center gap-1",
                               ord.status === "COMPLETE"
                                 ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/10"
                                 : isOpen
@@ -593,32 +514,221 @@ export default function OrdersPage() {
                             {isOpen && <Clock className="h-3 w-3" />}
                             {ord.status === "CANCELLED" && <Ban className="h-3 w-3" />}
                             {ord.status === "REJECTED" && <XCircle className="h-3 w-3" />}
-                            {ord.status === "COMPLETE" ? "COMPLETE" : ord.status}
+                            {ord.status}
                           </Badge>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          {isOpen ? (
+                        </div>
+                        <span className="font-mono text-xs text-muted-foreground">{time}</span>
+                      </div>
+
+                      {/* Middle: Instrument & Tags */}
+                      <div>
+                        <div className="font-bold text-sm text-foreground flex items-center gap-1.5 flex-wrap">
+                          <span>{formatted.displayName}</span>
+                          <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
+                            {ord.exchange || (formatted.isDerivative ? "NFO" : "NSE")}
+                          </span>
+                          <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
+                            {ord.productType || "MIS"}
+                          </span>
+                        </div>
+                        {ord.execution?.strategy?.name && (
+                          <p className="text-[11px] text-blue-500 font-medium mt-0.5 truncate">
+                            ⚡ {ord.execution.strategy.name}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Bottom Grid: Qty, Price, Avg Executed, and Action */}
+                      <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded-xl border border-border/60 text-xs">
+                        <div>
+                          <span className="text-[10px] text-muted-foreground block">Qty Filled</span>
+                          <span className="font-mono font-bold text-foreground">
+                            {ord.filledQty > 0 ? (
+                              <span className="text-emerald-600 font-bold">{ord.filledQty}</span>
+                            ) : (
+                              "0"
+                            )}
+                            <span className="text-muted-foreground text-[10px]">/{ord.qty}</span>
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-muted-foreground block">Order Price</span>
+                          <span className="font-mono font-semibold text-foreground">
+                            {ord.price && ord.price > 0 ? `₹${ord.price.toFixed(2)}` : "MARKET"}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-muted-foreground block">Avg Executed</span>
+                          <span className="font-mono font-semibold text-foreground">
+                            {ord.avgPrice && ord.avgPrice > 0 ? `₹${ord.avgPrice.toFixed(2)}` : "-"}
+                          </span>
+                        </div>
+
+                        {isOpen && (
+                          <div>
                             <Button
                               variant="outline"
                               size="sm"
                               onClick={() => setCancellingOrder(ord)}
                               disabled={isCancelling}
-                              className="h-7 px-2.5 text-xs text-rose-500 border-rose-500/30 hover:bg-rose-500/10"
+                              className="h-7 text-xs text-rose-500 border-rose-300 hover:bg-rose-50 px-3"
                             >
                               Cancel
                             </Button>
-                          ) : (
-                            <span className="text-xs text-muted-foreground font-mono" title={ord.brokerOrderId || ""}>
-                              {ord.brokerOrderId ? ord.brokerOrderId.slice(-8) : "-"}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ─── Desktop Table (>= md) ─── */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/40 text-xs font-semibold text-muted-foreground border-b border-border">
+                    <tr>
+                      <th className="py-3 px-4">Time (IST)</th>
+                      <th className="py-3 px-4">Side</th>
+                      <th className="py-3 px-4">Instrument</th>
+                      <th className="py-3 px-4">Product</th>
+                      <th className="py-3 px-4">Type</th>
+                      <th className="py-3 px-4 text-right">Qty</th>
+                      <th className="py-3 px-4 text-right">Price / Trigger</th>
+                      <th className="py-3 px-4 text-right">Avg. Executed</th>
+                      <th className="py-3 px-4 text-center">Status</th>
+                      <th className="py-3 px-4 text-center">Broker ID</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredOrders.map((ord) => {
+                      const isBuy = ord.side === "BUY";
+                      const isOpen = ord.status === "OPEN" || ord.status === "PENDING";
+                      const { date, time } = formatDateTime(ord.createdAt);
+                      const formatted = formatTradingSymbol(ord.symbol);
+
+                      return (
+                        <tr key={ord.id} className="hover:bg-muted/30 transition-colors">
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="font-mono text-xs font-medium text-foreground">{time}</div>
+                            <div className="text-[10px] text-muted-foreground">{date}</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <Badge
+                              className={cn(
+                                "text-[10.5px] font-bold px-2.5 py-0.5 border-0 shadow-2xs",
+                                isBuy
+                                  ? "bg-blue-600 text-white"
+                                  : "bg-rose-600 text-white"
+                              )}
+                            >
+                              {ord.side}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-foreground flex items-center gap-1.5">
+                              <span>{formatted.displayName}</span>
+                              <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
+                                {ord.exchange || (formatted.isDerivative ? "NFO" : "NSE")}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {formatted.isDerivative && (
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  {ord.symbol}
+                                </span>
+                              )}
+                              {ord.execution?.strategy?.name ? (
+                                <span className="text-[11px] text-blue-500 font-medium truncate max-w-[180px]">
+                                  • {ord.execution.strategy.name}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground">
+                                  • Discretionary / Kite Trade
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 font-mono text-xs">
+                            <Badge variant="outline" className="text-[10.5px] font-bold bg-muted/30">
+                              {ord.productType || "MIS"}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4 font-mono text-xs text-muted-foreground">
+                            {ord.orderType}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-semibold text-foreground">
+                            {ord.filledQty > 0 ? (
+                              <span>
+                                <span className="text-emerald-500 font-bold">{ord.filledQty}</span>
+                                <span className="text-muted-foreground text-[11px]">/{ord.qty}</span>
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">0/{ord.qty}</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">
+                            <div className="font-semibold text-foreground">
+                              {ord.price && ord.price > 0 ? `₹${ord.price.toFixed(2)}` : "MARKET"}
+                            </div>
+                            {ord.triggerPrice && ord.triggerPrice > 0 && (
+                              <div className="text-[10px] text-amber-500 font-mono">
+                                Trig: ₹{ord.triggerPrice.toFixed(2)}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-semibold text-foreground">
+                            {ord.avgPrice && ord.avgPrice > 0 ? (
+                              `₹${ord.avgPrice.toFixed(2)}`
+                            ) : (
+                              <span className="text-muted-foreground text-xs">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <Badge
+                              variant="secondary"
+                              className={cn(
+                                "text-[11px] font-semibold inline-flex items-center gap-1 px-2.5 py-0.5",
+                                ord.status === "COMPLETE"
+                                  ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/10"
+                                  : isOpen
+                                  ? "border-amber-500/30 text-amber-600 bg-amber-500/10"
+                                  : "border-rose-500/30 text-rose-600 bg-rose-500/10"
+                              )}
+                            >
+                              {ord.status === "COMPLETE" && <CheckCircle2 className="h-3 w-3" />}
+                              {isOpen && <Clock className="h-3 w-3" />}
+                              {ord.status === "CANCELLED" && <Ban className="h-3 w-3" />}
+                              {ord.status === "REJECTED" && <XCircle className="h-3 w-3" />}
+                              {ord.status === "COMPLETE" ? "COMPLETE" : ord.status}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            {isOpen ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCancellingOrder(ord)}
+                                disabled={isCancelling}
+                                className="h-7 px-2.5 text-xs text-rose-500 border-rose-500/30 hover:bg-rose-500/10"
+                              >
+                                Cancel
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground font-mono" title={ord.brokerOrderId || ""}>
+                                {ord.brokerOrderId ? ord.brokerOrderId.slice(-8) : "-"}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

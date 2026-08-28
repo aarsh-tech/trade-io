@@ -31,9 +31,11 @@ import {
   Info,
   ChevronLeft,
   ChevronRight,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { WhatsAppAlertsModal } from "@/components/dashboard/WhatsAppAlertsModal";
 
 interface OhlStockItem {
   symbol: string;
@@ -89,6 +91,9 @@ export default function LiveOhlScreenerPage() {
 
   // Quick Trade Modal State
   const [quickTradeStock, setQuickTradeStock] = useState<QuickTradeStock | null>(null);
+
+  // WhatsApp Alerts Modal State
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
 
   // Fetch data
   const { data: response, isLoading, refetch, isFetching } = useQuery({
@@ -331,6 +336,17 @@ export default function LiveOhlScreenerPage() {
             </button>
           </div>
 
+          {/* WhatsApp Alerts Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsWhatsAppModalOpen(true)}
+            className="bg-emerald-600/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/30 hover:text-white rounded-xl text-xs gap-1.5 font-bold"
+          >
+            <MessageSquare className="h-3.5 w-3.5 text-emerald-400" />
+            WhatsApp Alerts
+          </Button>
+
           {/* Refresh Button */}
           <Button
             variant="outline"
@@ -343,6 +359,12 @@ export default function LiveOhlScreenerPage() {
             {isFetching ? "Scanning..." : "Refresh"}
           </Button>
         </div>
+
+        {/* WhatsApp Alerts Modal */}
+        <WhatsAppAlertsModal
+          open={isWhatsAppModalOpen}
+          onOpenChange={setIsWhatsAppModalOpen}
+        />
       </div>
 
       {/* KPI Cards */}
@@ -601,7 +623,119 @@ export default function LiveOhlScreenerPage() {
       {/* Main Table / Grid View */}
       {viewMode === "table" ? (
         <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* ─── Mobile Stock Cards (< md) ─── */}
+          <div className="block md:hidden divide-y divide-border/60">
+            {isLoading ? (
+              Array.from({ length: 6 }).map((_, idx) => (
+                <div key={idx} className="p-4 space-y-2.5 animate-pulse">
+                  <div className="h-4 bg-muted rounded w-1/3" />
+                  <div className="h-10 bg-muted/60 rounded-xl" />
+                </div>
+              ))
+            ) : paginatedStocks.length === 0 ? (
+              <div className="py-12 text-center text-muted-foreground px-4">
+                <Info className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                <p className="font-semibold text-sm">No stocks matching the selected criteria</p>
+                <p className="text-xs text-muted-foreground mt-1">Try switching tabs or adjusting tolerance settings.</p>
+              </div>
+            ) : (
+              paginatedStocks.map((stock) => {
+                const isUp = stock.change >= 0;
+                const flash = priceFlashes[stock.symbol] || priceFlashes[`NSE:${stock.symbol}`];
+                const isBullish = stock.signalType === "BULLISH";
+
+                return (
+                  <div key={stock.symbol} className="p-3.5 space-y-3 bg-card hover:bg-muted/15 transition-colors">
+                    {/* Row 1: Symbol & LTP */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-sm text-foreground">{stock.symbol}</span>
+                        {stock.isFnO && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-blue-500/30 text-blue-500 bg-blue-500/5">
+                            Lot {stock.lotSize}
+                          </Badge>
+                        )}
+                        <span className="text-[10px] text-muted-foreground truncate max-w-[100px]">{stock.name}</span>
+                      </div>
+
+                      <div className="text-right">
+                        <span
+                          className={cn(
+                            "px-2 py-0.5 rounded transition-all duration-300 inline-block font-mono font-bold text-sm",
+                            flash === "up" && "bg-emerald-500/30 text-emerald-400 scale-105",
+                            flash === "down" && "bg-rose-500/30 text-rose-400 scale-105"
+                          )}
+                        >
+                          ₹{stock.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                        <div className={cn("flex items-center justify-end gap-0.5 font-bold text-[11px] font-mono", isUp ? "text-emerald-500" : "text-rose-500")}>
+                          {isUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                          <span>{isUp ? "+" : ""}{stock.changePct.toFixed(2)}%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 2: Signal Badge & O-L/O-H Gap */}
+                    <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded-xl border border-border/60 text-xs">
+                      <div>
+                        {stock.signal === "OPEN_LOW" && (
+                          <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] font-bold gap-1">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            OPEN = LOW 🟢
+                          </Badge>
+                        )}
+                        {stock.signal === "OPEN_HIGH" && (
+                          <Badge className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30 text-[10px] font-bold gap-1">
+                            <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                            OPEN = HIGH 🔴
+                          </Badge>
+                        )}
+                        {stock.signal === "NEAR_OPEN_LOW" && (
+                          <Badge variant="outline" className="text-[9px] border-blue-500/40 text-blue-500 bg-blue-500/5">
+                            NEAR O=L ({stock.diffOpenLowPct.toFixed(2)}%)
+                          </Badge>
+                        )}
+                        {stock.signal === "NEAR_OPEN_HIGH" && (
+                          <Badge variant="outline" className="text-[9px] border-purple-500/40 text-purple-500 bg-purple-500/5">
+                            NEAR O=H ({stock.diffOpenHighPct.toFixed(2)}%)
+                          </Badge>
+                        )}
+                        {stock.signal === "NEUTRAL" && (
+                          <span className="text-[10px] text-muted-foreground">Neutral</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 font-mono text-[10.5px]">
+                        <span className="text-rose-500">SL: ₹{stock.suggestedSL}</span>
+                        <span className="text-emerald-500">TGT: ₹{stock.suggestedTarget1}</span>
+                      </div>
+                    </div>
+
+                    {/* Row 3: Quick Action Buttons */}
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <Button
+                        size="sm"
+                        onClick={() => handleOpenTrade(stock, "LONG")}
+                        className="h-8 flex-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-sm"
+                      >
+                        BUY (Long)
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => handleOpenTrade(stock, "SHORT")}
+                        className="h-8 flex-1 text-xs bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shadow-sm"
+                      >
+                        SELL (Short)
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* ─── Desktop Table (>= md) ─── */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead className="bg-muted/50 text-muted-foreground font-semibold border-b border-border text-[11px] uppercase tracking-wider">
                 <tr>

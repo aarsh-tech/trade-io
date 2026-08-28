@@ -278,12 +278,12 @@ export default function DashboardPage() {
       </div>
 
       {/* ── 2. Top Row: Equity & Commodity Cards (2-Grid) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Equity Card */}
         <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-          <CardHeader className="py-4 px-6 border-b border-slate-100 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+          <CardHeader className="py-3.5 px-4 sm:px-6 border-b border-slate-100 flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2.5 sm:gap-3">
+              <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
                 <LayoutGrid className="h-4 w-4" />
               </div>
               <CardTitle className="text-sm font-bold text-slate-900 tracking-tight">
@@ -294,15 +294,15 @@ export default function DashboardPage() {
               href="/portfolio"
               className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1 group"
             >
-              <span>View statement</span>
+              <span>Statement</span>
               <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
             </Link>
           </CardHeader>
 
-          <CardContent className="p-6">
+          <CardContent className="p-4 sm:p-6">
             <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
               <div>
-                <div className="text-3xl font-bold font-mono text-slate-900 tracking-tight">
+                <div className="text-2xl sm:text-3xl font-bold font-mono text-slate-900 tracking-tight">
                   ₹{stats.marginAvailable.toLocaleString("en-IN", {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,

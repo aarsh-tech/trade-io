@@ -202,7 +202,7 @@ export default function BrokersPage() {
 
       {/* Connect modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="p-0 border-slate-100 overflow-hidden max-w-[440px] gap-0">
+        <DialogContent className="p-0 border-slate-100 overflow-hidden w-[calc(100%-2rem)] sm:max-w-[440px] rounded-2xl max-h-[90vh] overflow-y-auto gap-0">
           {selectedBroker && (
             <>
               {/* Header */}

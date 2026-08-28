@@ -63,19 +63,10 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Mobile backdrop */}
-      <div
-        className={cn(
-          "fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-40 transition-opacity md:hidden",
-          sidebarCollapsed ? "opacity-0 pointer-events-none" : "opacity-100"
-        )}
-        onClick={toggleSidebar}
-      />
-
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col h-screen bg-card border-r border-border transition-all duration-300 ease-in-out w-64 md:relative md:translate-x-0",
-          sidebarCollapsed ? "-translate-x-full md:w-16" : "translate-x-0"
+          "hidden md:flex flex-col h-screen bg-card border-r border-border transition-all duration-300 ease-in-out w-64 md:relative shrink-0",
+          sidebarCollapsed ? "md:w-16" : "md:w-64"
         )}
       >
         {/* Logo */}

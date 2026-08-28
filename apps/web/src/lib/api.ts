@@ -183,3 +183,22 @@ export const swingApi = {
     api.get("/swing-scanner/last", { params }),
 };
 
+// ─── WhatsApp Alerts ─────────────────────────────────────────────────────────
+export const whatsappApi = {
+  getStatus: () => api.get("/market/whatsapp/status"),
+  connect: () => api.post("/market/whatsapp/connect"),
+  disconnect: () => api.post("/market/whatsapp/disconnect"),
+  getGroups: () => api.get("/market/whatsapp/groups"),
+  updateSettings: (data: {
+    whatsappNumber?: string;
+    whatsappGroupId?: string;
+    whatsappAlertsEnabled?: boolean;
+    whatsappAlertTime?: string;
+    whatsappUniverse?: string;
+    whatsappTolerance?: number;
+  }) => api.patch("/market/whatsapp/settings", data),
+  testAlert: () => api.post("/market/whatsapp/test"),
+  triggerOhlNow: () => api.post("/market/whatsapp/trigger-ohl"),
+};
+
+

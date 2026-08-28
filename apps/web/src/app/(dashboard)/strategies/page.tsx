@@ -176,7 +176,7 @@ export default function StrategiesPage() {
   return (
     <div className="space-y-6 animate-[fade-up_0.4s_ease_both]">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Strategies</h1>
           <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">

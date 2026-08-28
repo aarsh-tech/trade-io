@@ -17,7 +17,7 @@ export class MarketController {
     private readonly ohlScannerService: OhlScannerService,
     private readonly whatsAppService: WhatsAppService,
     private readonly prisma: PrismaService,
-  ) {}
+  ) { }
 
   @Get('ohl-stocks')
   @Public()
@@ -134,6 +134,7 @@ export class MarketController {
       select: {
         whatsappNumber: true,
         whatsappGroupId: true,
+        whatsappAlertTime: true,
       },
     });
 
@@ -144,7 +145,7 @@ export class MarketController {
       };
     }
 
-    const testMsg = `🚀 *TradeIO Connection Test*\n\n✅ Your WhatsApp is successfully connected to the TradeIO Algorithmic Engine!\n⏰ You will receive automated Morning OHL scanner alerts as scheduled.\n\n⚡ _TradeIO Platform_`;
+    const testMsg = `━━━━━━━━━━━━━━━━━━━━\n⚡ *TRADEIO TERMINAL — CONNECTION VERIFIED*\n━━━━━━━━━━━━━━━━━━━━\n\n✅ *WhatsApp Alerts Integration Active!*\n⏰ *Scheduled Alert:* ${user.whatsappAlertTime || '09:20 AM'} IST Daily\n🎯 *Scanner:* F&O Morning Open=High/Low Momentum\n\nYour terminal is linked and configured to receive real-time institutional opening drive setups.\n\n🚀 _TradeIO Automated Trading Engine_`;
 
     const targets: string[] = [];
     if (user.whatsappNumber) {

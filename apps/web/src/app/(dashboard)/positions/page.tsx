@@ -302,76 +302,150 @@ export default function PositionsPage() {
               </div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-muted/40 text-xs font-semibold text-muted-foreground border-b border-border">
-                  <tr>
-                    <th className="py-3 px-4">Product</th>
-                    <th className="py-3 px-4">Instrument</th>
-                    <th className="py-3 px-4 text-right">Qty</th>
-                    <th className="py-3 px-4 text-right">Avg. Price</th>
-                    <th className="py-3 px-4 text-right">LTP</th>
-                    <th className="py-3 px-4 text-right">Current P&L</th>
-                    <th className="py-3 px-4 text-right">Change %</th>
-                    <th className="py-3 px-4 text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {(positions as Position[]).map((pos, idx) => {
-                    const isLong = pos.qty > 0;
-                    const pnlPct = pos.avgPrice > 0 ? ((pos.ltp - pos.avgPrice) / pos.avgPrice) * 100 * (isLong ? 1 : -1) : 0;
+            <>
+              {/* ─── Mobile Position Cards (< md) ─── */}
+              <div className="block md:hidden divide-y divide-border">
+                {(positions as Position[]).map((pos, idx) => {
+                  const isLong = pos.qty > 0;
+                  const pnlPct = pos.avgPrice > 0 ? ((pos.ltp - pos.avgPrice) / pos.avgPrice) * 100 * (isLong ? 1 : -1) : 0;
+                  const isProfit = pos.pnl > 0;
+                  const isLoss = pos.pnl < 0;
 
-                    return (
-                      <tr key={idx} className="hover:bg-muted/30 transition-colors">
-                        <td className="py-3.5 px-4 font-mono text-xs">
-                          <Badge variant="secondary" className="text-[11px] font-bold">
+                  return (
+                    <div key={idx} className="p-4 space-y-3 bg-card hover:bg-muted/20 transition-colors">
+                      {/* Top Row: Symbol, Product, Qty */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-foreground">{pos.symbol}</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                             {pos.product || "MIS"}
-                          </Badge>
-                        </td>
-                        <td className="py-3.5 px-4 font-semibold text-foreground">
-                          {pos.symbol}
-                        </td>
-                        <td className={cn(
-                          "py-3.5 px-4 text-right font-mono font-semibold",
-                          isLong ? "text-emerald-500" : "text-rose-500"
-                        )}>
-                          {pos.qty > 0 ? `+${pos.qty}` : pos.qty}
-                        </td>
-                        <td className="py-3.5 px-4 text-right font-mono text-foreground">
-                          ₹{pos.avgPrice?.toFixed(2) || "0.00"}
-                        </td>
-                        <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
-                          ₹{pos.ltp?.toFixed(2) || "0.00"}
-                        </td>
-                        <td className={cn(
-                          "py-3.5 px-4 text-right font-mono font-bold",
-                          pos.pnl > 0 ? "text-emerald-500" : pos.pnl < 0 ? "text-rose-500" : "text-muted-foreground"
-                        )}>
-                          {pos.pnl > 0 ? "+" : ""}₹{pos.pnl?.toFixed(2) || "0.00"}
-                        </td>
-                        <td className={cn(
-                          "py-3.5 px-4 text-right font-mono text-xs font-semibold",
-                          pnlPct > 0 ? "text-emerald-500" : pnlPct < 0 ? "text-rose-500" : "text-muted-foreground"
-                        )}>
-                          {pnlPct > 0 ? "+" : ""}{pnlPct.toFixed(2)}%
-                        </td>
-                        <td className="py-3.5 px-4 text-center">
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => setSquareOffPosition(pos)}
-                            disabled={isProcessing}
-                            className="h-7 px-2.5 text-xs font-medium"
-                          >
-                            Exit
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          </span>
+                        </div>
+                        <Badge
+                          className={cn(
+                            "font-mono text-xs font-bold px-2 py-0.5 border-0 shadow-2xs",
+                            isLong ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+                          )}
+                        >
+                          {isLong ? "BUY" : "SELL"} {Math.abs(pos.qty)} Qty
+                        </Badge>
+                      </div>
+
+                      {/* Middle Row: Avg vs LTP & P&L */}
+                      <div className="flex items-end justify-between bg-muted/40 p-3 rounded-xl border border-border/60">
+                        <div className="space-y-1 text-xs">
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <span>Avg: <strong className="text-foreground font-mono">₹{pos.avgPrice?.toFixed(2) || "0.00"}</strong></span>
+                            <span>•</span>
+                            <span>LTP: <strong className="text-foreground font-mono">₹{pos.ltp?.toFixed(2) || "0.00"}</strong></span>
+                          </div>
+                          <div className="flex items-center gap-1 text-[11px]">
+                            <span className={cn("font-semibold font-mono", pnlPct >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                              {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">P&L</div>
+                          <div className={cn(
+                            "text-lg font-bold font-mono",
+                            isProfit ? "text-emerald-600" : isLoss ? "text-rose-600" : "text-muted-foreground"
+                          )}>
+                            {isProfit ? "+" : ""}₹{pos.pnl?.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bottom Action */}
+                      <div className="flex justify-end pt-1">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => setSquareOffPosition(pos)}
+                          disabled={isProcessing}
+                          className="h-8 text-xs font-semibold px-4 w-full sm:w-auto"
+                        >
+                          Exit Position
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ─── Desktop Table (>= md) ─── */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/40 text-xs font-semibold text-muted-foreground border-b border-border">
+                    <tr>
+                      <th className="py-3 px-4">Product</th>
+                      <th className="py-3 px-4">Instrument</th>
+                      <th className="py-3 px-4 text-right">Qty</th>
+                      <th className="py-3 px-4 text-right">Avg. Price</th>
+                      <th className="py-3 px-4 text-right">LTP</th>
+                      <th className="py-3 px-4 text-right">Current P&L</th>
+                      <th className="py-3 px-4 text-right">Change %</th>
+                      <th className="py-3 px-4 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {(positions as Position[]).map((pos, idx) => {
+                      const isLong = pos.qty > 0;
+                      const pnlPct = pos.avgPrice > 0 ? ((pos.ltp - pos.avgPrice) / pos.avgPrice) * 100 * (isLong ? 1 : -1) : 0;
+
+                      return (
+                        <tr key={idx} className="hover:bg-muted/30 transition-colors">
+                          <td className="py-3.5 px-4 font-mono text-xs">
+                            <Badge variant="secondary" className="text-[11px] font-bold">
+                              {pos.product || "MIS"}
+                            </Badge>
+                          </td>
+                          <td className="py-3.5 px-4 font-semibold text-foreground">
+                            {pos.symbol}
+                          </td>
+                          <td className={cn(
+                            "py-3.5 px-4 text-right font-mono font-semibold",
+                            isLong ? "text-emerald-500" : "text-rose-500"
+                          )}>
+                            {pos.qty > 0 ? `+${pos.qty}` : pos.qty}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-foreground">
+                            ₹{pos.avgPrice?.toFixed(2) || "0.00"}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
+                            ₹{pos.ltp?.toFixed(2) || "0.00"}
+                          </td>
+                          <td className={cn(
+                            "py-3.5 px-4 text-right font-mono font-bold",
+                            pos.pnl > 0 ? "text-emerald-500" : pos.pnl < 0 ? "text-rose-500" : "text-muted-foreground"
+                          )}>
+                            {pos.pnl > 0 ? "+" : ""}₹{pos.pnl?.toFixed(2) || "0.00"}
+                          </td>
+                          <td className={cn(
+                            "py-3.5 px-4 text-right font-mono font-medium",
+                            pnlPct >= 0 ? "text-emerald-500" : "text-rose-500"
+                          )}>
+                            {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => setSquareOffPosition(pos)}
+                              disabled={isProcessing}
+                              className="h-7 text-xs px-2.5"
+                            >
+                              Exit
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
