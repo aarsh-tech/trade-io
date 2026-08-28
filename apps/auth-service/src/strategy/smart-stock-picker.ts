@@ -1,14 +1,9 @@
 import { Logger } from '@nestjs/common';
 import { detectIntradayMomentum, detectIntradayMomentumShort, DailyCandle } from '../swing-scanner/vcp.analyzer';
 
-// ─── Blacklist of Slow-Moving / Low-Volatility / Low-Beta / Penny Stocks ──────────
+// ─── Minimal Filter for Pure Penny / Illiquid Symbols (< ₹20) ───────────────────
 const BLACKLISTED_SLOW_STOCKS = new Set([
-  'PGEL', 'PGELTECH', 'MOTHERSON', 'MOTHERSUMI', 'SAMVARDHANA', 'MSUMI', 'IDEA', 'VODAFONE', 'NMDC', 'NMDCLTD',
-  'SAIL', 'NHPC', 'SJVN', 'IRFC', 'RVNL', 'HUDCO', 'IREDA',
-  'IOB', 'UNIONBANK', 'PNB', 'IDFCFIRSTB', 'BANDHANBNK', 'GMRINFRA',
-  'SUZLON', 'JISLJALEQS', 'AMBUJACEM', 'ACC', 'BERGEPAINT', 'BATAINDIA',
-  'CROMPTON', 'DABUR', 'MARICO', 'COLPAL', 'ICICIPRULI', 'SBICARD',
-  'NATIONALUM', 'OIL', 'PETRONET', 'IOC', 'BPCL', 'HINDPETRO', 'POWERGRID', 'NTPC', 'COALINDIA'
+  'IDEA', 'VODAFONE', 'JISLJALEQS'
 ]);
 
 /**
@@ -316,7 +311,7 @@ export async function autoSelectStock(
     const quote = liveQuotes[key];
     if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
       const ltp = quote.last_price;
-      if (ltp < 250) continue; // Minimum stock price threshold (₹250)
+      if (ltp < 50) continue; // Minimum stock price threshold (₹50)
 
       const prevClose = quote.ohlc.close;
       const todayOpen = quote.ohlc.open || ltp;
@@ -378,7 +373,7 @@ export async function getTopCandidateStocks(
   stopLossRs: number,
   logger?: Logger,
   maxCapital?: number,
-  limit: number = 10,
+  limit: number = 15,
 ): Promise<Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number; isOpenLow?: boolean; isOpenHigh?: boolean }>> {
   const result: Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number; isOpenLow?: boolean; isOpenHigh?: boolean }> = [];
 
@@ -408,7 +403,7 @@ export async function getTopCandidateStocks(
     const quote = liveQuotes[key];
     if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
       const ltp = quote.last_price;
-      if (ltp < 250) continue; // Min price threshold ₹250
+      if (ltp < 50) continue; // Min price threshold ₹50
 
       const prevClose = quote.ohlc.close;
       const todayOpen = quote.ohlc.open || ltp;
