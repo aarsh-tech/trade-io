@@ -54,6 +54,10 @@ export interface EmaVwapCrossoverConfig {
   maxPremium?: number;
   enableProfitFloor?: boolean;
   profitFloorBufferRs?: number;
+  enableOpenLowHighTrigger?: boolean; // Enable Open = Low (Buy) & Open = High (Sell) Opening Drive (default: true)
+  enableMarketTrendFilter?: boolean;  // Align trades with broader NIFTY 50 trend (default: true)
+  enableRvolVolumeFilter?: boolean;   // Require institutional volume spike (RVOL >= 1.25x) (default: true)
+  enableDailyPnLLock?: boolean;       // One-and-Done rule: lock day on hitting profit target or max loss (default: true)
 }
 
 export interface NiftyOptionsScalperConfig {

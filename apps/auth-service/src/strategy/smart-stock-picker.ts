@@ -30,13 +30,38 @@ function calculateATR(candles: DailyCandle[], period: number = 14): number {
   return trSum / period;
 }
 
+export const globalTickSizeMap = new Map<string, number>();
+
+export function getInstrumentTickSize(symbol: string, ltp?: number): number {
+  const cleanSym = (symbol || '').replace('NSE:', '').replace('NFO:', '').trim().toUpperCase();
+  if (globalTickSizeMap.has(cleanSym)) {
+    const ts = globalTickSizeMap.get(cleanSym);
+    if (ts && ts > 0) return ts;
+  }
+  // Fallback to NSE price-tiered tick size conventions if not found in broker map
+  if (ltp && ltp > 0) {
+    if (ltp >= 10000) return 1.00; // e.g. SOLARINDS, MRF, PAGEIND
+    if (ltp >= 5000) return 0.50;  // e.g. PERSISTENT, BOSCHLTD
+    if (ltp >= 2000) return 0.10;  // e.g. LTIM, COFORGE, DIXON
+  }
+  return 0.05; // Standard NSE equity & F&O tick size
+}
+
+export function roundToInstrumentTick(price: number, tickSize: number = 0.05): number {
+  if (!price || isNaN(price)) return 0;
+  const tick = tickSize > 0 ? tickSize : 0.05;
+  const rounded = Math.round(price / tick) * tick;
+  return parseFloat(rounded.toFixed(2));
+}
+
 /**
  * Dynamically fetches the active liquid stock universe directly from Zerodha Kite API.
  * Uses NFO instruments to extract all 180+ liquid F&O underlying stocks (Nifty 50, Nifty Next 50 & Midcap liquid leaders)
  * and maps them to their NSE equity instrument tokens.
  */
-export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promise<{ symbols: string[]; tokenMap: Map<string, number> }> {
+export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promise<{ symbols: string[]; tokenMap: Map<string, number>; tickSizeMap: Map<string, number> }> {
   const tokenMap = new Map<string, number>();
+  const tickSizeMap = new Map<string, number>();
 
   // 1. Fetch NSE Equity instruments
   let nseInstruments: any[] = [];
@@ -52,6 +77,10 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
       const sym = (i.tradingsymbol || '').trim().toUpperCase();
       if (sym && !sym.includes(' ') && !sym.startsWith('NIFTY') && !sym.startsWith('BANKNIFTY')) {
         tokenMap.set(sym, i.instrument_token);
+        if (i.tick_size && i.tick_size > 0) {
+          tickSizeMap.set(sym, i.tick_size);
+          globalTickSizeMap.set(sym, i.tick_size);
+        }
         allNseSymbols.add(sym);
       }
     }
@@ -82,7 +111,7 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
 
   // Filter blacklisted slow-moving stocks
   const liquidSymbols = rawUniverse.filter(sym => !BLACKLISTED_SLOW_STOCKS.has(sym));
-  return { symbols: liquidSymbols, tokenMap };
+  return { symbols: liquidSymbols, tokenMap, tickSizeMap };
 }
 
 /**
@@ -300,11 +329,19 @@ export async function autoSelectStock(
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
       if (gapPct > 3.5) continue;
 
-      // Filter out low momentum / low range stocks (< 0.5% change or < 1.0% day range)
-      if (changePct < 0.5 && dayRangePct < 1.0) continue;
+      const todayLow = quote.ohlc.low || ltp;
+      const todayHigh = quote.ohlc.high || ltp;
+      const isOpenLow = (Math.abs(todayOpen - todayLow) / todayOpen <= 0.0008) && ltp > todayOpen && ((ltp - todayOpen) / todayOpen >= 0.003);
+      const isOpenHigh = (Math.abs(todayHigh - todayOpen) / todayOpen <= 0.0008) && ltp < todayOpen && ((todayOpen - ltp) / todayOpen >= 0.003);
 
       // Composite momentum score: Intraday Gain/Loss (40%) + Day Range (30%) + Rupee Turnover in Crores (30%)
-      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
+      let score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
+      if (isOpenLow) {
+        score += 500; // Massive boost for explosive Open=Low morning drive
+      } else if (isOpenHigh) {
+        score += 500; // Massive boost for explosive Open=High breakdown drive
+      }
+
       const targetThresholdRs = targetRs && targetRs > 0 ? targetRs : 500;
       const expectedMovePoints = Math.max(0.50, ltp * 0.012);
       const targetQty = Math.ceil(targetThresholdRs / expectedMovePoints);
@@ -342,8 +379,8 @@ export async function getTopCandidateStocks(
   logger?: Logger,
   maxCapital?: number,
   limit: number = 10,
-): Promise<Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number }>> {
-  const result: Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number }> = [];
+): Promise<Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number; isOpenLow?: boolean; isOpenHigh?: boolean }>> {
+  const result: Array<{ symbol: string; exchange: string; ltp: number; qty: number; score: number; isOpenLow?: boolean; isOpenHigh?: boolean }> = [];
 
   let availableCapital = maxCapital;
   if (!availableCapital || availableCapital <= 0) {
@@ -383,9 +420,20 @@ export async function getTopCandidateStocks(
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
       if (gapPct > 3.5) continue;
 
-      if (changePct < 0.3 && dayRangePct < 0.8) continue;
+      const todayLow = quote.ohlc.low || ltp;
+      const todayHigh = quote.ohlc.high || ltp;
+      const isOpenLow = (Math.abs(todayOpen - todayLow) / todayOpen <= 0.0008) && ltp > todayOpen && ((ltp - todayOpen) / todayOpen >= 0.003);
+      const isOpenHigh = (Math.abs(todayHigh - todayOpen) / todayOpen <= 0.0008) && ltp < todayOpen && ((todayOpen - ltp) / todayOpen >= 0.003);
 
-      const score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
+      if (!isOpenLow && !isOpenHigh && changePct < 0.3 && dayRangePct < 0.8) continue;
+
+      let score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
+      if (isOpenLow) {
+        score += 500; // Priority rank for Open=Low breakout
+      } else if (isOpenHigh) {
+        score += 500; // Priority rank for Open=High breakdown
+      }
+
       const expectedMovePoints = Math.max(0.50, ltp * 0.012); // ~1.2% expected intraday move
       const targetThresholdRs = targetRs && targetRs > 0 ? targetRs : 500;
       const targetQty = Math.ceil(targetThresholdRs / expectedMovePoints);
@@ -393,7 +441,7 @@ export async function getTopCandidateStocks(
       const maxCapitalQty = Math.floor(maxBuyingPower / ltp);
       const qty = Math.max(1, Math.min(targetQty, maxCapitalQty));
 
-      result.push({ symbol: sym, exchange: 'NSE', ltp, qty, score });
+      result.push({ symbol: sym, exchange: 'NSE', ltp, qty, score, isOpenLow, isOpenHigh });
     }
   }
 
