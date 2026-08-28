@@ -149,13 +149,18 @@ class ZerodhaClient implements IBrokerClient {
       return orders.map((o: any) => ({
         orderId: o.order_id,
         symbol: o.tradingsymbol,
+        exchange: o.exchange || 'NSE',
         type: o.order_type,
         side: o.transaction_type,
+        product: o.product || 'MIS',
         status: o.status,
         qty: o.quantity,
         filledQty: o.filled_quantity,
         price: o.price,
+        triggerPrice: o.trigger_price,
         avgPrice: o.average_price,
+        variety: o.variety,
+        tag: o.tag,
         orderTime: o.order_timestamp,
         statusMessage: o.status_message,
       }));

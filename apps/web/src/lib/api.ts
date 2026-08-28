@@ -144,10 +144,13 @@ export const backtestApi = {
   history: () => api.get("/backtest/history"),
 };
 
-// ─── Orders ───────────────────────────────────────────────────────────────────
+// ─── Orders & P&L Ledger ────────────────────────────────────────────────────────
 export const orderApi = {
   list: (params?: { limit?: number; page?: number }) =>
     api.get("/orders", { params }),
+  sync: () => api.post("/orders/sync"),
+  ledger: (params?: { month?: number; year?: number }) =>
+    api.get("/orders/ledger", { params }),
 };
 
 export const swingApi = {

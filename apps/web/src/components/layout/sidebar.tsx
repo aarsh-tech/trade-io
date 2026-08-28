@@ -17,6 +17,7 @@ import {
   ScanSearch,
   Layers,
   Activity,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -27,6 +28,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/ledger", label: "P&L Ledger", icon: BookOpen },
   { href: "/live-screener", label: "Live OHL Screener", icon: ScanSearch, badge: "LIVE" },
   { href: "/swing-scanner", label: "Scanner", icon: Layers },
   { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },

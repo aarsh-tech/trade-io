@@ -20,13 +20,18 @@ export interface Position {
 export interface Order {
   orderId: string;
   symbol: string;
+  exchange?: string;
   type: string;
   side: 'BUY' | 'SELL';
+  product?: string;
   status: string;
   qty: number;
   filledQty: number;
   price: number;
+  triggerPrice?: number;
   avgPrice: number;
+  variety?: string;
+  tag?: string;
   orderTime: string;
   statusMessage?: string;
 }

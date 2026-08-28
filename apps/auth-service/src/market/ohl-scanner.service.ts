@@ -61,7 +61,7 @@ const NIFTY_50_SYMBOLS = [
   'BPCL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DRREDDY',
   'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE',
   'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'INDUSINDBK',
-  'INFY', 'ITC', 'JSWSTEEL', 'KOTAKBANK', 'LT',
+  'INFY', 'ITC', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTM',
   'M&M', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC',
   'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SHRIRAMFIN',
   'SUNPHARMA', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TCS',
@@ -79,7 +79,7 @@ export class OhlScannerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly factory: BrokerClientFactory,
-  ) {}
+  ) { }
 
   /**
    * Scan market stocks for Open = High and Open = Low setups
@@ -153,7 +153,7 @@ export class OhlScannerService {
 
     // Fallback if broker data is incomplete or unavailable (e.g. during weekend / testing)
     if (ohlcMap.size < 5) {
-      await this.fallbackFetchQuotes(targetList.slice(0, 60), ohlcMap);
+      await this.fallbackFetchQuotes(targetList, ohlcMap);
     }
 
     // Process & Classify each stock
@@ -363,7 +363,7 @@ export class OhlScannerService {
           const volume = meta.regularMarketVolume || 0;
           ohlcMap.set(item.symbol, { open, high, low, close, ltp, volume });
         }
-      } catch {}
+      } catch { }
     });
 
     await Promise.allSettled(promises);

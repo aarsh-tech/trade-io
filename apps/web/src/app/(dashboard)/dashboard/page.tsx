@@ -514,9 +514,14 @@ export default function DashboardPage() {
                 Top Gainers
               </CardTitle>
             </div>
-            <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
-              NIFTY 500
-            </Badge>
+            <div className="flex items-center gap-1.5">
+              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+                1D
+              </Badge>
+              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+                NIFTY 500
+              </Badge>
+            </div>
           </CardHeader>
 
           <CardContent className="p-0">
@@ -586,9 +591,14 @@ export default function DashboardPage() {
                 Top Losers
               </CardTitle>
             </div>
-            <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
-              NIFTY 500
-            </Badge>
+            <div className="flex items-center gap-1.5">
+              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+                1D
+              </Badge>
+              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+                NIFTY 500
+              </Badge>
+            </div>
           </CardHeader>
 
           <CardContent className="p-0">

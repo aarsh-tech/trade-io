@@ -46,7 +46,7 @@ export const NIFTY_500_UNIVERSE = [
   'KALYANKJIL', 'KANSAINER', 'KARURVYSYA', 'KAYNES', 'KEC', 'KEI', 'KFINTECH', 'KIRLOSBROS', 'KIRLOSENG', 'KIRLPNU',
   'KNRCON', 'KOTAKBANK', 'KPIL', 'KPITTECH', 'KPRMILL', 'KRBL', 'KSB', 'KSCL', 'KTKBANK', 'L&TFH',
   'LALPATHLAB', 'LATENTVIEW', 'LAURUSLABS', 'LEMONTREE', 'LICHSGFIN', 'LICI', 'LINDEINDIA', 'LLOYDSENGG', 'LT', 'LTFOODS',
-  'LTIM', 'LTTS', 'LUPIN', 'LUXIND', 'M&M', 'M&MFIN', 'MAHABANK', 'MAHSEAMLES', 'MANAPPURAM', 'MANKIND',
+  'LTM', 'LTTS', 'LUPIN', 'LUXIND', 'M&M', 'M&MFIN', 'MAHABANK', 'MAHSEAMLES', 'MANAPPURAM', 'MANKIND',
   'MARICO', 'MARUTI', 'MASTEK', 'MAXHEALTH', 'MAZDOCK', 'MCDOWELL-N', 'MCX', 'MEDANTA', 'METROPOLIS', 'MFSL',
   'MGL', 'MHRIL', 'MINDACORP', 'MOTHERSON', 'MOTILALOFS', 'MPHASIS', 'MRF', 'MRPL', 'MSUMI', 'MUTHOOTFIN',
   'NATCOPHARM', 'NATIONALUM', 'NAUKRI', 'NAVINFLUOR', 'NBCC', 'NCC', 'NESTLEIND', 'NETWORK18', 'NEWGEN', 'NH',
@@ -203,7 +203,7 @@ export const FO_STOCKS_LIST = [
   // L
   { symbol: 'L&TFH', name: 'L&T Finance Holdings Ltd', exchange: 'NSE', category: 'Banking', lotSize: 4476 },
   { symbol: 'LT', name: 'Larsen & Toubro Ltd', exchange: 'NSE', category: 'Capital Goods', lotSize: 300 },
-  { symbol: 'LTIM', name: 'LTIMindtree Ltd', exchange: 'NSE', category: 'IT', lotSize: 150 },
+  { symbol: 'LTM', name: 'LTIMindtree Ltd (LTM)', exchange: 'NSE', category: 'IT', lotSize: 150 },
   { symbol: 'LTTS', name: 'L&T Technology Services', exchange: 'NSE', category: 'IT', lotSize: 200 },
   { symbol: 'LUPIN', name: 'Lupin Ltd', exchange: 'NSE', category: 'Pharma', lotSize: 425 },
 
