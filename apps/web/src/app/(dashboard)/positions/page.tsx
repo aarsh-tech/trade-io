@@ -287,10 +287,10 @@ export default function PositionsPage() {
                 You currently have no open intraday or delivery positions in your connected broker account.
               </p>
               <div className="flex items-center justify-center gap-3">
-                <Link href="/fo-stocks">
+                <Link href="/live-screener">
                   <Button size="sm" variant="default" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
                     <Zap className="h-4 w-4" />
-                    Browse F&O Stocks
+                    Live OHL Screener
                   </Button>
                 </Link>
                 <Link href="/strategies">

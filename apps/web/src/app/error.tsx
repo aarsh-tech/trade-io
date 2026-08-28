@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect } from "react";
+import Link from "next/link";
 import { AlertOctagon, RotateCcw, Home, Terminal } from "lucide-react";
 
 interface ErrorProps {
@@ -58,13 +59,13 @@ export default function ErrorBoundary({ error, reset }: ErrorProps) {
             Try again
           </button>
           
-          <a
+          <Link
             href="/"
             className="flex items-center justify-center gap-2 px-6 py-3 bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 hover:border-white/20 font-medium text-sm rounded-lg transition-all active:scale-[0.98]"
           >
             <Home size={16} />
             Go to Dashboard
-          </a>
+          </Link>
         </div>
       </div>
     </div>

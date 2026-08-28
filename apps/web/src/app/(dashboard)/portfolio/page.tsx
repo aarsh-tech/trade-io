@@ -699,9 +699,9 @@ export default function PortfolioPage() {
                     : "You currently have no open intraday or derivative positions in this account."}
                 </p>
                 <div className="flex items-center justify-center gap-3">
-                  <Link href="/fo-stocks">
+                  <Link href="/live-screener">
                     <Button size="sm" variant="default" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
-                      <Zap className="h-4 w-4" /> Browse F&O Stocks
+                      <Zap className="h-4 w-4" /> Live OHL Screener
                     </Button>
                   </Link>
                   <Button
