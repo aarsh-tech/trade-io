@@ -221,8 +221,9 @@ export class SwingScannerService {
       id: `scan_${Date.now()}`,
       scannedAt: new Date().toISOString(),
       totalScanned: scanned,
-      results: results.slice(0, 150), // increased from 50 to 150
+      results: results.slice(0, 500),
     };
+
 
     this.cache.set(userId, run);
 

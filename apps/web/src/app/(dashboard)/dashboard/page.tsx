@@ -523,7 +523,8 @@ export default function DashboardPage() {
             <div className="divide-y divide-slate-100 text-xs">
               {(movers?.topGainers || []).slice(0, 8).map((item: any) => {
                 const livePrice = prices[item.symbol] || item.ltp;
-                const liveChangePct = item.changePercent;
+                const basePrice = item.prevClose || item.close || (item.ltp ? item.ltp / (1 + (item.changePercent / 100)) : livePrice);
+                const liveChangePct = basePrice > 0 ? ((livePrice - basePrice) / basePrice) * 100 : item.changePercent;
 
                 return (
                   <div
@@ -594,7 +595,8 @@ export default function DashboardPage() {
             <div className="divide-y divide-slate-100 text-xs">
               {(movers?.topLosers || []).slice(0, 8).map((item: any) => {
                 const livePrice = prices[item.symbol] || item.ltp;
-                const liveChangePct = item.changePercent;
+                const basePrice = item.prevClose || item.close || (item.ltp ? item.ltp / (1 + (item.changePercent / 100)) : livePrice);
+                const liveChangePct = basePrice > 0 ? ((livePrice - basePrice) / basePrice) * 100 : item.changePercent;
 
                 return (
                   <div
@@ -629,7 +631,7 @@ export default function DashboardPage() {
                         })}
                       </div>
                       <div className="text-[11px] font-mono font-bold text-rose-600 flex items-center justify-end gap-0.5 mt-0.5">
-                        <ChevronDown className="h-3 w-3 stroke-[2.5]" />-
+                        <ChevronDown className="h-3 w-3 stroke-[2.5]" />
                         {Math.abs(liveChangePct || 0).toFixed(2)}%
                       </div>
                     </div>

@@ -124,8 +124,8 @@ export async function autoSelectStock(
   let availableCapital = maxCapital;
   if (!availableCapital || availableCapital <= 0) {
     try {
-      const margins = await kite.getMargins('equity').catch(() => null);
-      const liveCash = margins?.available?.live_balance ?? margins?.available?.cash ?? 0;
+      const margins = await kite.getMargins().catch(() => null);
+      const liveCash = margins?.equity?.available?.live_balance ?? margins?.equity?.available?.cash ?? margins?.available?.live_balance ?? margins?.available?.cash ?? 0;
       if (liveCash > 0) {
         availableCapital = liveCash;
         logger?.log(`💰 Detected live Zerodha available capital: ₹${liveCash.toLocaleString('en-IN')}`);
@@ -133,7 +133,7 @@ export async function autoSelectStock(
     } catch { }
   }
   if (!availableCapital || availableCapital <= 0) {
-    availableCapital = 25000; // Fallback capital default if unreadable
+    availableCapital = 15000; // Safe default capital
   }
 
   // 1. Fetch live stock universe dynamically from Zerodha API
@@ -380,12 +380,12 @@ export async function getTopCandidateStocks(
   let availableCapital = maxCapital;
   if (!availableCapital || availableCapital <= 0) {
     try {
-      const margins = await kite.getMargins('equity').catch(() => null);
-      const liveCash = margins?.available?.live_balance ?? margins?.available?.cash ?? 0;
+      const margins = await kite.getMargins().catch(() => null);
+      const liveCash = margins?.equity?.available?.live_balance ?? margins?.equity?.available?.cash ?? margins?.available?.live_balance ?? margins?.available?.cash ?? 0;
       if (liveCash > 0) availableCapital = liveCash;
     } catch { }
   }
-  if (!availableCapital || availableCapital <= 0) availableCapital = 25000;
+  if (!availableCapital || availableCapital <= 0) availableCapital = 15000;
 
   const { symbols: targetSymbols } = await getDynamicLiquidStocks(kite, logger);
 

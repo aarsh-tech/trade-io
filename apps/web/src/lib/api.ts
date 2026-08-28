@@ -126,6 +126,8 @@ export const marketApi = {
   marketOverview: () => api.get("/market/overview"),
   livePrices: () => api.get("/market/live-prices"),
   movers: () => api.get("/market/movers"),
+  getOhlStocks: (params?: { universe?: string; tolerance?: number | string; filter?: string }) =>
+    api.get("/market/ohl-stocks", { params }),
   candles: (params: {
     symbol: string; exchange: string; interval: string; from: string; to: string;
   }) => api.get("/market/candles", { params }),
@@ -153,3 +155,4 @@ export const swingApi = {
   last: (params?: { page?: number; pageSize?: number; pattern?: string; sortBy?: string }) => 
     api.get("/swing-scanner/last", { params }),
 };
+

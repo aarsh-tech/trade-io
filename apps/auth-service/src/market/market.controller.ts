@@ -3,13 +3,32 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { MarketService } from './market.service';
+import { OhlScannerService } from './ohl-scanner.service';
 
 @ApiTags('Market')
 @Controller('market')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class MarketController {
-  constructor(private readonly marketService: MarketService) {}
+  constructor(
+    private readonly marketService: MarketService,
+    private readonly ohlScannerService: OhlScannerService,
+  ) {}
+
+  @Get('ohl-stocks')
+  @Public()
+  @ApiOperation({ summary: 'Get Live Open=High and Open=Low stocks with streaming metrics' })
+  async getOhlStocks(
+    @Query('universe') universe: string = 'fno',
+    @Query('tolerance') tolerance: string = '0.05',
+    @Query('filter') filter: string = 'all',
+    @Request() req: any,
+  ) {
+    const tolNum = parseFloat(tolerance) || 0.05;
+    const data = await this.ohlScannerService.scan(req.user?.id, universe, tolNum, filter);
+    return { success: true, data };
+  }
+
 
   @Get('search')
   @ApiOperation({ summary: 'Search for stocks/instruments' })

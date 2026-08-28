@@ -77,14 +77,16 @@ interface ScanRun {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const PATTERN_META: Record<string, { label: string; color: string; bg: string }> = {
-  VCP: { label: "VCP", color: "text-purple-700", bg: "bg-purple-50 border-purple-200" },
+  VCP: { label: "VCP Contraction", color: "text-purple-700", bg: "bg-purple-50 border-purple-200" },
   ROCKET_BASE: { label: "Rocket Base", color: "text-amber-700", bg: "bg-amber-50 border-amber-200" },
   TIGHT_AREA: { label: "Tight Area", color: "text-blue-700", bg: "bg-blue-50 border-blue-200" },
+  INTRADAY_MOMENTUM: { label: "Momentum Surge", color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
   CUP_HANDLE: { label: "Cup & Handle", color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
   DAILY_INSIDE: { label: "1D Inside", color: "text-rose-700", bg: "bg-rose-50 border-rose-200" },
   WEEKLY_INSIDE: { label: "Weekly Inside", color: "text-indigo-700", bg: "bg-indigo-50 border-indigo-200" },
   MONTHLY_INSIDE: { label: "Monthly Inside", color: "text-violet-700", bg: "bg-violet-50 border-violet-200" },
 };
+
 
 const CONFIDENCE_COLOR: Record<string, string> = {
   HIGH: "text-emerald-700 bg-emerald-50 border-emerald-200",
@@ -383,7 +385,8 @@ export default function SwingScannerPage() {
   const [scanMeta, setScanMeta] = useState<Omit<ScanRun, "results"> | null>(null);
   const [loading, setLoading] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
-  const [filter, setFilter] = useState<"ALL" | "VCP" | "ROCKET_BASE" | "DAILY_INSIDE" | "WEEKLY_INSIDE" | "MONTHLY_INSIDE">("ALL");
+  const [filter, setFilter] = useState<"ALL" | "VCP" | "ROCKET_BASE" | "TIGHT_AREA" | "DAILY_INSIDE" | "WEEKLY_INSIDE" | "MONTHLY_INSIDE" | "INTRADAY_MOMENTUM">("ALL");
+
   const [sortBy, setSortBy] = useState<"score" | "riskPct" | "riskReward">("score");
   const [page, setPage] = useState(1);
   const [targetRs, setTargetRs] = useState(500);
@@ -582,7 +585,7 @@ export default function SwingScannerPage() {
 
               {/* Pattern Pills */}
               <div className="flex gap-1 p-1 rounded-lg bg-slate-50 border border-slate-200/80 overflow-x-auto scrollbar-hide">
-                {(["ALL", "VCP", "ROCKET_BASE", "DAILY_INSIDE", "WEEKLY_INSIDE", "MONTHLY_INSIDE"] as const).map(
+                {(["ALL", "VCP", "ROCKET_BASE", "TIGHT_AREA", "DAILY_INSIDE", "WEEKLY_INSIDE", "MONTHLY_INSIDE", "INTRADAY_MOMENTUM"] as const).map(
                   (f) => (
                     <button
                       key={f}
@@ -599,17 +602,22 @@ export default function SwingScannerPage() {
                         : f === "VCP"
                         ? `VCP`
                         : f === "ROCKET_BASE"
-                        ? `Rocket`
+                        ? `Rocket Base`
+                        : f === "TIGHT_AREA"
+                        ? `Tight Area`
                         : f === "DAILY_INSIDE"
                         ? `1D Inside`
                         : f === "WEEKLY_INSIDE"
-                        ? `Weekly`
-                        : `Monthly`}
+                        ? `Weekly Inside`
+                        : f === "MONTHLY_INSIDE"
+                        ? `Monthly Inside`
+                        : `Momentum`}
                     </button>
                   )
                 )}
               </div>
             </div>
+
 
             {/* Right Controls: Target Rs & Sort Dropdown */}
             <div className="flex items-center gap-2.5 flex-wrap">

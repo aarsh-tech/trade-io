@@ -96,6 +96,34 @@ export class EmaVwapCrossoverEngine {
       }
     }).catch(() => 0);
 
+    let detectedCapital = (config as any).maxCapital;
+    let liveMarginDetected = false;
+
+    if (strategy.brokerAccount?.accessToken) {
+      try {
+        const client = this.factory.createClient(strategy.brokerAccount);
+        const kite = client['kite'] || client;
+        const liveMargins = await (kite.getMargins ? kite.getMargins() : client.getMargins?.()).catch(() => null);
+        const liveCash = liveMargins?.equity?.available?.live_balance
+          ?? liveMargins?.equity?.available?.cash
+          ?? liveMargins?.equity?.net
+          ?? liveMargins?.available?.live_balance
+          ?? liveMargins?.available?.cash
+          ?? liveMargins?.net;
+        if (liveCash && liveCash > 0) {
+          detectedCapital = Number(liveCash);
+          liveMarginDetected = true;
+        }
+      } catch (err: any) {
+        this.logger.debug?.(`Capital detection error on start: ${err?.message}`);
+      }
+    }
+
+    if (!detectedCapital || detectedCapital <= 0) {
+      detectedCapital = 15000;
+    }
+    (config as any).maxCapital = detectedCapital;
+
     const state: StrategyState = {
       strategyId,
       executionId: execution.id,
@@ -131,8 +159,9 @@ export class EmaVwapCrossoverEngine {
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange}`);
-    await this.persistLogs(state); // Persist immediately so UI shows "Started"
+    this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange} | Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
+    this.log(state, `💰 Detected Trading Capital: ₹${detectedCapital.toLocaleString('en-IN')}${liveMarginDetected ? ' (Live Zerodha Margin)' : (strategy.isPaperTrade ? ' [Paper Trading Mode]' : ' [Default / Configured]')}`);
+    await this.persistLogs(state); // Persist immediately so UI shows "Started" and capital
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
     this.timers.set(strategyId, timer);
@@ -281,7 +310,7 @@ export class EmaVwapCrossoverEngine {
 
     try {
       if (state.config.symbol === 'AUTO') {
-        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, undefined, 30);
+        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 30);
         this.log(state, `🚀 Simultaneous Multi-Stock Scanner: Scanning top 30 Zerodha liquid F&O leaders simultaneously...`);
 
         const activeSetups: Array<{ candidate: any; details: any }> = [];
@@ -1150,7 +1179,29 @@ export class EmaVwapCrossoverEngine {
     const targetPerShare = Math.max(symTickSize, Math.abs(tgt - entry));
     const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
     const targetQty = Math.ceil(targetThresholdRs / targetPerShare);
-    const capital = (config as any).maxCapital || 25000;
+
+    // Dynamically query exact live available capital from Zerodha Kite margin API
+    let capital = (config as any).maxCapital;
+    if (!capital || capital <= 0) {
+      if (client && !state.isPaperTrade && !isHistorical) {
+        try {
+          const kite = client['kite'] || client;
+          const liveMargins = await (kite.getMargins ? kite.getMargins() : client.getMargins?.()).catch(() => null);
+          const liveCash = liveMargins?.equity?.available?.live_balance
+            ?? liveMargins?.equity?.available?.cash
+            ?? liveMargins?.equity?.net
+            ?? liveMargins?.available?.live_balance
+            ?? liveMargins?.available?.cash
+            ?? liveMargins?.net;
+          if (liveCash && liveCash > 0) {
+            capital = Number(liveCash);
+            this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${capital.toLocaleString('en-IN')}`);
+          }
+        } catch { }
+      }
+    }
+    if (!capital || capital <= 0) capital = 15000;
+
     const safeCapital = capital * 0.90; // 90% safe utilization buffer for brokerage, STT & fees
     const maxBuyingPower = safeCapital * 5; // Zerodha 5x MIS intraday leverage
     const maxCapitalQty = Math.floor(maxBuyingPower / entry);
@@ -1163,7 +1214,6 @@ export class EmaVwapCrossoverEngine {
 
     this.log(state, `📋 Placing: ${symbol} — Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
     try {
-      const isHistorical = !!triggerTime;
       const limitPrice = finalSide === 'BUY'
         ? this.roundTick(entry + symTickSize * 2, symbol)
         : this.roundTick(entry - symTickSize * 2, symbol);

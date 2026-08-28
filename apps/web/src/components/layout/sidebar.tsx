@@ -27,17 +27,20 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/live-screener", label: "Live OHL Screener", icon: ScanSearch, badge: "LIVE" },
+  { href: "/swing-scanner", label: "Scanner", icon: Layers },
+  { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
   { href: "/positions", label: "Positions", icon: Activity },
   { href: "/orders", label: "Orders", icon: ClipboardList },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
-  { href: "/fo-stocks", label: "F&O Stocks", icon: Layers },
-  { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
-  { href: "/swing-scanner", label: "Scanner", icon: ScanSearch },
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/backtest", label: "Backtest", icon: FlaskConical },
   { href: "/brokers", label: "Brokers", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+
+
 
 
 export function Sidebar() {
@@ -103,7 +106,7 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {navItems.map(({ href, label, icon: Icon }) => {
+          {navItems.map(({ href, label, icon: Icon, badge }: any) => {
             const active = pathname.startsWith(href);
             return (
               <Link
@@ -121,7 +124,13 @@ export function Sidebar() {
                 <Icon
                   className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-blue-600" : "group-hover:text-slate-900")}
                 />
-                {!sidebarCollapsed && <span>{label}</span>}
+                {!sidebarCollapsed && <span className="truncate">{label}</span>}
+                {!sidebarCollapsed && badge && (
+                  <span className="ml-auto text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                    {badge}
+                  </span>
+                )}
                 {active && !sidebarCollapsed && (
                   <div className="absolute left-0 w-1 h-5 bg-blue-500 rounded-r-full" />
                 )}
@@ -129,6 +138,7 @@ export function Sidebar() {
             );
           })}
         </nav>
+
 
         {/* User Section */}
         <div className="px-3 py-4 border-t border-border">

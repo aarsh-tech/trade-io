@@ -9,7 +9,14 @@ export interface DailyCandle {
   volume: number;
 }
 
-export type PatternType = 'VCP' | 'ROCKET_BASE' | 'TIGHT_AREA' | 'INTRADAY_MOMENTUM' | 'DAILY_INSIDE' | 'WEEKLY_INSIDE' | 'MONTHLY_INSIDE';
+export type PatternType =
+  | 'VCP'
+  | 'ROCKET_BASE'
+  | 'TIGHT_AREA'
+  | 'INTRADAY_MOMENTUM'
+  | 'DAILY_INSIDE'
+  | 'WEEKLY_INSIDE'
+  | 'MONTHLY_INSIDE';
 
 export interface PatternResult {
   pattern: PatternType;
@@ -27,326 +34,349 @@ export interface PatternResult {
   trendStrength: 'WEAK' | 'MODERATE' | 'STRONG';
   volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING';
   contractions: number;
+  direction?: 'LONG' | 'SHORT';
   notes: string[];
 }
 
-// ─── Utility functions ────────────────────────────────────────────────────────
+// ─── Utility Functions ────────────────────────────────────────────────────────
 
-function sma(candles: DailyCandle[], period: number): number[] {
+export function sma(candles: DailyCandle[], period: number): number[] {
   const result: number[] = [];
   for (let i = 0; i < candles.length; i++) {
-    if (i < period - 1) { result.push(NaN); continue; }
+    if (i < period - 1) {
+      result.push(NaN);
+      continue;
+    }
     const slice = candles.slice(i - period + 1, i + 1);
     result.push(slice.reduce((s, c) => s + c.close, 0) / period);
   }
   return result;
 }
 
-function avgVolume(candles: DailyCandle[], period: number, endIdx: number): number {
-  const slice = candles.slice(Math.max(0, endIdx - period), endIdx);
+export function avgVolume(candles: DailyCandle[], period: number, endIdx: number): number {
+  const start = Math.max(0, endIdx - period);
+  const slice = candles.slice(start, endIdx);
   if (slice.length === 0) return 1;
-  return slice.reduce((s, c) => s + c.volume, 0) / slice.length;
+  return slice.reduce((s, c) => s + (c.volume || 0), 0) / slice.length;
 }
 
-function aggregateWeeklyCandles(daily: DailyCandle[]): DailyCandle[] {
+/**
+ * Aggregate daily candles into weekly candles (Monday to Friday)
+ * Ensures no mutation of date objects.
+ */
+export function aggregateWeeklyCandles(daily: DailyCandle[]): DailyCandle[] {
   if (daily.length === 0) return [];
   const weekly: DailyCandle[] = [];
   const groups = new Map<string, DailyCandle[]>();
 
-  daily.forEach(c => {
+  daily.forEach((c) => {
     const d = new Date(c.date);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
-    const monday = new Date(d.setDate(diff));
+    const day = d.getDay(); // 0 is Sun, 1 is Mon...
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(d.getFullYear(), d.getMonth(), diff);
     monday.setHours(0, 0, 0, 0);
-    const key = monday.toDateString();
+    const key = monday.toISOString().split('T')[0];
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(c);
   });
 
-  const sortedKeys = Array.from(groups.keys()).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-  sortedKeys.forEach(key => {
+  const sortedKeys = Array.from(groups.keys()).sort();
+  sortedKeys.forEach((key) => {
     const group = groups.get(key)!;
+    if (group.length === 0) return;
     weekly.push({
       date: group[group.length - 1].date,
       open: group[0].open,
-      high: Math.max(...group.map(g => g.high)),
-      low: Math.min(...group.map(g => g.low)),
+      high: Math.max(...group.map((g) => g.high)),
+      low: Math.min(...group.map((g) => g.low)),
       close: group[group.length - 1].close,
-      volume: group.reduce((s, g) => s + g.volume, 0),
+      volume: group.reduce((s, g) => s + (g.volume || 0), 0),
     });
   });
   return weekly;
 }
 
-function aggregateMonthlyCandles(daily: DailyCandle[]): DailyCandle[] {
+/**
+ * Aggregate daily candles into monthly candles
+ */
+export function aggregateMonthlyCandles(daily: DailyCandle[]): DailyCandle[] {
   if (daily.length === 0) return [];
   const monthly: DailyCandle[] = [];
   const groups = new Map<string, DailyCandle[]>();
 
-  daily.forEach(c => {
+  daily.forEach((c) => {
     const d = new Date(c.date);
-    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(c);
   });
 
-  const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
-    const [y1, m1] = a.split('-').map(Number);
-    const [y2, m2] = b.split('-').map(Number);
-    return y1 === y2 ? m1 - m2 : y1 - y2;
-  });
-
-  sortedKeys.forEach(key => {
+  const sortedKeys = Array.from(groups.keys()).sort();
+  sortedKeys.forEach((key) => {
     const group = groups.get(key)!;
+    if (group.length === 0) return;
     monthly.push({
       date: group[group.length - 1].date,
       open: group[0].open,
-      high: Math.max(...group.map(g => g.high)),
-      low: Math.min(...group.map(g => g.low)),
+      high: Math.max(...group.map((g) => g.high)),
+      low: Math.min(...group.map((g) => g.low)),
       close: group[group.length - 1].close,
-      volume: group.reduce((s, g) => s + g.volume, 0),
+      volume: group.reduce((s, g) => s + (g.volume || 0), 0),
     });
   });
   return monthly;
 }
 
-// ─── Trend Template (relaxed — works with 100+ candles) ──────────────────────
+// ─── Trend Template (Minervini Stage 2 Filter) ───────────────────────────────
 
 function trendTemplateScore(candles: DailyCandle[]): { score: number; strength: 'WEAK' | 'MODERATE' | 'STRONG' } {
   const n = candles.length - 1;
-
-  // Need at least 50 candles for any useful MA
-  if (n < 50) return { score: 0, strength: 'WEAK' };
+  if (n < 30) return { score: 50, strength: 'MODERATE' };
 
   const price = candles[n].close;
-  const sma50v = sma(candles, Math.min(50, n))[n];
-  const sma150v = n >= 149 ? sma(candles, 150)[n] : NaN;
-  const sma200v = n >= 199 ? sma(candles, 200)[n] : NaN;
+  const sma20 = sma(candles, Math.min(20, n))[n];
+  const sma50 = n >= 49 ? sma(candles, 50)[n] : sma20;
+  const sma200 = n >= 199 ? sma(candles, 200)[n] : NaN;
 
-  const lookback52w = Math.min(252, n + 1);
-  const high52w = Math.max(...candles.slice(n - lookback52w + 1).map(c => c.high));
-  const low52w = Math.min(...candles.slice(n - lookback52w + 1).map(c => c.low));
+  const lookback = Math.min(252, n + 1);
+  const high52w = Math.max(...candles.slice(n - lookback + 1).map((c) => c.high));
+  const low52w = Math.min(...candles.slice(n - lookback + 1).map((c) => c.low));
 
-  // Score each condition
-  let pts = 0; let max = 0;
+  let pts = 0;
+  let max = 0;
 
-  // Price above 50 SMA (always available)
-  max += 2; if (price > sma50v) pts += 2;
-  // Within 30% of 52w high
-  max += 2; if (price >= high52w * 0.70) pts += 2;
-  // At least 20% above 52w low (uptrend)
-  max += 1; if (price >= low52w * 1.20) pts += 1;
+  // Price above 20 & 50 SMA
+  max += 2;
+  if (price >= sma20) pts += 1;
+  if (price >= sma50) pts += 1;
 
-  if (!isNaN(sma150v)) {
-    max += 2; if (price > sma150v) pts += 2;
-    if (!isNaN(sma200v)) {
-      max += 1; if (sma150v > sma200v) pts += 1;
-      max += 1; if (price > sma200v) pts += 1;
-      // 200 SMA trending up vs 1 month ago
-      const sma200prev = sma(candles, 200)[Math.max(0, n - 20)];
-      if (!isNaN(sma200prev)) { max += 1; if (sma200v > sma200prev) pts += 1; }
-    }
+  // Within 35% of 52-week High
+  max += 2;
+  if (high52w > 0 && price >= high52w * 0.65) pts += 2;
+
+  // At least 15% above 52-week Low
+  max += 1;
+  if (low52w > 0 && price >= low52w * 1.15) pts += 1;
+
+  // SMA 50 above SMA 200 (Stage 2)
+  if (!isNaN(sma200)) {
+    max += 2;
+    if (price >= sma200) pts += 1;
+    if (sma50 >= sma200) pts += 1;
   }
 
-  const score = Math.round((pts / max) * 100);
+  const score = Math.round((pts / Math.max(1, max)) * 100);
   return {
     score,
-    strength: score >= 78 ? 'STRONG' : score >= 50 ? 'MODERATE' : 'WEAK',
+    strength: score >= 70 ? 'STRONG' : score >= 40 ? 'MODERATE' : 'WEAK',
   };
 }
 
-// ─── Swing high/low detection (tighter lookback for more hits) ────────────────
-
-function findSwingHighs(candles: DailyCandle[], lookback = 3): Array<{ idx: number; price: number }> {
-  const highs: Array<{ idx: number; price: number }> = [];
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const c = candles[i].high;
-    if (
-      candles.slice(i - lookback, i).every(x => x.high <= c) &&
-      candles.slice(i + 1, i + lookback + 1).every(x => x.high <= c)
-    ) highs.push({ idx: i, price: c });
-  }
-  return highs;
-}
-
-function findSwingLows(candles: DailyCandle[], lookback = 3): Array<{ idx: number; price: number }> {
-  const lows: Array<{ idx: number; price: number }> = [];
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const c = candles[i].low;
-    if (
-      candles.slice(i - lookback, i).every(x => x.low >= c) &&
-      candles.slice(i + 1, i + lookback + 1).every(x => x.low >= c)
-    ) lows.push({ idx: i, price: c });
-  }
-  return lows;
-}
-
-// ─── VCP ─────────────────────────────────────────────────────────────────────
+// ─── 1. VCP (Volatility Contraction Pattern) ──────────────────────────────────
+// Detects multi-stage contractions (2T, 3T, 4T) where volatility narrows towards pivot.
 
 export function detectVCP(candles: DailyCandle[]): PatternResult | null {
-  if (candles.length < 120) return null;
-
-  const { score: trendScore, strength: trendStrength } = trendTemplateScore(candles);
-  if (trendScore < 33) return null;
-
-  const baseCandles = candles.slice(-90);
-  const n = baseCandles.length - 1;
-
-  const highs = findSwingHighs(baseCandles, 3);
-  const lows = findSwingLows(baseCandles, 3);
-
-  if (highs.length < 2 || lows.length < 1) return null;
-
-  const swings: number[] = [];
-  const minLen = Math.min(highs.length, lows.length);
-  for (let i = 0; i < minLen - 1; i++) {
-    const depth = (highs[i].price - lows[i].price) / highs[i].price;
-    swings.push(depth);
-  }
-
-  let contractions = 0;
-  for (let i = 1; i < swings.length; i++) {
-    if (swings[i] < swings[i - 1] * 0.95) contractions++;
-  }
-
-  if (contractions < 1) return null;
-
-  const pivot = highs[highs.length - 1].price;
-  const currentPrice = baseCandles[n].close;
-
-  if (currentPrice < pivot * 0.88 || currentPrice > pivot * 1.02) return null;
-
-  const recentVol = avgVolume(baseCandles, 10, n + 1);
-  const baseVol = avgVolume(baseCandles, 40, n - 10);
-  const volRatio = recentVol / baseVol;
-  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' =
-    volRatio < 0.75 ? 'DRYING' : volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
-
-  const baseLow = Math.min(...lows.map(l => l.price));
-  const entryPrice = parseFloat((pivot * 1.005).toFixed(2));
-  let stopLoss = parseFloat((baseLow * 0.985).toFixed(2));
-  if (entryPrice - stopLoss > entryPrice * 0.05) {
-    stopLoss = parseFloat((entryPrice * 0.95).toFixed(2));
-  }
-  const riskPts = Math.max(0.01, entryPrice - stopLoss);
-  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
-
-  if (riskPct > 5.1) return null;
-
-  const target1 = parseFloat((entryPrice + riskPts).toFixed(2));
-  const target2 = parseFloat((entryPrice + riskPts * 2).toFixed(2));
-  const target3 = parseFloat((entryPrice + riskPts * 3).toFixed(2));
-  const riskReward = 2.0;
-
-  const score = Math.min(100, Math.round(
-    trendScore * 0.45 +
-    (contractions >= 3 ? 30 : contractions >= 2 ? 22 : 14) +
-    (volumeSignal === 'DRYING' ? 20 : 10),
-  ));
-
-  return {
-    pattern: 'VCP', score,
-    confidence: score >= 70 ? 'HIGH' : score >= 48 ? 'MEDIUM' : 'LOW',
-    currentPrice, pivotPrice: parseFloat(pivot.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward, riskPct,
-    trendStrength, volumeSignal, contractions,
-    notes: [
-      `Trend score: ${trendScore}/100`,
-      `${contractions} volatility contraction(s) detected`,
-      `Volume ${volRatio < 1 ? 'drying up' : 'above avg'} (${(volRatio * 100).toFixed(0)}%)`,
-      `Breakout pivot: ₹${pivot.toFixed(2)}`,
-      `Risk from entry: ${riskPct.toFixed(1)}%`,
-    ],
-  };
-}
-
-// ─── Rocket Base ──────────────────────────────────────────────────────────────
-
-export function detectRocketBase(candles: DailyCandle[]): PatternResult | null {
-  if (candles.length < 50) return null;
-
-  const { score: trendScore, strength: trendStrength } = trendTemplateScore(candles);
-  if (trendScore < 30) return null;
+  if (candles.length < 45) return null;
 
   const n = candles.length - 1;
   const currentPrice = candles[n].close;
 
-  const price3mAgo = candles[Math.max(0, n - 63)].close;
-  const priorMove = (currentPrice - price3mAgo) / price3mAgo;
-  if (priorMove < 0.10) return null;
+  // Analyze the last 60-90 trading days (or available length)
+  const baseLookback = Math.min(90, candles.length);
+  const baseCandles = candles.slice(candles.length - baseLookback);
+  const baseLen = baseCandles.length;
 
-  let baseStart = -1;
-  let baseRange = Infinity;
+  const { score: trendScore, strength: trendStrength } = trendTemplateScore(candles);
 
-  for (let lookback = 7; lookback <= 30; lookback++) {
-    if (n - lookback < 0) continue;
-    const slice = candles.slice(n - lookback, n + 1);
-    const hi = Math.max(...slice.map(c => c.high));
-    const lo = Math.min(...slice.map(c => c.low));
-    const range = (hi - lo) / hi;
-    if (range < 0.15 && range < baseRange) {
-      baseRange = range;
-      baseStart = n - lookback;
-    }
-  }
+  // Divide base into 3 rolling windows to measure volatility contraction (T1, T2, T3)
+  const partSize = Math.floor(baseLen / 3);
+  if (partSize < 8) return null;
 
-  if (baseStart < 0 || baseRange >= 0.15) return null;
+  const w1 = baseCandles.slice(0, partSize);
+  const w2 = baseCandles.slice(partSize, partSize * 2);
+  const w3 = baseCandles.slice(partSize * 2);
 
-  const baseSlice = candles.slice(baseStart, n + 1);
-  const baseHigh = Math.max(...baseSlice.map(c => c.high));
-  const baseLow = Math.min(...baseSlice.map(c => c.low));
+  const depth1 = (Math.max(...w1.map((c) => c.high)) - Math.min(...w1.map((c) => c.low))) / Math.max(...w1.map((c) => c.high));
+  const depth2 = (Math.max(...w2.map((c) => c.high)) - Math.min(...w2.map((c) => c.low))) / Math.max(...w2.map((c) => c.high));
+  const depth3 = (Math.max(...w3.map((c) => c.high)) - Math.min(...w3.map((c) => c.low))) / Math.max(...w3.map((c) => c.high));
 
-  const baseVol = avgVolume(baseSlice, baseSlice.length, baseSlice.length);
-  const priorVol = avgVolume(candles, 20, baseStart);
-  const volRatio = baseVol / priorVol;
+  let contractions = 0;
+  // Check if volatility depth is decreasing: depth1 > depth2 OR depth2 > depth3
+  if (depth2 <= depth1 * 1.05) contractions++;
+  if (depth3 <= depth2 * 1.05) contractions++;
+
+  // Must have contraction in final stage (depth3 <= 12%)
+  const isContracting = (contractions >= 1 && depth3 <= 0.14) || depth3 <= 0.08;
+  if (!isContracting) return null;
+
+  // Base High is the Pivot
+  const pivot = Math.max(...baseCandles.map((c) => c.high));
+  const recentHigh = Math.max(...w3.map((c) => c.high));
+  const pivotToUse = recentHigh >= pivot * 0.95 ? recentHigh : pivot;
+
+  // Current price must be near pivot (within 12%)
+  if (currentPrice < pivotToUse * 0.86 || currentPrice > pivotToUse * 1.04) return null;
+
+  // Volume analysis: volume drying up in the last contraction
+  const recentVol = avgVolume(baseCandles, Math.min(10, partSize), baseLen);
+  const baseVol = avgVolume(candles, Math.min(50, candles.length), candles.length);
+  const volRatio = recentVol / Math.max(1, baseVol);
   const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' =
-    volRatio < 0.75 ? 'DRYING' : volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
+    volRatio < 0.85 ? 'DRYING' : volRatio > 1.25 ? 'EXPANDING' : 'AVERAGE';
 
-  if (currentPrice < baseHigh * 0.94) return null;
+  // Entry at pivot breakout + 0.15%
+  const entryPrice = parseFloat((pivotToUse * 1.002).toFixed(2));
+  // Stop-loss at the lowest low of the last contraction stage
+  const lastStageLow = Math.min(...w3.map((c) => c.low));
+  let stopLoss = parseFloat((lastStageLow * 0.995).toFixed(2));
 
-  const entryPrice = parseFloat((baseHigh * 1.003).toFixed(2));
-  let stopLoss = parseFloat((baseLow * 0.985).toFixed(2));
-  if (entryPrice - stopLoss > entryPrice * 0.05) {
-    stopLoss = parseFloat((entryPrice * 0.95).toFixed(2));
+  // Cap risk percentage at max 7.5%
+  const rawRiskPct = ((entryPrice - stopLoss) / entryPrice) * 100;
+  if (rawRiskPct > 7.5) {
+    stopLoss = parseFloat((entryPrice * 0.935).toFixed(2));
   }
   const riskPts = Math.max(0.01, entryPrice - stopLoss);
   const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
-  if (riskPct > 5.1) return null;
 
-  const target1 = parseFloat((entryPrice + riskPts).toFixed(2));
-  const target2 = parseFloat((entryPrice + riskPts * 2).toFixed(2));
-  const target3 = parseFloat((entryPrice + riskPts * 3).toFixed(2));
+  const target1 = parseFloat((entryPrice + riskPts * 1.5).toFixed(2));
+  const target2 = parseFloat((entryPrice + riskPts * 2.5).toFixed(2));
+  const target3 = parseFloat((entryPrice + riskPts * 3.5).toFixed(2));
 
-  const score = Math.min(100, Math.round(
-    trendScore * 0.35 +
-    (1 - baseRange / 0.15) * 35 +
-    (volumeSignal === 'DRYING' ? 20 : 10) +
-    (priorMove > 0.30 ? 10 : priorMove > 0.15 ? 6 : 3),
-  ));
+  const contractionCount = depth3 < depth2 && depth2 < depth1 ? 3 : 2;
+  const score = Math.min(
+    100,
+    Math.round(
+      40 +
+      trendScore * 0.3 +
+      (volumeSignal === 'DRYING' ? 20 : 10) +
+      (depth3 <= 0.06 ? 15 : 8) +
+      (contractions >= 2 ? 15 : 5)
+    )
+  );
 
   return {
-    pattern: 'ROCKET_BASE', score,
-    confidence: score >= 65 ? 'HIGH' : score >= 45 ? 'MEDIUM' : 'LOW',
-    currentPrice, pivotPrice: parseFloat(baseHigh.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward: 2, riskPct,
-    trendStrength, volumeSignal, contractions: 0,
+    pattern: 'VCP',
+    score,
+    confidence: score >= 70 ? 'HIGH' : score >= 50 ? 'MEDIUM' : 'LOW',
+    currentPrice,
+    pivotPrice: parseFloat(pivotToUse.toFixed(2)),
+    entryPrice,
+    stopLoss,
+    target1,
+    target2,
+    target3,
+    riskReward: 2.0,
+    riskPct,
+    trendStrength,
+    volumeSignal,
+    contractions: contractionCount,
+    direction: 'LONG',
     notes: [
-      `Prior move: +${(priorMove * 100).toFixed(1)}% in last 3 months`,
-      `Base: ${(baseRange * 100).toFixed(1)}% range over ${n - baseStart} days`,
-      `Volume ${volRatio < 1 ? 'drying up' : 'above avg'} in base (${(volRatio * 100).toFixed(0)}%)`,
-      `Pivot: ₹${baseHigh.toFixed(2)} | Risk: ${riskPct.toFixed(1)}%`,
+      `VCP ${contractionCount}T Setup: Volatility contracted from ${(depth1 * 100).toFixed(1)}% → ${(depth2 * 100).toFixed(1)}% → ${(depth3 * 100).toFixed(1)}%`,
+      `Volume ${volRatio < 1 ? 'drying up' : 'stable'} (${(volRatio * 100).toFixed(0)}% of 50-day avg)`,
+      `Breakout Pivot: ₹${pivotToUse.toFixed(2)}`,
+      `Stop-Loss: ₹${stopLoss.toFixed(2)} (${riskPct}% risk)`,
     ],
   };
 }
 
-// ─── Tight Area (3-week tight closes) ────────────────────────────────────────
+// ─── 2. Rocket Base (High Momentum Flat Consolidation) ─────────────────────────
+
+export function detectRocketBase(candles: DailyCandle[]): PatternResult | null {
+  if (candles.length < 35) return null;
+
+  const n = candles.length - 1;
+  const currentPrice = candles[n].close;
+
+  // Measure prior run-up in the last 2-3 months (at least +8%)
+  const lookbackRun = Math.min(60, n);
+  const runUpStartPrice = candles[n - lookbackRun].close;
+  const priorMove = (currentPrice - runUpStartPrice) / Math.max(1, runUpStartPrice);
+  if (priorMove < 0.06) return null;
+
+  // Base consolidation: last 7 to 25 candles trading in a tight range (<= 16%)
+  let baseStart = -1;
+  let baseRange = Infinity;
+
+  for (let days = 6; days <= Math.min(25, n); days++) {
+    const slice = candles.slice(n - days, n + 1);
+    const hi = Math.max(...slice.map((c) => c.high));
+    const lo = Math.min(...slice.map((c) => c.low));
+    const range = (hi - lo) / Math.max(1, hi);
+    if (range <= 0.16 && range < baseRange) {
+      baseRange = range;
+      baseStart = n - days;
+    }
+  }
+
+  if (baseStart < 0) return null;
+
+  const baseSlice = candles.slice(baseStart, n + 1);
+  const baseHigh = Math.max(...baseSlice.map((c) => c.high));
+  const baseLow = Math.min(...baseSlice.map((c) => c.low));
+
+  // Current price must be within 8% of base high
+  if (currentPrice < baseHigh * 0.91) return null;
+
+  const baseVol = avgVolume(baseSlice, baseSlice.length, baseSlice.length);
+  const priorVol = avgVolume(candles, 20, baseStart);
+  const volRatio = baseVol / Math.max(1, priorVol);
+  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' =
+    volRatio < 0.85 ? 'DRYING' : volRatio > 1.25 ? 'EXPANDING' : 'AVERAGE';
+
+  const entryPrice = parseFloat((baseHigh * 1.002).toFixed(2));
+  let stopLoss = parseFloat((baseLow * 0.995).toFixed(2));
+  const rawRiskPct = ((entryPrice - stopLoss) / entryPrice) * 100;
+  if (rawRiskPct > 7.0) {
+    stopLoss = parseFloat((entryPrice * 0.94).toFixed(2));
+  }
+  const riskPts = Math.max(0.01, entryPrice - stopLoss);
+  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
+
+  const target1 = parseFloat((entryPrice + riskPts * 1.5).toFixed(2));
+  const target2 = parseFloat((entryPrice + riskPts * 2.5).toFixed(2));
+  const target3 = parseFloat((entryPrice + riskPts * 3.5).toFixed(2));
+
+  const score = Math.min(
+    100,
+    Math.round(
+      45 +
+      (priorMove > 0.15 ? 25 : 15) +
+      (1 - baseRange / 0.16) * 20 +
+      (volumeSignal === 'DRYING' ? 15 : 5)
+    )
+  );
+
+  return {
+    pattern: 'ROCKET_BASE',
+    score,
+    confidence: score >= 65 ? 'HIGH' : score >= 45 ? 'MEDIUM' : 'LOW',
+    currentPrice,
+    pivotPrice: parseFloat(baseHigh.toFixed(2)),
+    entryPrice,
+    stopLoss,
+    target1,
+    target2,
+    target3,
+    riskReward: 2.0,
+    riskPct,
+    trendStrength: 'STRONG',
+    volumeSignal,
+    contractions: 0,
+    direction: 'LONG',
+    notes: [
+      `Rocket Base: Prior momentum +${(priorMove * 100).toFixed(1)}%`,
+      `Tight Consolidation: ${(baseRange * 100).toFixed(1)}% base range over ${n - baseStart} days`,
+      `Breakout Pivot: ₹${baseHigh.toFixed(2)}`,
+      `Stop-Loss: ₹${stopLoss.toFixed(2)} (${riskPct}% risk)`,
+    ],
+  };
+}
+
+// ─── 3. Tight Area (Multi-Week Tight Closes) ───────────────────────────────────
 
 export function detectTightArea(candles: DailyCandle[]): PatternResult | null {
-  if (candles.length < 40) return null;
-
-  const { score: trendScore, strength: trendStrength } = trendTemplateScore(candles);
-  if (trendScore < 30) return null;
+  if (candles.length < 25) return null;
 
   const n = candles.length - 1;
   const currentPrice = candles[n].close;
@@ -354,440 +384,363 @@ export function detectTightArea(candles: DailyCandle[]): PatternResult | null {
   let bestWindow = -1;
   let bestRange = Infinity;
 
-  for (const days of [10, 12, 15]) {
+  // Check 8, 10, 12, 15 days window
+  for (const days of [8, 10, 12, 15]) {
     if (n < days) continue;
     const win = candles.slice(n - days, n + 1);
-    const closes = win.map(c => c.close);
-    const rng = (Math.max(...closes) - Math.min(...closes)) / Math.max(...closes);
-    if (rng < 0.06 && rng < bestRange) { bestRange = rng; bestWindow = days; }
+    const closes = win.map((c) => c.close);
+    const maxClose = Math.max(...closes);
+    const minClose = Math.min(...closes);
+    const range = (maxClose - minClose) / Math.max(1, maxClose);
+    if (range <= 0.065 && range < bestRange) {
+      bestRange = range;
+      bestWindow = days;
+    }
   }
 
   if (bestWindow < 0) return null;
 
-  const window = candles.slice(n - bestWindow, n + 1);
-  const baseHigh = Math.max(...window.map(c => c.high));
-  const baseLow = Math.min(...window.map(c => c.low));
+  const winSlice = candles.slice(n - bestWindow, n + 1);
+  const baseHigh = Math.max(...winSlice.map((c) => c.high));
+  const baseLow = Math.min(...winSlice.map((c) => c.low));
 
-  const baseVol = avgVolume(window, window.length, window.length);
-  const priorVol = avgVolume(candles, 20, n - bestWindow);
-  const volRatio = baseVol / priorVol;
-  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' =
-    volRatio < 0.75 ? 'DRYING' : volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
-
-  const entryPrice = parseFloat((baseHigh * 1.003).toFixed(2));
-  let stopLoss = parseFloat((baseLow * 0.985).toFixed(2));
-  if (entryPrice - stopLoss > entryPrice * 0.05) {
+  const entryPrice = parseFloat((baseHigh * 1.002).toFixed(2));
+  let stopLoss = parseFloat((baseLow * 0.995).toFixed(2));
+  const rawRiskPct = ((entryPrice - stopLoss) / entryPrice) * 100;
+  if (rawRiskPct > 6.0) {
     stopLoss = parseFloat((entryPrice * 0.95).toFixed(2));
   }
   const riskPts = Math.max(0.01, entryPrice - stopLoss);
   const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
-  if (riskPct > 5.1) return null;
 
-  const target1 = parseFloat((entryPrice + riskPts).toFixed(2));
-  const target2 = parseFloat((entryPrice + riskPts * 2).toFixed(2));
-  const target3 = parseFloat((entryPrice + riskPts * 3).toFixed(2));
+  const target1 = parseFloat((entryPrice + riskPts * 1.5).toFixed(2));
+  const target2 = parseFloat((entryPrice + riskPts * 2.5).toFixed(2));
+  const target3 = parseFloat((entryPrice + riskPts * 3.5).toFixed(2));
 
-  const score = Math.min(100, Math.round(
-    trendScore * 0.4 +
-    (1 - bestRange / 0.06) * 35 +
-    (volumeSignal === 'DRYING' ? 20 : 10),
-  ));
+  const score = Math.min(100, Math.round(50 + (1 - bestRange / 0.065) * 35 + 15));
 
   return {
-    pattern: 'TIGHT_AREA', score,
+    pattern: 'TIGHT_AREA',
+    score,
     confidence: score >= 65 ? 'HIGH' : score >= 45 ? 'MEDIUM' : 'LOW',
-    currentPrice, pivotPrice: parseFloat(baseHigh.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward: 2, riskPct,
-    trendStrength, volumeSignal, contractions: 0,
+    currentPrice,
+    pivotPrice: parseFloat(baseHigh.toFixed(2)),
+    entryPrice,
+    stopLoss,
+    target1,
+    target2,
+    target3,
+    riskReward: 2.0,
+    riskPct,
+    trendStrength: 'MODERATE',
+    volumeSignal: 'AVERAGE',
+    contractions: 0,
+    direction: 'LONG',
     notes: [
-      `${bestWindow}-day tight: closes within ${(bestRange * 100).toFixed(1)}%`,
-      `Volume ${volRatio < 1 ? 'drying' : 'above avg'} (${(volRatio * 100).toFixed(0)}%)`,
-      `Breakout pivot: ₹${baseHigh.toFixed(2)} | Risk: ${riskPct.toFixed(1)}%`,
+      `${bestWindow}-day Tight Area: Closes within ${(bestRange * 100).toFixed(1)}%`,
+      `Range: ₹${baseLow.toFixed(2)} — ₹${baseHigh.toFixed(2)}`,
+      `Breakout Pivot: ₹${baseHigh.toFixed(2)}`,
+      `Stop-Loss: ₹${stopLoss.toFixed(2)} (${riskPct}% risk)`,
     ],
   };
 }
 
-// ─── Intraday Momentum ───────────────────────────────────────────────────────
-// Original working detector: finds stocks with TODAY's volume surge, bullish
-// close (top 30% of day range) and positive return. Simple and effective.
-
-// Calculate elapsed trading time fraction for TODAY's partial daily candle during Indian market hours (09:15 to 15:30 IST)
-export function getElapsedMarketFraction(candleDate: Date): number {
-  const now = new Date();
-  const isToday = candleDate.toDateString() === now.toDateString();
-  if (!isToday) return 1.0; // Completed past daily candle
-
-  const nowHours = now.getHours();
-  const nowMins = now.getMinutes();
-
-  // Market hours: 09:15 to 15:30 (375 mins)
-  if (nowHours < 9 || (nowHours === 9 && nowMins < 15)) return 0.04; // Market pre-open/just started (min 4%)
-  if (nowHours > 15 || (nowHours === 15 && nowMins >= 30)) return 1.0; // Market closed
-
-  const elapsedMins = (nowHours - 9) * 60 + (nowMins - 15);
-  return Math.max(0.04, Math.min(1.0, elapsedMins / 375));
-}
-
-export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | null {
-  if (candles.length < 50) return null;
-
-  let n = candles.length - 1;
-  while (n > 0 && (candles[n].volume === 0 || candles[n].high === candles[n].low)) {
-    n--;
-  }
-
-  if (n < 20) return null;
-
-  const currentPrice = candles[n].close;
-
-  // Must be above SMA50 (uptrend)
-  const sma50v = sma(candles, 50)[n];
-  if (currentPrice < sma50v) return null;
-
-  // Volume pace (RVOL) prorated against elapsed market time
-  const recentVol = candles[n].volume;
-  const baseVol = avgVolume(candles, 20, n);
-  const dayFraction = getElapsedMarketFraction(candles[n].date);
-  const expectedVol = Math.max(1, baseVol * dayFraction);
-  const volRatio = recentVol / expectedVol;
-  if (volRatio < 0.80) return null;
-
-  // Must have a real trading range
-  const dayRange = candles[n].high - candles[n].low;
-  if (dayRange === 0) return null;
-
-  // Bullish close: price must finish in the top 30% of the day's range
-  const closeRelativePos = (currentPrice - candles[n].low) / dayRange;
-  if (closeRelativePos < 0.70) return null;
-
-  // Positive return today (at least +0.3%)
-  const todayReturn = (candles[n].close - candles[n].open) / candles[n].open;
-  if (todayReturn < 0.003) return null;
-
-  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' = volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
-
-  const entryPrice = parseFloat((candles[n].high * 1.001).toFixed(2));
-  const stopLoss   = parseFloat((candles[n].close * 0.985).toFixed(2));
-  const riskPts    = Math.max(0.01, entryPrice - stopLoss);
-  const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
-
-  if (riskPct > 6.0) return null;
-
-  // ── Fibonacci Levels from SWING range (last 10 candles) ──
-  const lookback = Math.min(10, n);
-  const recentSlice = candles.slice(n - lookback, n + 1);
-  const swingHigh = Math.max(...recentSlice.map(c => c.high));
-  const swingLow  = Math.min(...recentSlice.map(c => c.low));
-  const swingRange = Math.max(0.01, swingHigh - swingLow);
-
-  // T1 = 0.382 ext, T2 = 0.618 ext, T3 = 1.0 ext above entry
-  const target1 = parseFloat((entryPrice + swingRange * 0.382).toFixed(2));
-  const target2 = parseFloat((entryPrice + swingRange * 0.618).toFixed(2));
-  const target3 = parseFloat((entryPrice + swingRange * 1.0).toFixed(2));
-
-  // All key Fibonacci price levels for reference
-  const fibLevels = [
-    { level: '0',     price: swingLow },
-    { level: '0.236', price: swingLow + swingRange * 0.236 },
-    { level: '0.382', price: swingLow + swingRange * 0.382 },
-    { level: '0.5',   price: swingLow + swingRange * 0.5   },
-    { level: '0.618', price: swingLow + swingRange * 0.618 },
-    { level: '0.786', price: swingLow + swingRange * 0.786 },
-    { level: '1.0',   price: swingHigh },
-    { level: '1.272', price: swingHigh + swingRange * 0.272 },
-    { level: '1.414', price: swingHigh + swingRange * 0.414 },
-    { level: '1.618', price: swingHigh + swingRange * 0.618 },
-    { level: '2.0',   price: swingHigh + swingRange * 1.0   },
-    { level: '2.618', price: swingHigh + swingRange * 1.618 },
-  ];
-
-  const score = Math.min(100, Math.round(
-    50 +
-    (volRatio > 2 ? 30 : volRatio > 1.2 ? 20 : 10) +
-    (todayReturn > 0.03 ? 20 : 10)
-  ));
-
-  return {
-    pattern: 'INTRADAY_MOMENTUM', score,
-    confidence: score >= 80 ? 'HIGH' : score >= 65 ? 'MEDIUM' : 'LOW',
-    currentPrice, pivotPrice: parseFloat(candles[n].high.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward: parseFloat((Math.abs(target1 - entryPrice) / riskPts).toFixed(2)), riskPct,
-    trendStrength: 'STRONG', volumeSignal, contractions: 0,
-    notes: [
-      `🔥 Momentum Signal: +${(todayReturn * 100).toFixed(1)}% on ${candles[n].date.toLocaleDateString()}`,
-      `📊 RVOL Pace: ${(volRatio).toFixed(1)}x expected`,
-      `✨ Bullish Close: Top ${Math.round(closeRelativePos * 100)}% of day range`,
-      `🚀 Breakout Level: Buy above ₹${candles[n].high.toFixed(2)}`,
-      `📐 Swing Range: ₹${swingLow.toFixed(2)} → ₹${swingHigh.toFixed(2)} (₹${swingRange.toFixed(2)})`,
-      `── Fibonacci Retracement Levels ──`,
-      ...fibLevels.filter(f => parseFloat(f.level) <= 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
-      `── Fibonacci Extension Levels (LONG) ──`,
-      ...fibLevels.filter(f => parseFloat(f.level) > 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
-      `🎯 T1 (Fib 0.382): ₹${target1.toFixed(2)}  |  T2 (Fib 0.618): ₹${target2.toFixed(2)}  |  T3 (Fib 1.0): ₹${target3.toFixed(2)}`,
-    ],
-  };
-}
-
-// ─── Intraday Momentum (Active Breakdown Detector - SHORT) ───────────────────
-// Finds stocks with TODAY's volume surge, bearish close (bottom 30% of day range)
-// and negative return under SMA50.
-
-export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResult | null {
-  if (candles.length < 50) return null;
-
-  let n = candles.length - 1;
-  while (n > 0 && (candles[n].volume === 0 || candles[n].high === candles[n].low)) {
-    n--;
-  }
-
-  if (n < 20) return null;
-
-  const currentPrice = candles[n].close;
-
-  // Optional SMA50 reference calculation for context
-  const sma50v = sma(candles, 50)[n];
-
-  // Volume pace (RVOL) prorated against elapsed market time
-  const recentVol = candles[n].volume;
-  const baseVol = avgVolume(candles, 20, n);
-  const dayFraction = getElapsedMarketFraction(candles[n].date);
-  const expectedVol = Math.max(1, baseVol * dayFraction);
-  const volRatio = recentVol / expectedVol;
-  if (volRatio < 0.80) return null;
-
-  // Must have a real trading range
-  const dayRange = candles[n].high - candles[n].low;
-  if (dayRange === 0) return null;
-
-  // Bearish close: price must finish in the bottom 30% of the day's range
-  const closeRelativePos = (currentPrice - candles[n].low) / dayRange;
-  if (closeRelativePos > 0.30) return null;
-
-  // Negative return today (at least -0.3%)
-  const todayReturn = (candles[n].close - candles[n].open) / candles[n].open;
-  if (todayReturn > -0.003) return null;
-
-  const volumeSignal: 'DRYING' | 'AVERAGE' | 'EXPANDING' = volRatio > 1.3 ? 'EXPANDING' : 'AVERAGE';
-
-  const entryPrice = parseFloat((candles[n].low * 0.999).toFixed(2));
-  const stopLoss   = parseFloat((candles[n].close * 1.015).toFixed(2));
-  const riskPts    = Math.max(0.01, stopLoss - entryPrice);
-  const riskPct    = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
-
-  if (riskPct > 6.0) return null;
-
-  // ── Fibonacci Levels from SWING range (last 10 candles) ──
-  const lookback = Math.min(10, n);
-  const recentSlice = candles.slice(n - lookback, n + 1);
-  const swingHigh = Math.max(...recentSlice.map(c => c.high));
-  const swingLow  = Math.min(...recentSlice.map(c => c.low));
-  const swingRange = Math.max(0.01, swingHigh - swingLow);
-
-  // T1 = 0.382 ext, T2 = 0.618 ext, T3 = 1.0 ext below entry
-  const target1 = parseFloat((entryPrice - swingRange * 0.382).toFixed(2));
-  const target2 = parseFloat((entryPrice - swingRange * 0.618).toFixed(2));
-  const target3 = parseFloat((entryPrice - swingRange * 1.0).toFixed(2));
-
-  // All key Fibonacci price levels for reference (SHORT: extensions below)
-  const fibLevels = [
-    { level: '0',     price: swingHigh },
-    { level: '0.236', price: swingHigh - swingRange * 0.236 },
-    { level: '0.382', price: swingHigh - swingRange * 0.382 },
-    { level: '0.5',   price: swingHigh - swingRange * 0.5   },
-    { level: '0.618', price: swingHigh - swingRange * 0.618 },
-    { level: '0.786', price: swingHigh - swingRange * 0.786 },
-    { level: '1.0',   price: swingLow },
-    { level: '1.272', price: swingLow - swingRange * 0.272 },
-    { level: '1.414', price: swingLow - swingRange * 0.414 },
-    { level: '1.618', price: swingLow - swingRange * 0.618 },
-    { level: '2.0',   price: swingLow - swingRange * 1.0   },
-    { level: '2.618', price: swingLow - swingRange * 1.618 },
-  ];
-
-  const score = Math.min(100, Math.round(
-    50 +
-    (volRatio > 2 ? 30 : volRatio > 1.2 ? 20 : 10) +
-    (todayReturn < -0.03 ? 20 : 10)
-  ));
-
-  return {
-    pattern: 'INTRADAY_MOMENTUM', score,
-    confidence: score >= 80 ? 'HIGH' : score >= 65 ? 'MEDIUM' : 'LOW',
-    currentPrice, pivotPrice: parseFloat(candles[n].low.toFixed(2)),
-    entryPrice, stopLoss, target1, target2, target3, riskReward: parseFloat((Math.abs(entryPrice - target1) / riskPts).toFixed(2)), riskPct,
-    trendStrength: 'STRONG', volumeSignal, contractions: 0,
-    notes: [
-      `📉 Short Momentum Signal: ${(todayReturn * 100).toFixed(1)}% on ${candles[n].date.toLocaleDateString()}`,
-      `📊 Volume: ${(volRatio).toFixed(1)}x average`,
-      `✨ Bearish Close: Bottom ${Math.round(closeRelativePos * 100)}% of day range`,
-      `🚀 Breakdown Level: Sell below ₹${candles[n].low.toFixed(2)}`,
-      `📐 Swing Range: ₹${swingLow.toFixed(2)} → ₹${swingHigh.toFixed(2)} (₹${swingRange.toFixed(2)})`,
-      `── Fibonacci Retracement Levels ──`,
-      ...fibLevels.filter(f => parseFloat(f.level) <= 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
-      `── Fibonacci Extension Levels (SHORT) ──`,
-      ...fibLevels.filter(f => parseFloat(f.level) > 1.0).map(f => `  Fib ${f.level}: ₹${f.price.toFixed(2)}`),
-      `🎯 T1 (Fib 0.382): ₹${target1.toFixed(2)}  |  T2 (Fib 0.618): ₹${target2.toFixed(2)}  |  T3 (Fib 1.0): ₹${target3.toFixed(2)}`,
-    ],
-  };
-}
-
-// ─── Inside Candle ──────────────────────────────────────────────────────────
+// ─── 4. Inside Candle Setup (1D Inside, Weekly Inside, Monthly Inside) ─────────
+// Robust multi-timeframe inside candle analyzer for LONG & SHORT setups.
 
 export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEKLY' | 'MONTHLY'): PatternResult[] {
-  if (candles.length < 3) return [];
+  if (!candles || candles.length < 2) return [];
   const n = candles.length - 1;
 
-  let insideIdx = -1;
-  let motherIdx = -1;
+  let insideCandle: DailyCandle | null = null;
+  let motherCandle: DailyCandle | null = null;
+  let isBreakoutDay = false;
 
-  // Simple Check: Current candle is inside previous
-  if (candles[n].high > candles[n].low && 
-      candles[n].high <= candles[n - 1].high && 
-      candles[n].low >= candles[n - 1].low) {
-    insideIdx = n;
-    motherIdx = n - 1;
-  } 
-  // Simple Check: Previous was inside (breakout day)
-  else if (candles[n - 1].high > candles[n - 1].low && 
-           candles[n - 1].high <= candles[n - 2].high && 
-           candles[n - 1].low >= candles[n - 2].low) {
-    // Only if price hasn't escaped yet
-    if (candles[n].close <= candles[n - 2].high * 1.005) {
-      insideIdx = n - 1;
-      motherIdx = n - 2;
+  // Case A: Today / Current period is INSIDE the previous mother period
+  // (Current High <= Previous High and Current Low >= Previous Low)
+  const curr = candles[n];
+  const prev = candles[n - 1];
+
+  if (curr.high <= prev.high * 1.002 && curr.low >= prev.low * 0.998 && curr.high > curr.low) {
+    insideCandle = curr;
+    motherCandle = prev;
+    isBreakoutDay = false;
+  }
+  // Case B: Previous period was an inside candle (testing breakout now)
+  else if (n >= 2) {
+    const prev2 = candles[n - 2];
+    if (prev.high <= prev2.high * 1.002 && prev.low >= prev2.low * 0.998 && prev.high > prev.low) {
+      insideCandle = prev;
+      motherCandle = prev2;
+      isBreakoutDay = true;
+    }
+  }
+  // Case C: 2 periods ago was an inside candle (for weekly/monthly consolidations)
+  if (!insideCandle && n >= 3 && (type === 'WEEKLY' || type === 'MONTHLY')) {
+    const prev2 = candles[n - 2];
+    const prev3 = candles[n - 3];
+    if (prev2.high <= prev3.high * 1.002 && prev2.low >= prev3.low * 0.998 && prev2.high > prev2.low) {
+      insideCandle = prev2;
+      motherCandle = prev3;
+      isBreakoutDay = true;
     }
   }
 
-  if (insideIdx === -1) return [];
+  if (!insideCandle || !motherCandle) return [];
 
-  const mother = candles[motherIdx];
-  const inside = candles[insideIdx];
+
   const currentPrice = candles[n].close;
-
-  // Strict Mathematical Check: Current candle must be STRICTLY inside the Mother High/Low
-  // We check both the high/low of the day AND the current price to be absolutely safe.
-  if (candles[n].high >= mother.high || candles[n].low <= mother.low) return [];
-  if (currentPrice >= mother.high || currentPrice <= mother.low) return [];
+  const motherHigh = motherCandle.high;
+  const motherLow = motherCandle.low;
+  const insideHigh = insideCandle.high;
+  const insideLow = insideCandle.low;
 
   const patternMap: Record<string, PatternType> = {
-    'DAILY': 'DAILY_INSIDE',
-    'WEEKLY': 'WEEKLY_INSIDE',
-    'MONTHLY': 'MONTHLY_INSIDE'
+    DAILY: 'DAILY_INSIDE',
+    WEEKLY: 'WEEKLY_INSIDE',
+    MONTHLY: 'MONTHLY_INSIDE',
   };
 
-  const scoreMap: Record<string, number> = {
-    'DAILY': 95,
-    'WEEKLY': 92,
-    'MONTHLY': 85
+  const scoreBase: Record<string, number> = {
+    DAILY: 92,
+    WEEKLY: 88,
+    MONTHLY: 84,
   };
 
   const results: PatternResult[] = [];
+  const label = type === 'DAILY' ? '1D Inside Bar' : type === 'WEEKLY' ? 'Weekly Inside Bar' : 'Monthly Inside Bar';
 
-  // ── 1. LONG Setup (Breakout above mother.high) ───────────────────────
-  const entryPriceLong = parseFloat((mother.high * 1.002).toFixed(2));
-  let stopLossLong = parseFloat((mother.low * 0.998).toFixed(2));
-  const motherLowRiskLong = (entryPriceLong - stopLossLong) / entryPriceLong;
-  if (motherLowRiskLong > 0.05) {
-    stopLossLong = parseFloat((inside.low * 0.995).toFixed(2));
+  // ── 1. LONG Setup (Breakout above Mother / Inside High) ───────────────
+  const entryPriceLong = parseFloat((insideHigh * 1.002).toFixed(2));
+  let stopLossLong = parseFloat((insideLow * 0.998).toFixed(2));
+  const rawRiskLong = ((entryPriceLong - stopLossLong) / entryPriceLong) * 100;
+  if (rawRiskLong > 6.5) {
+    stopLossLong = parseFloat((entryPriceLong * 0.945).toFixed(2));
   }
   const riskPtsLong = Math.max(0.01, entryPriceLong - stopLossLong);
   const riskPctLong = parseFloat(((riskPtsLong / entryPriceLong) * 100).toFixed(2));
 
-  if (riskPctLong <= 10.0) {
-    const target1Long = parseFloat((entryPriceLong + riskPtsLong * 1.5).toFixed(2));
-    const target2Long = parseFloat((entryPriceLong + riskPtsLong * 2.5).toFixed(2));
-    const target3Long = parseFloat((entryPriceLong + riskPtsLong * 3.5).toFixed(2));
+  const target1Long = parseFloat((entryPriceLong + riskPtsLong * 1.5).toFixed(2));
+  const target2Long = parseFloat((entryPriceLong + riskPtsLong * 2.5).toFixed(2));
+  const target3Long = parseFloat((entryPriceLong + riskPtsLong * 3.5).toFixed(2));
 
-    results.push({
-      pattern: patternMap[type],
-      score: scoreMap[type],
-      confidence: 'HIGH',
-      currentPrice,
-      pivotPrice: mother.high,
-      entryPrice: entryPriceLong,
-      stopLoss: stopLossLong,
-      target1: target1Long,
-      target2: target2Long,
-      target3: target3Long,
-      riskReward: 1.5,
-      riskPct: riskPctLong,
-      trendStrength: 'MODERATE',
-      volumeSignal: 'AVERAGE',
-      contractions: 0,
-      notes: [
-        `${type.charAt(0) + type.slice(1).toLowerCase()} Inside Candle Setup (LONG)`,
-        `Mother Breakout Pivot: ₹${mother.high.toFixed(2)}`,
-        `Risk: ${riskPctLong.toFixed(1)}%`
-      ]
-    });
-  }
+  results.push({
+    pattern: patternMap[type],
+    score: scoreBase[type],
+    confidence: 'HIGH',
+    currentPrice,
+    pivotPrice: parseFloat(motherHigh.toFixed(2)),
+    entryPrice: entryPriceLong,
+    stopLoss: stopLossLong,
+    target1: target1Long,
+    target2: target2Long,
+    target3: target3Long,
+    riskReward: 1.5,
+    riskPct: riskPctLong,
+    trendStrength: 'MODERATE',
+    volumeSignal: 'AVERAGE',
+    contractions: 0,
+    direction: 'LONG',
+    notes: [
+      `🟢 ${label} Setup (LONG)`,
+      `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
+      `Inside Range: ₹${insideLow.toFixed(2)} → ₹${insideHigh.toFixed(2)}`,
+      `Long Trigger: Buy above ₹${entryPriceLong.toFixed(2)} | SL: ₹${stopLossLong.toFixed(2)}`,
+      isBreakoutDay ? `⚡ Breakout in progress today` : `⏳ Consolidation ready for breakout`,
+    ],
+  });
 
-  // ── 2. SHORT Setup (Breakdown below mother.low) ───────────────────────
-  const entryPriceShort = parseFloat((mother.low * 0.998).toFixed(2));
-  let stopLossShort = parseFloat((mother.high * 1.002).toFixed(2));
-  const motherLowRiskShort = (stopLossShort - entryPriceShort) / entryPriceShort;
-  if (motherLowRiskShort > 0.05) {
-    stopLossShort = parseFloat((inside.high * 1.005).toFixed(2));
+  // ── 2. SHORT Setup (Breakdown below Mother / Inside Low) ──────────────
+  const entryPriceShort = parseFloat((insideLow * 0.998).toFixed(2));
+  let stopLossShort = parseFloat((insideHigh * 1.002).toFixed(2));
+  const rawRiskShort = ((stopLossShort - entryPriceShort) / entryPriceShort) * 100;
+  if (rawRiskShort > 6.5) {
+    stopLossShort = parseFloat((entryPriceShort * 1.055).toFixed(2));
   }
   const riskPtsShort = Math.max(0.01, stopLossShort - entryPriceShort);
   const riskPctShort = parseFloat(((riskPtsShort / entryPriceShort) * 100).toFixed(2));
 
-  if (riskPctShort <= 10.0) {
-    const target1Short = parseFloat((entryPriceShort - riskPtsShort * 1.5).toFixed(2));
-    const target2Short = parseFloat((entryPriceShort - riskPtsShort * 2.5).toFixed(2));
-    const target3Short = parseFloat((entryPriceShort - riskPtsShort * 3.5).toFixed(2));
+  const target1Short = parseFloat((entryPriceShort - riskPtsShort * 1.5).toFixed(2));
+  const target2Short = parseFloat((entryPriceShort - riskPtsShort * 2.5).toFixed(2));
+  const target3Short = parseFloat((entryPriceShort - riskPtsShort * 3.5).toFixed(2));
 
-    results.push({
-      pattern: patternMap[type],
-      score: scoreMap[type],
-      confidence: 'HIGH',
-      currentPrice,
-      pivotPrice: mother.low,
-      entryPrice: entryPriceShort,
-      stopLoss: stopLossShort,
-      target1: target1Short,
-      target2: target2Short,
-      target3: target3Short,
-      riskReward: 1.5,
-      riskPct: riskPctShort,
-      trendStrength: 'MODERATE',
-      volumeSignal: 'AVERAGE',
-      contractions: 0,
-      notes: [
-        `${type.charAt(0) + type.slice(1).toLowerCase()} Inside Candle Setup (SHORT)`,
-        `Mother Breakdown Pivot: ₹${mother.low.toFixed(2)}`,
-        `Risk: ${riskPctShort.toFixed(1)}%`
-      ]
-    });
-  }
+  results.push({
+    pattern: patternMap[type],
+    score: scoreBase[type] - 2,
+    confidence: 'HIGH',
+    currentPrice,
+    pivotPrice: parseFloat(motherLow.toFixed(2)),
+    entryPrice: entryPriceShort,
+    stopLoss: stopLossShort,
+    target1: target1Short,
+    target2: target2Short,
+    target3: target3Short,
+    riskReward: 1.5,
+    riskPct: riskPctShort,
+    trendStrength: 'MODERATE',
+    volumeSignal: 'AVERAGE',
+    contractions: 0,
+    direction: 'SHORT',
+    notes: [
+      `🔴 ${label} Setup (SHORT)`,
+      `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
+      `Inside Range: ₹${insideLow.toFixed(2)} → ₹${insideHigh.toFixed(2)}`,
+      `Short Trigger: Sell below ₹${entryPriceShort.toFixed(2)} | SL: ₹${stopLossShort.toFixed(2)}`,
+      isBreakoutDay ? `⚡ Breakdown in progress today` : `⏳ Consolidation ready for breakdown`,
+    ],
+  });
 
   return results;
 }
 
-// ─── Main Logic ──────────────────────────────────────────────────────────────
+// ─── 5. Intraday Momentum Surge (Long & Short) ────────────────────────────────
+
+export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | null {
+  if (!candles || candles.length < 20) return null;
+  const n = candles.length - 1;
+  const curr = candles[n];
+
+  const currentPrice = curr.close;
+  const dayRange = curr.high - curr.low;
+  if (dayRange <= 0) return null;
+
+  // Bullish: Closed in the upper 40% of the day's range
+  const closeRel = (currentPrice - curr.low) / dayRange;
+  const returnToday = (curr.close - curr.open) / Math.max(1, curr.open);
+
+  if (closeRel < 0.60 || returnToday < 0.004) return null;
+
+  const baseVol = avgVolume(candles, 20, n);
+  const volRatio = (curr.volume || 1) / Math.max(1, baseVol);
+
+  const entryPrice = parseFloat((curr.high * 1.001).toFixed(2));
+  const stopLoss = parseFloat((curr.low * 0.995).toFixed(2));
+  const riskPts = Math.max(0.01, entryPrice - stopLoss);
+  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
+
+  const target1 = parseFloat((entryPrice + riskPts * 1.5).toFixed(2));
+  const target2 = parseFloat((entryPrice + riskPts * 2.5).toFixed(2));
+  const target3 = parseFloat((entryPrice + riskPts * 3.5).toFixed(2));
+
+  const score = Math.min(100, Math.round(55 + (returnToday > 0.02 ? 25 : 15) + (volRatio > 1.2 ? 20 : 10)));
+
+  return {
+    pattern: 'INTRADAY_MOMENTUM',
+    score,
+    confidence: score >= 75 ? 'HIGH' : 'MEDIUM',
+    currentPrice,
+    pivotPrice: parseFloat(curr.high.toFixed(2)),
+    entryPrice,
+    stopLoss,
+    target1,
+    target2,
+    target3,
+    riskReward: 1.5,
+    riskPct,
+    trendStrength: 'STRONG',
+    volumeSignal: volRatio > 1.2 ? 'EXPANDING' : 'AVERAGE',
+    contractions: 0,
+    direction: 'LONG',
+    notes: [
+      `🔥 Bullish Momentum: +${(returnToday * 100).toFixed(1)}% gain`,
+      `Volume Pace: ${(volRatio).toFixed(1)}x 20-day average`,
+      `Day High Breakout: ₹${curr.high.toFixed(2)}`,
+      `SL: ₹${stopLoss.toFixed(2)}`,
+    ],
+  };
+}
+
+export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResult | null {
+  if (!candles || candles.length < 20) return null;
+  const n = candles.length - 1;
+  const curr = candles[n];
+
+  const currentPrice = curr.close;
+  const dayRange = curr.high - curr.low;
+  if (dayRange <= 0) return null;
+
+  // Bearish: Closed in the lower 40% of the day's range
+  const closeRel = (currentPrice - curr.low) / dayRange;
+  const returnToday = (curr.close - curr.open) / Math.max(1, curr.open);
+
+  if (closeRel > 0.40 || returnToday > -0.004) return null;
+
+  const baseVol = avgVolume(candles, 20, n);
+  const volRatio = (curr.volume || 1) / Math.max(1, baseVol);
+
+  const entryPrice = parseFloat((curr.low * 0.999).toFixed(2));
+  const stopLoss = parseFloat((curr.high * 1.005).toFixed(2));
+  const riskPts = Math.max(0.01, stopLoss - entryPrice);
+  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
+
+  const target1 = parseFloat((entryPrice - riskPts * 1.5).toFixed(2));
+  const target2 = parseFloat((entryPrice - riskPts * 2.5).toFixed(2));
+  const target3 = parseFloat((entryPrice - riskPts * 3.5).toFixed(2));
+
+  const score = Math.min(100, Math.round(55 + (returnToday < -0.02 ? 25 : 15) + (volRatio > 1.2 ? 20 : 10)));
+
+  return {
+    pattern: 'INTRADAY_MOMENTUM',
+    score,
+    confidence: score >= 75 ? 'HIGH' : 'MEDIUM',
+    currentPrice,
+    pivotPrice: parseFloat(curr.low.toFixed(2)),
+    entryPrice,
+    stopLoss,
+    target1,
+    target2,
+    target3,
+    riskReward: 1.5,
+    riskPct,
+    trendStrength: 'STRONG',
+    volumeSignal: volRatio > 1.2 ? 'EXPANDING' : 'AVERAGE',
+    contractions: 0,
+    direction: 'SHORT',
+    notes: [
+      `📉 Bearish Momentum: ${(returnToday * 100).toFixed(1)}% drop`,
+      `Volume Pace: ${(volRatio).toFixed(1)}x 20-day average`,
+      `Day Low Breakdown: ₹${curr.low.toFixed(2)}`,
+      `SL: ₹${stopLoss.toFixed(2)}`,
+    ],
+  };
+}
+
+// ─── Master Analyzer ─────────────────────────────────────────────────────────
 
 export function analyzeStock(_symbol: string, candles: DailyCandle[]): PatternResult[] {
+  if (!candles || candles.length < 15) return [];
+
   const results: PatternResult[] = [];
 
+  // 1. VCP Pattern
   const vcp = detectVCP(candles);
-  const rocket = detectRocketBase(candles);
-  const tight = detectTightArea(candles);
-  const momentum = detectIntradayMomentum(candles);
-  const momentumShort = detectIntradayMomentumShort(candles);
-
   if (vcp) results.push(vcp);
+
+  // 2. Rocket Base Pattern
+  const rocket = detectRocketBase(candles);
   if (rocket) results.push(rocket);
+
+  // 3. Tight Area Pattern
+  const tight = detectTightArea(candles);
   if (tight) results.push(tight);
-  if (momentum) results.push(momentum);
+
+  // 4. Intraday Momentum Long / Short
+  const momentumLong = detectIntradayMomentum(candles);
+  if (momentumLong) results.push(momentumLong);
+
+  const momentumShort = detectIntradayMomentumShort(candles);
   if (momentumShort) results.push(momentumShort);
 
+  // 5. 1D Inside Bar
   const dailyInside = detectInsideCandle(candles, 'DAILY');
   results.push(...dailyInside);
 
+  // 6. Weekly Inside Bar
   const weeklyCandles = aggregateWeeklyCandles(candles);
   const weeklyInside = detectInsideCandle(weeklyCandles, 'WEEKLY');
   results.push(...weeklyInside);
 
+  // 7. Monthly Inside Bar
   const monthlyCandles = aggregateMonthlyCandles(candles);
   const monthlyInside = detectInsideCandle(monthlyCandles, 'MONTHLY');
   results.push(...monthlyInside);
