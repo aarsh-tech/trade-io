@@ -16,7 +16,12 @@
     "db:generate": "prisma generate --schema=./prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema=./prisma/schema.prisma",
     "db:push": "prisma db push --schema=./prisma/schema.prisma",
-    "db:studio": "prisma studio --schema=./prisma/schema.prisma"
+    "db:studio": "prisma studio --schema=./prisma/schema.prisma",
+    "db:sqlite:generate": "prisma generate --schema=./prisma/schema.sqlite.prisma",
+    "db:sqlite:push": "prisma db push --schema=./prisma/schema.sqlite.prisma",
+    "desktop:build": "pnpm --filter @algo-trade/desktop build:main",
+    "desktop:dist": "pnpm --filter @algo-trade/desktop dist",
+    "desktop:dist:portable": "pnpm --filter @algo-trade/desktop dist:portable"
   },
   "devDependencies": {
     "turbo": "2.3.3",

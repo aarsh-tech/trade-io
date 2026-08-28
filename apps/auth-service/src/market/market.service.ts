@@ -144,7 +144,7 @@ export class MarketService {
       where: { userId, name: 'Default' },
     });
 
-    let watchSymbols = watchlist?.symbols || [];
+    let watchSymbols = this.parseWatchlistSymbols(watchlist?.symbols);
 
     // Fallback if empty
     if (watchSymbols.length === 0) {
@@ -152,7 +152,7 @@ export class MarketService {
       // Initialize if doesn't exist
       if (!watchlist) {
         await this.prisma.watchlist.create({
-          data: { userId, name: 'Default', symbols: watchSymbols },
+          data: { userId, name: 'Default', symbols: JSON.stringify(watchSymbols) as any },
         });
       }
     }
@@ -189,6 +189,17 @@ export class MarketService {
     };
   }
 
+  private parseWatchlistSymbols(raw: any): string[] {
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    return [];
+  }
+
   async addToWatchlist(userId: string, symbol: string, exchange: string = 'NSE') {
     const key = `${exchange}:${symbol}`;
     let watchlist = await this.prisma.watchlist.findFirst({
@@ -197,15 +208,17 @@ export class MarketService {
 
     if (!watchlist) {
       return this.prisma.watchlist.create({
-        data: { userId, name: 'Default', symbols: [key] },
+        data: { userId, name: 'Default', symbols: JSON.stringify([key]) as any },
       });
     }
 
-    if (watchlist.symbols.includes(key)) return watchlist;
+    const current = this.parseWatchlistSymbols(watchlist.symbols);
+    if (current.includes(key)) return watchlist;
 
+    const updated = [...current, key];
     return this.prisma.watchlist.update({
       where: { id: watchlist.id },
-      data: { symbols: { push: key } },
+      data: { symbols: JSON.stringify(updated) as any },
     });
   }
 
@@ -217,12 +230,13 @@ export class MarketService {
 
     if (!watchlist) return null;
 
+    const current = this.parseWatchlistSymbols(watchlist.symbols);
+    const updated = current.filter(s => s !== key);
+
     return this.prisma.watchlist.update({
       where: { id: watchlist.id },
       data: {
-        symbols: {
-          set: watchlist.symbols.filter(s => s !== key),
-        },
+        symbols: JSON.stringify(updated) as any,
       },
     });
   }

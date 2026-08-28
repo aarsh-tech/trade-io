@@ -1,0 +1,66 @@
+{
+  "name": "@algo-trade/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.json",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.tradeio.app",
+    "productName": "TradeIO",
+    "copyright": "Copyright © 2026 TradeIO",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/.next/standalone",
+        "to": "web-server",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../auth-service/dist",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "22.10.7",
+    "electron": "34.0.0",
+    "electron-builder": "25.1.8",
+    "typescript": "5.7.3"
+  }
+}
