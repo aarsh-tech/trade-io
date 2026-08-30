@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   TrendingUp,
-  FlaskConical,
   Plug,
   ClipboardList,
   Settings,
@@ -36,7 +35,6 @@ const navItems = [
   { href: "/orders", label: "Orders", icon: ClipboardList },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
-  { href: "/backtest", label: "Backtest", icon: FlaskConical },
   { href: "/brokers", label: "Brokers", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

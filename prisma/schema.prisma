@@ -33,7 +33,6 @@ model User {
   brokerAccounts    BrokerAccount[]
   strategies        Strategy[]
   orders            Order[]
-  backtests         Backtest[]
   refreshTokens     RefreshToken[]
   swingScans        SwingScan[]
   watchlists        Watchlist[]
@@ -102,7 +101,6 @@ model Strategy {
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   brokerAccount BrokerAccount? @relation(fields: [brokerAccountId], references: [id], onDelete: SetNull)
   executions    StrategyExecution[]
-  backtests     Backtest[]
 
   @@map("strategies")
 }
@@ -194,35 +192,6 @@ enum OrderStatus {
   COMPLETE
   REJECTED
   CANCELLED
-}
-
-// ─── Backtests ────────────────────────────────────────────────────────────────
-
-model Backtest {
-  id          String        @id @default(cuid())
-  userId      String
-  strategyId  String
-  symbol      String
-  exchange    String
-  fromDate    DateTime
-  toDate      DateTime
-  capital     Float         @default(100000)
-  status      BacktestStatus @default(PENDING)
-  result      String?
-  createdAt   DateTime      @default(now())
-  completedAt DateTime?
-
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
-
-  @@map("backtests")
-}
-
-enum BacktestStatus {
-  PENDING
-  RUNNING
-  DONE
-  FAILED
 }
 
 // ─── Swing Scanner Results ────────────────────────────────────────────────────

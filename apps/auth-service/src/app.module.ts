@@ -7,7 +7,6 @@ import { PrismaModule } from './prisma/prisma.module';
 import { BrokersModule } from './brokers/brokers.module';
 import { MarketModule } from './market/market.module';
 import { StrategyModule } from './strategy/strategy.module';
-import { BacktestModule } from './backtest/backtest.module';
 import { SwingScannerModule } from './swing-scanner/swing-scanner.module';
 import { OrdersModule } from './orders/orders.module';
 
@@ -21,7 +20,6 @@ import { OrdersModule } from './orders/orders.module';
     BrokersModule,
     MarketModule,
     StrategyModule,
-    BacktestModule,
     SwingScannerModule,
     OrdersModule,
   ],

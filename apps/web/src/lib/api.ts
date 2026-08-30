@@ -161,13 +161,6 @@ export const marketApi = {
   removeFromWatchlist: (symbol: string, exchange: string = 'NSE') => api.delete("/market/watchlist", { params: { symbol, exchange } }),
 };
 
-
-// ─── Backtesting ──────────────────────────────────────────────────────────────
-export const backtestApi = {
-  run: (data: any) => api.post("/backtest/run", data),
-  history: () => api.get("/backtest/history"),
-};
-
 // ─── Orders & P&L Ledger ────────────────────────────────────────────────────────
 export const orderApi = {
   list: (params?: { limit?: number; page?: number }) =>

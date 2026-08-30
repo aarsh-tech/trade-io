@@ -15,7 +15,6 @@ import {
   Layers,
   Wallet,
   BookOpen,
-  FlaskConical,
   Plug,
   Settings,
   LogOut,
@@ -41,7 +40,6 @@ const secondaryNav = [
   { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
   { href: "/portfolio", label: "Portfolio & Margins", icon: Wallet },
   { href: "/ledger", label: "P&L Ledger", icon: BookOpen },
-  { href: "/backtest", label: "Backtest Engine", icon: FlaskConical },
   { href: "/brokers", label: "Connected Brokers", icon: Plug },
   { href: "/settings", label: "Settings & Security", icon: Settings },
 ];
