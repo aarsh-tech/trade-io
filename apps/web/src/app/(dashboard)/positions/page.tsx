@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
+import { useMarketData } from "@/hooks/use-market-data";
 import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -47,14 +48,42 @@ export default function PositionsPage() {
     refreshPositions,
   } = usePortfolio(activeBrokerId);
 
-  // Calculate summary metrics
+  // Extract symbols for real-time WebSocket market data streaming
+  const positionSymbols = useMemo(() => {
+    return (positions as Position[]).map((p) => p.symbol).filter(Boolean);
+  }, [positions]);
+
+  const { getPrice } = useMarketData(positionSymbols);
+
+  // Calculate dynamic live positions with real-time LTP & live P&L overrides
+  const livePositions = useMemo(() => {
+    return (positions as Position[]).map((pos) => {
+      const livePrice = getPrice(pos.symbol) ?? pos.ltp;
+      const isLong = pos.qty > 0;
+      const livePnl = (pos.qty !== 0 && livePrice && pos.avgPrice)
+        ? (isLong ? (livePrice - pos.avgPrice) * pos.qty : (pos.avgPrice - livePrice) * Math.abs(pos.qty))
+        : (pos.pnl || 0);
+      const pnlPct = (pos.avgPrice > 0 && livePrice)
+        ? ((livePrice - pos.avgPrice) / pos.avgPrice) * 100 * (isLong ? 1 : -1)
+        : 0;
+
+      return {
+        ...pos,
+        ltp: livePrice || pos.ltp,
+        pnl: livePnl,
+        pnlPct,
+      };
+    });
+  }, [positions, getPrice]);
+
+  // Calculate summary metrics from live dynamic positions
   const { totalPnl, totalInvestment, profitableCount, losingCount } = useMemo(() => {
     let pnl = 0;
     let investment = 0;
     let wins = 0;
     let losses = 0;
 
-    (positions as Position[]).forEach((p) => {
+    livePositions.forEach((p) => {
       pnl += p.pnl || 0;
       investment += Math.abs(p.qty * p.avgPrice);
       if (p.pnl > 0) wins++;
@@ -67,7 +96,7 @@ export default function PositionsPage() {
       profitableCount: wins,
       losingCount: losses,
     };
-  }, [positions]);
+  }, [livePositions]);
 
   const handleSquareOffSingle = async () => {
     if (!squareOffPosition || !activeBrokerId) return;
@@ -305,9 +334,8 @@ export default function PositionsPage() {
             <>
               {/* ─── Mobile Position Cards (< md) ─── */}
               <div className="block md:hidden divide-y divide-border">
-                {(positions as Position[]).map((pos, idx) => {
+                {livePositions.map((pos, idx) => {
                   const isLong = pos.qty > 0;
-                  const pnlPct = pos.avgPrice > 0 ? ((pos.ltp - pos.avgPrice) / pos.avgPrice) * 100 * (isLong ? 1 : -1) : 0;
                   const isProfit = pos.pnl > 0;
                   const isLoss = pos.pnl < 0;
 
@@ -340,8 +368,8 @@ export default function PositionsPage() {
                             <span>LTP: <strong className="text-foreground font-mono">₹{pos.ltp?.toFixed(2) || "0.00"}</strong></span>
                           </div>
                           <div className="flex items-center gap-1 text-[11px]">
-                            <span className={cn("font-semibold font-mono", pnlPct >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                              {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                            <span className={cn("font-semibold font-mono", pos.pnlPct >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                              {pos.pnlPct >= 0 ? "+" : ""}{pos.pnlPct.toFixed(2)}%
                             </span>
                           </div>
                         </div>
@@ -390,9 +418,8 @@ export default function PositionsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {(positions as Position[]).map((pos, idx) => {
+                    {livePositions.map((pos, idx) => {
                       const isLong = pos.qty > 0;
-                      const pnlPct = pos.avgPrice > 0 ? ((pos.ltp - pos.avgPrice) / pos.avgPrice) * 100 * (isLong ? 1 : -1) : 0;
 
                       return (
                         <tr key={idx} className="hover:bg-muted/30 transition-colors">
@@ -424,9 +451,9 @@ export default function PositionsPage() {
                           </td>
                           <td className={cn(
                             "py-3.5 px-4 text-right font-mono font-medium",
-                            pnlPct >= 0 ? "text-emerald-500" : "text-rose-500"
+                            pos.pnlPct >= 0 ? "text-emerald-500" : "text-rose-500"
                           )}>
-                            {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                            {pos.pnlPct >= 0 ? "+" : ""}{pos.pnlPct.toFixed(2)}%
                           </td>
                           <td className="py-3.5 px-4 text-center">
                             <Button

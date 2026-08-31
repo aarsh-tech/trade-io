@@ -326,15 +326,15 @@ export async function autoSelectStock(
 
       const todayLow = quote.ohlc.low || ltp;
       const todayHigh = quote.ohlc.high || ltp;
-      const isOpenLow = (Math.abs(todayOpen - todayLow) / todayOpen <= 0.0008) && ltp > todayOpen && ((ltp - todayOpen) / todayOpen >= 0.003);
-      const isOpenHigh = (Math.abs(todayHigh - todayOpen) / todayOpen <= 0.0008) && ltp < todayOpen && ((todayOpen - ltp) / todayOpen >= 0.003);
+      const isOpenLow = (Math.abs(todayOpen - todayLow) / todayOpen <= 0.0025) && ltp > todayOpen && ((ltp - todayOpen) / todayOpen >= 0.003);
+      const isOpenHigh = (Math.abs(todayHigh - todayOpen) / todayOpen <= 0.0025) && ltp < todayOpen && ((todayOpen - ltp) / todayOpen >= 0.003);
 
       // Composite momentum score: Intraday Gain/Loss (40%) + Day Range (30%) + Rupee Turnover in Crores (30%)
       let score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
       if (isOpenLow) {
-        score += 500; // Massive boost for explosive Open=Low morning drive
+        score += 1000; // Massive boost for explosive Open=Low morning drive
       } else if (isOpenHigh) {
-        score += 500; // Massive boost for explosive Open=High breakdown drive
+        score += 1000; // Massive boost for explosive Open=High breakdown drive
       }
 
       const targetThresholdRs = targetRs && targetRs > 0 ? targetRs : 500;
@@ -417,16 +417,16 @@ export async function getTopCandidateStocks(
 
       const todayLow = quote.ohlc.low || ltp;
       const todayHigh = quote.ohlc.high || ltp;
-      const isOpenLow = (Math.abs(todayOpen - todayLow) / todayOpen <= 0.0008) && ltp > todayOpen && ((ltp - todayOpen) / todayOpen >= 0.003);
-      const isOpenHigh = (Math.abs(todayHigh - todayOpen) / todayOpen <= 0.0008) && ltp < todayOpen && ((todayOpen - ltp) / todayOpen >= 0.003);
+      const isOpenLow = (Math.abs(todayOpen - todayLow) / todayOpen <= 0.0025) && ltp > todayOpen && ((ltp - todayOpen) / todayOpen >= 0.003);
+      const isOpenHigh = (Math.abs(todayHigh - todayOpen) / todayOpen <= 0.0025) && ltp < todayOpen && ((todayOpen - ltp) / todayOpen >= 0.003);
 
       if (!isOpenLow && !isOpenHigh && changePct < 0.3 && dayRangePct < 0.8) continue;
 
       let score = Math.round((changePct * 40) + (dayRangePct * 30) + (Math.min(turnoverCr / 5, 10) * 30));
       if (isOpenLow) {
-        score += 500; // Priority rank for Open=Low breakout
+        score += 1000; // Priority rank for Open=Low breakout
       } else if (isOpenHigh) {
-        score += 500; // Priority rank for Open=High breakdown
+        score += 1000; // Priority rank for Open=High breakdown
       }
 
       const expectedMovePoints = Math.max(0.50, ltp * 0.012); // ~1.2% expected intraday move

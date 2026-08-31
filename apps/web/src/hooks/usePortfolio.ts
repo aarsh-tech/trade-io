@@ -32,6 +32,7 @@ export function usePortfolio(brokerId?: string | null) {
       return res.data.data;
     },
     enabled: !!brokerId,
+    refetchInterval: 3000,
   });
 
   const marginsQuery = useQuery({
@@ -42,6 +43,7 @@ export function usePortfolio(brokerId?: string | null) {
       return res.data.data;
     },
     enabled: !!brokerId,
+    refetchInterval: 5000,
   });
 
   const renewSessionMutation = useMutation({

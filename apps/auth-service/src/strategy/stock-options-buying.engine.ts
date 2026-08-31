@@ -415,7 +415,8 @@ export class StockOptionsBuyingEngine {
 
   private async setupBreakoutTrigger(
     state: StrategyState, client: any, kite: any,
-    side: 'CALL' | 'PUT', motherTimestamp: Date, motherSpotSl: number
+    side: 'CALL' | 'PUT', motherTimestamp: Date, motherSpotSl: number,
+    isHistorical?: boolean,
   ) {
     try {
       const ltpData = await kite.getLTP([`${state.config.exchange}:${state.config.symbol}`]);
@@ -499,7 +500,7 @@ export class StockOptionsBuyingEngine {
       // Upgrade 3: Precision Order Execution with Ask Offset & Timeout
       state.orderPlacedTimestamp = Date.now();
 
-      if (state.isPaperTrade) {
+      if (state.isPaperTrade || isHistorical) {
         state.entryOrderId = `PAPER_${Date.now().toString(36).toUpperCase()}`;
         state.stateType = 'WAITING_FOR_TRIGGER';
         this.log(state, `📝 Simulated Breakout Trigger order placed. Waiting for break above ₹${entryPrice}...`);
@@ -1188,12 +1189,10 @@ export class StockOptionsBuyingEngine {
 
               if (isBreakout) {
                 this.log(state, `🚀 (Catch-up) Found past ${side} Breakout (${setupType}) at ${this.formatTime(new Date(checkCandle.date))}!`);
-                await this.setupBreakoutTrigger(state, client, kite, side, baby.date, side === 'CALL' ? triggerLow : triggerHigh);
+                await this.setupBreakoutTrigger(state, client, kite, side, baby.date, side === 'CALL' ? triggerLow : triggerHigh, true);
                 await new Promise(r => setTimeout(r, 250)); // Rate limit pause
-                if (state.isPaperTrade) {
-                  state.stateType = 'ACTIVE_POSITION';
-                  state.entryTime = checkCandle.date.getTime();
-                }
+                state.stateType = 'ACTIVE_POSITION';
+                state.entryTime = checkCandle.date.getTime();
                 i = j;
                 breakoutFound = true;
                 break;
@@ -1211,10 +1210,13 @@ export class StockOptionsBuyingEngine {
         }
       }
 
-      if (state.stateType === 'ACTIVE_POSITION') {
-        this.log(state, `📊 (Catch-up) Position remains OPEN at 15:30 close | Option: NFO:${state.optionSymbol} | Entry: ₹${state.entryTriggerPrice} | T1: ₹${state.target1Price} | T2: ₹${state.target2Price} | SL: ₹${state.stopLossPrice}`);
+      if (state.stateType === 'ACTIVE_POSITION' || state.stateType === 'WAITING_FOR_TRIGGER') {
+        this.log(state, `📊 (Catch-up) Past morning signals reviewed. Transitioning to SCANNING for live market signals.`);
+        this.resetStateToScanning(state);
+      } else if (state.stateType === 'SCANNING') {
+        this.log(state, `✅ Catch-up complete. Ready for live signals.`);
       }
-      if (state.stateType === 'SCANNING') this.log(state, `✅ Catch-up complete. No past signals found.`);
+      state.tradesPlacedToday = 0;
       await this.persistLogs(state);
     } catch (err) {
       this.log(state, `⚠ Catch-up failed: ${err.message}`);

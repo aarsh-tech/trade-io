@@ -140,7 +140,7 @@ export class NiftyOptionsScalperEngine {
       targetOrderId: null,
       entryTriggered: null,
       optionSymbol: null,
-      tradesPlacedToday: Math.floor(completedOrdersCount / 2),
+      tradesPlacedToday: 0,
       winningTradesToday: 0,
       logs: [],
       lastProcessedTimestamp: 0,
@@ -420,7 +420,8 @@ export class NiftyOptionsScalperEngine {
         }
       }
 
-      if (!state.entryTriggered) this.log(state, `✅ Catch-up complete for Nifty 10-Point Scalper. Evaluated ${sessionCandles.length} 5-min candles for session (${targetSessionDateStr}). Placed ${state.tradesPlacedToday} trades.`);
+      if (!state.entryTriggered) this.log(state, `✅ Catch-up complete for Nifty 10-Point Scalper. Evaluated ${sessionCandles.length} 5-min candles for session (${targetSessionDateStr}).`);
+      state.tradesPlacedToday = 0;
       await this.persistLogs(state);
     } catch (err) {
       this.log(state, `⚠ Catch-up failed: ${err.message}`);

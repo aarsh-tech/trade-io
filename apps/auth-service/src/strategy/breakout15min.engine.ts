@@ -1390,13 +1390,13 @@ export class Breakout15MinEngine {
     state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
     const isOption = exchange === 'NFO' || exchange === 'BFO' || symbol.endsWith('CE') || symbol.endsWith('PE');
     state.optionSymbol = isOption ? symbol : null;
-    state.tradesPlacedToday += 1;
+    if (!triggerTime) state.tradesPlacedToday += 1;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
     state.isBreakevenTrailed = false;
     state.highestPriceReached = entry;
     state.lowestPriceReached = entry;
 
-    if (state.isPaperTrade) {
+    if (state.isPaperTrade || triggerTime) {
       const entryId = `PAPER_ENTRY_${Math.random().toString(36).substring(7).toUpperCase()}`;
       state.entryOrderId = entryId;
       state.entryFilled = true;
@@ -1426,9 +1426,7 @@ export class Breakout15MinEngine {
     this.log(state, `✅ Live Entry Order placed (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
     await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: limitPrice }, entryId, strategyId, triggerTime);
 
-    if (!triggerTime) {
-      await this.startRealtimeMonitor(state, client);
-    }
+    await this.startRealtimeMonitor(state, client);
   }
 
   private async getHistoricalOptionPrice(client: any, symbol: string, exchange: string, timestamp: Date): Promise<number | null> {
