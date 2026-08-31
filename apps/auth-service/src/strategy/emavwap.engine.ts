@@ -1298,7 +1298,10 @@ export class EmaVwapCrossoverEngine {
     }
     if (!capital || capital <= 0) capital = 15000;
 
-    const safeCapital = capital * 0.90; // 90% safe utilization buffer for brokerage, STT & fees
+    // Preserve at least ₹1,500 cash buffer for Expiry Option Buying / Gamma Blast & brokerage charges
+    const capitalBuffer = Math.min(1500, capital * 0.15);
+    const availableCapitalForStock = Math.max(2000, capital - capitalBuffer);
+    const safeCapital = availableCapitalForStock * 0.90; // 90% safe utilization buffer
     const maxBuyingPower = safeCapital * 5; // Zerodha 5x MIS intraday leverage
     const maxCapitalQty = Math.floor(maxBuyingPower / entry);
     const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : (targetThresholdRs * 1.5);
@@ -1306,7 +1309,7 @@ export class EmaVwapCrossoverEngine {
     const finalQty = Math.max(1, Math.min(riskQty, targetQty, maxCapitalQty));
     state.config.qty = finalQty;
     const potentialMaxLossRs = finalQty * riskPerShare;
-    this.log(state, `⚖ Risk-Managed Position Sizing: ${finalQty} shares (Risk/sh: ₹${riskPerShare.toFixed(2)}, Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [Cap: ₹${maxRiskRs.toFixed(0)}], Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}, Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${capital.toLocaleString('en-IN')})`);
+    this.log(state, `⚖ Risk-Managed Position Sizing: ${finalQty} shares (Risk/sh: ₹${riskPerShare.toFixed(2)}, Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [Cap: ₹${maxRiskRs.toFixed(0)}], Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}, Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${capital.toLocaleString('en-IN')} [Reserved ₹${capitalBuffer.toFixed(0)} for Gamma Blast/Options])`);
 
     this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
     try {
