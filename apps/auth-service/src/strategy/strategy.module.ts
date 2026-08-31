@@ -6,6 +6,7 @@ import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
+import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { BrokersModule } from '../brokers/brokers.module';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -23,6 +24,7 @@ import { AuthModule } from '../auth/auth.module';
     EmaVwapCrossoverEngine,
     StockOptionsBuyingEngine,
     NiftyOptionsScalperEngine,
+    GammaBlastExpiryEngine,
     MarketSchedulerService,
   ],
   exports: [
@@ -32,6 +34,7 @@ import { AuthModule } from '../auth/auth.module';
     EmaVwapCrossoverEngine,
     StockOptionsBuyingEngine,
     NiftyOptionsScalperEngine,
+    GammaBlastExpiryEngine,
   ],
 })
 export class StrategyModule {}

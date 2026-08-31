@@ -71,13 +71,23 @@ export class StrategyService {
   }
 
   async create(userId: string, dto: CreateStrategyDto) {
+    let validBrokerAccountId: string | null = null;
+    if (dto.brokerAccountId) {
+      const brokerAccount = await this.prisma.brokerAccount.findFirst({
+        where: { id: dto.brokerAccountId, userId },
+      });
+      if (brokerAccount) {
+        validBrokerAccountId = brokerAccount.id;
+      }
+    }
+
     return this.prisma.strategy.create({
       data: {
         userId,
         name: dto.name,
         type: dto.type as any,
         config: dto.config,
-        brokerAccountId: dto.brokerAccountId || null,
+        brokerAccountId: validBrokerAccountId,
         isActive: false,
         isPaperTrade: dto.isPaperTrade !== undefined ? dto.isPaperTrade : true,
       },
@@ -86,13 +96,25 @@ export class StrategyService {
 
   async update(userId: string, id: string, dto: UpdateStrategyDto) {
     await this.assertOwner(userId, id);
+    let validBrokerAccountId: string | null | undefined = undefined;
+    if (dto.brokerAccountId !== undefined) {
+      if (dto.brokerAccountId) {
+        const brokerAccount = await this.prisma.brokerAccount.findFirst({
+          where: { id: dto.brokerAccountId, userId },
+        });
+        validBrokerAccountId = brokerAccount ? brokerAccount.id : null;
+      } else {
+        validBrokerAccountId = null;
+      }
+    }
+
     return this.prisma.strategy.update({
       where: { id },
       data: {
         ...(dto.name && { name: dto.name }),
         ...(dto.config && { config: dto.config }),
-        ...(dto.brokerAccountId !== undefined && {
-          brokerAccountId: dto.brokerAccountId,
+        ...(validBrokerAccountId !== undefined && {
+          brokerAccountId: validBrokerAccountId,
         }),
         ...(dto.isPaperTrade !== undefined && {
           isPaperTrade: dto.isPaperTrade,

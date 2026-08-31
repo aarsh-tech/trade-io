@@ -4,9 +4,35 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export enum StrategyTypeEnum {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
+  EMA_RSI_OPTIONS = 'EMA_RSI_OPTIONS',
+  DAILY_SCALPER = 'DAILY_SCALPER',
   STOCK_OPTIONS_BUYING = 'STOCK_OPTIONS_BUYING',
   NIFTY_OPTIONS_SCALPER = 'NIFTY_OPTIONS_SCALPER',
+  GAMMA_BLAST_EXPIRY = 'GAMMA_BLAST_EXPIRY',
   CUSTOM = 'CUSTOM',
+}
+
+// ─── Gamma Blast Expiry Config ───────────────────────────────────────────────
+export interface GammaBlastExpiryConfig {
+  symbol: 'AUTO' | 'NIFTY' | 'SENSEX'; // 'AUTO' detects Tuesday NIFTY / Thursday SENSEX
+  exchange: 'NFO' | 'BFO' | 'NSE';
+  lots: number;                        // default 1 lot
+  qty?: number;                        // Resolved dynamically (65 for Nifty, 20 for Sensex)
+  product: 'MIS' | 'NRML';             // default 'NRML' / 'MIS'
+  maxTradesPerDay: number;             // default 2
+  maxWinsPerDay?: number;              // default 1
+  minPremiumNifty: number;             // default 8.0
+  maxPremiumNifty: number;             // default 15.0
+  minPremiumSensex: number;            // default 12.0
+  maxPremiumSensex: number;            // default 25.0
+  startTime: string;                   // default '13:30' (1:30 PM)
+  endTime: string;                     // default '15:25' (3:25 PM)
+  enableOiFilter?: boolean;            // Confirm with live Call/Put OI unwinding & PCR (default: true)
+  enableVolumeSurge?: boolean;         // Require >= 2.5x volume surge on breakout (default: true)
+  enableRatchetTrailing?: boolean;     // Sub-second 2x Cost lock, 3x 2x lock, 5x+ 20% Peak trail (default: true)
+  initialSlPct?: number;               // Initial SL % from entry premium (default: 50%)
+  stopLossRs?: number;                 // Max daily loss in INR
+  targetRs?: number;                   // Target profit in INR
 }
 
 // ─── Breakout 15-Min Config ────────────────────────────────────────────────────

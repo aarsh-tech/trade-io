@@ -9,6 +9,7 @@ import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
+import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 
@@ -23,6 +24,7 @@ export class StrategyController {
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
+    private readonly gammaBlastEngine: GammaBlastExpiryEngine,
     private readonly scheduler: MarketSchedulerService,
   ) { }
 
@@ -131,9 +133,10 @@ export class StrategyController {
 
   private getEngine(type: any) {
     if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
-    if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
+    if (type === 'EMA_VWAP_CROSSOVER' || type === 'EMA_RSI_OPTIONS' || type === 'DAILY_SCALPER') return this.emaVwapEngine;
     if (type === 'STOCK_OPTIONS_BUYING') return this.stockOptionsBuyingEngine;
     if (type === 'NIFTY_OPTIONS_SCALPER') return this.niftyOptionsScalperEngine;
-    throw new Error('No engine found for this strategy type');
+    if (type === 'GAMMA_BLAST_EXPIRY') return this.gammaBlastEngine;
+    throw new Error(`No engine found for strategy type: ${type}`);
   }
 }

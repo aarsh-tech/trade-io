@@ -5,6 +5,7 @@ import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
+import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 import { OhlScannerService } from '../market/ohl-scanner.service';
 import { WhatsAppService } from '../market/whatsapp.service';
 
@@ -57,6 +58,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
+    private readonly gammaBlastEngine: GammaBlastExpiryEngine,
     private readonly ohlScannerService: OhlScannerService,
     private readonly whatsAppService: WhatsAppService,
   ) { }
@@ -365,6 +367,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
     if (type === 'STOCK_OPTIONS_BUYING') return this.stockOptionsBuyingEngine;
     if (type === 'NIFTY_OPTIONS_SCALPER') return this.niftyOptionsScalperEngine;
+    if (type === 'GAMMA_BLAST_EXPIRY') return this.gammaBlastEngine;
     return null;
   }
 }
