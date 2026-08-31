@@ -164,6 +164,66 @@ export class EmaVwapCrossoverEngine {
     this.running.set(strategyId, state);
     this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange} | Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
     this.log(state, `💰 Detected Trading Capital: ₹${detectedCapital.toLocaleString('en-IN')}${liveMarginDetected ? ' (Live Zerodha Margin)' : (strategy.isPaperTrade ? ' [Paper Trading Mode]' : ' [Default / Configured]')}`);
+
+    // ── Live Position Recovery after power cut or server restart ─────────────
+    if (!strategy.isPaperTrade && strategy.brokerAccount?.accessToken) {
+      try {
+        const client = this.factory.createClient(strategy.brokerAccount);
+        const kite = client['kite'] || client;
+        if (kite && kite.getPositions) {
+          const positionsData = await kite.getPositions().catch(() => null);
+          const netPositions = positionsData?.net || [];
+          const openPos = netPositions.find((p: any) =>
+            p.product === (config.product || 'MIS') &&
+            Number(p.quantity) !== 0 &&
+            (state.isAutoMode || p.tradingsymbol === config.symbol || p.tradingsymbol?.startsWith(config.symbol))
+          );
+
+          if (openPos) {
+            const rawQty = Number(openPos.quantity);
+            const side = rawQty > 0 ? 'LONG' : 'SHORT';
+            const absQty = Math.abs(rawQty);
+            const entryAvg = Number(openPos.average_price) || Number(openPos.buy_price) || Number(openPos.sell_price) || 0;
+            const sym = openPos.tradingsymbol;
+
+            state.activeSymbol = sym;
+            state.entryTriggered = side;
+            state.executedQty = absQty;
+            state.config.qty = absQty;
+            state.entryPrice = entryAvg;
+
+            // Look for existing broker SL order
+            const orders = await (kite.getOrders ? kite.getOrders() : []).catch(() => []);
+            const openOrders = (orders || []).filter((o: any) => o.tradingsymbol === sym && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'));
+            const slOrder = openOrders.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
+            const targetOrder = openOrders.find((o: any) => o.order_type === 'LIMIT');
+
+            if (slOrder) {
+              state.slOrderId = slOrder.order_id;
+              state.stopLossPrice = Number(slOrder.trigger_price) || Number(slOrder.price);
+            } else {
+              const riskPerSh = entryAvg * 0.01;
+              state.stopLossPrice = side === 'LONG' ? (entryAvg - riskPerSh) : (entryAvg + riskPerSh);
+            }
+
+            if (targetOrder) {
+              state.targetOrderId = targetOrder.order_id;
+              state.targetPrice = Number(targetOrder.price);
+            } else {
+              const riskPerSh = Math.abs(entryAvg - (state.stopLossPrice || entryAvg * 0.01));
+              state.targetPrice = side === 'LONG' ? (entryAvg + riskPerSh * 1.5) : (entryAvg - riskPerSh * 1.5);
+            }
+
+            this.log(state, `🔄 [POWER RECOVERY] Reconnected to active Zerodha position: ${sym} (${absQty} shares ${side} @ Avg ₹${entryAvg.toFixed(2)}) | SL: ₹${state.stopLossPrice?.toFixed(2)} [OrderId: ${state.slOrderId || 'Active'}] | Target: ₹${state.targetPrice?.toFixed(2)}`);
+            this.log(state, `📡 Resumed live real-time tracking & dynamic trailing seamlessly!`);
+            await this.startRealtimeMonitor(state, client);
+          }
+        }
+      } catch (recErr: any) {
+        this.logger.debug?.(`Position recovery notice on start: ${recErr.message}`);
+      }
+    }
+
     await this.persistLogs(state); // Persist immediately so UI shows "Started" and capital
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 10_000);
@@ -304,6 +364,10 @@ export class EmaVwapCrossoverEngine {
   private async initialCatchup(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
+    if (state.entryTriggered) {
+      this.log(state, `ℹ Active live position already recovered from Zerodha. Skipping historical catchup.`);
+      return;
+    }
     const now = new Date();
     if (this.getIstHhmm(now) < 9 * 60 + 20) return;
 
