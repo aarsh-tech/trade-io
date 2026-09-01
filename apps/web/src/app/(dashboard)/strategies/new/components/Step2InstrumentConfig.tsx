@@ -56,7 +56,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               </p>
             </div>
             <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-relaxed">
-              Trades explosive 01:30 PM – 03:25 PM momentum spikes on NIFTY (Tuesdays) & SENSEX (Thursdays). The engine automatically selects cheap ₹8–₹15 / ₹12–₹25 strikes using live Open Interest (OI) & range breakout triggers.
+              Trades explosive 01:00 PM – 03:05 PM momentum spikes on NIFTY (Tuesdays) & SENSEX (Thursdays). The engine automatically selects cheap ₹8–₹15 / ₹12–₹25 strikes using live Open Interest (OI) & range breakout triggers.
             </p>
           </div>
 

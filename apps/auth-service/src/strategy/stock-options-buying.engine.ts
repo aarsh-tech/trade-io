@@ -90,6 +90,10 @@ export class StockOptionsBuyingEngine {
     }
 
     const config: StockOptionsBuyingConfig = JSON.parse(strategy.config);
+    await this.prisma.strategyExecution.updateMany({
+      where: { strategyId, status: 'RUNNING' },
+      data: { status: 'STOPPED', stoppedAt: new Date() },
+    });
     const execution = await this.prisma.strategyExecution.create({
       data: { strategyId, status: 'RUNNING' },
     });

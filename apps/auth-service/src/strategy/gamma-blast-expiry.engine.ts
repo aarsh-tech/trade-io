@@ -35,7 +35,8 @@ interface GammaStrategyState {
   isPaperTrade: boolean;
   activeUnderlying: 'NIFTY' | 'SENSEX';
   activeExchange: 'NFO' | 'BFO';
-  activeSpotSymbol: string;
+  futureSymbol?: string;
+  futureExchange?: 'NFO' | 'BFO';
   lotSize: number;
   lots: number;
   targetQty: number;
@@ -64,6 +65,7 @@ interface GammaStrategyState {
   currentPnlRs?: number;
   currentPnlPct?: number;
   peakPnlRs?: number;
+  isCostLocked?: boolean;
   is2xLocked?: boolean;
   is3xLocked?: boolean;
   is5xLocked?: boolean;
@@ -72,6 +74,7 @@ interface GammaStrategyState {
   rangeVwap?: number | null;
   atmPcr?: number | null;
   bias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | null;
+  hasLoggedStandby?: boolean;
 }
 
 @Injectable()
@@ -97,6 +100,12 @@ export class GammaBlastExpiryEngine {
     });
     if (!strategy) throw new Error('Strategy not found');
 
+    // Clean up any stale/orphaned 'RUNNING' executions for this strategy in DB
+    await this.prisma.strategyExecution.updateMany({
+      where: { strategyId, status: 'RUNNING' },
+      data: { status: 'STOPPED', stoppedAt: new Date() },
+    });
+
     const config: GammaBlastExpiryConfig = JSON.parse(strategy.config);
     const execution = await this.prisma.strategyExecution.create({
       data: { strategyId, status: 'RUNNING' },
@@ -114,16 +123,13 @@ export class GammaBlastExpiryEngine {
 
     let underlying: 'NIFTY' | 'SENSEX' = 'NIFTY';
     let exchange: 'NFO' | 'BFO' = 'NFO';
-    let spotSymbol = 'NSE:NIFTY 50';
 
     if (config.symbol === 'SENSEX' || (config.symbol === 'AUTO' && dayOfWeek === 4)) {
       underlying = 'SENSEX';
       exchange = 'BFO';
-      spotSymbol = 'BSE:SENSEX';
     } else {
       underlying = 'NIFTY';
       exchange = 'NFO';
-      spotSymbol = 'NSE:NIFTY 50';
     }
 
     const defaultLotSize = underlying === 'NIFTY' ? 65 : 20;
@@ -138,7 +144,6 @@ export class GammaBlastExpiryEngine {
       isPaperTrade: strategy.isPaperTrade,
       activeUnderlying: underlying,
       activeExchange: exchange,
-      activeSpotSymbol: spotSymbol,
       lotSize: defaultLotSize,
       lots,
       targetQty,
@@ -150,15 +155,25 @@ export class GammaBlastExpiryEngine {
       logs: [],
       peakPrice: 0,
       peakPnlRs: 0,
+      isCostLocked: false,
       is2xLocked: false,
       is3xLocked: false,
       is5xLocked: false,
     };
 
+    if (strategy.brokerAccount?.accessToken) {
+      try {
+        const client = this.factory.createClient(strategy.brokerAccount);
+        const res = await this.findFutureSymbol(client, underlying);
+        state.futureSymbol = res.symbol;
+        state.futureExchange = res.exchange as any;
+      } catch { }
+    }
+
     this.running.set(strategyId, state);
     this.log(state, `▶ Gamma Blast (CAS Expiry Special) Engine Started! Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
-    this.log(state, `🎯 Active Expiry Focus: ${underlying} (${exchange}) | Lot Size: ${defaultLotSize} (${lots} Lot = ${targetQty} Qty)`);
-    this.log(state, `⏰ Active Execution Window: ${config.startTime || '13:30'} – ${config.endTime || '15:25'} IST (Auto Square-off @ 03:25 PM)`);
+    this.log(state, `🎯 Active Tracking Contract: ${state.futureSymbol ? `${state.futureExchange}:${state.futureSymbol} (Future)` : `${underlying} (${exchange})`} | Lot Size: ${defaultLotSize} (${lots} Lot = ${targetQty} Qty)`);
+    this.log(state, `⏰ Active Execution Window: ${config.startTime || '13:00'} – ${config.endTime || '15:05'} IST (Auto Square-off @ ${config.endTime || '15:05'} IST)`);
     this.log(state, `💎 Premium Target Range: ${underlying === 'NIFTY' ? `₹${config.minPremiumNifty || 8} – ₹${config.maxPremiumNifty || 15}` : `₹${config.minPremiumSensex || 12} – ₹${config.maxPremiumSensex || 25}`}`);
 
     // ── Live Crash / Power Recovery on Startup ──────────────────────────────
@@ -207,6 +222,12 @@ export class GammaBlastExpiryEngine {
     }
 
     await this.persistLogs(state);
+
+    this.initialCatchup(strategyId).then(() => {
+      this.logger.log(`Initial catchup completed for Gamma Blast strategy ${strategyId}`);
+    }).catch(err => {
+      this.logger.error(`Initial catchup failed: ${err?.message || err}`);
+    });
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 5_000);
     this.timers.set(strategyId, timer);
@@ -299,6 +320,292 @@ export class GammaBlastExpiryEngine {
     return { success: true, message: `Position squared off at ₹${exitPrice.toFixed(2)}` };
   }
 
+  // ── Catch-Up Historical Session Replay ──────────────────────────────────
+
+  private async initialCatchup(strategyId: string) {
+    const state = this.running.get(strategyId);
+    if (!state) return;
+    const now = new Date();
+
+    this.log(state, `🔍 Running catch-up for Gamma Blast (CAS Expiry Special)...`);
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+    if (!account || !account.accessToken) {
+      this.log(state, `⚠️ Catch-up skipped: No active broker account or access token found. Please authenticate your broker in Broker Settings.`);
+      await this.persistLogs(state);
+      return;
+    }
+
+    const client = this.factory.createClient(account);
+    const kite = client['kite'] || client;
+
+    try {
+      const underlying = state.activeUnderlying;
+      const exchange = state.activeExchange;
+
+      // 1. Resolve Current Month Future Contract
+      if (!state.futureSymbol) {
+        const res = await this.findFutureSymbol(client, underlying);
+        state.futureSymbol = res.symbol;
+        state.futureExchange = res.exchange as any;
+      }
+
+      const futureKey = `${state.futureExchange}:${state.futureSymbol}`;
+      this.log(state, `🎯 Active Tracking Contract: ${futureKey} (Current Month Future)`);
+
+      // 2. Fetch 3-min Future Candles (Past 5 days to cover weekend/aftermarket)
+      const candles = await this.fetchFutureCandles(client, state.futureSymbol!, state.futureExchange || exchange, now);
+      if (!candles || candles.length < 10) {
+        this.log(state, `⚠️ Catch-up: Insufficient historical candles fetched for ${futureKey} (got ${candles?.length || 0}). Standing by.`);
+        await this.persistLogs(state);
+        return;
+      }
+
+      // Determine target session date (today if today has market candles, otherwise latest completed trading session)
+      const todayStr = this.getIstDateStr(now);
+      const lastCandle = candles[candles.length - 1];
+      const latestCandleDateStr = lastCandle ? this.getIstDateStr(lastCandle.date) : todayStr;
+      const todayCandlesCheck = candles.filter(c => this.getIstDateStr(c.date) === todayStr);
+      const targetSessionDateStr = todayCandlesCheck.length > 0 ? todayStr : latestCandleDateStr;
+
+      const sessionCandles = candles.filter(c => this.getIstDateStr(c.date) === targetSessionDateStr);
+      if (sessionCandles.length < 5) {
+        this.log(state, `ℹ Catch-up: Only ${sessionCandles.length} candles in session (${targetSessionDateStr}). Standing by.`);
+        await this.persistLogs(state);
+        return;
+      }
+
+      this.log(state, `📊 Catch-up analyzing Future session ${targetSessionDateStr} (${sessionCandles.length} 3m candles)...`);
+
+      // 3. Fetch Instruments & Filter Weekly Option Chain
+      const instruments = await kite.getInstruments(exchange).catch(() => []);
+      const segment = exchange === 'BFO' ? 'BFO-OPT' : 'NFO-OPT';
+      const optInstruments = (instruments || []).filter((i: any) =>
+        i.name === underlying &&
+        i.segment === segment
+      );
+
+      const expiries = Array.from(new Set(optInstruments.map((i: any) => this.getIstDateStr(new Date(i.expiry))))).sort();
+      const targetExpiry = expiries.find(e => e >= targetSessionDateStr) || expiries[0];
+      const weeklyOptions = optInstruments.filter((i: any) => this.getIstDateStr(new Date(i.expiry)) === targetExpiry);
+
+      if (weeklyOptions.length > 0 && weeklyOptions[0]?.lot_size) {
+        state.lotSize = weeklyOptions[0].lot_size;
+        state.targetQty = state.lots * state.lotSize;
+      }
+
+      const [startH, startM] = (state.config.startTime || '13:00').split(':').map(Number);
+      const startHhmm = startH * 60 + startM;
+      const [endH, endM] = (state.config.endTime || '15:05').split(':').map(Number);
+      const endHhmm = endH * 60 + endM;
+      const strikeStep = underlying === 'NIFTY' ? 50 : 100;
+      const minPrem = underlying === 'NIFTY' ? (state.config.minPremiumNifty || 8) : (state.config.minPremiumSensex || 12);
+      const maxPrem = underlying === 'NIFTY' ? (state.config.maxPremiumNifty || 15) : (state.config.maxPremiumSensex || 25);
+
+      let catchupTradePlaced = 0;
+      let catchupPnl = 0;
+      let inCatchupPosition = false;
+      let catchupOptSymbol: string | null = null;
+      let catchupEntryPrice = 0;
+      let catchupSlPrice = 0;
+      let catchupPeakPrice = 0;
+      let catchupOptCandles: Candle[] = [];
+      let catchupOptEmas: (number | null)[] = [];
+      let isCostLocked = false;
+      let is2x = false;
+      let is3x = false;
+
+      for (let i = 4; i < sessionCandles.length; i++) {
+        const c = sessionCandles[i];
+        const candleHhmm = this.getIstHhmm(c.date);
+
+        // Manage active catchup position with REAL option candles
+        if (inCatchupPosition && catchupOptSymbol) {
+          const optCandleIdx = catchupOptCandles.findIndex((oc: Candle) => oc.date.getTime() === c.date.getTime());
+          const currentOptCandle = optCandleIdx !== -1 ? catchupOptCandles[optCandleIdx] : null;
+          const candleHigh = currentOptCandle ? currentOptCandle.high : catchupEntryPrice;
+          const candleLow = currentOptCandle ? currentOptCandle.low : catchupEntryPrice;
+          const candleClose = currentOptCandle ? currentOptCandle.close : catchupEntryPrice;
+
+          if (candleHigh > catchupPeakPrice) {
+            catchupPeakPrice = candleHigh;
+          }
+
+          // 1. Check EOD Cutoff (Default 03:05 PM)
+          if (candleHhmm >= endHhmm) {
+            const exitPrice = candleClose;
+            const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
+            catchupPnl += pnl;
+            this.log(state, `⏰ (Catch-up) ${state.config.endTime || '15:05'} Hard Cutoff Reached! Auto-squared off ${catchupOptSymbol} @ ₹${exitPrice.toFixed(2)} on ${this.formatTime(c.date)} | P&L: ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`);
+            await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
+            inCatchupPosition = false;
+            catchupOptSymbol = null;
+            continue;
+          }
+
+          // 2. Ratchet Multiplier Profit Trailing
+          // 1.4x Gain -> Trail SL to COST + ₹0.50 (Risk-Free Early!)
+          const costMultiple = state.config.costLockMultiple || 1.4;
+          if (candleHigh >= catchupEntryPrice * costMultiple && !isCostLocked) {
+            isCostLocked = true;
+            const costSl = this.roundTick(catchupEntryPrice + 0.50);
+            if (costSl > catchupSlPrice) {
+              catchupSlPrice = costSl;
+            }
+            this.log(state, `🚀 (Catch-up) ${costMultiple}X GAIN HIT on ${this.formatTime(c.date)}! Option hit ₹${candleHigh.toFixed(2)} (${(candleHigh / catchupEntryPrice).toFixed(1)}x). SL Trailed to COST (₹${catchupSlPrice.toFixed(2)}) — ZERO RISK!`);
+          }
+
+          // 2.0x Multiplier -> Lock +50% Profit (1.5x of entry)
+          const profit2xMultiple = state.config.profitLock2xMultiple || 2.0;
+          if (candleHigh >= catchupEntryPrice * profit2xMultiple && !is2x) {
+            is2x = true;
+            const lock50 = this.roundTick(catchupEntryPrice * 1.50);
+            if (lock50 > catchupSlPrice) {
+              catchupSlPrice = lock50;
+            }
+            this.log(state, `🎯 (Catch-up) 2X MULTIPLIER HIT on ${this.formatTime(c.date)}! Option hit ₹${candleHigh.toFixed(2)} (${(candleHigh / catchupEntryPrice).toFixed(1)}x). SL LOCKED at +50% Profit (₹${catchupSlPrice.toFixed(2)})!`);
+          }
+
+          // 3. Continuous High-Water Mark Dynamic Peak Trailing
+          if (state.config.enablePeakTrailing !== false) {
+            if (catchupPeakPrice >= catchupEntryPrice * 2.0 && catchupPeakPrice < catchupEntryPrice * 3.0) {
+              const peakTrail = this.roundTick(catchupPeakPrice * 0.75); // 25% max pullback buffer from peak
+              if (peakTrail > catchupSlPrice) {
+                catchupSlPrice = peakTrail;
+              }
+            } else if (catchupPeakPrice >= catchupEntryPrice * 3.0 && catchupPeakPrice < catchupEntryPrice * 4.0) {
+              const peakTrail = this.roundTick(catchupPeakPrice * 0.80); // 20% max pullback buffer from peak
+              if (peakTrail > catchupSlPrice) {
+                catchupSlPrice = peakTrail;
+              }
+            } else if (catchupPeakPrice >= catchupEntryPrice * 4.0) {
+              const peakTrail = this.roundTick(catchupPeakPrice * 0.85); // 15% max pullback buffer from peak
+              if (peakTrail > catchupSlPrice) {
+                catchupSlPrice = peakTrail;
+              }
+            }
+          }
+
+          // 4. 15 EMA Option Trend Exhaustion Exit Check
+          if (state.config.enableEmaExit !== false && optCandleIdx !== -1 && catchupOptEmas[optCandleIdx] !== null) {
+            const optEma = catchupOptEmas[optCandleIdx];
+            if (optEma && catchupPeakPrice >= catchupEntryPrice * 1.3 && candleClose < optEma) {
+              const exitPrice = candleClose;
+              const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
+              catchupPnl += pnl;
+              this.log(state, `📉 (Catch-up) 15 EMA Option Exit Triggered on ${this.formatTime(c.date)}! Candle Closed @ ₹${exitPrice.toFixed(2)} below 15 EMA (₹${optEma.toFixed(2)}) | Peak was ₹${catchupPeakPrice.toFixed(2)} | Trade Profit: ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`);
+              await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
+              inCatchupPosition = false;
+              catchupOptSymbol = null;
+              continue;
+            }
+          }
+
+          // 5. 5x Jackpot Target Hit -> Take Profit
+          if (candleHigh >= catchupEntryPrice * 5.0) {
+            const exitPrice = this.roundTick(catchupEntryPrice * 5.0);
+            const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
+            catchupPnl += pnl;
+            this.log(state, `🎯 (Catch-up) 5X JACKPOT TARGET ACHIEVED on ${this.formatTime(c.date)} @ ₹${exitPrice.toFixed(2)} (High: ₹${candleHigh.toFixed(2)})! Trade Profit: +₹${pnl.toFixed(2)}`);
+            await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
+            inCatchupPosition = false;
+            catchupOptSymbol = null;
+            continue;
+          }
+
+          // 6. Stop Loss Hit Check
+          if (candleLow <= catchupSlPrice) {
+            const exitPrice = catchupSlPrice;
+            const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
+            catchupPnl += pnl;
+            this.log(state, `🛑 (Catch-up) Stop Loss Hit on ${this.formatTime(c.date)} @ ₹${exitPrice.toFixed(2)} (Floor: ₹${catchupSlPrice.toFixed(2)}, Peak: ₹${catchupPeakPrice.toFixed(2)}) | Trade Result: ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`);
+            await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
+            inCatchupPosition = false;
+            catchupOptSymbol = null;
+            continue;
+          }
+
+          continue;
+        }
+
+        // Only scan within configured time window
+        if (candleHhmm < startHhmm || candleHhmm > endHhmm) continue;
+        if (catchupTradePlaced >= (state.config.maxTradesPerDay || 2)) break;
+
+        // Calculate compression range on Future candles up to current candle
+        const candlesUpToNow = sessionCandles.slice(0, i + 1);
+        const rangeData = this.calculateCompressionRange(candlesUpToNow, c.date, state.config.startTime || '13:00');
+        if (!rangeData) continue;
+
+        const currentFuture = c.close;
+        const currentFutureHigh = c.high;
+        const currentFutureLow = c.low;
+
+        const atmStrike = Math.round(currentFuture / strikeStep) * strikeStep;
+        let signalType: 'CALL_BLAST' | 'PUT_BLAST' | null = null;
+        let selectedStrike = atmStrike;
+        let selectedOptType: 'CE' | 'PE' = 'CE';
+
+        if (currentFutureHigh >= rangeData.high && currentFuture >= rangeData.vwap) {
+          signalType = 'CALL_BLAST';
+          selectedOptType = 'CE';
+          selectedStrike = atmStrike + strikeStep;
+        } else if (currentFutureLow <= rangeData.low && currentFuture <= rangeData.vwap) {
+          signalType = 'PUT_BLAST';
+          selectedOptType = 'PE';
+          selectedStrike = atmStrike - strikeStep;
+        }
+
+        if (signalType) {
+          const matchingOpt = weeklyOptions.find((o: any) => Number(o.strike) === selectedStrike && o.instrument_type === selectedOptType);
+          const optSymbol = matchingOpt?.tradingsymbol || `${underlying}${targetSessionDateStr.replace(/-/g, '').slice(2)}${selectedStrike}${selectedOptType}`;
+
+          // Fetch REAL historical option candles from Kite for the entire session
+          const sessionFrom = new Date(`${targetSessionDateStr}T09:15:00.000+05:30`);
+          const sessionTo = new Date(`${targetSessionDateStr}T15:30:00.000+05:30`);
+          const rawOptData = await client.getHistoricalData(optSymbol, exchange, '3minute', sessionFrom, sessionTo).catch(() => []);
+
+          const entryOptCandle = (rawOptData || []).find((oc: any) => new Date(oc.date).getTime() === c.date.getTime()) || rawOptData[0];
+          const actualEntryPrice = entryOptCandle ? Number(entryOptCandle.open || entryOptCandle.close) : ((minPrem + maxPrem) / 2);
+          const initialSl = this.roundTick(actualEntryPrice * (1 - (state.config.initialSlPct || 50) / 100));
+
+          this.log(state, `🚀 (Catch-up) [GAMMA BLAST SIGNAL - ${signalType === 'CALL_BLAST' ? 'CALL' : 'PUT'}] on ${this.formatTime(c.date)}! Future: ₹${currentFuture.toFixed(2)} broke Range ${signalType === 'CALL_BLAST' ? 'High' : 'Low'} (₹${(signalType === 'CALL_BLAST' ? rangeData.high : rangeData.low).toFixed(2)})`);
+          this.log(state, `🎯 (Catch-up) Triggered 1-Lot Entry: ${exchange}:${optSymbol} @ Real Mkt ₹${actualEntryPrice.toFixed(2)} | Qty: ${state.targetQty} | Initial SL: ₹${initialSl.toFixed(2)} (Max Risk: ₹${((actualEntryPrice - initialSl) * state.targetQty).toFixed(2)})`);
+
+          const orderId = `PAPER_GAMMA_${Math.random().toString(36).substring(7).toUpperCase()}`;
+          await this.trackOrderInDB(state, 'BUY', optSymbol, exchange, state.targetQty, actualEntryPrice, orderId, c.date, 'LIMIT');
+
+          const optCandleObjs: Candle[] = (rawOptData || []).map((oc: any) => ({
+            date: new Date(oc.date),
+            open: Number(oc.open),
+            high: Number(oc.high),
+            low: Number(oc.low),
+            close: Number(oc.close),
+            volume: Number(oc.volume || 1),
+          }));
+
+          inCatchupPosition = true;
+          catchupOptSymbol = optSymbol;
+          catchupEntryPrice = actualEntryPrice;
+          catchupSlPrice = initialSl;
+          catchupPeakPrice = actualEntryPrice;
+          catchupOptCandles = optCandleObjs;
+          catchupOptEmas = this.calculateEMA(optCandleObjs, state.config.emaPeriod || 15);
+          catchupTradePlaced++;
+          isCostLocked = false;
+          is2x = false;
+          is3x = false;
+        }
+      }
+
+      state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + catchupPnl;
+      this.log(state, `✅ Catch-up complete for Gamma Blast. Evaluated ${sessionCandles.length} candles for session (${targetSessionDateStr}). Realized P&L: ₹${state.dailyRealizedPnlRs.toFixed(2)}`);
+      await this.persistLogs(state);
+    } catch (err: any) {
+      this.log(state, `⚠️ Catch-up notice: ${err?.message || err}`);
+      await this.persistLogs(state);
+    }
+  }
+
   // ── Core Periodic Evaluation Loop ──────────────────────────────────────────
 
   private async tick(strategyId: string) {
@@ -306,23 +613,41 @@ export class GammaBlastExpiryEngine {
     if (!state) return;
 
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-    if (!account || !account.accessToken) return;
+    if (!account || !account.accessToken) {
+      if (!state.lastTickTime || (Date.now() - state.lastTickTime > 60000)) {
+        state.lastTickTime = Date.now();
+        this.log(state, `⚠️ Broker access token is missing or expired. Please link/login your broker in Broker Settings.`);
+        await this.persistLogs(state);
+      }
+      return;
+    }
 
     const client = this.factory.createClient(account);
     const kite = client['kite'] || client;
     const now = new Date();
     const hhmm = this.getIstHhmm(now);
 
-    // ── 1. 03:25:00 PM Sharp Mandatory EOD Square-Off ────────────────────────
-    if (hhmm >= 15 * 60 + 25) {
+    const [endH, endM] = (state.config.endTime || '15:05').split(':').map(Number);
+    const endHhmm = endH * 60 + endM;
+
+    // ── 1. Hard Mandatory EOD Square-Off & Standby ──────────────
+    if (hhmm >= endHhmm || hhmm < 9 * 60 + 15) {
       if (state.entryTriggered) {
         const exitPrice = state.currentLtp || state.entryPrice || 0;
-        this.log(state, `⏰ 03:25 PM Pre-CAS Hard Cutoff Reached! Auto-squaring off position @ ₹${exitPrice.toFixed(2)} to secure profits before CAS settlement...`);
+        this.log(state, `⏰ ${state.config.endTime || '15:05'} Hard Cutoff Reached! Auto-squaring off position @ ₹${exitPrice.toFixed(2)} to secure profits...`);
         await this.exitPosition(state, client, exitPrice, 'TIME_CUTOFF');
         await this.persistLogs(state);
+      } else {
+        if (!state.hasLoggedStandby) {
+          state.hasLoggedStandby = true;
+          this.log(state, `🌙 Market is currently closed (09:15 AM – ${state.config.endTime || '15:05'} IST). Strategy is standing by for the next session.`);
+          await this.persistLogs(state);
+        }
       }
       return;
     }
+
+    state.hasLoggedStandby = false; // Reset flag when inside active trading hours
 
     // If position is active, monitorPosition safety net handles it
     if (state.entryTriggered) {
@@ -335,22 +660,22 @@ export class GammaBlastExpiryEngine {
     if (state.dailyTargetLocked) return;
     if (state.tradesPlacedToday >= (state.config.maxTradesPerDay || 2)) return;
 
-    // ── 2. Time Window Check (Active between 01:30 PM and 03:15 PM) ───────────
-    const [startH, startM] = (state.config.startTime || '13:30').split(':').map(Number);
+    // ── 2. Time Window Check (Active between startTime and endTime) ───────────
+    const [startH, startM] = (state.config.startTime || '13:00').split(':').map(Number);
     const startHhmm = startH * 60 + startM;
 
     if (hhmm < startHhmm) {
       const minutesLeft = startHhmm - hhmm;
       if (minutesLeft % 15 === 0 && (!state.lastTickTime || (Date.now() - state.lastTickTime > 60000))) {
         state.lastTickTime = Date.now();
-        this.log(state, `⏳ Waiting for 01:30 PM Gamma Window (${minutesLeft} mins remaining). Monitoring underlying ${state.activeUnderlying}...`);
+        this.log(state, `⏳ Waiting for ${state.config.startTime || '13:00'} Gamma Window (${minutesLeft} mins remaining). Monitoring underlying ${state.activeUnderlying}...`);
         await this.persistLogs(state);
       }
       return;
     }
 
-    if (hhmm > 15 * 60 + 15) {
-      return; // Past 03:15 PM, do not open new trades
+    if (hhmm > endHhmm) {
+      return; // Past configured endTime, do not open new trades
     }
 
     // ── 3. Range Compression & Confluence Trigger Evaluation ──────────────────
@@ -367,25 +692,31 @@ export class GammaBlastExpiryEngine {
   private async evaluateGammaBreakout(state: GammaStrategyState, client: any, kite: any, now: Date) {
     const underlying = state.activeUnderlying;
     const exchange = state.activeExchange;
-    const spotKey = state.activeSpotSymbol;
 
-    // 1. Fetch Spot 3m candles for Range Compression calculation (1:00 PM – 2:00 PM)
-    const candles = await this.fetchIndexCandles(client, spotKey, now);
+    // 1. Resolve Future Contract if not already cached
+    if (!state.futureSymbol) {
+      const res = await this.findFutureSymbol(client, underlying);
+      state.futureSymbol = res.symbol;
+      state.futureExchange = res.exchange as any;
+    }
+
+    // 2. Fetch Future 3m candles for Range Compression calculation
+    const candles = await this.fetchFutureCandles(client, state.futureSymbol!, state.futureExchange || exchange, now);
     if (!candles || candles.length < 15) return;
 
-    // Calculate 1:00 PM to current range
-    const rangeData = this.calculateCompressionRange(candles, now);
+    // Calculate compression range on Future based on configured window
+    const rangeData = this.calculateCompressionRange(candles, now, state.config.startTime || '13:00');
     if (!rangeData) return;
 
     state.rangeHigh = rangeData.high;
     state.rangeLow = rangeData.low;
     state.rangeVwap = rangeData.vwap;
 
-    const currentSpot = candles[candles.length - 1].close;
-    const currentSpotHigh = candles[candles.length - 1].high;
-    const currentSpotLow = candles[candles.length - 1].low;
+    const currentFuture = candles[candles.length - 1].close;
+    const currentFutureHigh = candles[candles.length - 1].high;
+    const currentFutureLow = candles[candles.length - 1].low;
 
-    // 2. Fetch Instruments & Filter Today's Weekly Option Chain
+    // 3. Fetch Instruments & Filter Today's Weekly Option Chain
     const instruments = await kite.getInstruments(exchange);
     const segment = exchange === 'BFO' ? 'BFO-OPT' : 'NFO-OPT';
     const optInstruments = instruments.filter((i: any) =>
@@ -408,9 +739,9 @@ export class GammaBlastExpiryEngine {
       state.targetQty = state.lots * state.lotSize;
     }
 
-    // 3. Resolve ATM Strike & Query Live Quotes with Open Interest (OI)
+    // 4. Resolve ATM Strike from Future Price & Query Live Quotes with Open Interest (OI)
     const strikeStep = underlying === 'NIFTY' ? 50 : 100;
-    const atmStrike = Math.round(currentSpot / strikeStep) * strikeStep;
+    const atmStrike = Math.round(currentFuture / strikeStep) * strikeStep;
 
     // Select ATM ± 4 strikes for OI & PCR computation
     const candidateStrikes: number[] = [];
@@ -476,13 +807,11 @@ export class GammaBlastExpiryEngine {
     const pcr = totalCallOi > 0 ? (totalPutOi / totalCallOi) : 1.0;
     state.atmPcr = Number(pcr.toFixed(2));
 
-    // Determine Institutional Bias
-    // Bullish Squeeze: Price > VWAP & Range High + Call OI unwinding / PCR > 1.15
-    // Bearish Squeeze: Price < VWAP & Range Low + Put OI unwinding / PCR < 0.85
+    // Determine Institutional Bias on Future
     let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-    if (currentSpot >= rangeData.high && currentSpot >= rangeData.vwap) {
+    if (currentFuture >= rangeData.high && currentFuture >= rangeData.vwap) {
       bias = 'BULLISH';
-    } else if (currentSpot <= rangeData.low && currentSpot <= rangeData.vwap) {
+    } else if (currentFuture <= rangeData.low && currentFuture <= rangeData.vwap) {
       bias = 'BEARISH';
     }
     state.bias = bias;
@@ -490,30 +819,30 @@ export class GammaBlastExpiryEngine {
     const minPrem = underlying === 'NIFTY' ? (state.config.minPremiumNifty || 8) : (state.config.minPremiumSensex || 12);
     const maxPrem = underlying === 'NIFTY' ? (state.config.maxPremiumNifty || 15) : (state.config.maxPremiumSensex || 25);
 
-    // ── 4. Trigger Execution Check ───────────────────────────────────────────
+    // ── 5. Trigger Execution Check ───────────────────────────────────────────
 
-    // Bullish Call Blast: Spot breaks Range High + CE breaks 15m high with volume
-    if (bias === 'BULLISH' && currentSpotHigh >= rangeData.high) {
+    // Bullish Call Blast: Future breaks Range High
+    if (bias === 'BULLISH' && currentFutureHigh >= rangeData.high) {
       const eligibleCe = optionQuotes
         .filter(o => o.type === 'CE' && o.ltp >= minPrem && o.ltp <= maxPrem)
         .sort((a, b) => Math.abs(a.ltp - ((minPrem + maxPrem) / 2)) - Math.abs(b.ltp - ((minPrem + maxPrem) / 2)))[0];
 
       if (eligibleCe && eligibleCe.ltp > 0) {
-        this.log(state, `🚀 [GAMMA BLAST SIGNAL - CALL] ${underlying} broke Range High (₹${rangeData.high.toFixed(2)}) @ Spot ₹${currentSpot.toFixed(2)} | PCR: ${pcr.toFixed(2)}`);
+        this.log(state, `🚀 [GAMMA BLAST SIGNAL - CALL] ${underlying} Future broke Range High (₹${rangeData.high.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}`);
         this.log(state, `🎯 Selected Explosive Strike: ${eligibleCe.tradingsymbol} @ ₹${eligibleCe.ltp.toFixed(2)} (OI: ${(eligibleCe.oi / 1000).toFixed(0)}k, Vol: ${(eligibleCe.volume / 1000).toFixed(0)}k)`);
         await this.placeGammaTrade(state, client, kite, eligibleCe.tradingsymbol, eligibleCe.ltp, 'CALL_BLAST');
         return;
       }
     }
 
-    // Bearish Put Blast: Spot breaks Range Low + PE breaks 15m high with volume
-    if (bias === 'BEARISH' && currentSpotLow <= rangeData.low) {
+    // Bearish Put Blast: Future breaks Range Low
+    if (bias === 'BEARISH' && currentFutureLow <= rangeData.low) {
       const eligiblePe = optionQuotes
         .filter(o => o.type === 'PE' && o.ltp >= minPrem && o.ltp <= maxPrem)
         .sort((a, b) => Math.abs(a.ltp - ((minPrem + maxPrem) / 2)) - Math.abs(b.ltp - ((minPrem + maxPrem) / 2)))[0];
 
       if (eligiblePe && eligiblePe.ltp > 0) {
-        this.log(state, `🚀 [GAMMA BLAST SIGNAL - PUT] ${underlying} broke Range Low (₹${rangeData.low.toFixed(2)}) @ Spot ₹${currentSpot.toFixed(2)} | PCR: ${pcr.toFixed(2)}`);
+        this.log(state, `🚀 [GAMMA BLAST SIGNAL - PUT] ${underlying} Future broke Range Low (₹${rangeData.low.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}`);
         this.log(state, `🎯 Selected Explosive Strike: ${eligiblePe.tradingsymbol} @ ₹${eligiblePe.ltp.toFixed(2)} (OI: ${(eligiblePe.oi / 1000).toFixed(0)}k, Vol: ${(eligiblePe.volume / 1000).toFixed(0)}k)`);
         await this.placeGammaTrade(state, client, kite, eligiblePe.tradingsymbol, eligiblePe.ltp, 'PUT_BLAST');
         return;
@@ -636,28 +965,41 @@ export class GammaBlastExpiryEngine {
 
       // ── Ratchet Trailing Logic ──────────────────────────────────────────────
 
-      // 1. Milestone 1: 2x Spike (e.g. ₹12 -> ₹24) -> Move SL to Cost + ₹1 (Risk-Free!)
-      if (peak >= entry * 2.0 && !state.is2xLocked) {
+      // 1. Milestone 1: 1.4x Spike (e.g. ₹51.60 -> ₹72.20) -> Move SL to Cost + ₹0.50 (Risk-Free Early!)
+      const costMultiple = state.config.costLockMultiple || 1.4;
+      if (peak >= entry * costMultiple && !state.isCostLocked) {
+        state.isCostLocked = true;
+        const newSl = this.roundTick(entry + 0.50);
+        state.stopLossPrice = Math.max(state.stopLossPrice || 0, newSl);
+        this.log(state, `🚀 [${costMultiple}X GAIN] Peak: ₹${peak.toFixed(2)} (${(peak / entry).toFixed(1)}x)! Trailing SL ratcheted to Cost (₹${state.stopLossPrice.toFixed(2)}) — Trade is 100% Risk-Free!`);
+      }
+
+      // 2. Milestone 2: 2x Spike (e.g. ₹51.60 -> ₹103.20) -> Lock SL at +50% Profit (₹77.40)
+      const profit2xMultiple = state.config.profitLock2xMultiple || 2.0;
+      if (peak >= entry * profit2xMultiple && !state.is2xLocked) {
         state.is2xLocked = true;
-        const newSl = this.roundTick(entry + 1.00);
+        const newSl = this.roundTick(entry * 1.50);
         state.stopLossPrice = Math.max(state.stopLossPrice || 0, newSl);
-        this.log(state, `🚀 [2X GAMMA SPIKE] Peak: ₹${peak.toFixed(2)} (${(peak / entry).toFixed(1)}x)! Trailing SL ratcheted to Cost+1 (₹${state.stopLossPrice.toFixed(2)}) — Trade is 100% Risk-Free!`);
+        this.log(state, `🎯 [2X GAMMA BLAST] Peak: ₹${peak.toFixed(2)} (${(peak / entry).toFixed(1)}x)! Trailing SL LOCKED at +50% Profit (₹${state.stopLossPrice.toFixed(2)})!`);
       }
 
-      // 2. Milestone 2: 3x Spike (e.g. ₹12 -> ₹36) -> Lock SL at 2x level (₹24.00)
-      if (peak >= entry * 3.0 && !state.is3xLocked) {
-        state.is3xLocked = true;
-        const newSl = this.roundTick(entry * 2.0);
-        state.stopLossPrice = Math.max(state.stopLossPrice || 0, newSl);
-        this.log(state, `🎯 [3X GAMMA BLAST] Peak: ₹${peak.toFixed(2)} (${(peak / entry).toFixed(1)}x)! Trailing SL LOCKED at 2x profit level (₹${state.stopLossPrice.toFixed(2)})!`);
-      }
-
-      // 3. Milestone 3: 5x+ Multi-Bagger Explosion (e.g. ₹12 -> ₹60+) -> High-Water Mark Trail (Peak * 0.80)
-      if (peak >= entry * 4.0) {
-        state.is5xLocked = true;
-        const peakTrailSl = this.roundTick(peak * 0.80); // 20% pullback buffer from the highest tick
-        if (peakTrailSl > (state.stopLossPrice || 0)) {
-          state.stopLossPrice = peakTrailSl;
+      // 3. Continuous High-Water Mark Dynamic Peak Trailing
+      if (state.config.enablePeakTrailing !== false) {
+        if (peak >= entry * 2.0 && peak < entry * 3.0) {
+          const peakTrailSl = this.roundTick(peak * 0.75); // 25% pullback buffer
+          if (peakTrailSl > (state.stopLossPrice || 0)) {
+            state.stopLossPrice = peakTrailSl;
+          }
+        } else if (peak >= entry * 3.0 && peak < entry * 4.0) {
+          const peakTrailSl = this.roundTick(peak * 0.80); // 20% pullback buffer
+          if (peakTrailSl > (state.stopLossPrice || 0)) {
+            state.stopLossPrice = peakTrailSl;
+          }
+        } else if (peak >= entry * 4.0) {
+          const peakTrailSl = this.roundTick(peak * 0.85); // 15% pullback buffer
+          if (peakTrailSl > (state.stopLossPrice || 0)) {
+            state.stopLossPrice = peakTrailSl;
+          }
         }
       }
 
@@ -665,7 +1007,7 @@ export class GammaBlastExpiryEngine {
       if (currentPrice <= (state.stopLossPrice || 0)) {
         if (isExiting) return;
         isExiting = true;
-        const reason = (state.is2xLocked || state.is3xLocked || state.is5xLocked) ? 'TARGET' : 'SL';
+        const reason = (state.is2xLocked || state.is3xLocked || state.is5xLocked || state.isCostLocked) ? 'TARGET' : 'SL';
         this.log(state, `🛑 Trailing Stop hit @ ₹${currentPrice.toFixed(2)} (Floor: ₹${state.stopLossPrice?.toFixed(2)}, Peak: ₹${peak.toFixed(2)}) | Realized P&L: ₹${pnlRs.toFixed(2)}`);
         this.stopRealtimeMonitor(state);
         await this.exitPosition(state, client, currentPrice, reason);
@@ -728,10 +1070,40 @@ export class GammaBlastExpiryEngine {
     const qty = state.executedQty || state.targetQty;
     const pnlRs = (currentPrice - entry) * qty;
 
+    // 1. Stop Loss Hit Check
     if (currentPrice <= (state.stopLossPrice || 0)) {
-      this.log(state, `🛑 Position Monitor: Trailing SL triggered @ ₹${currentPrice.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)}`);
+      this.log(state, `🛑 Position Monitor: Trailing SL triggered @ ₹${currentPrice.toFixed(2)} (Floor: ₹${state.stopLossPrice?.toFixed(2)}, Peak: ₹${state.peakPrice?.toFixed(2)}) | P&L: ₹${pnlRs.toFixed(2)}`);
       await this.exitPosition(state, client, currentPrice, 'SL');
       await this.persistLogs(state);
+      return;
+    }
+
+    // 2. 15 EMA Option Trend Exhaustion Exit Check
+    if (state.config.enableEmaExit !== false && (state.peakPrice || 0) >= entry * 1.3) {
+      try {
+        const from = new Date(Date.now() - (60 * 60 * 1000)); // Last 60 mins
+        const optCandles = await client.getHistoricalData(symbol, exchange, '3minute', from, new Date()).catch(() => []);
+        if (optCandles && optCandles.length >= (state.config.emaPeriod || 15)) {
+          const candleObjs: Candle[] = optCandles.map((oc: any) => ({
+            date: new Date(oc.date),
+            open: Number(oc.open),
+            high: Number(oc.high),
+            low: Number(oc.low),
+            close: Number(oc.close),
+            volume: Number(oc.volume || 1),
+          }));
+          const emas = this.calculateEMA(candleObjs, state.config.emaPeriod || 15);
+          const lastClosedCandle = candleObjs[candleObjs.length - 2] || candleObjs[candleObjs.length - 1];
+          const lastClosedEma = emas[emas.length - 2] || emas[emas.length - 1];
+
+          if (lastClosedEma && lastClosedCandle.close < lastClosedEma) {
+            this.log(state, `📉 [15 EMA TRAIL EXIT] Option candle closed @ ₹${lastClosedCandle.close.toFixed(2)} below 15 EMA (₹${lastClosedEma.toFixed(2)}) | Securing Profit @ ₹${currentPrice.toFixed(2)} (Peak: ₹${state.peakPrice?.toFixed(2)})`);
+            await this.exitPosition(state, client, currentPrice, 'EMA_TRAIL');
+            await this.persistLogs(state);
+            return;
+          }
+        }
+      } catch { }
     }
   }
 
@@ -780,6 +1152,7 @@ export class GammaBlastExpiryEngine {
       state.stopLossPrice = null;
       state.slOrderId = null;
       state.peakPrice = 0;
+      state.isCostLocked = false;
       state.is2xLocked = false;
       state.is3xLocked = false;
       state.is5xLocked = false;
@@ -790,11 +1163,43 @@ export class GammaBlastExpiryEngine {
 
   // ── Helper Utilities ───────────────────────────────────────────────────────
 
-  private async fetchIndexCandles(client: any, spotKey: string, now: Date): Promise<Candle[]> {
+  private calculateEMA(candles: Candle[], period: number): (number | null)[] {
+    const emas: (number | null)[] = new Array(candles.length).fill(null);
+    if (candles.length < period) return emas;
+    let sum = 0;
+    for (let i = 0; i < period; i++) sum += candles[i].close;
+    let prev = sum / period;
+    emas[period - 1] = prev;
+    const mult = 2 / (period + 1);
+    for (let i = period; i < candles.length; i++) {
+      const ema = (candles[i].close - prev) * mult + prev;
+      emas[i] = ema;
+      prev = ema;
+    }
+    return emas;
+  }
+
+  private formatTime(d: Date): string {
+    return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
+    const upperSymbol = baseSymbol.toUpperCase().trim();
+    const isSensex = upperSymbol === 'SENSEX' || upperSymbol === 'BSE SENSEX';
+    const exchange = isSensex ? 'BFO' : 'NFO';
+    const segment = isSensex ? 'BFO-FUT' : 'NFO-FUT';
+    const underlying = isSensex ? 'SENSEX' : (upperSymbol.includes('BANK') ? 'BANKNIFTY' : 'NIFTY');
+
+    const instruments = await client.getInstruments(exchange);
+    const futures = instruments.filter((i: any) => i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment);
+    if (futures.length === 0) throw new Error(`No ${exchange} future found for ${baseSymbol}`);
+    const sorted = futures.sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+    return { symbol: sorted[0].tradingsymbol, exchange };
+  }
+
+  private async fetchFutureCandles(client: any, symbol: string, exchange: string, now: Date): Promise<Candle[]> {
     try {
-      const todayStr = this.getIstDateStr(now);
-      const from = new Date(`${todayStr}T09:15:00.000+05:30`);
-      const [exchange, symbol] = spotKey.split(':');
+      const from = new Date(now.getTime() - (5 * 24 * 60 * 60 * 1000));
       const data = await client.getHistoricalData(symbol, exchange, '3minute', from, now);
       return (data || []).map((c: any) => ({
         date: new Date(c.date),
@@ -809,16 +1214,20 @@ export class GammaBlastExpiryEngine {
     }
   }
 
-  private calculateCompressionRange(candles: Candle[], now: Date): { high: number; low: number; vwap: number } | null {
+  private calculateCompressionRange(candles: Candle[], now: Date, startTimeStr: string = '13:00'): { high: number; low: number; vwap: number } | null {
     if (candles.length === 0) return null;
 
-    // Filter candles between 01:00 PM and current time
-    const afternoonCandles = candles.filter(c => {
+    // Calculate lookback window based on configured start time
+    const [sH, sM] = (startTimeStr || '13:00').split(':').map(Number);
+    const startMins = isNaN(sH) ? 13 * 60 : (sH * 60 + (sM || 0));
+    const rangeLookbackMins = Math.max(9 * 60 + 15, startMins - 45); // Up to 45 mins prior compression
+
+    const sessionCandles = candles.filter(c => {
       const hhmm = this.getIstHhmm(c.date);
-      return hhmm >= 13 * 60; // 01:00 PM onwards
+      return hhmm >= rangeLookbackMins;
     });
 
-    const evalCandles = afternoonCandles.length >= 6 ? afternoonCandles : candles.slice(-15);
+    const evalCandles = sessionCandles.length >= 6 ? sessionCandles : candles.slice(-15);
     let high = -Infinity;
     let low = Infinity;
     let sumPv = 0;

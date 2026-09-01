@@ -157,11 +157,11 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               <Input
                 type="text"
                 disabled
-                value="15:25 IST (CAS Square-Off)"
+                value="15:05 IST (Square-Off)"
                 className="font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/20"
               />
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                Auto-squares off at 3:25 PM sharp
+                Auto-squares off at 3:05 PM sharp
               </p>
             </div>
           </div>

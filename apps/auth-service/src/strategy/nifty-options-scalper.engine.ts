@@ -105,6 +105,11 @@ export class NiftyOptionsScalperEngine {
       enablePullbackTrigger: parsedConfig.enablePullbackTrigger !== undefined ? parsedConfig.enablePullbackTrigger : true,
     };
 
+    await this.prisma.strategyExecution.updateMany({
+      where: { strategyId, status: 'RUNNING' },
+      data: { status: 'STOPPED', stoppedAt: new Date() },
+    });
+
     const execution = await this.prisma.strategyExecution.create({ data: { strategyId, status: 'RUNNING' } });
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 

@@ -2,13 +2,24 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 
 @Injectable()
-export class StrategyService {
+export class StrategyService implements OnModuleInit {
   constructor(private prisma: PrismaService) { }
+
+  async onModuleInit() {
+    try {
+      // Clean up orphaned RUNNING executions across all strategies on startup
+      await this.prisma.strategyExecution.updateMany({
+        where: { status: 'RUNNING' },
+        data: { status: 'STOPPED', stoppedAt: new Date() },
+      });
+    } catch { }
+  }
 
   async list(userId: string) {
     const strategies = await this.prisma.strategy.findMany({
@@ -60,6 +71,25 @@ export class StrategyService {
 
     if (!strategy) throw new NotFoundException('Strategy not found');
     if (strategy.userId !== userId) throw new ForbiddenException();
+
+    // Self-heal stale RUNNING executions in the database:
+    // Only the single latest execution can be RUNNING (and only if strategy.isActive is true).
+    const staleExecIds = (strategy.executions || [])
+      .filter((ex, index) => ex.status === 'RUNNING' && (index > 0 || !strategy.isActive))
+      .map((ex) => ex.id);
+
+    if (staleExecIds.length > 0) {
+      await this.prisma.strategyExecution.updateMany({
+        where: { id: { in: staleExecIds } },
+        data: { status: 'STOPPED', stoppedAt: new Date() },
+      }).catch(() => {});
+      strategy.executions.forEach((ex, index) => {
+        if (staleExecIds.includes(ex.id)) {
+          ex.status = 'STOPPED';
+          ex.stoppedAt = ex.stoppedAt || new Date();
+        }
+      });
+    }
 
     const performance = this.calculatePerformance(strategy.executions, strategy.type);
 

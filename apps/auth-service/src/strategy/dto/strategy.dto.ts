@@ -25,11 +25,17 @@ export interface GammaBlastExpiryConfig {
   maxPremiumNifty: number;             // default 15.0
   minPremiumSensex: number;            // default 12.0
   maxPremiumSensex: number;            // default 25.0
-  startTime: string;                   // default '13:30' (1:30 PM)
-  endTime: string;                     // default '15:25' (3:25 PM)
+  startTime: string;                   // default '13:00' (1:00 PM)
+  endTime: string;                     // default '15:05' (3:05 PM)
   enableOiFilter?: boolean;            // Confirm with live Call/Put OI unwinding & PCR (default: true)
   enableVolumeSurge?: boolean;         // Require >= 2.5x volume surge on breakout (default: true)
-  enableRatchetTrailing?: boolean;     // Sub-second 2x Cost lock, 3x 2x lock, 5x+ 20% Peak trail (default: true)
+  enableRatchetTrailing?: boolean;     // Sub-second 1.4x Cost lock, 2x +50% lock, 3x+ Peak trail (default: true)
+  enablePeakTrailing?: boolean;        // High-water mark dynamic peak trailing (default: true)
+  peakTrailingPct?: number;            // Peak pullback buffer % (default: 25%)
+  enableEmaExit?: boolean;             // Exit when option candle closes below EMA (default: true)
+  emaPeriod?: number;                  // EMA period for trend trailing (default: 15)
+  costLockMultiple?: number;           // Multiplier to move SL to Cost (default: 1.4)
+  profitLock2xMultiple?: number;       // Multiplier to lock +50% profit (default: 2.0)
   initialSlPct?: number;               // Initial SL % from entry premium (default: 50%)
   stopLossRs?: number;                 // Max daily loss in INR
   targetRs?: number;                   // Target profit in INR

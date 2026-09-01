@@ -280,6 +280,68 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
     return { sentCount, errors };
   }
 
+  /**
+   * Broadcast arbitrary formatted Trade Alert to user's configured WhatsApp numbers and groups
+   */
+  async broadcastTradeAlert(
+    userId: string,
+    message: string,
+  ): Promise<{ sentCount: number; errors: string[] }> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          whatsappNumber: true,
+          whatsappGroupId: true,
+          whatsappAlertsEnabled: true,
+        },
+      });
+
+      if (!user || !user.whatsappAlertsEnabled) {
+        return { sentCount: 0, errors: ['WhatsApp alerts disabled for user.'] };
+      }
+
+      const targets: string[] = [];
+
+      if (user.whatsappNumber) {
+        const numbers = user.whatsappNumber
+          .split(',')
+          .map((n) => n.trim())
+          .filter((n) => n.length > 5);
+
+        for (const num of numbers.slice(0, 10)) {
+          targets.push(num);
+        }
+      }
+
+      if (user.whatsappGroupId && user.whatsappGroupId.trim()) {
+        targets.push(user.whatsappGroupId.trim());
+      }
+
+      if (targets.length === 0) {
+        return { sentCount: 0, errors: ['No recipient phone numbers or group configured.'] };
+      }
+
+      let sentCount = 0;
+      const errors: string[] = [];
+
+      for (const target of targets) {
+        try {
+          await this.sendTextMessage(userId, target, message);
+          sentCount++;
+          this.logger.log(`Sent Live Trade Alert to WhatsApp target: ${target}`);
+        } catch (err: any) {
+          this.logger.warn(`Failed to send trade alert to ${target}: ${err?.message}`);
+          errors.push(`${target}: ${err?.message}`);
+        }
+      }
+
+      return { sentCount, errors };
+    } catch (err: any) {
+      return { sentCount: 0, errors: [err?.message || String(err)] };
+    }
+  }
+
   formatOhlAlertMessage(
     openLowStocks: OhlStockResult[],
     openHighStocks: OhlStockResult[],
