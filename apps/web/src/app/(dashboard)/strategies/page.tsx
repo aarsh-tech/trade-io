@@ -421,7 +421,7 @@ export default function StrategiesPage() {
               </span>
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                Auto 03:15 PM EOD Square-Off
+                Auto 03:05 PM EOD Square-Off
               </span>
             </div>
           </div>
@@ -673,14 +673,14 @@ function StrategyCard({
                 {isNiftyScalper
                   ? "Nifty 10-Pt Scalper"
                   : isStockOptions
-                  ? "Stock Options"
-                  : is15Min
-                  ? "15-Min Breakout"
-                  : isEmaVwap
-                  ? "15-EMA & VWAP"
-                  : isDailyScalper
-                  ? "Daily Scalper"
-                  : s.type}
+                    ? "Stock Options"
+                    : is15Min
+                      ? "15-Min Breakout"
+                      : isEmaVwap
+                        ? "15-EMA & VWAP"
+                        : isDailyScalper
+                          ? "Daily Scalper"
+                          : s.type}
               </span>
             </span>
 
@@ -739,8 +739,8 @@ function StrategyCard({
               {cfg.symbol === "AUTO"
                 ? "Auto (5x)"
                 : cfg.qty
-                ? `${cfg.qty} Qty`
-                : "Dynamic"}
+                  ? `${cfg.qty} Qty`
+                  : "Dynamic"}
             </span>
           </div>
 
@@ -771,7 +771,7 @@ function StrategyCard({
                 s.latestExecution?.status === "STOPPED" && "bg-amber-500/10 text-amber-600",
                 s.latestExecution?.status === "ERROR" && "bg-rose-500/10 text-rose-600",
                 (!s.latestExecution || s.latestExecution?.status === "COMPLETED") &&
-                  "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                "bg-slate-500/10 text-slate-600 dark:text-slate-400"
               )}
             >
               {s.latestExecution?.status ?? "READY"}

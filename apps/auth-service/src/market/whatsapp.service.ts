@@ -200,19 +200,51 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
     if (cleaned.includes('@g.us') || cleaned.includes('@s.whatsapp.net')) {
       return cleaned;
     }
-    // If phone number
+    // If it is a 10-digit Indian mobile number without country code, prepend 91
+    if (/^\d{10}$/.test(cleaned)) {
+      return `91${cleaned}@s.whatsapp.net`;
+    }
+    // If phone number with country code
     return `${cleaned}@s.whatsapp.net`;
   }
 
   async sendTextMessage(userId: string, targetJid: string, text: string): Promise<boolean> {
     const sock = this.sockets.get(userId);
     if (!sock || !this.isConnectedMap.get(userId)) {
-      throw new Error('WhatsApp is not connected. Please scan the QR code first.');
+      throw new Error('WhatsApp is disconnected. Please scan the QR code in WhatsApp Setup first.');
     }
 
     const jid = this.formatJid(targetJid);
     await sock.sendMessage(jid, { text });
     return true;
+  }
+
+  private extractTargetNumbers(rawInput?: string | null): string[] {
+    if (!rawInput) return [];
+    const trimmed = rawInput.trim();
+    if (!trimmed) return [];
+
+    // Check JSON array format: [{ number, countryCode, fullNumber, label }]
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((item: any) => {
+              if (typeof item === 'string') return item.replace(/\D/g, '');
+              const num = item.fullNumber || `${item.countryCode || ''}${item.number || ''}`;
+              return String(num).replace(/\D/g, '');
+            })
+            .filter((n: string) => n && n.length > 5);
+        }
+      } catch {}
+    }
+
+    // Fallback: comma-separated e.g. "919924763776:Aarsh Patel, 919876543210" or "919924763776, 919876543210"
+    return trimmed
+      .split(',')
+      .map((item) => item.split(':')[0].trim().replace(/\D/g, ''))
+      .filter((n) => n.length > 5);
   }
 
   /**
@@ -234,21 +266,15 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
     });
 
     if (!user || !user.whatsappAlertsEnabled) {
-      return { sentCount: 0, errors: ['WhatsApp alerts disabled for user.'] };
+      return { sentCount: 0, errors: ['WhatsApp alerts are currently disabled in Settings.'] };
     }
 
     const targets: string[] = [];
 
-    // Parse comma-separated phone numbers (up to 10 numbers)
-    if (user.whatsappNumber) {
-      const numbers = user.whatsappNumber
-        .split(',')
-        .map((n) => n.trim())
-        .filter((n) => n.length > 5);
-
-      for (const num of numbers.slice(0, 10)) {
-        targets.push(num);
-      }
+    // Extract numbers (up to 10 numbers)
+    const numbers = this.extractTargetNumbers(user.whatsappNumber);
+    for (const num of numbers.slice(0, 10)) {
+      targets.push(num);
     }
 
     // Add group ID if configured
@@ -257,7 +283,7 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (targets.length === 0) {
-      return { sentCount: 0, errors: ['No recipient phone numbers or group configured.'] };
+      return { sentCount: 0, errors: ['No recipient phone numbers or group configured. Please add numbers in WhatsApp Alert Manager.'] };
     }
 
     // Format the alert message
@@ -286,8 +312,17 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
   async broadcastTradeAlert(
     userId: string,
     message: string,
+    ignoreDisabledCheck: boolean = false,
   ): Promise<{ sentCount: number; errors: string[] }> {
     try {
+      const isConnected = this.isConnectedMap.get(userId);
+      if (!isConnected) {
+        return {
+          sentCount: 0,
+          errors: ['WhatsApp is disconnected. Please scan the QR code in WhatsApp Setup first.'],
+        };
+      }
+
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -297,21 +332,18 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      if (!user || !user.whatsappAlertsEnabled) {
-        return { sentCount: 0, errors: ['WhatsApp alerts disabled for user.'] };
+      if (!user || (!ignoreDisabledCheck && !user.whatsappAlertsEnabled)) {
+        return {
+          sentCount: 0,
+          errors: ['WhatsApp alerts are disabled. Enable "WhatsApp Notifications" or save recipients first.'],
+        };
       }
 
       const targets: string[] = [];
 
-      if (user.whatsappNumber) {
-        const numbers = user.whatsappNumber
-          .split(',')
-          .map((n) => n.trim())
-          .filter((n) => n.length > 5);
-
-        for (const num of numbers.slice(0, 10)) {
-          targets.push(num);
-        }
+      const numbers = this.extractTargetNumbers(user.whatsappNumber);
+      for (const num of numbers.slice(0, 10)) {
+        targets.push(num);
       }
 
       if (user.whatsappGroupId && user.whatsappGroupId.trim()) {
@@ -319,7 +351,10 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
       }
 
       if (targets.length === 0) {
-        return { sentCount: 0, errors: ['No recipient phone numbers or group configured.'] };
+        return {
+          sentCount: 0,
+          errors: ['No recipient numbers found. Please add mobile numbers or select a WhatsApp group in Recipient Management.'],
+        };
       }
 
       let sentCount = 0;

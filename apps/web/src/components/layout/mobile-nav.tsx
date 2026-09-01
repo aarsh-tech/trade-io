@@ -20,6 +20,8 @@ import {
   LogOut,
   ChevronRight,
   User,
+  Flame,
+  Smartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store";
@@ -29,12 +31,14 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 const primaryNav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/advisory", label: "Advisory", icon: Flame },
   { href: "/positions", label: "Positions", icon: Activity },
   { href: "/orders", label: "Orders", icon: ClipboardList },
-  { href: "/strategies", label: "Strategies", icon: TrendingUp },
 ];
 
 const secondaryNav = [
+  { href: "/whatsapp", label: "WhatsApp Alerts", icon: Smartphone, badge: "ALERTS" },
+  { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/live-screener", label: "Live OHL Screener", icon: ScanSearch, badge: "LIVE" },
   { href: "/swing-scanner", label: "Swing Scanner", icon: Layers },
   { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },

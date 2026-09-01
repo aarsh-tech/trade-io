@@ -17,6 +17,8 @@ import {
   Layers,
   Activity,
   BookOpen,
+  Flame,
+  Smartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -36,6 +38,8 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/brokers", label: "Brokers", icon: Plug },
+  { href: "/advisory", label: "Daily Advisory", icon: Flame, badge: "3 TRADES" },
+  { href: "/whatsapp", label: "WhatsApp Alerts", icon: Smartphone, badge: "ALERTS" },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

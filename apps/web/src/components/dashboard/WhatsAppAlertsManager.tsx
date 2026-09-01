@@ -55,6 +55,7 @@ export function WhatsAppAlertsManager() {
   const [isConnected, setIsConnected] = useState(false);
   const [isPollingQr, setIsPollingQr] = useState(false);
   const [activeTab, setActiveTab] = useState<"config" | "recipients" | "preview">("config");
+  const [previewCategory, setPreviewCategory] = useState<"advisory-stock" | "advisory-nifty" | "advisory-sensex" | "advisory-trailing" | "ohl-scan">("advisory-stock");
 
   // Recipient Entry Form State
   const [countryCode, setCountryCode] = useState("91");
@@ -81,6 +82,16 @@ export function WhatsAppAlertsManager() {
     refetchInterval: isPollingQr ? 3000 : 15000,
   });
 
+  // ─── Fetch Dynamic Live Advisory Report ───────────────────────────────────
+  const { data: advisoryReport } = useQuery({
+    queryKey: ["advisory-report"],
+    queryFn: async () => {
+      const res = await whatsappApi.getAdvisoryReport();
+      return res.data?.data;
+    },
+    refetchInterval: 30000,
+  });
+
   useEffect(() => {
     if (statusData) {
       setIsConnected(statusData.isConnected ?? false);
@@ -100,31 +111,71 @@ export function WhatsAppAlertsManager() {
           whatsappTolerance: statusData.settings.whatsappTolerance ?? 0.05,
         });
 
-        // Parse comma-separated phone numbers into recipient objects
-        if (statusData.settings.whatsappNumber) {
-          const rawNums = statusData.settings.whatsappNumber
-            .split(",")
-            .map((n: string) => n.trim())
-            .filter((n: string) => n.length > 5);
+        // Parse recipients with their custom labels preserved
+        if (
+          statusData.settings.whatsappNumber &&
+          statusData.settings.whatsappNumber.trim() !== "" &&
+          statusData.settings.whatsappNumber.trim() !== "[]"
+        ) {
+          let parsedList: Recipient[] = [];
+          const rawStr = statusData.settings.whatsappNumber.trim();
 
-          const parsedList: Recipient[] = rawNums.map((raw: string, idx: number) => {
-            let cc = "91";
-            let pureNum = raw;
-            if (raw.startsWith("91") && raw.length === 12) {
-              cc = "91";
-              pureNum = raw.slice(2);
-            } else if (raw.startsWith("1") && raw.length === 11) {
-              cc = "1";
-              pureNum = raw.slice(1);
-            }
-            return {
-              id: `${raw}-${idx}`,
-              countryCode: cc,
-              number: pureNum,
-              label: idx === 0 ? "Primary Mobile" : `Recipient ${idx + 1}`,
-            };
-          });
+          // Try parsing JSON format: [{ countryCode, number, label }]
+          if (rawStr.startsWith("[") && rawStr.endsWith("]")) {
+            try {
+              const rawJson = JSON.parse(rawStr);
+              if (Array.isArray(rawJson)) {
+                parsedList = rawJson.map((item: any, idx: number) => {
+                  const cc = item.countryCode || "91";
+                  let num = String(item.number || "").replace(/\D/g, "");
+                  if (num.startsWith(cc) && num.length > 10) {
+                    num = num.slice(cc.length);
+                  }
+                  return {
+                    id: `${cc}${num}-${idx}`,
+                    countryCode: cc,
+                    number: num,
+                    label: item.label?.trim() || (idx === 0 ? "Primary Mobile" : `Recipient ${idx + 1}`),
+                  };
+                });
+              }
+            } catch {}
+          }
+
+          // Fallback: parse comma-separated "919924763776:Aarsh Patel, 919876543210:Desk" or "919924763776, 919876543210"
+          if (parsedList.length === 0) {
+            const rawItems = rawStr
+              .split(",")
+              .map((n: string) => n.trim())
+              .filter((n: string) => n.length > 5);
+
+            parsedList = rawItems.map((rawItem: string, idx: number) => {
+              const parts = rawItem.split(":");
+              const rawNum = parts[0].trim();
+              const rawLabel = parts[1]?.trim();
+
+              let cc = "91";
+              let pureNum = rawNum;
+              if (rawNum.startsWith("91") && rawNum.length === 12) {
+                cc = "91";
+                pureNum = rawNum.slice(2);
+              } else if (rawNum.startsWith("1") && rawNum.length === 11) {
+                cc = "1";
+                pureNum = rawNum.slice(1);
+              }
+
+              return {
+                id: `${rawNum}-${idx}`,
+                countryCode: cc,
+                number: pureNum,
+                label: rawLabel || (idx === 0 ? "Primary Mobile" : `Recipient ${idx + 1}`),
+              };
+            });
+          }
+
           setRecipients(parsedList);
+        } else {
+          setRecipients([]);
         }
       }
     }
@@ -140,8 +191,8 @@ export function WhatsAppAlertsManager() {
     enabled: isConnected,
   });
 
-  // ─── Add Recipient Helper ──────────────────────────────────────────────────
-  const handleAddRecipient = (e: React.FormEvent) => {
+  // ─── Add Recipient Helper (Auto-syncs to Database) ──────────────────────────
+  const handleAddRecipient = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanNum = inputNumber.replace(/\D/g, "");
     if (cleanNum.length < 7) {
@@ -164,13 +215,52 @@ export function WhatsAppAlertsManager() {
     setRecipients(updated);
     setInputNumber("");
     setInputLabel("");
-    toast.success(`Added ${newRecipient.label} (+${countryCode} ${cleanNum})`);
+
+    const compiledNumberJson = JSON.stringify(
+      updated.map((r) => ({
+        countryCode: r.countryCode,
+        number: r.number,
+        fullNumber: `${r.countryCode}${r.number}`,
+        label: r.label?.trim() || "Primary Mobile",
+      }))
+    );
+
+    try {
+      await whatsappApi.updateSettings({
+        ...settings,
+        whatsappNumber: compiledNumberJson,
+      });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-status"] });
+      toast.success(`Added & saved ${newRecipient.label} (+${countryCode} ${cleanNum})`);
+    } catch (err: any) {
+      toast.error("Saved in UI, but failed to sync to server");
+    }
   };
 
-  const handleRemoveRecipient = (id: string) => {
+  // ─── Remove Recipient Helper (Auto-deletes from Database) ───────────────────
+  const handleRemoveRecipient = async (id: string) => {
     const updated = recipients.filter((r) => r.id !== id);
     setRecipients(updated);
-    toast.info("Recipient removed");
+
+    const compiledNumberJson = JSON.stringify(
+      updated.map((r) => ({
+        countryCode: r.countryCode,
+        number: r.number,
+        fullNumber: `${r.countryCode}${r.number}`,
+        label: r.label?.trim() || "Primary Mobile",
+      }))
+    );
+
+    try {
+      await whatsappApi.updateSettings({
+        ...settings,
+        whatsappNumber: compiledNumberJson,
+      });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-status"] });
+      toast.success("Recipient deleted successfully from server");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to delete recipient from server");
+    }
   };
 
   // ─── Connect / Generate QR ────────────────────────────────────────────────
@@ -214,14 +304,19 @@ export function WhatsAppAlertsManager() {
   // ─── Save Settings ────────────────────────────────────────────────────────
   const saveMutation = useMutation({
     mutationFn: async () => {
-      // Compile recipients back into clean database format
-      const compiledNumberStr = recipients
-        .map((r) => `${r.countryCode}${r.number}`)
-        .join(", ");
+      // Compile recipients with their custom labels preserved in clean JSON
+      const compiledNumberJson = JSON.stringify(
+        recipients.map((r) => ({
+          countryCode: r.countryCode,
+          number: r.number,
+          fullNumber: `${r.countryCode}${r.number}`,
+          label: r.label?.trim() || "Primary Mobile",
+        }))
+      );
 
       const res = await whatsappApi.updateSettings({
         ...settings,
-        whatsappNumber: compiledNumberStr,
+        whatsappNumber: compiledNumberJson,
       });
       return res.data?.data;
     },
@@ -266,6 +361,42 @@ export function WhatsAppAlertsManager() {
     },
   });
 
+  // ─── Trigger Live 3-Advisory Alert Now ─────────────────────────────────────
+  const triggerAdvisoryMutation = useMutation({
+    mutationFn: async () => {
+      const res = await whatsappApi.triggerAdvisoryNow();
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data?.success) {
+        toast.success(data.message || "Live 3-Trade Advisory broadcast to WhatsApp!");
+      } else {
+        toast.error(data?.message || "Notice: No recipients or WhatsApp disconnected");
+      }
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.message || "Failed to trigger live advisory scan");
+    },
+  });
+
+  // ─── Send Test Advisory Alerts ─────────────────────────────────────────────
+  const testAdvisoryMutation = useMutation({
+    mutationFn: async () => {
+      const res = await whatsappApi.testAdvisory();
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data?.success) {
+        toast.success(data.message || "Test Pre-Entry & Trigger Advisory alerts sent!");
+      } else {
+        toast.error(data?.message || "Failed to send test advisory alerts");
+      }
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.message || "Failed to send test advisory alerts");
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -278,7 +409,7 @@ export function WhatsAppAlertsManager() {
     <div className="space-y-4 sm:space-y-5 animate-[fade-up_0.3s_ease_both]">
       {/* ── 1. Top Connection Banner ── */}
       <Card className="border-slate-200/90 bg-white shadow-xs rounded-2xl overflow-hidden">
-        <div className="p-3.5 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 text-white relative overflow-hidden">
+        <div className="p-3.5 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 text-white relative overflow-hidden rounded-2xl">
           <div className="absolute right-0 top-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
           <div className="flex items-start sm:items-center gap-3 sm:gap-3.5 relative z-10">
@@ -690,95 +821,419 @@ export function WhatsAppAlertsManager() {
       {activeTab === "preview" && (
         <div className="space-y-4">
           <Card className="border-slate-200/90 bg-white shadow-xs rounded-2xl overflow-hidden">
-            <CardHeader className="p-3.5 sm:p-5 pb-2 bg-slate-50/50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <CardHeader className="p-3.5 sm:p-5 pb-3 bg-slate-50/50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <CardTitle className="text-sm sm:text-base font-bold text-slate-900">
-                  Institutional WhatsApp Message Preview
+                <CardTitle className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4 text-emerald-600 shrink-0" />
+                  Live WhatsApp Message Preview & Testing
                 </CardTitle>
                 <CardDescription className="text-[11px] sm:text-xs text-slate-500">
-                  Live formatting simulated as rendered on WhatsApp mobile clients
+                  Simulated high-contrast mobile view for Daily 3-Trade Advisory & 09:20 OHL Scanner
                 </CardDescription>
               </div>
 
-              {/* Testing Buttons */}
-              <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto">
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => testMutation.mutate()}
-                  disabled={!isConnected || testMutation.isPending}
+                  onClick={() => testAdvisoryMutation.mutate()}
+                  disabled={!isConnected || testAdvisoryMutation.isPending}
                   className="h-8.5 text-[11px] sm:text-xs font-semibold rounded-xl border-slate-300 text-slate-700 hover:bg-slate-50 gap-1.5"
                 >
-                  {testMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 text-blue-600 shrink-0" />}
-                  Send Test Alert
+                  {testAdvisoryMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 text-blue-600 shrink-0" />}
+                  Send Test Advisory
                 </Button>
 
                 <Button
                   size="sm"
-                  onClick={() => triggerNowMutation.mutate()}
-                  disabled={!isConnected || triggerNowMutation.isPending}
+                  onClick={() => triggerAdvisoryMutation.mutate()}
+                  disabled={!isConnected || triggerAdvisoryMutation.isPending}
                   className="h-8.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-bold rounded-xl shadow-xs gap-1.5"
                 >
-                  {triggerNowMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 shrink-0" />}
-                  Scan & Broadcast
+                  {triggerAdvisoryMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 shrink-0" />}
+                  Broadcast Today's 3 Live Setups
                 </Button>
               </div>
             </CardHeader>
 
+            {/* Preview Sub-Category Switcher Chips */}
+            <div className="p-3 bg-slate-100/70 border-b border-slate-200/60 flex items-center gap-1.5 overflow-x-auto">
+              <button
+                onClick={() => setPreviewCategory("advisory-stock")}
+                className={cn(
+                  "px-3 py-1 text-xs font-bold rounded-lg transition-all shrink-0",
+                  previewCategory === "advisory-stock"
+                    ? "bg-purple-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
+                )}
+              >
+                💎 1. Stock Cash Setup
+              </button>
+
+              <button
+                onClick={() => setPreviewCategory("advisory-nifty")}
+                className={cn(
+                  "px-3 py-1 text-xs font-bold rounded-lg transition-all shrink-0",
+                  previewCategory === "advisory-nifty"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
+                )}
+              >
+                🎯 2. NIFTY 50 Option
+              </button>
+
+              <button
+                onClick={() => setPreviewCategory("advisory-sensex")}
+                className={cn(
+                  "px-3 py-1 text-xs font-bold rounded-lg transition-all shrink-0",
+                  previewCategory === "advisory-sensex"
+                    ? "bg-amber-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
+                )}
+              >
+                ⚡ 3. BSE SENSEX Option
+              </button>
+
+              <button
+                onClick={() => setPreviewCategory("advisory-trailing")}
+                className={cn(
+                  "px-3 py-1 text-xs font-bold rounded-lg transition-all shrink-0",
+                  previewCategory === "advisory-trailing"
+                    ? "bg-emerald-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
+                )}
+              >
+                🛡️ 4. Trailing Update
+              </button>
+
+              <button
+                onClick={() => setPreviewCategory("ohl-scan")}
+                className={cn(
+                  "px-3 py-1 text-xs font-bold rounded-lg transition-all shrink-0",
+                  previewCategory === "ohl-scan"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
+                )}
+              >
+                📊 5. 09:20 OHL Scanner
+              </button>
+            </div>
+
             <CardContent className="p-3 sm:p-6 bg-[#0b141a] flex justify-center">
-              {/* WhatsApp Simulated Chat Bubble */}
-              <div className="max-w-md w-full bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl font-sans text-xs sm:text-[13px] leading-relaxed border border-[#025144] space-y-2.5 sm:space-y-3 break-words">
-                <div className="border-b border-[#025144] pb-2 font-mono text-[10px] sm:text-[11px] text-emerald-200 whitespace-pre-wrap">
-                  ━━━━━━━━━━━━━━━━━━━━{"\n"}
-                  ⚡ <strong className="text-white">TRADEIO INSTITUTIONAL SCANNER</strong>{"\n"}
-                  🎯 <strong>Morning Opening Drive (09:20 AM IST)</strong>{"\n"}
-                  📅 <strong>Date:</strong> Sat, 29 Aug 2026{"\n"}
-                  ━━━━━━━━━━━━━━━━━━━━
-                </div>
+              {/* ── Option A: Stock Cash Intraday (Live Data) ── */}
+              {previewCategory === "advisory-stock" && (() => {
+                const stock = advisoryReport?.stockSetup || {
+                  symbol: "TATAMOTORS",
+                  spotLtp: 985.4,
+                  triggerPrice: 992.0,
+                  stopLoss: 985.0,
+                  target1: 1008.0,
+                  target2: 1025.0,
+                  target3: 1050.0,
+                  contractSymbol: "TATAMOTORS (NSE Cash EQ)",
+                  direction: "BULLISH",
+                  setupRationale: "15-min Range Compression near Day High (+1.25%)",
+                  entryZone: "₹990.00 – ₹992.00",
+                };
+                const isBull = stock.direction === "BULLISH";
+                const dirEmoji = isBull ? "🟢" : "🔴";
+                const dirVerb = isBull ? "Bullish above" : "Bearish below";
 
-                <div className="space-y-1 sm:space-y-1.5">
-                  <p className="font-bold text-emerald-300 text-xs sm:text-[13px]">
-                    🟢 BULLISH MOMENTUM — OPEN = LOW
-                  </p>
-                  <p className="text-[10px] sm:text-[11px] text-emerald-100/70 italic">
-                    (Institutional Accumulation • Zero Below Open)
-                  </p>
-                  <div className="space-y-1 pt-1 font-mono text-[11px] sm:text-xs">
-                    <p>1️⃣ <strong className="text-white">RELIANCE</strong> [Lot 250]</p>
-                    <p className="text-slate-300 pl-2.5 sm:pl-3">▸ LTP: <strong className="text-emerald-400">₹2,950.40</strong> (+1.85%)</p>
-                    <p className="text-slate-300 pl-2.5 sm:pl-3">▸ Open=Low: ₹2,950.40 | SL: ₹2,935.00</p>
-                    <p>2️⃣ <strong className="text-white">TCS</strong> [Lot 175]</p>
-                    <p className="text-slate-300 pl-2.5 sm:pl-3">▸ LTP: <strong className="text-emerald-400">₹4,180.00</strong> (+2.10%)</p>
-                    <p className="text-slate-300 pl-2.5 sm:pl-3">▸ Open=Low: ₹4,180.00 | SL: ₹4,155.00</p>
+                return (
+                  <div className="max-w-md w-full space-y-3 font-sans text-xs sm:text-[13px] leading-relaxed">
+                    {/* Stage 1 Bubble */}
+                    <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
+                      <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
+                        ━━━━━━━━━━━━━━━━━━━━{"\n"}
+                        👀 <strong className="text-white">TRADEIO PRE-ENTRY SETUP WATCH</strong>{"\n"}
+                        🎯 <strong>1️⃣ STOCK INTRADAY (NSE CASH)</strong>{"\n"}
+                        ━━━━━━━━━━━━━━━━━━━━
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-emerald-300">{dirEmoji} {stock.symbol} {dirVerb} {stock.triggerPrice.toFixed(2)}</p>
+                        <p className="text-slate-300">▸ Current Price: <strong>₹{stock.spotLtp.toFixed(2)}</strong></p>
+                        <p className="text-slate-300">▸ Setup: {stock.setupRationale}</p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 space-y-1">
+                        <p className="font-bold text-yellow-300">💎 ADD TO WATCHLIST NOW:</p>
+                        <p>▸ Script: <strong className="text-white">{stock.contractSymbol}</strong></p>
+                        <p className="text-emerald-200">▸ ⚡ <strong>TRIGGER:</strong> Buy when price crosses above ₹{stock.triggerPrice.toFixed(2)}</p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
+                        <p>▸ Planned Entry: <strong>{stock.entryZone}</strong></p>
+                        <p>▸ Stop-Loss (SL): <strong>₹{stock.stopLoss.toFixed(2)}</strong> (Strict Intraday SL)</p>
+                        <p>▸ Targets: <strong>₹{stock.target1.toFixed(2)} / ₹{stock.target2.toFixed(2)} / ₹{stock.target3?.toFixed(2)}</strong></p>
+                        <p className="text-yellow-200/90 pt-1">⚠️ <em>Keep on watchlist. Buy only on confirmed breakout above {stock.triggerPrice.toFixed(0)}!</em></p>
+                      </div>
+                      <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
+                        <span>09:22 AM</span>
+                        <span className="text-[#53bdeb]">✓✓</span>
+                      </div>
+                    </div>
+
+                    {/* Stage 2 Bubble */}
+                    <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
+                      <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
+                        ━━━━━━━━━━━━━━━━━━━━{"\n"}
+                        🚀 <strong className="text-white">TRADEIO OFFICIAL TRADE TRIGGER</strong>{"\n"}
+                        🎯 <strong>1️⃣ STOCK INTRADAY (NSE CASH)</strong>{"\n"}
+                        ━━━━━━━━━━━━━━━━━━━━
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-emerald-300">{dirEmoji} {stock.symbol} {dirVerb} {stock.triggerPrice.toFixed(2)} CONFIRMED</p>
+                        <p className="text-slate-300">▸ Level Hit @ <strong>₹{stock.triggerPrice.toFixed(2)}</strong> with strong volume confirmation!</p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 space-y-1">
+                        <p className="font-bold text-emerald-300">💎 EXECUTE NOW:</p>
+                        <p>▸ Action: BUY <strong className="text-white">{stock.contractSymbol}</strong></p>
+                        <p>▸ Entry Zone: <strong>{stock.entryZone}</strong></p>
+                        <p>▸ Stop-Loss (SL): <strong>₹{stock.stopLoss.toFixed(2)}</strong></p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
+                        <p>▸ Target 1: <strong className="text-emerald-400">₹{stock.target1.toFixed(2)}</strong> (Book 50% & Trail SL to Cost)</p>
+                        <p>▸ Target 2: <strong className="text-emerald-400">₹{stock.target2.toFixed(2)}</strong></p>
+                        <p>▸ Target 3: <strong className="text-emerald-400">₹{stock.target3?.toFixed(2)}</strong></p>
+                      </div>
+                      <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
+                        <span>09:31 AM</span>
+                        <span className="text-[#53bdeb]">✓✓</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Option B: NIFTY 50 Option (Live Data) ── */}
+              {previewCategory === "advisory-nifty" && (() => {
+                const nifty = advisoryReport?.niftySetup || {
+                  contractSymbol: "NIFTY 24100 PE",
+                  spotLtp: 24125.0,
+                  triggerPrice: 24100.0,
+                  cmp: 90.0,
+                  stopLoss: 74.0,
+                  target1: 116.0,
+                  target2: 145.0,
+                  target3: 180.0,
+                  lotSize: 65,
+                  maxRiskPerLot: 1040,
+                  direction: "BEARISH",
+                  setupRationale: "Breakdown below 15-min Opening Range & VWAP",
+                  entryZone: "₹90.00 – ₹94.00",
+                };
+                const isBull = nifty.direction === "BULLISH";
+                const dirEmoji = isBull ? "🟢" : "🔴";
+                const dirVerb = isBull ? "Bullish above" : "Bearish below";
+
+                return (
+                  <div className="max-w-md w-full space-y-3 font-sans text-xs sm:text-[13px] leading-relaxed">
+                    {/* Stage 1 Bubble */}
+                    <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
+                      <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
+                        ━━━━━━━━━━━━━━━━━━━━{"\n"}
+                        👀 <strong className="text-white">TRADEIO PRE-ENTRY SETUP WATCH</strong>{"\n"}
+                        🎯 <strong>2️⃣ NIFTY 50 INDEX OPTION</strong>{"\n"}
+                        ━━━━━━━━━━━━━━━━━━━━
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-rose-300">{dirEmoji} NIFTY {dirVerb} {nifty.triggerPrice.toFixed(0)}</p>
+                        <p className="text-slate-300">▸ Current Spot: <strong>₹{nifty.spotLtp.toFixed(2)}</strong></p>
+                        <p className="text-slate-300">▸ Setup: {nifty.setupRationale}</p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 space-y-1">
+                        <p className="font-bold text-yellow-300">💎 ADD TO WATCHLIST NOW:</p>
+                        <p>▸ Contract: <strong className="text-white">{nifty.contractSymbol}</strong></p>
+                        <p>▸ Approx CMP: <strong>₹{nifty.cmp.toFixed(2)}</strong></p>
+                        <p className="text-emerald-200">▸ ⚡ <strong>TRIGGER:</strong> Buy when Spot breaks below ₹{nifty.triggerPrice.toFixed(0)}</p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
+                        <p>▸ Stop-Loss (SL): <strong>₹{nifty.stopLoss.toFixed(2)}</strong> (Strict 18% SL)</p>
+                        <p>▸ Targets: <strong>₹{nifty.target1.toFixed(2)} (+29%) / ₹{nifty.target2.toFixed(2)} (+61%) / ₹{nifty.target3?.toFixed(2)} (2X)</strong></p>
+                        <p>▸ Lot Size: <strong>{nifty.lotSize} Qty</strong> | Max Risk: <strong>₹{nifty.maxRiskPerLot?.toFixed(0)}</strong></p>
+                        <p className="text-yellow-200/90 pt-1">⚠️ <em>Keep strike on watchlist. Wait for official trigger confirmation before entering!</em></p>
+                      </div>
+                      <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
+                        <span>09:28 AM</span>
+                        <span className="text-[#53bdeb]">✓✓</span>
+                      </div>
+                    </div>
+
+                    {/* Stage 2 Bubble */}
+                    <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
+                      <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
+                        ━━━━━━━━━━━━━━━━━━━━{"\n"}
+                        🚀 <strong className="text-white">TRADEIO OFFICIAL TRADE TRIGGER</strong>{"\n"}
+                        🎯 <strong>2️⃣ NIFTY 50 INDEX OPTION</strong>{"\n"}
+                        ━━━━━━━━━━━━━━━━━━━━
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-rose-300">{dirEmoji} NIFTY {dirVerb} {nifty.triggerPrice.toFixed(0)} CONFIRMED</p>
+                        <p className="text-slate-300">▸ Spot Level Hit @ <strong>₹{nifty.triggerPrice.toFixed(2)}</strong> with strong volume confirmation!</p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 space-y-1">
+                        <p className="font-bold text-emerald-300">💎 EXECUTE NOW:</p>
+                        <p>▸ Buy: <strong className="text-white">{nifty.contractSymbol}</strong></p>
+                        <p>▸ Entry Zone: <strong>{nifty.entryZone}</strong></p>
+                        <p>▸ Stop-Loss (SL): <strong>₹{nifty.stopLoss.toFixed(2)}</strong> (Strict 18% SL)</p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
+                        <p>▸ Target 1: <strong className="text-emerald-400">₹{nifty.target1.toFixed(2)}</strong> (+29% Gain • Trail SL to Cost)</p>
+                        <p>▸ Target 2: <strong className="text-emerald-400">₹{nifty.target2.toFixed(2)}</strong> (+61% Runner)</p>
+                        <p>▸ Target 3: <strong className="text-emerald-400">₹{nifty.target3?.toFixed(2)}</strong> (+100% Doubler)</p>
+                      </div>
+                      <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
+                        <span>09:33 AM</span>
+                        <span className="text-[#53bdeb]">✓✓</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Option C: SENSEX Option (Live Data) ── */}
+              {previewCategory === "advisory-sensex" && (() => {
+                const sensex = advisoryReport?.sensexSetup || {
+                  contractSymbol: "SENSEX 80500 CE",
+                  spotLtp: 80450.0,
+                  triggerPrice: 80500.0,
+                  cmp: 140.0,
+                  stopLoss: 115.0,
+                  target1: 180.0,
+                  target2: 220.0,
+                  target3: 280.0,
+                  lotSize: 20,
+                  maxRiskPerLot: 500,
+                  direction: "BULLISH",
+                  setupRationale: "15-min Range Compression near Day High",
+                  entryZone: "₹140.00 – ₹146.00",
+                };
+                const isBull = sensex.direction === "BULLISH";
+                const dirEmoji = isBull ? "🟢" : "🔴";
+                const dirVerb = isBull ? "Bullish breakout above" : "Bearish breakdown below";
+
+                return (
+                  <div className="max-w-md w-full bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2 text-xs sm:text-[13px] leading-relaxed">
+                    <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
+                      ━━━━━━━━━━━━━━━━━━━━{"\n"}
+                      🚀 <strong className="text-white">TRADEIO OFFICIAL TRADE TRIGGER</strong>{"\n"}
+                      🎯 <strong>3️⃣ BSE SENSEX INDEX OPTION</strong>{"\n"}
+                      ━━━━━━━━━━━━━━━━━━━━
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-bold text-emerald-300">{dirEmoji} SENSEX {dirVerb} {sensex.triggerPrice.toFixed(0)} CONFIRMED</p>
+                      <p className="text-slate-300">▸ Spot Level Hit @ <strong>₹{sensex.triggerPrice.toFixed(2)}</strong> with strong buying expansion!</p>
+                    </div>
+                    <div className="border-t border-[#025144] pt-2 space-y-1">
+                      <p className="font-bold text-yellow-300">💎 EXECUTE NOW:</p>
+                      <p>▸ Buy: <strong className="text-white">{sensex.contractSymbol}</strong> (BFO)</p>
+                      <p>▸ Entry Zone: <strong>{sensex.entryZone}</strong></p>
+                      <p>▸ Stop-Loss (SL): <strong>₹{sensex.stopLoss.toFixed(2)}</strong> (Lot Size: {sensex.lotSize})</p>
+                    </div>
+                    <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
+                      <p>▸ Target 1: <strong className="text-emerald-400">₹{sensex.target1.toFixed(2)}</strong> (+29% Gain • Trail SL to Cost)</p>
+                      <p>▸ Target 2: <strong className="text-emerald-400">₹{sensex.target2.toFixed(2)}</strong> (+57% Runner)</p>
+                      <p>▸ Target 3: <strong className="text-emerald-400">₹{sensex.target3?.toFixed(2)}</strong> (+100% Doubler)</p>
+                    </div>
+                    <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
+                      <span>09:45 AM</span>
+                      <span className="text-[#53bdeb]">✓✓</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Option D: Trailing Follow-up Update Preview ── */}
+              {previewCategory === "advisory-trailing" && (() => {
+                const nifty = advisoryReport?.niftySetup || {
+                  contractSymbol: "NIFTY 24100 PE",
+                  entryZone: "₹90.00 – ₹94.00",
+                  target1: 116.0,
+                  target2: 145.0,
+                  cmp: 90.0,
+                };
+
+                return (
+                  <div className="max-w-md w-full space-y-3 font-sans text-xs sm:text-[13px] leading-relaxed">
+                    <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
+                      <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
+                        ━━━━━━━━━━━━━━━━━━━━{"\n"}
+                        🎯 <strong className="text-white">TARGET 1 HIT! (+29% GAIN)</strong>{"\n"}
+                        🔥 <strong>{nifty.contractSymbol} reached ₹{nifty.target1?.toFixed(2)}</strong>{"\n"}
+                        ━━━━━━━━━━━━━━━━━━━━
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-slate-300">▸ Initial Entry: <strong>{nifty.entryZone}</strong></p>
+                        <p className="text-emerald-300 font-bold">▸ 🛡️ ACTION REQUIRED: Trail Stop-Loss to COST (₹{nifty.cmp?.toFixed(2)})</p>
+                        <p className="text-yellow-200 font-bold">▸ 🔒 TRADE IS NOW 100% RISK-FREE!</p>
+                        <p className="text-slate-300">▸ Next Target: <strong>₹{nifty.target2?.toFixed(2)} (+61% Runner)</strong></p>
+                      </div>
+                      <div className="border-t border-[#025144] pt-2 text-[10px] text-emerald-200/80">
+                        🏁 TradeIO Algo Advisory Alerts
+                      </div>
+                      <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
+                        <span>09:48 AM</span>
+                        <span className="text-[#53bdeb]">✓✓</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Option E: 09:20 AM OHL Scanner Preview ── */}
+              {previewCategory === "ohl-scan" && (
+                <div className="max-w-md w-full bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl font-sans text-xs sm:text-[13px] leading-relaxed border border-[#025144] space-y-2.5 sm:space-y-3 break-words">
+                  <div className="border-b border-[#025144] pb-2 font-mono text-[10px] sm:text-[11px] text-emerald-200 whitespace-pre-wrap">
+                    ━━━━━━━━━━━━━━━━━━━━{"\n"}
+                    ⚡ <strong className="text-white">TRADEIO INSTITUTIONAL SCANNER</strong>{"\n"}
+                    🎯 <strong>Morning Opening Drive (09:20 AM IST)</strong>{"\n"}
+                    📅 <strong>Date:</strong> Sat, 29 Aug 2026{"\n"}
+                    ━━━━━━━━━━━━━━━━━━━━
+                  </div>
+
+                  <div className="space-y-1 sm:space-y-1.5">
+                    <p className="font-bold text-emerald-300 text-xs sm:text-[13px]">
+                      🟢 BULLISH MOMENTUM — OPEN = LOW
+                    </p>
+                    <p className="text-[10px] sm:text-[11px] text-emerald-100/70 italic">
+                      (Institutional Accumulation • Zero Below Open)
+                    </p>
+                    <div className="space-y-1 pt-1 font-mono text-[11px] sm:text-xs">
+                      <p>1️⃣ <strong className="text-white">RELIANCE</strong> [Lot 250]</p>
+                      <p className="text-slate-300 pl-2.5 sm:pl-3">▸ LTP: <strong className="text-emerald-400">₹2,950.40</strong> (+1.85%)</p>
+                      <p className="text-slate-300 pl-2.5 sm:pl-3">▸ Open=Low: ₹2,950.40 | SL: ₹2,935.00</p>
+                      <p>2️⃣ <strong className="text-white">TCS</strong> [Lot 175]</p>
+                      <p className="text-slate-300 pl-2.5 sm:pl-3">▸ LTP: <strong className="text-emerald-400">₹4,180.00</strong> (+2.10%)</p>
+                      <p className="text-slate-300 pl-2.5 sm:pl-3">▸ Open=Low: ₹4,180.00 | SL: ₹4,155.00</p>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-[#025144] pt-2 space-y-1 sm:space-y-1.5">
+                    <p className="font-bold text-rose-300 text-xs sm:text-[13px]">
+                      🔴 BEARISH MOMENTUM — OPEN = HIGH
+                    </p>
+                    <p className="text-[10px] sm:text-[11px] text-rose-100/70 italic">
+                      (Institutional Distribution • Zero Above Open)
+                    </p>
+                    <div className="space-y-1 pt-1 font-mono text-[11px] sm:text-xs">
+                      <p>1️⃣ <strong className="text-white">HDFCBANK</strong> [Lot 550]</p>
+                      <p className="text-slate-300 pl-2.5 sm:pl-3">▸ LTP: <strong className="text-rose-400">₹1,620.50</strong> (-1.65%)</p>
+                      <p className="text-slate-300 pl-2.5 sm:pl-3">▸ Open=High: ₹1,620.50 | SL: ₹1,632.00</p>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-[#025144] pt-2 text-[10px] sm:text-[11px] text-slate-300 space-y-1">
+                    <p className="font-bold text-white">💡 Execution Guidance:</p>
+                    <p>• Bullish: Buy on 5-min breakout with SL @ Day Low</p>
+                    <p>• Bearish: Short on 5-min breakdown with SL @ Day High</p>
+                    <p className="pt-1 text-emerald-200/80">🚀 TradeIO Algorithmic Trading Systems</p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
+                    <span>09:20 AM</span>
+                    <span className="text-[#53bdeb]">✓✓</span>
                   </div>
                 </div>
-
-                <div className="border-t border-[#025144] pt-2 space-y-1 sm:space-y-1.5">
-                  <p className="font-bold text-rose-300 text-xs sm:text-[13px]">
-                    🔴 BEARISH MOMENTUM — OPEN = HIGH
-                  </p>
-                  <p className="text-[10px] sm:text-[11px] text-rose-100/70 italic">
-                    (Institutional Distribution • Zero Above Open)
-                  </p>
-                  <div className="space-y-1 pt-1 font-mono text-[11px] sm:text-xs">
-                    <p>1️⃣ <strong className="text-white">HDFCBANK</strong> [Lot 550]</p>
-                    <p className="text-slate-300 pl-2.5 sm:pl-3">▸ LTP: <strong className="text-rose-400">₹1,620.50</strong> (-1.65%)</p>
-                    <p className="text-slate-300 pl-2.5 sm:pl-3">▸ Open=High: ₹1,620.50 | SL: ₹1,632.00</p>
-                  </div>
-                </div>
-
-                <div className="border-t border-[#025144] pt-2 text-[10px] sm:text-[11px] text-slate-300 space-y-1">
-                  <p className="font-bold text-white">💡 Execution Guidance:</p>
-                  <p>• Bullish: Buy on 5-min breakout with SL @ Day Low</p>
-                  <p>• Bearish: Short on 5-min breakdown with SL @ Day High</p>
-                  <p className="pt-1 text-emerald-200/80">🚀 TradeIO Algorithmic Trading Systems</p>
-                </div>
-
-                <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
-                  <span>09:20 AM</span>
-                  <span className="text-[#53bdeb]">✓✓</span>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>

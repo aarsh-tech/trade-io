@@ -5,6 +5,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { MarketService } from './market.service';
 import { OhlScannerService } from './ohl-scanner.service';
 import { WhatsAppService } from './whatsapp.service';
+import { DailyAdvisoryService } from './daily-advisory.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('Market')
@@ -16,6 +17,7 @@ export class MarketController {
     private readonly marketService: MarketService,
     private readonly ohlScannerService: OhlScannerService,
     private readonly whatsAppService: WhatsAppService,
+    private readonly dailyAdvisoryService: DailyAdvisoryService,
     private readonly prisma: PrismaService,
   ) { }
 
@@ -149,7 +151,29 @@ export class MarketController {
 
     const targets: string[] = [];
     if (user.whatsappNumber) {
-      user.whatsappNumber.split(',').map((n) => n.trim()).filter((n) => n.length > 5).slice(0, 10).forEach((n) => targets.push(n));
+      let numbers: string[] = [];
+      const rawStr = user.whatsappNumber.trim();
+      if (rawStr.startsWith('[') && rawStr.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(rawStr);
+          if (Array.isArray(parsed)) {
+            numbers = parsed
+              .map((item: any) => {
+                if (typeof item === 'string') return item.replace(/\D/g, '');
+                const num = item.fullNumber || `${item.countryCode || ''}${item.number || ''}`;
+                return String(num).replace(/\D/g, '');
+              })
+              .filter((n: string) => n && n.length > 5);
+          }
+        } catch {}
+      }
+      if (numbers.length === 0) {
+        numbers = rawStr
+          .split(',')
+          .map((n) => n.trim().split(':')[0].trim().replace(/\D/g, ''))
+          .filter((n) => n.length > 5);
+      }
+      numbers.slice(0, 10).forEach((n) => targets.push(n));
     }
     if (user.whatsappGroupId) {
       targets.push(user.whatsappGroupId.trim());
@@ -213,6 +237,65 @@ export class MarketController {
         broadcastRes.sentCount > 0
           ? `OHL alert sent to ${broadcastRes.sentCount} recipient(s) with ${openLowStocks.length} Open=Low & ${openHighStocks.length} Open=High stocks!`
           : `Alert dispatch notice: ${broadcastRes.errors.join(', ')}`,
+    };
+  }
+
+  @Post('whatsapp/trigger-advisory')
+  @ApiOperation({ summary: 'Scan today\'s live market & broadcast 3 Trade Advisory Setups (Stock + NIFTY + SENSEX)' })
+  async triggerDailyAdvisoryNow(@Request() req: any) {
+    const res = await this.dailyAdvisoryService.scanAndBroadcastDailyAdvisory(req.user.id);
+    return {
+      success: res.sentCount > 0,
+      sentCount: res.sentCount,
+      report: res.report,
+      errors: res.errors,
+      message:
+        res.sentCount > 0
+          ? `Live 3-Trade Advisory (Stock + NIFTY + SENSEX) dispatched successfully to ${res.sentCount} recipient(s)!`
+          : `Advisory dispatch notice: ${res.errors.join(', ')}`,
+    };
+  }
+
+  @Post('whatsapp/test-advisory')
+  @ApiOperation({ summary: 'Send sample Pre-Entry Watch & Trigger Advisory alerts to test formatting' })
+  async testDailyAdvisory(@Request() req: any) {
+    const res = await this.dailyAdvisoryService.sendTestAdvisoryBroadcast(req.user.id);
+    return {
+      success: res.sentCount > 0,
+      sentCount: res.sentCount,
+      errors: res.errors,
+      message:
+        res.sentCount > 0
+          ? `Test Pre-Entry & Trigger Advisory alerts sent to your WhatsApp!`
+          : `Test notice: ${res.errors.join(', ')}`,
+    };
+  }
+
+  @Post('whatsapp/send-message')
+  @ApiOperation({ summary: 'Send a specific formatted trade alert message to all recipients / groups' })
+  async sendSpecificTradeAlert(@Request() req: any, @Body() body: { message: string }) {
+    if (!body?.message) {
+      return { success: false, message: 'Message content is required' };
+    }
+    const res = await this.whatsAppService.broadcastTradeAlert(req.user.id, body.message, true);
+    return {
+      success: res.sentCount > 0,
+      sentCount: res.sentCount,
+      errors: res.errors,
+      message:
+        res.sentCount > 0
+          ? `Trade alert dispatched successfully to ${res.sentCount} recipient(s)!`
+          : `Alert notice: ${res.errors.join(', ')}`,
+    };
+  }
+
+  @Get('whatsapp/advisory-report')
+  @ApiOperation({ summary: 'Get current Live 3-Trade Advisory Report for UI display' })
+  async getAdvisoryReport(@Request() req: any) {
+    const report = await this.dailyAdvisoryService.getLatestReport(req.user?.id);
+    return {
+      success: true,
+      data: report,
     };
   }
 

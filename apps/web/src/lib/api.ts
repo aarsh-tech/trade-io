@@ -193,6 +193,10 @@ export const whatsappApi = {
   }) => api.patch("/market/whatsapp/settings", data),
   testAlert: () => api.post("/market/whatsapp/test"),
   triggerOhlNow: () => api.post("/market/whatsapp/trigger-ohl"),
+  triggerAdvisoryNow: () => api.post("/market/whatsapp/trigger-advisory"),
+  testAdvisory: () => api.post("/market/whatsapp/test-advisory"),
+  sendMessage: (data: { message: string }) => api.post("/market/whatsapp/send-message", data),
+  getAdvisoryReport: () => api.get("/market/whatsapp/advisory-report"),
 };
 
 

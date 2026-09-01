@@ -8,6 +8,7 @@ import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
 import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 import { OhlScannerService } from '../market/ohl-scanner.service';
 import { WhatsAppService } from '../market/whatsapp.service';
+import { DailyAdvisoryService } from '../market/daily-advisory.service';
 
 /**
  * MarketSchedulerService
@@ -15,6 +16,7 @@ import { WhatsAppService } from '../market/whatsapp.service';
  * Runs every 1 s. At exactly 09:15 IST it auto-starts every strategy
  * that has `autoStart = true` and is not already running.
  * At 09:20 IST (or configured time) it scans Open=High/Low and broadcasts WhatsApp alerts.
+ * At 09:28 IST it scans and broadcasts Daily 3-Trade Advisory (Stock + NIFTY + SENSEX).
  * At 15:30 IST it stops all running strategies so they don't poll after market close.
  */
 @Injectable()
@@ -61,6 +63,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly gammaBlastEngine: GammaBlastExpiryEngine,
     private readonly ohlScannerService: OhlScannerService,
     private readonly whatsAppService: WhatsAppService,
+    private readonly dailyAdvisoryService: DailyAdvisoryService,
   ) { }
 
   onModuleInit() {
@@ -123,6 +126,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     // ── Morning OHL Scanner WhatsApp Broadcast (e.g. 09:16, 09:18, 09:20 IST) ──
     if (hhmm >= 9 * 60 + 15 && hhmm <= 9 * 60 + 35) {
       await this.checkAndSendOhlAlerts(ist);
+      await this.checkAndSendDailyAdvisory(ist);
     }
 
     // ── 3:05 PM – 3:25 PM IST Mandatory Safety Square-Off Window (Runs once per minute) ───
@@ -174,6 +178,27 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err: any) {
       this.logger.error(`Error checking WhatsApp OHL alerts: ${err?.message || err}`);
+    }
+  }
+
+  // ── Daily 3-Trade Advisory WhatsApp Broadcast (Stock + NIFTY + SENSEX) ──────
+
+  private async checkAndSendDailyAdvisory(ist: Date) {
+    const todayKey = ist.toDateString();
+    const h = ist.getHours();
+    const m = ist.getMinutes();
+    const s = ist.getSeconds();
+    const currentTimeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+    if (currentTimeStr === '09:28' && s <= 5) {
+      const advisoryKey = `daily_advisory_${todayKey}_09:28`;
+      if (!this.sentOhlAlertsToday.has(advisoryKey)) {
+        this.sentOhlAlertsToday.add(advisoryKey);
+        this.logger.log(`⏰ Triggering automated 09:28 AM Daily 3-Trade Advisory scan & broadcast...`);
+        this.dailyAdvisoryService.scanAndBroadcastDailyAdvisory().catch((err) => {
+          this.logger.error(`Error in automated Daily Advisory scan: ${err?.message || err}`);
+        });
+      }
     }
   }
 
