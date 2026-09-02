@@ -48,6 +48,7 @@ interface ScalperStrategyState {
   realtimeActive?: boolean;
   lastPnlLogTime?: number;
   lastTickTime?: number;
+  lastExitTimestamp?: number;
   currentLtp?: number;
   currentPnlRs?: number;
   currentPnlPct?: number;
@@ -81,8 +82,8 @@ export class NiftyOptionsScalperEngine {
     const symUpper = (parsedConfig.symbol || 'NIFTY').toUpperCase().trim();
     const defaultLotSize = symUpper.includes('SENSEX') ? 20 : (symUpper.includes('BANKNIFTY') ? 15 : 25);
     const qty = parsedConfig.qty || (lots * (parsedConfig.lots ? defaultLotSize : (symUpper.includes('SENSEX') ? 20 : 65)));
-    const stopLossPoints = parsedConfig.stopLossPoints || 7;
-    const targetPoints = parsedConfig.targetPoints || 10;
+    const stopLossPoints = parsedConfig.stopLossPoints || 6;
+    const targetPoints = parsedConfig.targetPoints || 8;
     const trailCostAtPoints = parsedConfig.trailCostAtPoints || 4;
 
     const config: NiftyOptionsScalperConfig = {
@@ -94,8 +95,8 @@ export class NiftyOptionsScalperEngine {
       qty,
       lots,
       product: parsedConfig.product || 'MIS',
-      maxTradesPerDay: parsedConfig.maxTradesPerDay || 3,
-      maxWinsPerDay: parsedConfig.maxWinsPerDay || 1,
+      maxTradesPerDay: parsedConfig.maxTradesPerDay || 4,
+      maxWinsPerDay: parsedConfig.maxWinsPerDay || 2,
       stopLossPoints,
       targetPoints,
       trailCostAtPoints,
@@ -348,13 +349,13 @@ export class NiftyOptionsScalperEngine {
               this.log(state, `🛡 (Catch-up) Option hit +${state.config.trailCostAtPoints || 4} pts profit! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
             }
 
-            // Step 2: Check +7 Points Profit Lock (+4 Pts locked)
-            if (optCandle.high >= state.entryPrice! + 7 && state.stopLossPrice! < state.entryPrice! + 4) {
-              state.stopLossPrice = state.entryPrice! + 4;
-              this.log(state, `🔒 (Catch-up) Option hit +7 pts profit! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
+            // Step 2: Check +7 Points Profit Lock (+5 Pts locked)
+            if (optCandle.high >= state.entryPrice! + 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+              state.stopLossPrice = state.entryPrice! + 5;
+              this.log(state, `🔒 (Catch-up) Option hit +7 pts profit! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
             }
 
-            // Target (+10 Points) Check
+            // Target Check
             if (optCandle.high >= state.targetPrice!) {
               const exitPrice = state.targetPrice!;
               const pnlPoints = exitPrice - state.entryPrice!;
@@ -387,6 +388,11 @@ export class NiftyOptionsScalperEngine {
         }
 
         // ── 3-Trigger Catch-up Scanning ─────────────────────────────────────────
+
+        // 1. Post-Trade Cooldown Check (15 minutes / 3 candles) to prevent entering at exhausted peaks
+        if (state.lastExitTimestamp && (currentCandle.date.getTime() - state.lastExitTimestamp) < 15 * 60 * 1000) {
+          continue;
+        }
 
         const prevCandle = candles[i - 1];
         const prevDateStr = prevCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
@@ -429,8 +435,10 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        // Trigger 3: 15-Min Opening Range Breakdown (ORB)
-        if (!triggerSide && state.config.enableOrbTrigger && orbLow !== null && orbHigh !== null && i >= 3) {
+        // Trigger 3: 15-Min Opening Range Breakdown (ORB) — strictly active between 9:30 AM and 11:30 AM!
+        const candleHhmm = this.getIstHhmm(currentCandle.date);
+        const isOrbTimeWindow = candleHhmm >= 9 * 60 + 30 && candleHhmm <= 11 * 60 + 30;
+        if (!triggerSide && state.config.enableOrbTrigger && isOrbTimeWindow && orbLow !== null && orbHigh !== null && i >= 3) {
           if (currentCandle.close < orbLow && prevCandle.close >= orbLow) {
             triggerSide = 'SELL'; setupName = '15-Min ORB Breakdown (PE)'; triggerPriceLevel = currentCandle.low;
           } else if (currentCandle.close > orbHigh && prevCandle.close <= orbHigh) {
@@ -438,13 +446,18 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        // Apply Optimized Stochastic RSI (14, 14, 3, 3) Momentum Confirmation Filter
+        // Apply Optimized Stochastic RSI (14, 14, 3, 3) Momentum Confirmation Filter by Setup Type
         if (triggerSide && state.config.enableRsiFilter !== false && currK !== null && currD !== null) {
+          const isBreakoutSetup = setupName.includes('Crossover') || setupName.includes('ORB');
+
           if (triggerSide === 'BUY') {
             const isKAboveD = currK >= currD - 0.5;
             const isRising = prevK === null || currK >= prevK - 1.0;
             const isNotToppedOut = currK <= 92;
-            const isBullishZone = (currK <= 45 && (prevK === null || currK >= prevK)) || (currK >= 50);
+
+            const isBullishZone = isBreakoutSetup
+              ? (currK >= 50 && isRising)
+              : ((currK <= 45 && (prevK === null || currK >= prevK)) || (currK >= 50));
 
             if (!(isKAboveD && isRising && isNotToppedOut && isBullishZone)) {
               triggerSide = null; // Filter out weak CE
@@ -453,7 +466,10 @@ export class NiftyOptionsScalperEngine {
             const isKBelowD = currK <= currD + 0.5;
             const isFalling = prevK === null || currK <= prevK + 1.0;
             const isNotBottomedOut = currK >= 8;
-            const isBearishZone = (currK >= 55 && (prevK === null || currK <= prevK)) || (currK <= 50);
+
+            const isBearishZone = isBreakoutSetup
+              ? (currK <= 50 && isFalling)
+              : ((currK >= 55 && (prevK === null || currK <= prevK)) || (currK <= 50));
 
             if (!(isKBelowD && isFalling && isNotBottomedOut && isBearishZone)) {
               triggerSide = null; // Filter out weak PE
@@ -546,6 +562,13 @@ export class NiftyOptionsScalperEngine {
         // Ensure both current candle and previous candle belong strictly to today's trading session
         if (currDateStr !== todayStr || prevDateStr !== todayStr) return;
 
+        // 1. Post-Trade Cooldown Check (15 minutes / 3 candles) to prevent entering at exhausted peaks
+        if (state.lastExitTimestamp && (currentCandle.date.getTime() - state.lastExitTimestamp) < 15 * 60 * 1000) {
+          const remMin = Math.ceil((15 * 60 * 1000 - (currentCandle.date.getTime() - state.lastExitTimestamp)) / 60000);
+          this.log(state, `⏳ Post-trade cooldown active (${remMin}m remaining). Skipping entries.`);
+          return;
+        }
+
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';
 
@@ -580,7 +603,9 @@ export class NiftyOptionsScalperEngine {
             }
           }
 
-          // 3. 15-Min Opening Range Breakdown (ORB)
+          // 3. 15-Min Opening Range Breakdown (ORB) — strictly active between 9:30 AM and 11:30 AM!
+          const candleHhmm = this.getIstHhmm(currentCandle.date);
+          const isOrbTimeWindow = candleHhmm >= 9 * 60 + 30 && candleHhmm <= 11 * 60 + 30;
           let orbHigh: number | null = null;
           let orbLow: number | null = null;
           const todayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) === todayStr);
@@ -590,7 +615,7 @@ export class NiftyOptionsScalperEngine {
             orbLow = Math.min(...orbCandles.map(c => c.low));
           }
 
-          if (!triggerSide && config.enableOrbTrigger && orbLow !== null && orbHigh !== null && lastIdx >= 3) {
+          if (!triggerSide && config.enableOrbTrigger && isOrbTimeWindow && orbLow !== null && orbHigh !== null && lastIdx >= 3) {
             if (currentCandle.close < orbLow && prevCandle.close >= orbLow) {
               triggerSide = 'SELL'; setupName = '15-Min ORB Breakdown (PE)';
             } else if (currentCandle.close > orbHigh && prevCandle.close <= orbHigh) {
@@ -598,13 +623,18 @@ export class NiftyOptionsScalperEngine {
             }
           }
 
-          // Apply Optimized Stochastic RSI (14, 14, 3, 3) Momentum Confirmation Filter
+          // Apply Optimized Stochastic RSI (14, 14, 3, 3) Momentum Confirmation Filter by Setup Type
           if (triggerSide && config.enableRsiFilter !== false && currK !== null && currD !== null) {
+            const isBreakoutSetup = setupName.includes('Crossover') || setupName.includes('ORB');
+
             if (triggerSide === 'BUY') {
               const isKAboveD = currK >= currD - 0.5;
               const isRising = prevK === null || currK >= prevK - 1.0;
               const isNotToppedOut = currK <= 92;
-              const isBullishZone = (currK <= 45 && (prevK === null || currK >= prevK)) || (currK >= 50);
+
+              const isBullishZone = isBreakoutSetup
+                ? (currK >= 50 && isRising)
+                : ((currK <= 45 && (prevK === null || currK >= prevK)) || (currK >= 50));
 
               if (!(isKAboveD && isRising && isNotToppedOut && isBullishZone)) {
                 triggerSide = null; // Filter out weak CE
@@ -613,7 +643,10 @@ export class NiftyOptionsScalperEngine {
               const isKBelowD = currK <= currD + 0.5;
               const isFalling = prevK === null || currK <= prevK + 1.0;
               const isNotBottomedOut = currK >= 8;
-              const isBearishZone = (currK >= 55 && (prevK === null || currK <= prevK)) || (currK <= 50);
+
+              const isBearishZone = isBreakoutSetup
+                ? (currK <= 50 && isFalling)
+                : ((currK >= 55 && (prevK === null || currK <= prevK)) || (currK <= 50));
 
               if (!(isKBelowD && isFalling && isNotBottomedOut && isBearishZone)) {
                 triggerSide = null; // Filter out weak PE
@@ -742,9 +775,9 @@ export class NiftyOptionsScalperEngine {
       }
 
       // 3. Check +7 Points Profit Lock (Step 2)
-      if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 4) {
-        state.stopLossPrice = state.entryPrice! + 4;
-        this.log(state, `🔒 Option profit hit +7 pts! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
+      if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+        state.stopLossPrice = state.entryPrice! + 5;
+        this.log(state, `🔒 Option profit hit +7 pts! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
       }
 
       // 4. Stagnant Trade / Theta Decay Timeout (Exit flat trade after 15m without momentum)
@@ -856,9 +889,9 @@ export class NiftyOptionsScalperEngine {
     }
 
     // 3. Profit Lock (+7 pts)
-    if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 4) {
-      state.stopLossPrice = state.entryPrice! + 4;
-      this.log(state, `🔒 Option profit hit +7 pts! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
+    if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+      state.stopLossPrice = state.entryPrice! + 5;
+      this.log(state, `🔒 Option profit hit +7 pts! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
     }
 
     // 4. Stagnant Trade / Theta Decay Timeout
@@ -929,6 +962,7 @@ export class NiftyOptionsScalperEngine {
 
       await this.trackOrderInDB(state, 'SELL', symbol, exch, qty, exitPrice, exitOrderId);
       state.tradesPlacedToday++;
+      state.lastExitTimestamp = Date.now();
 
       state.entryTriggered = null;
       state.optionSymbol = null;
@@ -951,6 +985,7 @@ export class NiftyOptionsScalperEngine {
       const exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
       await this.trackOrderInDB(state, 'SELL', symbol, exch, qty, exitPrice, exitOrderId, timestamp);
       state.tradesPlacedToday++;
+      state.lastExitTimestamp = timestamp.getTime();
 
       state.entryTriggered = null;
       state.optionSymbol = null;
