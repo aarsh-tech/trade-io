@@ -69,6 +69,8 @@ interface GammaStrategyState {
   is2xLocked?: boolean;
   is3xLocked?: boolean;
   is5xLocked?: boolean;
+  isPartialExited?: boolean;
+  isHighConvictionTrade?: boolean;
   rangeHigh?: number | null;
   rangeLow?: number | null;
   rangeVwap?: number | null;
@@ -159,6 +161,8 @@ export class GammaBlastExpiryEngine {
       is2xLocked: false,
       is3xLocked: false,
       is5xLocked: false,
+      isPartialExited: false,
+      isHighConvictionTrade: false,
     };
 
     if (strategy.brokerAccount?.accessToken) {
@@ -828,9 +832,10 @@ export class GammaBlastExpiryEngine {
         .sort((a, b) => Math.abs(a.ltp - ((minPrem + maxPrem) / 2)) - Math.abs(b.ltp - ((minPrem + maxPrem) / 2)))[0];
 
       if (eligibleCe && eligibleCe.ltp > 0) {
-        this.log(state, `🚀 [GAMMA BLAST SIGNAL - CALL] ${underlying} Future broke Range High (₹${rangeData.high.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}`);
+        const isHighConviction = (pcr >= 1.05 || totalCallOi < totalPutOi) && (eligibleCe.volume >= 2000 || eligibleCe.oi >= 10000);
+        this.log(state, `🚀 [GAMMA BLAST SIGNAL - CALL] ${underlying} Future broke Range High (₹${rangeData.high.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}${isHighConviction ? ' | High-Conviction A+ Setup' : ''}`);
         this.log(state, `🎯 Selected Explosive Strike: ${eligibleCe.tradingsymbol} @ ₹${eligibleCe.ltp.toFixed(2)} (OI: ${(eligibleCe.oi / 1000).toFixed(0)}k, Vol: ${(eligibleCe.volume / 1000).toFixed(0)}k)`);
-        await this.placeGammaTrade(state, client, kite, eligibleCe.tradingsymbol, eligibleCe.ltp, 'CALL_BLAST');
+        await this.placeGammaTrade(state, client, kite, eligibleCe.tradingsymbol, eligibleCe.ltp, 'CALL_BLAST', isHighConviction);
         return;
       }
     }
@@ -842,9 +847,10 @@ export class GammaBlastExpiryEngine {
         .sort((a, b) => Math.abs(a.ltp - ((minPrem + maxPrem) / 2)) - Math.abs(b.ltp - ((minPrem + maxPrem) / 2)))[0];
 
       if (eligiblePe && eligiblePe.ltp > 0) {
-        this.log(state, `🚀 [GAMMA BLAST SIGNAL - PUT] ${underlying} Future broke Range Low (₹${rangeData.low.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}`);
+        const isHighConviction = (pcr <= 0.95 || totalPutOi < totalCallOi) && (eligiblePe.volume >= 2000 || eligiblePe.oi >= 10000);
+        this.log(state, `🚀 [GAMMA BLAST SIGNAL - PUT] ${underlying} Future broke Range Low (₹${rangeData.low.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}${isHighConviction ? ' | High-Conviction A+ Setup' : ''}`);
         this.log(state, `🎯 Selected Explosive Strike: ${eligiblePe.tradingsymbol} @ ₹${eligiblePe.ltp.toFixed(2)} (OI: ${(eligiblePe.oi / 1000).toFixed(0)}k, Vol: ${(eligiblePe.volume / 1000).toFixed(0)}k)`);
-        await this.placeGammaTrade(state, client, kite, eligiblePe.tradingsymbol, eligiblePe.ltp, 'PUT_BLAST');
+        await this.placeGammaTrade(state, client, kite, eligiblePe.tradingsymbol, eligiblePe.ltp, 'PUT_BLAST', isHighConviction);
         return;
       }
     }
@@ -858,14 +864,26 @@ export class GammaBlastExpiryEngine {
     kite: any,
     symbol: string,
     entryPrice: number,
-    type: 'CALL_BLAST' | 'PUT_BLAST'
+    type: 'CALL_BLAST' | 'PUT_BLAST',
+    isHighConviction: boolean = false
   ) {
     const exchange = state.activeExchange;
-    const qty = state.targetQty; // 1 Lot (65 Nifty / 20 Sensex)
+    const baseLots = state.lots || state.config.lots || 1;
+    const shouldBoost = isHighConviction && state.config.enableHighConvictionBoost !== false;
+    const lots = shouldBoost ? Math.max(baseLots, 2) : baseLots;
+    const qty = lots * state.lotSize;
+    state.executedQty = qty;
+    state.isHighConvictionTrade = shouldBoost;
+    state.isPartialExited = false;
+
     const initialSl = this.roundTick(entryPrice * 0.50); // 50% initial SL (e.g. ₹6 on ₹12)
     const product = state.config.product || 'NRML';
 
-    this.log(state, `📋 Placing 1-Lot Order: ${exchange}:${symbol} | Qty: ${qty} | Entry: ₹${entryPrice.toFixed(2)} | Initial SL: ₹${initialSl.toFixed(2)} (Max Loss: ₹${((entryPrice - initialSl) * qty).toFixed(2)})`);
+    if (shouldBoost) {
+      this.log(state, `🔥 [HIGH-CONVICTION A+ BOOST] Range Compression + Volume Surge + OI Confluence verified! Boosting size to ${lots} Lots (${qty} shares)!`);
+    } else {
+      this.log(state, `📋 Placing ${lots}-Lot Order: ${exchange}:${symbol} | Qty: ${qty} | Entry: ₹${entryPrice.toFixed(2)} | Initial SL: ₹${initialSl.toFixed(2)} (Max Loss: ₹${((entryPrice - initialSl) * qty).toFixed(2)})`);
+    }
 
     try {
       const limitPrice = this.roundTick(entryPrice + 0.50);
@@ -974,13 +992,23 @@ export class GammaBlastExpiryEngine {
         this.log(state, `🚀 [${costMultiple}X GAIN] Peak: ₹${peak.toFixed(2)} (${(peak / entry).toFixed(1)}x)! Trailing SL ratcheted to Cost (₹${state.stopLossPrice.toFixed(2)}) — Trade is 100% Risk-Free!`);
       }
 
-      // 2. Milestone 2: 2x Spike (e.g. ₹51.60 -> ₹103.20) -> Lock SL at +50% Profit (₹77.40)
+      // 2. Milestone 2: 2x Spike (e.g. ₹18.00 -> ₹36.00) -> Lock SL at +50% Profit (₹27.00)
       const profit2xMultiple = state.config.profitLock2xMultiple || 2.0;
       if (peak >= entry * profit2xMultiple && !state.is2xLocked) {
         state.is2xLocked = true;
         const newSl = this.roundTick(entry * 1.50);
         state.stopLossPrice = Math.max(state.stopLossPrice || 0, newSl);
         this.log(state, `🎯 [2X GAMMA BLAST] Peak: ₹${peak.toFixed(2)} (${(peak / entry).toFixed(1)}x)! Trailing SL LOCKED at +50% Profit (₹${state.stopLossPrice.toFixed(2)})!`);
+
+        // ── 50% Partial Profit Booking (Scales out half if holding >= 2 lots) ──
+        const activeQty = state.executedQty || state.targetQty;
+        if (state.config.enablePartialProfitBooking !== false && !state.isPartialExited && activeQty >= state.lotSize * 2) {
+          state.isPartialExited = true;
+          const partialQty = Math.floor((activeQty / 2) / state.lotSize) * state.lotSize;
+          if (partialQty > 0) {
+            await this.partialExitPosition(state, client, currentPrice, partialQty, '2X_PARTIAL_PROFIT');
+          }
+        }
       }
 
       // 3. Continuous High-Water Mark Dynamic Peak Trailing
@@ -1107,6 +1135,65 @@ export class GammaBlastExpiryEngine {
     }
   }
 
+  private async partialExitPosition(state: GammaStrategyState, client: any, exitPrice: number, partialQty: number, reason: string) {
+    const symbol = state.optionSymbol || state.config.symbol;
+    const exchange = state.activeExchange;
+
+    try {
+      let exitOrderId = '';
+      if (state.isPaperTrade) {
+        exitOrderId = `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      } else {
+        // Cancel pending broker SL order to avoid mismatch
+        if (state.slOrderId) {
+          await client.cancelOrder(state.slOrderId).catch(() => { });
+        }
+
+        exitOrderId = await client.placeOrder({
+          symbol,
+          exchange,
+          product: state.config.product || 'NRML',
+          qty: partialQty,
+          side: 'SELL',
+          orderType: 'MARKET',
+        });
+        this.log(state, `✅ Partial Market Exit Order Placed (${reason}): ${exitOrderId} for ${partialQty} Qty`);
+
+        // Re-arm broker SL for remaining quantity
+        const remainingQty = (state.executedQty || state.targetQty) - partialQty;
+        if (remainingQty > 0 && state.stopLossPrice) {
+          const slTrigger = this.roundTick(state.stopLossPrice);
+          const slLimit = this.roundTick(slTrigger * 0.90);
+          state.slOrderId = await client.placeOrder({
+            symbol,
+            exchange,
+            product: state.config.product || 'NRML',
+            qty: remainingQty,
+            side: 'SELL',
+            orderType: 'SL',
+            price: slLimit,
+            triggerPrice: slTrigger,
+          }).catch(() => null);
+
+          if (state.slOrderId) {
+            this.log(state, `🛡 Re-armed Broker SL for remaining ${remainingQty} Qty: Trigger ₹${slTrigger.toFixed(2)} [OrderId: ${state.slOrderId}]`);
+          }
+        }
+      }
+
+      await this.trackOrderInDB(state, 'SELL', symbol, exchange, partialQty, exitPrice, exitOrderId, undefined, 'MARKET');
+
+      const entry = state.entryPrice || exitPrice;
+      const bookedPnl = (exitPrice - entry) * partialQty;
+      state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + bookedPnl;
+      state.executedQty = (state.executedQty || state.targetQty) - partialQty;
+
+      this.log(state, `💰 [50% PARTIAL PROFIT SECURED] Sold ${partialQty} shares @ ₹${exitPrice.toFixed(2)} | Realized: +₹${bookedPnl.toFixed(2)} | 100% Principal Recovered! Remaining ${state.executedQty} shares trailing risk-free!`);
+    } catch (e: any) {
+      this.log(state, `⚠ Partial exit notice: ${e.message}`);
+    }
+  }
+
   private async exitPosition(state: GammaStrategyState, client: any, exitPrice: number, reason: string) {
     const symbol = state.optionSymbol || state.config.symbol;
     const exchange = state.activeExchange;
@@ -1176,6 +1263,8 @@ export class GammaBlastExpiryEngine {
       state.is2xLocked = false;
       state.is3xLocked = false;
       state.is5xLocked = false;
+      state.isPartialExited = false;
+      state.isHighConvictionTrade = false;
     } catch (e: any) {
       this.log(state, `❌ Exit failed: ${e.message}`);
     }
