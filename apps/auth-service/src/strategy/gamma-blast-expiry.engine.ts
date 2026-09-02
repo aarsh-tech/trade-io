@@ -1124,15 +1124,35 @@ export class GammaBlastExpiryEngine {
           await client.cancelOrder(state.slOrderId).catch(() => { });
         }
 
-        exitOrderId = await client.placeOrder({
-          symbol,
-          exchange,
-          product: state.config.product || 'NRML',
-          qty,
-          side: 'SELL',
-          orderType: 'MARKET',
-        });
-        this.log(state, `✅ Live Market Exit Order Placed (${reason}): ${exitOrderId}`);
+        // Prevent duplicate exit order if user already manually exited on Zerodha Kite
+        const kite = client['kite'];
+        let isManuallyClosed = false;
+        if (kite && kite.getPositions) {
+          try {
+            const pos = await kite.getPositions().catch(() => null);
+            const allPos = [...(pos?.net || []), ...(pos?.day || [])];
+            const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
+            const liveNetQty = currentPos ? currentPos.quantity : 0;
+            if (liveNetQty <= 0) {
+              isManuallyClosed = true;
+              this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Net Qty: 0). Skipping duplicate exit order to prevent order misplacement.`);
+            }
+          } catch (posErr: any) {
+            this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
+          }
+        }
+
+        if (!isManuallyClosed) {
+          exitOrderId = await client.placeOrder({
+            symbol,
+            exchange,
+            product: state.config.product || 'NRML',
+            qty,
+            side: 'SELL',
+            orderType: 'MARKET',
+          });
+          this.log(state, `✅ Live Market Exit Order Placed (${reason}): ${exitOrderId}`);
+        }
       }
 
       await this.trackOrderInDB(state, 'SELL', symbol, exchange, qty, exitPrice, exitOrderId, undefined, 'MARKET');
