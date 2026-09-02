@@ -1,29 +1,10 @@
 import { Logger } from '@nestjs/common';
-import { detectIntradayMomentum, detectIntradayMomentumShort, DailyCandle } from '../swing-scanner/vcp.analyzer';
+import { NIFTY_500_UNIVERSE } from '../market/market.constants';
 
 // ─── Minimal Filter for Pure Penny / Illiquid / Extreme High-Price Symbols ───────────────────
 const BLACKLISTED_SLOW_STOCKS = new Set([
   'IDEA', 'VODAFONE', 'JISLJALEQS', 'YESBANK', 'SUZLON'
 ]);
-
-/**
- * Calculates Average True Range (ATR) over N periods
- */
-function calculateATR(candles: DailyCandle[], period: number = 14): number {
-  if (candles.length < period + 1) return 0;
-  let trSum = 0;
-  for (let i = candles.length - period; i < candles.length; i++) {
-    const current = candles[i];
-    const prevClose = candles[i - 1].close;
-    const tr = Math.max(
-      current.high - current.low,
-      Math.abs(current.high - prevClose),
-      Math.abs(current.low - prevClose)
-    );
-    trSum += tr;
-  }
-  return trSum / period;
-}
 
 export const globalTickSizeMap = new Map<string, number>();
 
@@ -51,8 +32,8 @@ export function roundToInstrumentTick(price: number, tickSize: number = 0.05): n
 
 /**
  * Dynamically fetches the active liquid stock universe directly from Zerodha Kite API.
- * Uses NFO instruments to extract all 180+ liquid F&O underlying stocks (Nifty 50, Nifty Next 50 & Midcap liquid leaders)
- * and maps them to their NSE equity instrument tokens.
+ * Combines full NIFTY 500 universe (Top Gainers/Losers, Midcaps, RRKABEL, IFCI, etc.)
+ * with all 180+ liquid F&O stocks and maps them to their NSE equity instrument tokens.
  */
 export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promise<{ symbols: string[]; tokenMap: Map<string, number>; tickSizeMap: Map<string, number> }> {
   const tokenMap = new Map<string, number>();
@@ -99,13 +80,17 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
       logger?.log(`⚡ Loaded ${fnoSymbols.length} liquid F&O stocks dynamically from Zerodha API`);
     }
   } catch (err: any) {
-    logger?.warn(`Could not fetch NFO universe, falling back to NSE equity universe: ${err.message}`);
+    logger?.warn(`Could not fetch NFO universe: ${err.message}`);
   }
 
-  const rawUniverse = fnoSymbols.length >= 30 ? fnoSymbols : Array.from(allNseSymbols);
+  // 3. Combine NIFTY 500 Universe (RRKABEL, IFCI, INDOCO, UFLEX, etc.) + F&O Symbols
+  const combinedSet = new Set<string>([...(NIFTY_500_UNIVERSE || []), ...fnoSymbols]);
+  const validSymbols = Array.from(combinedSet).filter(sym => allNseSymbols.has(sym));
+  const rawUniverse = validSymbols.length >= 50 ? validSymbols : Array.from(allNseSymbols);
 
   // Filter blacklisted slow-moving stocks
   const liquidSymbols = rawUniverse.filter(sym => !BLACKLISTED_SLOW_STOCKS.has(sym));
+  logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} high-momentum NSE stocks (NIFTY 500 + F&O)`);
   return { symbols: liquidSymbols, tokenMap, tickSizeMap };
 }
 
@@ -239,18 +224,18 @@ export async function getTopCandidateStocks(
       const todayLow = quote.ohlc.low || ltp;
       const liveVolume = quote.volume || 0;
 
-      // Filter out extreme overnight gap (>3.8%) — event/earnings binary risk
+      // Filter out extreme overnight gap (>8.0%) — event/earnings binary risk
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
-      if (gapPct > 3.8) continue;
+      if (gapPct > 8.0) continue;
 
       const changeFromOpenPct = ((ltp - todayOpen) / todayOpen) * 100;
       const dayChangePct = ((ltp - prevClose) / prevClose) * 100;
       const dayRangePct = todayOpen > 0 ? ((todayHigh - todayLow) / todayOpen) * 100 : 0;
       const turnoverCr = (liveVolume * ltp) / 10000000; // Rupee Turnover in Crores
 
-      // Scaled liquidity filter: During 09:15-09:20 AM opening, accept turnover >= 0.10 Cr so fast movers are not skipped
-      const minTurnoverCr = isMarketOpening ? 0.10 : 1.5;
-      const minVolume = isMarketOpening ? 1000 : 25000;
+      // Scaled liquidity filter: During 09:15-09:20 AM opening, accept turnover >= 0.05 Cr so fast movers are not skipped
+      const minTurnoverCr = isMarketOpening ? 0.05 : 0.30;
+      const minVolume = isMarketOpening ? 500 : 5000;
       if (turnoverCr < minTurnoverCr && liveVolume < minVolume) continue;
 
       const diffOpenLowPct = todayOpen > 0 ? Math.abs(todayOpen - todayLow) / todayOpen : 1;

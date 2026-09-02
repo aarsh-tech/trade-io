@@ -1801,19 +1801,38 @@ export class EmaVwapCrossoverEngine {
           await this.cancelBrokerOrderSafe(client, state.slOrderId);
           await this.cancelBrokerOrderSafe(client, state.targetOrderId);
 
+          // Check if user already manually squared off on Zerodha
+          let isManuallyClosed = false;
           try {
-            exitOrderId = await client.placeOrder({
-              symbol,
-              exchange,
-              product: config.product ?? 'MIS',
-              qty,
-              side: exitSide,
-              orderType: 'MARKET',
-            });
-            exitOrderType = 'MARKET';
-            this.log(state, `✅ Live Market Exit Order placed (${reason}): ${exitOrderId}`);
-          } catch (err: any) {
-            this.log(state, `❌ Live Market Exit Order failed (${reason}): ${err.message}`);
+            if (kite && kite.getPositions) {
+              const pos = await kite.getPositions().catch(() => null);
+              const allPos = [...(pos?.net || []), ...(pos?.day || [])];
+              const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
+              const liveNetQty = currentPos ? Math.abs(currentPos.quantity) : 0;
+              if (liveNetQty === 0 && reason !== 'FORCE_CLOSE') {
+                isManuallyClosed = true;
+                this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Net Qty: 0). Skipping duplicate exit order to prevent order misplacement.`);
+              }
+            }
+          } catch (posErr: any) {
+            this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
+          }
+
+          if (!isManuallyClosed) {
+            try {
+              exitOrderId = await client.placeOrder({
+                symbol,
+                exchange,
+                product: config.product ?? 'MIS',
+                qty,
+                side: exitSide,
+                orderType: 'MARKET',
+              });
+              exitOrderType = 'MARKET';
+              this.log(state, `✅ Live Market Exit Order placed (${reason}): ${exitOrderId}`);
+            } catch (err: any) {
+              this.log(state, `❌ Live Market Exit Order failed (${reason}): ${err.message}`);
+            }
           }
         }
       }

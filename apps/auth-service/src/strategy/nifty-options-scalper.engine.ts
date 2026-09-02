@@ -78,14 +78,16 @@ export class NiftyOptionsScalperEngine {
 
     const parsedConfig: Partial<NiftyOptionsScalperConfig> = JSON.parse(strategy.config);
     const lots = parsedConfig.lots || 1;
-    const qty = parsedConfig.qty || (lots * 65);
+    const symUpper = (parsedConfig.symbol || 'NIFTY').toUpperCase().trim();
+    const defaultLotSize = symUpper.includes('SENSEX') ? 20 : (symUpper.includes('BANKNIFTY') ? 15 : 25);
+    const qty = parsedConfig.qty || (lots * (parsedConfig.lots ? defaultLotSize : (symUpper.includes('SENSEX') ? 20 : 65)));
     const stopLossPoints = parsedConfig.stopLossPoints || 7;
     const targetPoints = parsedConfig.targetPoints || 10;
-    const trailCostAtPoints = parsedConfig.trailCostAtPoints || 5;
+    const trailCostAtPoints = parsedConfig.trailCostAtPoints || 4;
 
     const config: NiftyOptionsScalperConfig = {
       symbol: parsedConfig.symbol || 'NIFTY',
-      exchange: parsedConfig.exchange || 'NSE',
+      exchange: parsedConfig.exchange || (symUpper.includes('SENSEX') ? 'BSE' : 'NSE'),
       emaPeriod: parsedConfig.emaPeriod || 15,
       vwapSource: parsedConfig.vwapSource || 'close',
       isOptionBuyingOnly: true,
@@ -103,6 +105,11 @@ export class NiftyOptionsScalperEngine {
       maxPremium: parsedConfig.maxPremium,
       enableOrbTrigger: parsedConfig.enableOrbTrigger !== undefined ? parsedConfig.enableOrbTrigger : true,
       enablePullbackTrigger: parsedConfig.enablePullbackTrigger !== undefined ? parsedConfig.enablePullbackTrigger : true,
+      enableRsiFilter: parsedConfig.enableRsiFilter !== undefined ? parsedConfig.enableRsiFilter : true,
+      enableRangeFilter: parsedConfig.enableRangeFilter !== undefined ? parsedConfig.enableRangeFilter : true,
+      enableStagnancyExit: parsedConfig.enableStagnancyExit !== undefined ? parsedConfig.enableStagnancyExit : true,
+      stagnancyMinutes: parsedConfig.stagnancyMinutes || 15,
+      moneyness: parsedConfig.moneyness || 'ITM',
     };
 
     await this.prisma.strategyExecution.updateMany({
@@ -130,7 +137,7 @@ export class NiftyOptionsScalperEngine {
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: strategy.isPaperTrade,
       futureSymbol: null,
-      futureExchange: 'NFO',
+      futureExchange: symUpper.includes('SENSEX') ? 'BFO' : 'NFO',
       lastEma: null,
       lastVwap: null,
       waitingForConfirmation: null,
@@ -153,10 +160,11 @@ export class NiftyOptionsScalperEngine {
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Nifty 10-Point Scalper Started — ${config.symbol}:${config.exchange} (Target: +${config.targetPoints} pts, SL: -${config.stopLossPoints} pts, Cost Trail: +${config.trailCostAtPoints} pts)`);
+    this.log(state, `▶ Nifty 10-Point Scalper Started — ${config.symbol}:${config.exchange} (Target: +${config.targetPoints} pts, SL: -${config.stopLossPoints} pts, Cost Trail: +${config.trailCostAtPoints} pts, Strike: ${config.moneyness || 'ITM'})`);
+    this.log(state, `⚡ High-Speed Engine active: 3-second tick frequency, RSI & Range choppiness filters enabled`);
     await this.persistLogs(state);
 
-    const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
+    const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 3_000);
     this.timers.set(strategyId, timer);
 
     this.initialCatchup(strategyId).then(() => {
@@ -279,6 +287,7 @@ export class NiftyOptionsScalperEngine {
 
       const emas = this.calculateEMA(candles, emaPeriod);
       const vwaps = this.calculateVWAP(candles, state.config.vwapSource || 'close');
+      const rsis = this.calculateRSI(candles, 14);
 
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
 
@@ -316,12 +325,14 @@ export class NiftyOptionsScalperEngine {
 
         const currentEma = emas[i];
         const currentVwap = vwaps[i];
+        const currentRsi = rsis[i];
         if (currentEma === null || currentVwap === null) continue;
 
         // Active Position Management in Catch-up
         if (state.entryTriggered) {
           const optSymbol = state.optionSymbol!;
-          const rawData = await client.getHistoricalData(optSymbol, 'NFO', '5minute', new Date(state.setupTimestamp || currentCandle.date), now);
+          const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
+          const rawData = await client.getHistoricalData(optSymbol, exch, '5minute', new Date(state.setupTimestamp || currentCandle.date), now);
           const optCandles: Candle[] = (rawData || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
           const optCandle = optCandles.find(c => c.date.getTime() === currentCandle.date.getTime());
 
@@ -378,6 +389,10 @@ export class NiftyOptionsScalperEngine {
         if (prevDateStr !== targetSessionDateStr) continue;
 
         const prevEma = emas[i - 1], prevVwap = vwaps[i - 1];
+        const candleRange = currentCandle.high - currentCandle.low;
+
+        // Skip micro / flat candles (< 8 pts) to avoid choppy sideways whipsaws
+        if (state.config.enableRangeFilter !== false && candleRange < 8) continue;
 
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';
@@ -419,8 +434,17 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
+        // Apply RSI Momentum Confirmation Filter
+        if (triggerSide && state.config.enableRsiFilter !== false && currentRsi !== null) {
+          if (triggerSide === 'BUY' && currentRsi < 50) {
+            triggerSide = null; // Filter out weak momentum CE
+          } else if (triggerSide === 'SELL' && currentRsi > 50) {
+            triggerSide = null; // Filter out weak momentum PE
+          }
+        }
+
         if (triggerSide) {
-          this.log(state, `🚀 (Catch-up) Detected ${setupName} on ${this.formatTime(currentCandle.date)}! Executing 10-point Option Trade...`);
+          this.log(state, `🚀 (Catch-up) Detected ${setupName} on ${this.formatTime(currentCandle.date)} (RSI: ${currentRsi?.toFixed(1) || 'N/A'}, Range: ${candleRange.toFixed(1)} pts)! Executing 10-point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, triggerPriceLevel, new Date(currentCandle.date), new Date(prevCandle.date), currentCandle.low, currentCandle.high);
         }
       }
@@ -484,11 +508,14 @@ export class NiftyOptionsScalperEngine {
         state.lastProcessedTimestamp = lastClosedCandleTime;
         const emas = this.calculateEMA(closedCandles, config.emaPeriod || 15);
         const vwaps = this.calculateVWAP(closedCandles, config.vwapSource || 'close');
+        const rsis = this.calculateRSI(closedCandles, 14);
 
         const currEma = emas[lastIdx], prevEma = emas[lastIdx - 1];
         const currVwap = vwaps[lastIdx], prevVwap = vwaps[lastIdx - 1];
+        const currRsi = rsis[lastIdx];
         const currentCandle = closedCandles[lastIdx];
         const prevCandle = closedCandles[lastIdx - 1];
+        const candleRange = currentCandle.high - currentCandle.low;
 
         const todayStr = this.getIstDateStr(now);
         const currDateStr = this.getIstDateStr(currentCandle.date);
@@ -500,48 +527,62 @@ export class NiftyOptionsScalperEngine {
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';
 
-        // 1. EMA-VWAP Crossover Trigger (requires price confirmation)
-        if (prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
-          if (prevEma <= prevVwap && currEma > currVwap && currentCandle.close >= currVwap && currentCandle.close >= currEma && currentCandle.close >= currentCandle.open) {
-            triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover';
-          } else if (prevEma >= prevVwap && currEma < currVwap && currentCandle.close <= currVwap && currentCandle.close <= currEma && currentCandle.close <= currentCandle.open) {
-            triggerSide = 'SELL'; setupName = 'EMA-VWAP Bearish Crossover';
-          }
-        }
+        // Skip micro / flat candles (< 8 pts) to avoid choppy sideways whipsaws
+        const isRangeValid = config.enableRangeFilter === false || candleRange >= 8;
 
-        // 2. VWAP / 15-EMA Pullback Rejection (Captures CE & PE continuation)
-        if (!triggerSide && config.enablePullbackTrigger && currEma !== null && currVwap !== null) {
-          const candleHhmm = this.getIstHhmm(currentCandle.date);
-          if (candleHhmm >= 9 * 60 + 35) {
-            const isBearishRegime = currEma < currVwap && currentCandle.close < currEma && currentCandle.close < currVwap;
-            const isBullishRegime = currEma > currVwap && currentCandle.close > currEma && currentCandle.close > currVwap;
-
-            const touchedVwapOrEmaBearish = currentCandle.high >= currEma - 8 && currentCandle.high <= Math.max(currEma, currVwap) + 10;
-            const touchedVwapOrEmaBullish = currentCandle.low <= currEma + 8 && currentCandle.low >= Math.min(currEma, currVwap) - 10;
-
-            if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
-              triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection';
-            } else if (isBullishRegime && touchedVwapOrEmaBullish && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high) {
-              triggerSide = 'BUY'; setupName = 'VWAP/EMA Pullback CE Rejection';
+        if (isRangeValid) {
+          // 1. EMA-VWAP Crossover Trigger (requires price confirmation)
+          if (prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
+            if (prevEma <= prevVwap && currEma > currVwap && currentCandle.close >= currVwap && currentCandle.close >= currEma && currentCandle.close >= currentCandle.open) {
+              triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover';
+            } else if (prevEma >= prevVwap && currEma < currVwap && currentCandle.close <= currVwap && currentCandle.close <= currEma && currentCandle.close <= currentCandle.open) {
+              triggerSide = 'SELL'; setupName = 'EMA-VWAP Bearish Crossover';
             }
           }
-        }
 
-        // 3. 15-Min Opening Range Breakdown (ORB)
-        let orbHigh: number | null = null;
-        let orbLow: number | null = null;
-        const todayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) === todayStr);
-        if (todayCandles.length >= 3) {
-          const orbCandles = todayCandles.slice(0, 3);
-          orbHigh = Math.max(...orbCandles.map(c => c.high));
-          orbLow = Math.min(...orbCandles.map(c => c.low));
-        }
+          // 2. VWAP / 15-EMA Pullback Rejection (Captures CE & PE continuation)
+          if (!triggerSide && config.enablePullbackTrigger && currEma !== null && currVwap !== null) {
+            const candleHhmm = this.getIstHhmm(currentCandle.date);
+            if (candleHhmm >= 9 * 60 + 35) {
+              const isBearishRegime = currEma < currVwap && currentCandle.close < currEma && currentCandle.close < currVwap;
+              const isBullishRegime = currEma > currVwap && currentCandle.close > currEma && currentCandle.close > currVwap;
 
-        if (!triggerSide && config.enableOrbTrigger && orbLow !== null && orbHigh !== null && lastIdx >= 3) {
-          if (currentCandle.close < orbLow && prevCandle.close >= orbLow) {
-            triggerSide = 'SELL'; setupName = '15-Min ORB Breakdown (PE)';
-          } else if (currentCandle.close > orbHigh && prevCandle.close <= orbHigh) {
-            triggerSide = 'BUY'; setupName = '15-Min ORB Breakout (CE)';
+              const touchedVwapOrEmaBearish = currentCandle.high >= currEma - 8 && currentCandle.high <= Math.max(currEma, currVwap) + 10;
+              const touchedVwapOrEmaBullish = currentCandle.low <= currEma + 8 && currentCandle.low >= Math.min(currEma, currVwap) - 10;
+
+              if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
+                triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection';
+              } else if (isBullishRegime && touchedVwapOrEmaBullish && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high) {
+                triggerSide = 'BUY'; setupName = 'VWAP/EMA Pullback CE Rejection';
+              }
+            }
+          }
+
+          // 3. 15-Min Opening Range Breakdown (ORB)
+          let orbHigh: number | null = null;
+          let orbLow: number | null = null;
+          const todayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) === todayStr);
+          if (todayCandles.length >= 3) {
+            const orbCandles = todayCandles.slice(0, 3);
+            orbHigh = Math.max(...orbCandles.map(c => c.high));
+            orbLow = Math.min(...orbCandles.map(c => c.low));
+          }
+
+          if (!triggerSide && config.enableOrbTrigger && orbLow !== null && orbHigh !== null && lastIdx >= 3) {
+            if (currentCandle.close < orbLow && prevCandle.close >= orbLow) {
+              triggerSide = 'SELL'; setupName = '15-Min ORB Breakdown (PE)';
+            } else if (currentCandle.close > orbHigh && prevCandle.close <= orbHigh) {
+              triggerSide = 'BUY'; setupName = '15-Min ORB Breakout (CE)';
+            }
+          }
+
+          // Apply RSI Momentum Confirmation Filter
+          if (triggerSide && config.enableRsiFilter !== false && currRsi !== null) {
+            if (triggerSide === 'BUY' && currRsi < 50) {
+              triggerSide = null; // Filter out weak momentum CE
+            } else if (triggerSide === 'SELL' && currRsi > 50) {
+              triggerSide = null; // Filter out weak momentum PE
+            }
           }
         }
 
@@ -549,10 +590,10 @@ export class NiftyOptionsScalperEngine {
         const closeTimeStr = this.formatCandleCloseTime(currentCandle.date, 5);
 
         if (triggerSide) {
-          this.log(state, `🚀 Triggered ${setupName} on 5m candle [${rangeStr}] (closed at ${closeTimeStr})! Placing 10-Point Option Trade...`);
+          this.log(state, `🚀 Triggered ${setupName} on 5m candle [${rangeStr}] (closed at ${closeTimeStr}, RSI: ${currRsi?.toFixed(1) || 'N/A'}, Range: ${candleRange.toFixed(1)} pts)! Placing 10-Point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, currentCandle.close);
         } else {
-          this.log(state, `👀 Scanned 5-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} (No crossover signal)`);
+          this.log(state, `👀 Scanned 5-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | RSI: ${currRsi?.toFixed(1) || 'N/A'} (No crossover signal)`);
         }
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
@@ -571,13 +612,14 @@ export class NiftyOptionsScalperEngine {
       return;
     }
 
+    const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     let optionEntryPrice = 100;
     if (triggerTime) {
-      const histPrice = await this.getHistoricalOptionPrice(client, optSym, 'NFO', triggerTime);
+      const histPrice = await this.getHistoricalOptionPrice(client, optSym, exch, triggerTime);
       if (histPrice !== null) optionEntryPrice = histPrice;
     } else {
-      const q = await kite.getLTP([`NFO:${optSym}`]);
-      if (q[`NFO:${optSym}`]?.last_price) optionEntryPrice = q[`NFO:${optSym}`].last_price;
+      const q = await kite.getLTP([`${exch}:${optSym}`]);
+      if (q[`${exch}:${optSym}`]?.last_price) optionEntryPrice = q[`${exch}:${optSym}`].last_price;
     }
 
     const entry = this.roundTick(optionEntryPrice);
@@ -593,20 +635,20 @@ export class NiftyOptionsScalperEngine {
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
     state.isCostSlTrailed = false;
 
-    this.log(state, `📋 Placed Option Trade: ${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+10 pts): ₹${tgt.toFixed(2)} | Initial SL (-7 pts): ₹${sl.toFixed(2)}`);
+    this.log(state, `📋 Placed Option Trade: ${exch}:${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+10 pts): ₹${tgt.toFixed(2)} | Initial SL (-7 pts): ₹${sl.toFixed(2)}`);
 
     const tStart = performance.now();
     try {
       const isHistorical = !!triggerTime;
       const orderId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ symbol: optSym, exchange: 'NFO', product: config.product, qty: config.qty, side: 'BUY', orderType: 'MARKET' });
+        : await client.placeOrder({ symbol: optSym, exchange: exch, product: config.product, qty: config.qty, side: 'BUY', orderType: 'MARKET' });
 
       const elapsed = (performance.now() - tStart).toFixed(2);
       this.log(state, `⚡ Order punched in ${elapsed} ms [${state.isPaperTrade ? 'Paper Trade' : 'Live Broker Execution'}] (Order ID: ${orderId})`);
 
       // Track order in DB asynchronously (non-blocking for ultra-fast tick startup)
-      this.trackOrderInDB(state, 'BUY', optSym, 'NFO', config.qty, entry, orderId, triggerTime).catch(() => {});
+      this.trackOrderInDB(state, 'BUY', optSym, exch, config.qty, entry, orderId, triggerTime).catch(() => {});
 
       if (!isHistorical) {
         await this.startRealtimeMonitor(state, client);
@@ -667,7 +709,21 @@ export class NiftyOptionsScalperEngine {
         this.log(state, `🔒 Option profit hit +7 pts! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
       }
 
-      // 4. Check Target (+10 Points)
+      // 4. Stagnant Trade / Theta Decay Timeout (Exit flat trade after 15m without momentum)
+      const stagnancyMs = (state.config.stagnancyMinutes || 15) * 60 * 1000;
+      const holdingTime = now - (state.setupTimestamp || now);
+      if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs) {
+        if (pnlPoints >= -3 && pnlPoints <= 2) {
+          isExiting = true;
+          this.log(state, `⌛ Stagnant Trade Timeout (${Math.round(holdingTime / 60000)}m flat). Exiting at ₹${currentPrice.toFixed(2)} (P&L: ${pnlPoints.toFixed(1)} pts) to prevent theta decay.`);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
+          await this.persistLogs(state);
+          return;
+        }
+      }
+
+      // 5. Check Target (+10 Points)
       if (currentPrice >= state.targetPrice!) {
         isExiting = true;
         this.log(state, `🎯 Target Hit (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}`);
@@ -678,7 +734,7 @@ export class NiftyOptionsScalperEngine {
         return;
       }
 
-      // 5. Check Stop Loss
+      // 6. Check Stop Loss
       if (currentPrice <= state.stopLossPrice!) {
         isExiting = true;
         this.log(state, `🛑 Stop Loss Hit (${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}`);
@@ -712,7 +768,8 @@ export class NiftyOptionsScalperEngine {
     if (!state.optionSymbol || !state.entryTriggered) return;
 
     const symbol = state.optionSymbol;
-    const key = `NFO:${symbol}`;
+    const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
+    const key = `${exch}:${symbol}`;
 
     // 1. 3:05 PM Cutoff
     if (this.getIstHhmm(new Date()) >= 15 * 60 + 5) {
@@ -753,10 +810,31 @@ export class NiftyOptionsScalperEngine {
     state.currentPnlPct = pnlPct;
     state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-    if (pnlPoints >= (state.config.trailCostAtPoints || 5) && !state.isCostSlTrailed) {
+    // 2. Breakeven Trailing (+4 pts)
+    if (pnlPoints >= (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
       state.isCostSlTrailed = true;
       state.stopLossPrice = state.entryPrice;
-      this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)})`);
+      this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints || 4} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+    }
+
+    // 3. Profit Lock (+7 pts)
+    if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 4) {
+      state.stopLossPrice = state.entryPrice! + 4;
+      this.log(state, `🔒 Option profit hit +7 pts! Locked +4 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹520 Profit Guaranteed!`);
+    }
+
+    // 4. Stagnant Trade / Theta Decay Timeout
+    const now = Date.now();
+    const stagnancyMs = (state.config.stagnancyMinutes || 15) * 60 * 1000;
+    const holdingTime = now - (state.setupTimestamp || now);
+    if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs) {
+      if (pnlPoints >= -3 && pnlPoints <= 2) {
+        this.log(state, `⌛ Stagnant Trade Timeout in poll (${Math.round(holdingTime / 60000)}m flat). Exiting at ₹${currentPrice.toFixed(2)}.`);
+        this.stopRealtimeMonitor(state);
+        await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
+        await this.persistLogs(state);
+        return;
+      }
     }
 
     const sign = pnlRs >= 0 ? '+' : '';
@@ -777,14 +855,41 @@ export class NiftyOptionsScalperEngine {
   private async exitPosition(state: ScalperStrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE') {
     const symbol = state.optionSymbol!;
     const qty = state.config.qty;
+    const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     this.stopRealtimeMonitor(state);
+
+    // ── 0. Prevent Duplicate Exit Order if User Already Exited on Zerodha ──────
+    if (!state.isPaperTrade && client) {
+      try {
+        const kite = client['kite'];
+        if (kite && kite.getPositions) {
+          const pos = await kite.getPositions().catch(() => null);
+          const allPos = [...(pos?.net || []), ...(pos?.day || [])];
+          const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
+          const liveNetQty = currentPos ? currentPos.quantity : 0;
+
+          if (liveNetQty <= 0 && reason !== 'FORCE_CLOSE') {
+            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Net Qty: 0). Skipping duplicate exit order to prevent order misplacement.`);
+            state.entryTriggered = null;
+            state.optionSymbol = null;
+            state.entryPrice = null;
+            state.stopLossPrice = null;
+            state.targetPrice = null;
+            state.isCostSlTrailed = false;
+            return;
+          }
+        }
+      } catch (err: any) {
+        this.log(state, `⚠ Position sync check notice: ${err.message}`);
+      }
+    }
 
     try {
       const exitOrderId = state.isPaperTrade
         ? `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ symbol, exchange: 'NFO', product: state.config.product, qty, side: 'SELL', orderType: 'MARKET' });
+        : await client.placeOrder({ symbol, exchange: exch, product: state.config.product, qty, side: 'SELL', orderType: 'MARKET' });
 
-      await this.trackOrderInDB(state, 'SELL', symbol, 'NFO', qty, exitPrice, exitOrderId);
+      await this.trackOrderInDB(state, 'SELL', symbol, exch, qty, exitPrice, exitOrderId);
       state.tradesPlacedToday++;
 
       state.entryTriggered = null;
@@ -801,11 +906,12 @@ export class NiftyOptionsScalperEngine {
   private async exitPositionHistorical(state: ScalperStrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET', timestamp: Date) {
     const symbol = state.optionSymbol!;
     const qty = state.config.qty;
+    const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     this.stopRealtimeMonitor(state);
 
     try {
       const exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
-      await this.trackOrderInDB(state, 'SELL', symbol, 'NFO', qty, exitPrice, exitOrderId, timestamp);
+      await this.trackOrderInDB(state, 'SELL', symbol, exch, qty, exitPrice, exitOrderId, timestamp);
       state.tradesPlacedToday++;
 
       state.entryTriggered = null;
@@ -910,6 +1016,34 @@ export class NiftyOptionsScalperEngine {
     return vwaps;
   }
 
+  private calculateRSI(candles: Candle[], period: number = 14): (number | null)[] {
+    const rsis: (number | null)[] = new Array(candles.length).fill(null);
+    if (candles.length < period + 1) return rsis;
+
+    let gains = 0;
+    let losses = 0;
+    for (let i = 1; i <= period; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      if (diff >= 0) gains += diff;
+      else losses -= diff;
+    }
+
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+    rsis[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
+
+    for (let i = period + 1; i < candles.length; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      const gain = diff > 0 ? diff : 0;
+      const loss = diff < 0 ? -diff : 0;
+
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+      rsis[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
+    }
+    return rsis;
+  }
+
   private async fetchCandles(client: any, config: any, interval: string, now: Date, symbol?: string, exchange?: string): Promise<Candle[]> {
     const istDateStr = this.getIstDateStr(now);
     const from = new Date(`${istDateStr}T09:15:00.000+05:30`);
@@ -937,12 +1071,17 @@ export class NiftyOptionsScalperEngine {
   private async findOptionSymbol(client: any, state: ScalperStrategyState, spotPrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
-    const underlying = upper.includes('BANKNIFTY') ? 'BANKNIFTY' : 'NIFTY';
-    const exchange = 'NFO';
-    const segment = 'NFO-OPT';
+    let underlying = 'NIFTY';
+    if (upper.includes('BANKNIFTY')) underlying = 'BANKNIFTY';
+    else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
+    else if (upper.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
+    else if (upper.includes('SENSEX')) underlying = 'SENSEX';
+
+    const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
+    const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
 
     const instruments = await client.getInstruments(exchange);
-    const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && i.segment === segment);
+    const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && (i.segment === segment || i.segment === `${exchange}-OPT`));
     if (options.length === 0) return null;
 
     const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -958,11 +1097,32 @@ export class NiftyOptionsScalperEngine {
     const nearestExpiry = uniqueExpiries[0];
     const filteredOptions = options.filter((i: any) => getExpiryStr(i.expiry) === nearestExpiry);
 
-    // ATM strike matching
-    const step = 50;
+    const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : (underlying === 'MIDCPNIFTY' ? 25 : 100);
     const atm = Math.round(spotPrice / step) * step;
-    const match = filteredOptions.find((i: any) => Number(i.strike) === atm);
-    if (match) return match.tradingsymbol;
+
+    // 1. Premium range search (if minPremium and maxPremium specified)
+    if (config.minPremium && config.maxPremium) {
+      const candidateStrikes = [atm, atm + step, atm - step, atm + 2 * step, atm - 2 * step, atm + 3 * step, atm - 3 * step];
+      for (const strike of candidateStrikes) {
+        const opt = filteredOptions.find((i: any) => Number(i.strike) === strike);
+        if (!opt) continue;
+        const p = triggerTime ? await this.getHistoricalOptionPrice(client, opt.tradingsymbol, exchange, triggerTime) : null;
+        if (p !== null && p >= config.minPremium && p <= config.maxPremium) {
+          return opt.tradingsymbol;
+        }
+      }
+    }
+
+    // 2. High-Delta Slight ITM / ATM strike selection (Delta >= 0.55 for fastest 10-point capture)
+    const useItm = config.moneyness === 'ITM';
+    const targetStrike = useItm ? (type === 'CE' ? (atm - step) : (atm + step)) : atm;
+
+    const itmMatch = filteredOptions.find((i: any) => Number(i.strike) === targetStrike);
+    if (itmMatch) return itmMatch.tradingsymbol;
+
+    // 3. Exact ATM Fallback
+    const atmMatch = filteredOptions.find((i: any) => Number(i.strike) === atm);
+    if (atmMatch) return atmMatch.tradingsymbol;
 
     let closest: any = null, closestD = Infinity;
     for (const opt of filteredOptions) {
@@ -994,11 +1154,16 @@ export class NiftyOptionsScalperEngine {
 
   private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
     const upperSymbol = baseSymbol.toUpperCase().trim();
-    const exchange = 'NFO';
-    const segment = 'NFO-FUT';
-    const underlying = upperSymbol.includes('BANK') ? 'BANKNIFTY' : 'NIFTY';
+    let underlying = 'NIFTY';
+    if (upperSymbol.includes('BANK')) underlying = 'BANKNIFTY';
+    else if (upperSymbol.includes('FIN')) underlying = 'FINNIFTY';
+    else if (upperSymbol.includes('MIDCP')) underlying = 'MIDCPNIFTY';
+    else if (upperSymbol.includes('SENSEX')) underlying = 'SENSEX';
+
+    const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
+    const segment = underlying === 'SENSEX' ? 'BFO-FUT' : 'NFO-FUT';
     const instruments = await client.getInstruments(exchange);
-    const futures = instruments.filter((i: any) => i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment);
+    const futures = instruments.filter((i: any) => i.name === underlying && i.instrument_type === 'FUT' && (i.segment === segment || i.segment === `${exchange}-FUT`));
     if (futures.length === 0) throw new Error(`No ${exchange} future for ${baseSymbol}`);
     const sorted = futures.sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
     return { symbol: sorted[0].tradingsymbol, exchange };

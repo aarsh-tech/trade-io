@@ -112,6 +112,11 @@ export interface NiftyOptionsScalperConfig {
   maxPremium?: number;
   enableOrbTrigger?: boolean;
   enablePullbackTrigger?: boolean;
+  enableRsiFilter?: boolean;       // Require 5m RSI confirmation (RSI >= 50 for CE, <= 50 for PE) (default: true)
+  enableRangeFilter?: boolean;     // Skip candles with small range < 8 pts to avoid choppiness (default: true)
+  enableStagnancyExit?: boolean;   // Auto-exit if trade stays flat for 15+ mins without momentum (default: true)
+  stagnancyMinutes?: number;       // Max minutes to hold stagnant trade (default: 15)
+  moneyness?: 'ATM' | 'ITM';       // Option strike moneyness ('ITM' gives Delta >= 0.55 for fastest 10-pt target) (default: 'ITM')
 }
 
 // ─── Stock Options Buying Config ───────────────────────────────────────────────
