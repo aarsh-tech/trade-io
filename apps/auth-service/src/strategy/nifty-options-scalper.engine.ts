@@ -249,7 +249,7 @@ export class NiftyOptionsScalperEngine {
       try {
         const ltpData = await client['kite'].getLTP([`NFO:${state.optionSymbol}`]);
         exitPrice = ltpData[`NFO:${state.optionSymbol}`]?.last_price || exitPrice;
-      } catch {}
+      } catch { }
     }
 
     this.log(state, `⚡ Manual Instant Square-Off requested by user @ ₹${exitPrice.toFixed(2)}`);
@@ -287,7 +287,7 @@ export class NiftyOptionsScalperEngine {
 
       const emas = this.calculateEMA(candles, emaPeriod);
       const vwaps = this.calculateVWAP(candles, state.config.vwapSource || 'close');
-      const rsis = this.calculateRSI(candles, 9);
+      const stochRsis = this.calculateStochRSI(candles, 14, 14, 3, 3);
 
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
 
@@ -325,7 +325,11 @@ export class NiftyOptionsScalperEngine {
 
         const currentEma = emas[i];
         const currentVwap = vwaps[i];
-        const currentRsi = rsis[i];
+        const currStoch = stochRsis[i];
+        const prevStoch = stochRsis[i - 1];
+        const currK = currStoch?.k ?? null;
+        const currD = currStoch?.d ?? null;
+        const prevK = prevStoch?.k ?? null;
         if (currentEma === null || currentVwap === null) continue;
 
         // Active Position Management in Catch-up
@@ -413,7 +417,7 @@ export class NiftyOptionsScalperEngine {
           if (candleHhmm >= 9 * 60 + 35) {
             const isBearishRegime = currentEma < currentVwap && currentCandle.close < currentEma && currentCandle.close < currentVwap;
             const isBullishRegime = currentEma > currentVwap && currentCandle.close > currentEma && currentCandle.close > currentVwap;
-            
+
             const touchedVwapOrEmaBearish = currentCandle.high >= currentEma - 8 && currentCandle.high <= Math.max(currentEma, currentVwap) + 10;
             const touchedVwapOrEmaBullish = currentCandle.low <= currentEma + 8 && currentCandle.low >= Math.min(currentEma, currentVwap) - 10;
 
@@ -434,20 +438,33 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        // Apply Optimized RSI Momentum & Exhaustion Filter (53/47 Power Zones + Slope + Overbought/Oversold Guard)
-        const prevRsi = rsis[i - 1];
-        if (triggerSide && state.config.enableRsiFilter !== false && currentRsi !== null) {
+        // Apply Optimized Stochastic RSI (14, 14, 3, 3) Momentum Confirmation Filter
+        if (triggerSide && state.config.enableRsiFilter !== false && currK !== null && currD !== null) {
           if (triggerSide === 'BUY') {
-            const isCeMomentum = currentRsi >= 53 && currentRsi <= 75 && (prevRsi === null || currentRsi >= prevRsi - 0.5);
-            if (!isCeMomentum) triggerSide = null; // Filter out weak or exhausted CE
+            const isKAboveD = currK >= currD - 0.5;
+            const isRising = prevK === null || currK >= prevK - 1.0;
+            const isNotToppedOut = currK <= 92;
+            const isBullishZone = (currK <= 45 && (prevK === null || currK >= prevK)) || (currK >= 50);
+
+            if (!(isKAboveD && isRising && isNotToppedOut && isBullishZone)) {
+              triggerSide = null; // Filter out weak CE
+            }
           } else if (triggerSide === 'SELL') {
-            const isPeMomentum = currentRsi <= 47 && currentRsi >= 25 && (prevRsi === null || currentRsi <= prevRsi + 0.5);
-            if (!isPeMomentum) triggerSide = null; // Filter out weak or oversold PE
+            const isKBelowD = currK <= currD + 0.5;
+            const isFalling = prevK === null || currK <= prevK + 1.0;
+            const isNotBottomedOut = currK >= 8;
+            const isBearishZone = (currK >= 55 && (prevK === null || currK <= prevK)) || (currK <= 50);
+
+            if (!(isKBelowD && isFalling && isNotBottomedOut && isBearishZone)) {
+              triggerSide = null; // Filter out weak PE
+            }
           }
         }
 
         if (triggerSide) {
-          this.log(state, `🚀 (Catch-up) Detected ${setupName} on ${this.formatTime(currentCandle.date)} (RSI: ${currentRsi?.toFixed(1) || 'N/A'}, Range: ${candleRange.toFixed(1)} pts)! Executing 10-point Option Trade...`);
+          const kStr = currK !== null ? currK.toFixed(1) : 'N/A';
+          const dStr = currD !== null ? currD.toFixed(1) : 'N/A';
+          this.log(state, `🚀 (Catch-up) Detected ${setupName} on ${this.formatTime(currentCandle.date)} (StochRSI %K: ${kStr}, %D: ${dStr}, Range: ${candleRange.toFixed(1)} pts)! Executing 10-point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, triggerPriceLevel, new Date(currentCandle.date), new Date(prevCandle.date), currentCandle.low, currentCandle.high);
         }
       }
@@ -511,11 +528,13 @@ export class NiftyOptionsScalperEngine {
         state.lastProcessedTimestamp = lastClosedCandleTime;
         const emas = this.calculateEMA(closedCandles, config.emaPeriod || 15);
         const vwaps = this.calculateVWAP(closedCandles, config.vwapSource || 'close');
-        const rsis = this.calculateRSI(closedCandles, 9);
+        const stochRsis = this.calculateStochRSI(closedCandles, 14, 14, 3, 3);
 
         const currEma = emas[lastIdx], prevEma = emas[lastIdx - 1];
         const currVwap = vwaps[lastIdx], prevVwap = vwaps[lastIdx - 1];
-        const currRsi = rsis[lastIdx], prevRsi = rsis[lastIdx - 1];
+        const currStoch = stochRsis[lastIdx], prevStoch = stochRsis[lastIdx - 1];
+        const currK = currStoch?.k ?? null, currD = currStoch?.d ?? null;
+        const prevK = prevStoch?.k ?? null;
         const currentCandle = closedCandles[lastIdx];
         const prevCandle = closedCandles[lastIdx - 1];
         const candleRange = currentCandle.high - currentCandle.low;
@@ -579,26 +598,40 @@ export class NiftyOptionsScalperEngine {
             }
           }
 
-          // Apply Optimized RSI Momentum & Exhaustion Filter (53/47 Power Zones + Slope + Overbought/Oversold Guard)
-          if (triggerSide && config.enableRsiFilter !== false && currRsi !== null) {
+          // Apply Optimized Stochastic RSI (14, 14, 3, 3) Momentum Confirmation Filter
+          if (triggerSide && config.enableRsiFilter !== false && currK !== null && currD !== null) {
             if (triggerSide === 'BUY') {
-              const isCeMomentum = currRsi >= 53 && currRsi <= 75 && (prevRsi === null || currRsi >= prevRsi - 0.5);
-              if (!isCeMomentum) triggerSide = null; // Filter out weak or exhausted CE
+              const isKAboveD = currK >= currD - 0.5;
+              const isRising = prevK === null || currK >= prevK - 1.0;
+              const isNotToppedOut = currK <= 92;
+              const isBullishZone = (currK <= 45 && (prevK === null || currK >= prevK)) || (currK >= 50);
+
+              if (!(isKAboveD && isRising && isNotToppedOut && isBullishZone)) {
+                triggerSide = null; // Filter out weak CE
+              }
             } else if (triggerSide === 'SELL') {
-              const isPeMomentum = currRsi <= 47 && currRsi >= 25 && (prevRsi === null || currRsi <= prevRsi + 0.5);
-              if (!isPeMomentum) triggerSide = null; // Filter out weak or oversold PE
+              const isKBelowD = currK <= currD + 0.5;
+              const isFalling = prevK === null || currK <= prevK + 1.0;
+              const isNotBottomedOut = currK >= 8;
+              const isBearishZone = (currK >= 55 && (prevK === null || currK <= prevK)) || (currK <= 50);
+
+              if (!(isKBelowD && isFalling && isNotBottomedOut && isBearishZone)) {
+                triggerSide = null; // Filter out weak PE
+              }
             }
           }
         }
 
         const rangeStr = this.formatCandleRange(currentCandle.date, 5);
         const closeTimeStr = this.formatCandleCloseTime(currentCandle.date, 5);
+        const kStr = currK !== null ? currK.toFixed(1) : 'N/A';
+        const dStr = currD !== null ? currD.toFixed(1) : 'N/A';
 
         if (triggerSide) {
-          this.log(state, `🚀 Triggered ${setupName} on 5m candle [${rangeStr}] (closed at ${closeTimeStr}, RSI: ${currRsi?.toFixed(1) || 'N/A'}, Range: ${candleRange.toFixed(1)} pts)! Placing 10-Point Option Trade...`);
+          this.log(state, `🚀 Triggered ${setupName} on 5m candle [${rangeStr}] (closed at ${closeTimeStr}, StochRSI %K: ${kStr}, %D: ${dStr}, Range: ${candleRange.toFixed(1)} pts)! Placing 10-Point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, currentCandle.close);
         } else {
-          this.log(state, `👀 Scanned 5-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | RSI: ${currRsi?.toFixed(1) || 'N/A'} (No crossover signal)`);
+          this.log(state, `👀 Scanned 5-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | StochRSI: ${kStr}/${dStr} (No crossover signal)`);
         }
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
@@ -653,7 +686,7 @@ export class NiftyOptionsScalperEngine {
       this.log(state, `⚡ Order punched in ${elapsed} ms [${state.isPaperTrade ? 'Paper Trade' : 'Live Broker Execution'}] (Order ID: ${orderId})`);
 
       // Track order in DB asynchronously (non-blocking for ultra-fast tick startup)
-      this.trackOrderInDB(state, 'BUY', optSym, exch, config.qty, entry, orderId, triggerTime).catch(() => {});
+      this.trackOrderInDB(state, 'BUY', optSym, exch, config.qty, entry, orderId, triggerTime).catch(() => { });
 
       if (!isHistorical) {
         await this.startRealtimeMonitor(state, client);
@@ -782,7 +815,7 @@ export class NiftyOptionsScalperEngine {
       try {
         const ltpData = await kite.getLTP([key]);
         if (ltpData[key]?.last_price) exitPrice = ltpData[key].last_price;
-      } catch {}
+      } catch { }
       this.log(state, `⏰ 3:05 PM Cutoff reached in poll monitor! Squaring off at ₹${exitPrice.toFixed(2)}`);
       this.stopRealtimeMonitor(state);
       await this.exitPosition(state, client, exitPrice, 'FORCE_CLOSE');
@@ -1047,6 +1080,78 @@ export class NiftyOptionsScalperEngine {
       rsis[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
     }
     return rsis;
+  }
+
+  /**
+   * Calculates Stochastic RSI (14, 14, 3, 3) returning %K and %D lines (0 - 100)
+   */
+  private calculateStochRSI(
+    candles: Candle[],
+    rsiPeriod: number = 14,
+    stochPeriod: number = 14,
+    smoothK: number = 3,
+    smoothD: number = 3
+  ): Array<{ k: number | null; d: number | null }> {
+    const n = candles.length;
+    const result: Array<{ k: number | null; d: number | null }> = new Array(n).fill({ k: null, d: null });
+    const rsis = this.calculateRSI(candles, rsiPeriod);
+
+    const rawStoch: (number | null)[] = new Array(n).fill(null);
+
+    for (let i = rsiPeriod + stochPeriod - 1; i < n; i++) {
+      let minRsi = Infinity;
+      let maxRsi = -Infinity;
+      let valid = true;
+
+      for (let j = i - stochPeriod + 1; j <= i; j++) {
+        const val = rsis[j];
+        if (val === null) { valid = false; break; }
+        if (val < minRsi) minRsi = val;
+        if (val > maxRsi) maxRsi = val;
+      }
+
+      if (valid && minRsi !== Infinity && maxRsi !== -Infinity) {
+        const curr = rsis[i]!;
+        rawStoch[i] = maxRsi === minRsi ? 50 : ((curr - minRsi) / (maxRsi - minRsi)) * 100;
+      }
+    }
+
+    // Calculate %K (3-period SMA of rawStoch)
+    const kValues: (number | null)[] = new Array(n).fill(null);
+    for (let i = 0; i < n; i++) {
+      if (i < smoothK - 1) continue;
+      let sum = 0;
+      let count = 0;
+      for (let j = i - smoothK + 1; j <= i; j++) {
+        if (rawStoch[j] !== null) {
+          sum += rawStoch[j]!;
+          count++;
+        }
+      }
+      if (count === smoothK) {
+        kValues[i] = sum / smoothK;
+      }
+    }
+
+    // Calculate %D (3-period SMA of %K)
+    for (let i = 0; i < n; i++) {
+      if (kValues[i] === null) {
+        result[i] = { k: null, d: null };
+        continue;
+      }
+      let sum = 0;
+      let count = 0;
+      for (let j = i - smoothD + 1; j <= i; j++) {
+        if (j >= 0 && kValues[j] !== null) {
+          sum += kValues[j]!;
+          count++;
+        }
+      }
+      const dVal = count === smoothD ? sum / smoothD : null;
+      result[i] = { k: kValues[i], d: dVal };
+    }
+
+    return result;
   }
 
   private async fetchCandles(client: any, config: any, interval: string, now: Date, symbol?: string, exchange?: string): Promise<Candle[]> {
