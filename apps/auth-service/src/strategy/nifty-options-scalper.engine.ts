@@ -1178,7 +1178,7 @@ export class NiftyOptionsScalperEngine {
     }
   }
 
-  private async findOptionSymbol(client: any, state: ScalperStrategyState, spotPrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
+  private async findOptionSymbol(client: any, state: ScalperStrategyState, futurePrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
     const { config } = state;
     const upper = config.symbol.toUpperCase().trim();
     let underlying = 'NIFTY';
@@ -1208,7 +1208,7 @@ export class NiftyOptionsScalperEngine {
     const filteredOptions = options.filter((i: any) => getExpiryStr(i.expiry) === nearestExpiry);
 
     const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : (underlying === 'MIDCPNIFTY' ? 25 : 100);
-    const atm = Math.round(spotPrice / step) * step;
+    const atm = Math.round(futurePrice / step) * step;
 
     // 1. Premium range search (if minPremium and maxPremium specified)
     if (config.minPremium && config.maxPremium) {
@@ -1236,7 +1236,7 @@ export class NiftyOptionsScalperEngine {
 
     let closest: any = null, closestD = Infinity;
     for (const opt of filteredOptions) {
-      const d = Math.abs(Number(opt.strike) - spotPrice);
+      const d = Math.abs(Number(opt.strike) - futurePrice);
       if (d < closestD) { closestD = d; closest = opt; }
     }
     return closest ? closest.tradingsymbol : null;
