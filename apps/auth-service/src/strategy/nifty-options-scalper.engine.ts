@@ -287,7 +287,7 @@ export class NiftyOptionsScalperEngine {
 
       const emas = this.calculateEMA(candles, emaPeriod);
       const vwaps = this.calculateVWAP(candles, state.config.vwapSource || 'close');
-      const rsis = this.calculateRSI(candles, 14);
+      const rsis = this.calculateRSI(candles, 9);
 
       const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
 
@@ -434,12 +434,15 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        // Apply RSI Momentum Confirmation Filter
+        // Apply Optimized RSI Momentum & Exhaustion Filter (53/47 Power Zones + Slope + Overbought/Oversold Guard)
+        const prevRsi = rsis[i - 1];
         if (triggerSide && state.config.enableRsiFilter !== false && currentRsi !== null) {
-          if (triggerSide === 'BUY' && currentRsi < 50) {
-            triggerSide = null; // Filter out weak momentum CE
-          } else if (triggerSide === 'SELL' && currentRsi > 50) {
-            triggerSide = null; // Filter out weak momentum PE
+          if (triggerSide === 'BUY') {
+            const isCeMomentum = currentRsi >= 53 && currentRsi <= 75 && (prevRsi === null || currentRsi >= prevRsi - 0.5);
+            if (!isCeMomentum) triggerSide = null; // Filter out weak or exhausted CE
+          } else if (triggerSide === 'SELL') {
+            const isPeMomentum = currentRsi <= 47 && currentRsi >= 25 && (prevRsi === null || currentRsi <= prevRsi + 0.5);
+            if (!isPeMomentum) triggerSide = null; // Filter out weak or oversold PE
           }
         }
 
@@ -508,11 +511,11 @@ export class NiftyOptionsScalperEngine {
         state.lastProcessedTimestamp = lastClosedCandleTime;
         const emas = this.calculateEMA(closedCandles, config.emaPeriod || 15);
         const vwaps = this.calculateVWAP(closedCandles, config.vwapSource || 'close');
-        const rsis = this.calculateRSI(closedCandles, 14);
+        const rsis = this.calculateRSI(closedCandles, 9);
 
         const currEma = emas[lastIdx], prevEma = emas[lastIdx - 1];
         const currVwap = vwaps[lastIdx], prevVwap = vwaps[lastIdx - 1];
-        const currRsi = rsis[lastIdx];
+        const currRsi = rsis[lastIdx], prevRsi = rsis[lastIdx - 1];
         const currentCandle = closedCandles[lastIdx];
         const prevCandle = closedCandles[lastIdx - 1];
         const candleRange = currentCandle.high - currentCandle.low;
@@ -576,12 +579,14 @@ export class NiftyOptionsScalperEngine {
             }
           }
 
-          // Apply RSI Momentum Confirmation Filter
+          // Apply Optimized RSI Momentum & Exhaustion Filter (53/47 Power Zones + Slope + Overbought/Oversold Guard)
           if (triggerSide && config.enableRsiFilter !== false && currRsi !== null) {
-            if (triggerSide === 'BUY' && currRsi < 50) {
-              triggerSide = null; // Filter out weak momentum CE
-            } else if (triggerSide === 'SELL' && currRsi > 50) {
-              triggerSide = null; // Filter out weak momentum PE
+            if (triggerSide === 'BUY') {
+              const isCeMomentum = currRsi >= 53 && currRsi <= 75 && (prevRsi === null || currRsi >= prevRsi - 0.5);
+              if (!isCeMomentum) triggerSide = null; // Filter out weak or exhausted CE
+            } else if (triggerSide === 'SELL') {
+              const isPeMomentum = currRsi <= 47 && currRsi >= 25 && (prevRsi === null || currRsi <= prevRsi + 0.5);
+              if (!isPeMomentum) triggerSide = null; // Filter out weak or oversold PE
             }
           }
         }
@@ -1016,7 +1021,7 @@ export class NiftyOptionsScalperEngine {
     return vwaps;
   }
 
-  private calculateRSI(candles: Candle[], period: number = 14): (number | null)[] {
+  private calculateRSI(candles: Candle[], period: number = 9): (number | null)[] {
     const rsis: (number | null)[] = new Array(candles.length).fill(null);
     if (candles.length < period + 1) return rsis;
 
