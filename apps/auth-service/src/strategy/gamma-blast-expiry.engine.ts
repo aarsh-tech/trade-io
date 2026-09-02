@@ -1133,6 +1133,49 @@ export class GammaBlastExpiryEngine {
         }
       } catch { }
     }
+
+    // 3. Underlying Future 15-EMA & VWAP Trend Exhaustion Exit Check (Same as Nifty Engine)
+    if (state.futureSymbol && (state.peakPrice || 0) >= entry * 1.3) {
+      try {
+        const futCandles = await this.fetchFutureCandles(client, state.futureSymbol, state.futureExchange || exchange, new Date());
+        if (futCandles && futCandles.length >= 15) {
+          const futEmas = this.calculateEMA(futCandles, state.config.emaPeriod || 15);
+          const futVwaps = this.calculateVWAP(futCandles, 'hlc3');
+
+          const lastIdx = futCandles.length - 1;
+          const isClosed = (Date.now() - futCandles[lastIdx].date.getTime()) >= 3 * 60 * 1000;
+          const evalIdx = isClosed ? lastIdx : lastIdx - 1;
+
+          if (evalIdx >= 14) {
+            const evalCandle = futCandles[evalIdx];
+            const evalEma = futEmas[evalIdx];
+            const evalVwap = futVwaps[evalIdx];
+
+            if (evalEma !== null && evalVwap !== null) {
+              if (state.entryTriggered === 'CALL_BLAST') {
+                // Call trade: if future candle closes below both 15-EMA and VWAP, institutional rally has broken down!
+                if (evalCandle.close < evalEma && evalCandle.close < evalVwap) {
+                  this.log(state, `📉 [FUTURE EMA/VWAP BREAKDOWN EXIT] ${state.activeUnderlying} Future closed @ ₹${evalCandle.close.toFixed(2)} below 15-EMA (₹${evalEma.toFixed(2)}) & VWAP (₹${evalVwap.toFixed(2)})! Securing Runner Profit @ ₹${currentPrice.toFixed(2)} (Peak: ₹${state.peakPrice?.toFixed(2)})`);
+                  await this.exitPosition(state, client, currentPrice, 'FUT_EMA_VWAP_EXIT');
+                  await this.persistLogs(state);
+                  return;
+                }
+              } else if (state.entryTriggered === 'PUT_BLAST') {
+                // Put trade: if future candle closes above both 15-EMA and VWAP, institutional fall has reversed!
+                if (evalCandle.close > evalEma && evalCandle.close > evalVwap) {
+                  this.log(state, `📈 [FUTURE EMA/VWAP REVERSAL EXIT] ${state.activeUnderlying} Future closed @ ₹${evalCandle.close.toFixed(2)} above 15-EMA (₹${evalEma.toFixed(2)}) & VWAP (₹${evalVwap.toFixed(2)})! Securing Runner Profit @ ₹${currentPrice.toFixed(2)} (Peak: ₹${state.peakPrice?.toFixed(2)})`);
+                  await this.exitPosition(state, client, currentPrice, 'FUT_EMA_VWAP_EXIT');
+                  await this.persistLogs(state);
+                  return;
+                }
+              }
+            }
+          }
+        }
+      } catch (futErr: any) {
+        this.log(state, `⚠ Future EMA/VWAP monitor notice: ${futErr.message}`);
+      }
+    }
   }
 
   private async partialExitPosition(state: GammaStrategyState, client: any, exitPrice: number, partialQty: number, reason: string) {
@@ -1286,6 +1329,23 @@ export class GammaBlastExpiryEngine {
       prev = ema;
     }
     return emas;
+  }
+
+  private calculateVWAP(candles: Candle[], vwapSource: 'close' | 'hlc3' = 'hlc3'): (number | null)[] {
+    const vwaps: (number | null)[] = new Array(candles.length).fill(null);
+    let cpv = 0, cv = 0;
+    let lastDateStr = '';
+    for (let i = 0; i < candles.length; i++) {
+      const dateStr = this.getIstDateStr(candles[i].date);
+      if (dateStr !== lastDateStr) {
+        cpv = 0; cv = 0; lastDateStr = dateStr;
+      }
+      const price = vwapSource === 'close' ? candles[i].close : (candles[i].high + candles[i].low + candles[i].close) / 3;
+      cpv += price * (candles[i].volume || 1);
+      cv += (candles[i].volume || 1);
+      vwaps[i] = cv === 0 ? candles[i].close : cpv / cv;
+    }
+    return vwaps;
   }
 
   private formatTime(d: Date): string {
