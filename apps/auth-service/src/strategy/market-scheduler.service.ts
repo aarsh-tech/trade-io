@@ -67,7 +67,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   ) { }
 
   onModuleInit() {
-    this.logger.log('Market Scheduler initialised — will auto-start strategies at 09:15:05 IST sharp');
+    this.logger.log('Market Scheduler initialised — will auto-start strategies at 09:15:01 IST sharp');
     // Check immediately on boot (handles the case where the server restarts mid-session)
     this.checkAndAct().catch((e) => this.logger.error(e));
     // High-precision 1-second check loop
@@ -109,8 +109,8 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     const MARKET_OPEN = 9 * 60 + 15; // 09:15
     const MARKET_CLOSE = 15 * 60 + 30; // 15:30
 
-    // ── Auto-start at exactly 09:15:05 IST (or boot mid-session during market hours) ──
-    const isExactAutoStartTime = (h === 9 && m === 15 && s >= 5) || (h === 9 && m === 16);
+    // ── Auto-start at exactly 09:15:01 IST (or boot mid-session during market hours) ──
+    const isExactAutoStartTime = (h === 9 && m === 15 && s >= 1) || (h === 9 && m === 16);
     const isMidSessionStart = hhmm > MARKET_OPEN && hhmm < MARKET_CLOSE && this.lastAutoStartDate === null;
 
     if (isExactAutoStartTime || isMidSessionStart) {
