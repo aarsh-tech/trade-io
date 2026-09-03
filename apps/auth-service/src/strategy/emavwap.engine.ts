@@ -56,6 +56,8 @@ interface StrategyState {
   currentPnlPct?: number;
   peakPnlRs?: number;
   lockedProfitRs?: number;
+  isCostLocked?: boolean;
+  isHalfTargetLocked?: boolean;
   isTrailingEma?: boolean;
   isAutoMode?: boolean;
   activeSymbol?: string | null;
@@ -867,10 +869,15 @@ export class EmaVwapCrossoverEngine {
       return;
     }
 
-    // ── Instant 9:15 / 9:16 AM Opening Momentum Trigger ───────────────────────
-    const isInstantOpeningTriggered = await this.checkInstantOpeningTrigger(state, client, kite, account, now);
-    if (isInstantOpeningTriggered) {
-      await this.persistLogs(state);
+    // ── 09:15 to 09:20 AM: Opening Range (ORB) Formation Window ─────────────
+    const currentHhmm = this.getIstHhmm(now);
+    if (currentHhmm < 9 * 60 + 20) {
+      // In the first 5 minutes (09:15 - 09:20), allow the opening 5m candle to complete its institutional range.
+      // This eliminates the 09:15:02 retail fakeout traps and establishes the true High/Low/VWAP baseline!
+      if (now.getSeconds() % 15 === 0) {
+        this.log(state, `⏳ [09:15 - 09:20 AM OBSERVATION WINDOW] Opening 5m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Real breakout execution begins @ 09:20 AM.`);
+        await this.persistLogs(state);
+      }
       return;
     }
 
@@ -1185,15 +1192,15 @@ export class EmaVwapCrossoverEngine {
       if (finalSide === 'BUY') {
         const rawSl = motherLow ? motherLow : (entry - (maxRiskThresholdRs / (config.qty || 1)));
         sl = this.roundTick(Math.max(rawSl, entry - maxRiskPointsCap), symbol);
-        if (sl >= entry) sl = this.roundTick(entry - symTickSize * 3, symbol);
+        if (sl >= entry) sl = this.roundTick(entry - symTickSize * 5, symbol);
         const risk = Math.max(symTickSize, Math.abs(entry - sl));
-        tgt = this.roundTick(entry + risk * 1.5, symbol);
+        tgt = config.enableProfitFloor !== false ? this.roundTick(entry * 1.06, symbol) : this.roundTick(entry + risk * 1.5, symbol);
       } else {
         const rawSl = motherHigh ? motherHigh : (entry + (maxRiskThresholdRs / (config.qty || 1)));
         sl = this.roundTick(Math.min(rawSl, entry + maxRiskPointsCap), symbol);
-        if (sl <= entry) sl = this.roundTick(entry + symTickSize * 3, symbol);
+        if (sl <= entry) sl = this.roundTick(entry + symTickSize * 5, symbol);
         const risk = Math.max(symTickSize, Math.abs(sl - entry));
-        tgt = this.roundTick(entry - risk * 1.5, symbol);
+        tgt = config.enableProfitFloor !== false ? this.roundTick(entry * 0.94, symbol) : this.roundTick(entry - risk * 1.5, symbol);
       }
     }
 
@@ -1340,9 +1347,29 @@ export class EmaVwapCrossoverEngine {
     } catch (err) { this.log(state, `❌ Placement failed: ${err.message}`); }
   }
 
-  // ── Real-Time WebSocket Position Monitoring ────────────────────────────────
-
   // ── Real-Time Position Monitoring ──────────────────────────────────────────
+
+  private async updateBrokerSlSafe(client: any, kite: any, state: StrategyState, symbol: string) {
+    if (state.isPaperTrade || !state.slOrderId || state.slOrderId === 'FAILED' || !state.stopLossPrice) return;
+    try {
+      const symTickSize = state.optionSymbol ? 0.05 : getInstrumentTickSize(symbol, state.stopLossPrice);
+      const isLong = (state.config.isOptionBuyingOnly && state.optionSymbol) || state.entryTriggered === 'LONG';
+      const triggerPrice = this.roundTick(state.stopLossPrice, symbol);
+      const price = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symbol);
+
+      const k = kite || client?.['kite'] || client;
+      if (k && k.modifyOrder) {
+        await k.modifyOrder('regular', state.slOrderId, {
+          trigger_price: triggerPrice,
+          price: price,
+        }).catch((e: any) => {
+          this.logger.warn(`Broker SL modify notice: ${e.message}`);
+        });
+      }
+    } catch (e: any) {
+      this.logger.warn(`Failed to update broker SL order: ${e.message}`);
+    }
+  }
 
   private async startRealtimeMonitor(state: StrategyState, client: any) {
     if (!state.entryTriggered) return;
@@ -1395,20 +1422,44 @@ export class EmaVwapCrossoverEngine {
         return;
       }
 
-      // ── 2. Dynamic VWAP & 15-EMA Trailing SL Check (Live Real-time Ticks) ───
-      const targetThresholdRs = state.config.targetRs || 500;
-      const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
+      // ── 2. Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ───────────────
+      // Preserves original structural Stop Loss (no premature Cost SL to avoid wick-outs).
+      // Trails ONLY when the 15-EMA & VWAP trend support lines naturally advance into profit!
+      const entryPrice = state.entryPrice || currentPrice;
+      const moveFromEntryPct = entryPrice > 0 ? (isLong ? (currentPrice - entryPrice) / entryPrice : (entryPrice - currentPrice) / entryPrice) * 100 : 0;
       const isTrailingEnabled = state.config.enableProfitFloor !== false;
+      const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
 
-      if ((pnlRs >= targetThresholdRs || isTarget1Reached) && !state.isTrailingEma && isTrailingEnabled) {
-        state.isTrailingEma = true;
-        this.log(state, `📈 Target 1 reached (Target: ₹${state.targetPrice?.toFixed(2)}, P&L: ₹${pnlRs.toFixed(2)})! Activated Dynamic VWAP & 15-EMA Trailing SL — riding trend...`);
-        if (state.targetOrderId) {
-          await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-          state.targetOrderId = null;
+      // Uncapped 15-EMA & VWAP Trend Riding (Holds through normal intraday pullbacks & wicks to capture multi-percent runs)
+      if (!isOptionTrade && state.lastEma && state.lastVwap) {
+        const trendSupport = isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap);
+
+        // If trend support rises into profit, trail SL along with the 15-EMA / VWAP
+        const isSupportInProfit = isLong ? (trendSupport > entryPrice) : (trendSupport < entryPrice);
+        if (isSupportInProfit) {
+          const newTrailSl = this.roundTick(trendSupport, symbol);
+          if (isLong ? (newTrailSl > (state.stopLossPrice || 0)) : (newTrailSl < (state.stopLossPrice || Infinity))) {
+            state.stopLossPrice = newTrailSl;
+            state.isTrailingEma = true;
+            this.log(state, `📈 [15-EMA / VWAP TRAIL] Dynamic trend support advanced to ₹${newTrailSl.toFixed(2)} (in profit)! Trailing SL to lock structural gains...`);
+            await this.updateBrokerSlSafe(client, kite, state, symbol);
+          }
+        }
+
+        // Exit ONLY when the stock actually breaks below the 15-EMA / VWAP trend line!
+        const isTrendBroken = isLong ? (currentPrice < trendSupport) : (currentPrice > trendSupport);
+        if (isTrendBroken && isSupportInProfit) {
+          if (isExiting) return;
+          isExiting = true;
+          this.log(state, `📈 [TREND EXHAUSTION EXIT] ${symbol} crossed 15-EMA / VWAP trend line @ ₹${currentPrice.toFixed(2)} (Trail Level: ₹${trendSupport.toFixed(2)}) | Captured Move: ${moveFromEntryPct.toFixed(2)}% | Realized P&L: ₹${pnlRs.toFixed(2)}`);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'TARGET');
+          await this.persistLogs(state);
+          return;
         }
       }
 
+      // 15-EMA & VWAP Dynamic Trailing check if configured
       if (state.isTrailingEma && !isOptionTrade) {
         let dynamicTrailingSl: number | null = null;
         if (state.lastEma && state.lastVwap) {
@@ -1663,6 +1714,12 @@ export class EmaVwapCrossoverEngine {
     const sign = pnlRs >= 0 ? '+' : '';
     const pctSign = pnlPct >= 0 ? '+' : '';
     this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | Entry: ₹${state.entryPrice!.toFixed(2)} | SL: ₹${state.stopLossPrice!.toFixed(2)} | Tgt: ₹${state.targetPrice!.toFixed(2)} | P&L: ${sign}₹${pnlRs.toFixed(2)} (${pctSign}${pnlPct.toFixed(2)}%) | Executed Qty: ${activeQty} | Peak: +₹${state.peakPnlRs.toFixed(2)}${state.isTrailingEma ? ' (15-EMA Trailing Active)' : ''}`);
+
+    // ── Intraday Multi-Stage Profit Ratchet & Breakeven Protection ───────────
+    // ── Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ─────────────────
+    const entryPrice = state.entryPrice || currentPrice;
+    const moveFromEntryPct = entryPrice > 0 ? (isLong ? (currentPrice - entryPrice) / entryPrice : (entryPrice - currentPrice) / entryPrice) * 100 : 0;
+
 
     // Check Target 1 / Dynamic VWAP & EMA Trailing
     if ((pnlRs >= targetThresholdRs || isTarget1Reached) && !state.isTrailingEma && isTrailingEnabled) {
@@ -2191,25 +2248,91 @@ export class EmaVwapCrossoverEngine {
 
   private async checkInstantOpeningTrigger(state: StrategyState, client: any, kite: any, account: any, now: Date): Promise<boolean> {
     const hhmm = this.getIstHhmm(now);
-    // Active between 09:15:02 and 09:18:30 (Immediate Market Opening Surge window)
-    if (hhmm < 9 * 60 + 15 || hhmm > 9 * 60 + 18) return false;
+    // Active between 09:15:30 and 09:19:00 (Allow 30s for opening ticks to settle before firing!)
+    if (hhmm < 9 * 60 + 15 || hhmm > 9 * 60 + 19) return false;
+    const currentSeconds = now.getSeconds();
+    if (hhmm === 9 * 60 + 15 && currentSeconds < 30) return false;
     if (state.entryTriggered || state.waitingForConfirmation) return false;
 
     try {
+      // 0. Query overall Market Sentiment (NIFTY 50 Direction)
+      let marketBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+      try {
+        const n50 = await kite.getQuote(['NSE:NIFTY 50']).catch(() => null);
+        const q = n50?.['NSE:NIFTY 50'];
+        if (q?.last_price && q?.ohlc?.open) {
+          const changeFromOpen = ((q.last_price - q.ohlc.open) / q.ohlc.open) * 100;
+          if (changeFromOpen >= 0.08) marketBias = 'BULLISH';
+          else if (changeFromOpen <= -0.08) marketBias = 'BEARISH';
+        }
+      } catch { }
+
       const excluded = new Set(state.cooldownSymbols?.keys() || []);
-      const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 10, excluded);
+      const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 12, excluded);
       if (candidates.length === 0) return false;
 
-      for (const candidate of candidates.slice(0, 5)) {
-        const { open, high, low, ltp, changeFromOpenPct, symbol, exchange, qty } = candidate;
+      // Sort candidates to align with Market Bias
+      const prioritizedCandidates = candidates.slice(0, 8).sort((a, b) => {
+        if (marketBias === 'BULLISH') {
+          if (a.trend === 'LONG' && b.trend !== 'LONG') return -1;
+          if (b.trend === 'LONG' && a.trend !== 'LONG') return 1;
+        } else if (marketBias === 'BEARISH') {
+          if (a.trend === 'SHORT' && b.trend !== 'SHORT') return -1;
+          if (b.trend === 'SHORT' && a.trend !== 'SHORT') return 1;
+        }
+        return b.score - a.score;
+      });
+
+      for (const candidate of prioritizedCandidates) {
+        const { open, high, low, ltp, changeFromOpenPct, symbol, exchange, qty, trend } = candidate;
         if (!open || !ltp || open <= 0) continue;
 
         const diffHighOpenPct = (high - open) / open;
         const diffOpenLowPct = (open - low) / open;
 
-        // 1. Bearish Open=High Drive or Immediate Opening Crash (SHRIRAMFIN / HEROMOTOCO style)
-        const isBearishOpenDrive = (candidate.isOpenHigh || diffHighOpenPct <= 0.0018) && (changeFromOpenPct <= -0.22);
-        const isImmediateCrash = (changeFromOpenPct <= -0.40) && (ltp <= low * 1.002);
+        // Bullish Open=Low Drive or Immediate Opening Surge
+        const isBullishOpenDrive = (candidate.isOpenLow || diffOpenLowPct <= 0.0020) && (changeFromOpenPct >= 0.22);
+        const isImmediateSurge = (changeFromOpenPct >= 0.38) && (ltp >= high * 0.998);
+
+        // Bearish Open=High Drive or Immediate Opening Crash
+        const isBearishOpenDrive = (candidate.isOpenHigh || diffHighOpenPct <= 0.0020) && (changeFromOpenPct <= -0.22);
+        const isImmediateCrash = (changeFromOpenPct <= -0.38) && (ltp <= low * 1.002);
+
+        // 1. If Candidate or Market is Bullish, evaluate BUY setup first!
+        if ((trend === 'LONG' || marketBias === 'BULLISH') && (isBullishOpenDrive || isImmediateSurge) && marketBias !== 'BEARISH') {
+          state.activeSymbol = symbol;
+          state.config.exchange = exchange;
+          state.config.qty = qty;
+          const slPrice = Math.max(Math.min(low, open * 0.997), ltp * 0.988);
+          const reason = isBullishOpenDrive ? `Open=Low Opening Drive Breakout` : `Immediate Opening Velocity Surge (+${changeFromOpenPct.toFixed(2)}%)`;
+          this.log(state, `[${symbol}] 🚀 Instant 09:15 AM Bullish Opening Triggered! ${reason} (Market: ${marketBias}) | Open: ₹${open.toFixed(2)}, Low: ₹${low.toFixed(2)}, SL: ₹${slPrice.toFixed(2)} @ LTP ₹${ltp.toFixed(2)}`);
+          await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, slPrice, high);
+          return true;
+        }
+
+        // 2. If Candidate or Market is Bearish, evaluate SELL setup!
+        if ((trend === 'SHORT' || marketBias === 'BEARISH') && (isBearishOpenDrive || isImmediateCrash) && marketBias !== 'BULLISH') {
+          state.activeSymbol = symbol;
+          state.config.exchange = exchange;
+          state.config.qty = qty;
+          const slPrice = Math.min(Math.max(high, open * 1.003), ltp * 1.012);
+          const reason = isBearishOpenDrive ? `Open=High Opening Drive Breakdown` : `Immediate Opening Velocity Crash (${changeFromOpenPct.toFixed(2)}%)`;
+          this.log(state, `[${symbol}] 🚀 Instant 09:15 AM Bearish Opening Triggered! ${reason} (Market: ${marketBias}) | Open: ₹${open.toFixed(2)}, High: ₹${high.toFixed(2)}, SL: ₹${slPrice.toFixed(2)} @ LTP ₹${ltp.toFixed(2)}`);
+          await this.placeTrade(state, client, account, 'SELL', ltp, undefined, undefined, low, slPrice);
+          return true;
+        }
+
+        // 3. Neutral Market: Trigger whichever side has confirmed structural drive
+        if (isBullishOpenDrive || isImmediateSurge) {
+          state.activeSymbol = symbol;
+          state.config.exchange = exchange;
+          state.config.qty = qty;
+          const slPrice = Math.max(Math.min(low, open * 0.997), ltp * 0.988);
+          const reason = isBullishOpenDrive ? `Open=Low Opening Drive Breakout` : `Immediate Opening Velocity Surge (+${changeFromOpenPct.toFixed(2)}%)`;
+          this.log(state, `[${symbol}] 🚀 Instant 09:15 AM Bullish Opening Triggered! ${reason} | Open: ₹${open.toFixed(2)}, Low: ₹${low.toFixed(2)}, SL: ₹${slPrice.toFixed(2)} @ LTP ₹${ltp.toFixed(2)}`);
+          await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, slPrice, high);
+          return true;
+        }
 
         if (isBearishOpenDrive || isImmediateCrash) {
           state.activeSymbol = symbol;
@@ -2219,21 +2342,6 @@ export class EmaVwapCrossoverEngine {
           const reason = isBearishOpenDrive ? `Open=High Opening Drive Breakdown` : `Immediate Opening Velocity Crash (${changeFromOpenPct.toFixed(2)}%)`;
           this.log(state, `[${symbol}] 🚀 Instant 09:15 AM Bearish Opening Triggered! ${reason} | Open: ₹${open.toFixed(2)}, High: ₹${high.toFixed(2)}, SL: ₹${slPrice.toFixed(2)} @ LTP ₹${ltp.toFixed(2)}`);
           await this.placeTrade(state, client, account, 'SELL', ltp, undefined, undefined, low, slPrice);
-          return true;
-        }
-
-        // 2. Bullish Open=Low Drive or Immediate Opening Surge
-        const isBullishOpenDrive = (candidate.isOpenLow || diffOpenLowPct <= 0.0018) && (changeFromOpenPct >= 0.22);
-        const isImmediateSurge = (changeFromOpenPct >= 0.40) && (ltp >= high * 0.998);
-
-        if (isBullishOpenDrive || isImmediateSurge) {
-          state.activeSymbol = symbol;
-          state.config.exchange = exchange;
-          state.config.qty = qty;
-          const slPrice = Math.max(Math.min(low, open * 0.997), ltp * 0.988);
-          const reason = isBullishOpenDrive ? `Open=Low Opening Drive Breakout` : `Immediate Opening Velocity Surge (+${changeFromOpenPct.toFixed(2)}%)`;
-          this.log(state, `[${symbol}] 🚀 Instant 09:15 AM Bullish Opening Triggered! ${reason} | Open: ₹${open.toFixed(2)}, Low: ₹${low.toFixed(2)}, SL: ₹${slPrice.toFixed(2)} @ LTP ₹${ltp.toFixed(2)}`);
-          await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, slPrice, high);
           return true;
         }
       }
@@ -2482,30 +2590,17 @@ export class EmaVwapCrossoverEngine {
     const isOpenLow = lowOpenDiffPct <= 0.0025 && isGreen;
 
     if (isOpenLow) {
-      const candleRangePct = (high - low) / open;
-      let slPrice = low;
-      let slNote = 'Open/Low';
-
-      // Adaptive SL for large candles (> 0.8% range):
-      // Pick the closer/tighter level between 50% midpoint and VWAP to optimize RR & risk
-      if (candleRangePct > 0.008) {
-        const midpoint = (high + low) / 2;
-        const vwapLevel = (vwap && vwap > low && vwap < high) ? vwap : midpoint;
-        // For LONG, closer SL to entry is higher:
-        const candidateSl = Math.max(midpoint, vwapLevel);
-        // Safety cap: Ensure SL is at least 0.35% below high to avoid noise, capped to max 1.2% risk
-        const maxSl = high * (1 - 0.0035);
-        const minSl = high * (1 - 0.012);
-        slPrice = Math.max(Math.min(candidateSl, maxSl), minSl);
-        slNote = (candidateSl === vwapLevel && vwapLevel !== midpoint) ? 'VWAP Level' : 'Tight Risk SL';
-      }
+      // True structural Stop Loss below Opening Candle Low with buffer to absorb noise wicks
+      const buffer = Math.max(0.10, low * 0.0035);
+      const slPrice = low - buffer;
+      const slNote = 'Day Low Buffer';
 
       return {
         trend: 'LONG',
         setupType: 'OPEN_LOW_DRIVE',
         triggerHigh: high,
-        triggerLow: slPrice, // Adaptive SL
-        invalidationPrice: low, // Absolute candle low
+        triggerLow: slPrice,
+        invalidationPrice: low,
         slNote,
         candleIdx: firstIdx,
         candleTime: new Date(firstCandle.date),
@@ -2519,23 +2614,10 @@ export class EmaVwapCrossoverEngine {
     const isOpenHigh = highOpenDiffPct <= 0.0025 && isRed;
 
     if (isOpenHigh) {
-      const candleRangePct = (high - low) / open;
-      let slPrice = high;
-      let slNote = 'Open/High';
-
-      // Adaptive SL for large candles (> 0.8% range):
-      // Pick the closer/tighter level between 50% midpoint and VWAP to optimize RR & risk
-      if (candleRangePct > 0.008) {
-        const midpoint = (high + low) / 2;
-        const vwapLevel = (vwap && vwap > low && vwap < high) ? vwap : midpoint;
-        // For SHORT, closer SL to entry is lower:
-        const candidateSl = Math.min(midpoint, vwapLevel);
-        // Safety cap: Ensure SL is at least 0.35% above low to avoid noise, capped to max 1.2% risk
-        const minSl = low * (1 + 0.0035);
-        const maxSl = low * (1 + 0.012);
-        slPrice = Math.min(Math.max(candidateSl, minSl), maxSl);
-        slNote = (candidateSl === vwapLevel && vwapLevel !== midpoint) ? 'VWAP Level' : 'Tight Risk SL';
-      }
+      // True structural Stop Loss above Opening Candle High with buffer to absorb noise wicks
+      const buffer = Math.max(0.10, high * 0.0035);
+      const slPrice = high + buffer;
+      const slNote = 'Day High Buffer';
 
       return {
         trend: 'SHORT',
