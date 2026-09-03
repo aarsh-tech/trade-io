@@ -100,15 +100,15 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-semibold">Lots to Trade</label>
-                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                  Fixed 1 Lot (Recommended)
+                <label className="text-sm font-semibold">Base Position Lots</label>
+                <span className="text-[10px] text-indigo-500 font-semibold">
+                  1 to 5 Lots Recommended
                 </span>
               </div>
               <Input
                 type="number"
                 min={1}
-                max={5}
+                max={10}
                 value={form.lots}
                 onChange={(e) => set("lots", e.target.value)}
               />
@@ -129,48 +129,68 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             </div>
           </div>
 
-          {/* Premium Thresholds */}
-          <div className="grid grid-cols-2 gap-4 p-4 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--secondary)/0.2)]">
+          {/* Smart Auto Premium Discovery */}
+          <div className="flex items-start gap-3 p-4 rounded-xl border border-[hsl(var(--primary)/0.2)] bg-[hsl(var(--primary)/0.05)]">
+            <Sparkles className="h-5 w-5 text-indigo-500 shrink-0 mt-0.5" />
             <div>
-              <label className="text-xs font-semibold mb-1 block">NIFTY Premium Range (₹)</label>
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  type="number"
-                  step={0.5}
-                  placeholder="Min (8)"
-                  value={form.gbMinPremiumNifty}
-                  onChange={(e) => set("gbMinPremiumNifty", e.target.value)}
-                />
-                <Input
-                  type="number"
-                  step={0.5}
-                  placeholder="Max (15)"
-                  value={form.gbMaxPremiumNifty}
-                  onChange={(e) => set("gbMaxPremiumNifty", e.target.value)}
-                />
-              </div>
-              <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Target range: ₹8.00 – ₹15.00</p>
+              <p className="text-xs font-bold text-[hsl(var(--foreground))]">
+                Auto-Adaptive Near-OTM Strike Discovery Enabled
+              </p>
+              <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5 leading-relaxed">
+                The engine automatically targets high-delta Near-OTM contracts (1–3 strikes from Spot ATM) that rapidly cross In-The-Money during breakouts and retain intrinsic cash settlement value.
+              </p>
             </div>
-            <div>
-              <label className="text-xs font-semibold mb-1 block">SENSEX Premium Range (₹)</label>
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  type="number"
-                  step={0.5}
-                  placeholder="Min (12)"
-                  value={form.gbMinPremiumSensex}
-                  onChange={(e) => set("gbMinPremiumSensex", e.target.value)}
-                />
-                <Input
-                  type="number"
-                  step={0.5}
-                  placeholder="Max (25)"
-                  value={form.gbMaxPremiumSensex}
-                  onChange={(e) => set("gbMaxPremiumSensex", e.target.value)}
-                />
+          </div>
+
+          {/* Multi-Lot & High-Conviction Sizing Controls */}
+          <div className="p-4 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--secondary)/0.15)] space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-[hsl(var(--foreground))]">High-Conviction A+ Setup Boost</p>
+                <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                  Automatically boost position up to 3–5 lots when Range Breakout + Volume Surge + OI Unwinding align
+                </p>
               </div>
-              <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Target range: ₹12.00 – ₹25.00</p>
+              <input
+                type="checkbox"
+                checked={form.gbEnableHighConvictionBoost}
+                onChange={(e) => set("gbEnableHighConvictionBoost", e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
             </div>
+
+            {form.gbEnableHighConvictionBoost && (
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[hsl(var(--border)/0.5)]">
+                <div>
+                  <label className="text-[11px] font-semibold block mb-1">Max Conviction Lots</label>
+                  <select
+                    value={form.gbMaxConvictionLots}
+                    onChange={(e) => set("gbMaxConvictionLots", e.target.value)}
+                    className="flex h-9 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-2.5 py-1.5 text-xs text-[hsl(var(--foreground))] font-semibold"
+                  >
+                    <option value="2">2 Lots</option>
+                    <option value="3">3 Lots (Recommended)</option>
+                    <option value="4">4 Lots</option>
+                    <option value="5">5 Lots (Aggressive Max)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold block mb-1">2.0x Partial Profit Booking</label>
+                  <div className="flex items-center h-9 gap-2">
+                    <input
+                      type="checkbox"
+                      id="partialBooking"
+                      checked={form.gbEnablePartialProfitBooking}
+                      onChange={(e) => set("gbEnablePartialProfitBooking", e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <label htmlFor="partialBooking" className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                      Exit 50% lots @ 2.0x milestone; trail remainder
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Time Window */}
@@ -178,8 +198,8 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-indigo-500" />
               <div>
-                <p className="text-xs font-bold">Execution Window: 01:30 PM – 03:15 PM IST</p>
-                <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Mandatory Hard Auto-Exit @ 03:25:00 PM before CAS closing</p>
+                <p className="text-xs font-bold">Execution Window: 01:00 PM – 03:25 PM IST</p>
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Active hold & trail through 15:25–15:30 candle | Hard Auto-Exit @ 03:29:30 PM before market close</p>
               </div>
             </div>
             <Badge className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">

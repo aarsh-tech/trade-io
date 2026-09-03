@@ -21,12 +21,13 @@ export interface GammaBlastExpiryConfig {
   product: 'MIS' | 'NRML';             // default 'NRML' / 'MIS'
   maxTradesPerDay: number;             // default 2
   maxWinsPerDay?: number;              // default 1
-  minPremiumNifty: number;             // default 8.0
-  maxPremiumNifty: number;             // default 15.0
-  minPremiumSensex: number;            // default 12.0
-  maxPremiumSensex: number;            // default 25.0
+  autoSelectStrike?: boolean;          // Auto-select explosive gamma strike with high liquidity (default: true)
+  minPremiumNifty?: number;            // Optional override
+  maxPremiumNifty?: number;            // Optional override
+  minPremiumSensex?: number;           // Optional override
+  maxPremiumSensex?: number;           // Optional override
   startTime: string;                   // default '13:00' (1:00 PM)
-  endTime: string;                     // default '15:05' (3:05 PM)
+  endTime: string;                     // default '15:25' (3:25 PM - Hold/Trail through closing candle)
   enableOiFilter?: boolean;            // Confirm with live Call/Put OI unwinding & PCR (default: true)
   enableVolumeSurge?: boolean;         // Require >= 2.5x volume surge on breakout (default: true)
   enableRatchetTrailing?: boolean;     // Sub-second 1.4x Cost lock, 2x +50% lock, 3x+ Peak trail (default: true)
@@ -36,7 +37,8 @@ export interface GammaBlastExpiryConfig {
   emaPeriod?: number;                  // EMA period for trend trailing (default: 15)
   costLockMultiple?: number;           // Multiplier to move SL to Cost (default: 1.4)
   profitLock2xMultiple?: number;       // Multiplier to lock +50% profit (default: 2.0)
-  enableHighConvictionBoost?: boolean;// Automatically boost to 2 lots on A+ 4/4 confluence (default: true)
+  enableHighConvictionBoost?: boolean;// Automatically boost lots on A+ 4/4 confluence (default: true)
+  maxConvictionLots?: number;          // Max lots to trade on A+ high-conviction setup (e.g. 3 to 5 lots, default: 3)
   enablePartialProfitBooking?: boolean;// Book 50% lots at 2.0x milestone, trailing remainder (default: true)
   initialSlPct?: number;               // Initial SL % from entry premium (default: 50%)
   stopLossRs?: number;                 // Max daily loss in INR

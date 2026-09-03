@@ -77,6 +77,13 @@ interface GammaStrategyState {
   atmPcr?: number | null;
   bias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | null;
   hasLoggedStandby?: boolean;
+  liveSpotPrice?: number;
+  liveFuturePrice?: number;
+  spotSymbol?: string;
+  candlesCache?: Candle[];
+  lastCandleFetchTime?: number;
+  globalTickerUnsubscribe?: () => void;
+  lastQuotesCache?: { quotes: any; timestamp: number };
 }
 
 @Injectable()
@@ -165,20 +172,47 @@ export class GammaBlastExpiryEngine {
       isHighConvictionTrade: false,
     };
 
+    state.spotSymbol = underlying === 'SENSEX' ? 'BSE:SENSEX' : 'NSE:NIFTY 50';
+
     if (strategy.brokerAccount?.accessToken) {
       try {
         const client = this.factory.createClient(strategy.brokerAccount);
         const res = await this.findFutureSymbol(client, underlying);
         state.futureSymbol = res.symbol;
         state.futureExchange = res.exchange as any;
-      } catch { }
+
+        // Subscribe to real-time WebSocket ticks for Spot & Future
+        await this.tickerService.subscribeSymbol(state.brokerAccountId, state.spotSymbol);
+        if (state.futureSymbol) {
+          await this.tickerService.subscribeSymbol(state.brokerAccountId, state.futureSymbol);
+        }
+      } catch (e: any) {
+        this.logger.warn(`Future symbol resolution / ticker subscription error: ${e?.message || e}`);
+      }
     }
+
+    // Register WebSocket tick listener for real-time price streaming (eliminates 5-second REST calls)
+    const globalTickerUnsubscribe = this.tickerService.registerListener((ticks) => {
+      const spotKey = state.spotSymbol;
+      const futKey = state.futureSymbol ? `${state.futureExchange}:${state.futureSymbol}` : null;
+      if (spotKey && ticks[spotKey]) {
+        state.liveSpotPrice = ticks[spotKey];
+      }
+      if (futKey && ticks[futKey]) {
+        state.liveFuturePrice = ticks[futKey];
+      } else if (state.futureSymbol && ticks[state.futureSymbol]) {
+        state.liveFuturePrice = ticks[state.futureSymbol];
+      }
+    });
+    state.globalTickerUnsubscribe = globalTickerUnsubscribe;
+
+    const effectiveEndTime = config.endTime || '15:25';
 
     this.running.set(strategyId, state);
     this.log(state, `▶ Gamma Blast (CAS Expiry Special) Engine Started! Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
     this.log(state, `🎯 Active Tracking Contract: ${state.futureSymbol ? `${state.futureExchange}:${state.futureSymbol} (Future)` : `${underlying} (${exchange})`} | Lot Size: ${defaultLotSize} (${lots} Lot = ${targetQty} Qty)`);
-    this.log(state, `⏰ Active Execution Window: ${config.startTime || '13:00'} – ${config.endTime || '15:05'} IST (Auto Square-off @ ${config.endTime || '15:05'} IST)`);
-    this.log(state, `💎 Premium Target Range: ${underlying === 'NIFTY' ? `₹${config.minPremiumNifty || 8} – ₹${config.maxPremiumNifty || 15}` : `₹${config.minPremiumSensex || 12} – ₹${config.maxPremiumSensex || 25}`}`);
+    this.log(state, `⏰ Active Execution Window: ${config.startTime || '13:00'} – ${effectiveEndTime} IST (Hold & Trail through 15:25–15:30 candle | Hard Auto Square-off @ 15:29:30 IST)`);
+    this.log(state, `💎 Strike Selection: AUTO-ADAPTIVE (Automatically pinpoints peak gamma leverage OTM strike with max liquidity)`);
 
     // ── Live Crash / Power Recovery on Startup ──────────────────────────────
     if (!strategy.isPaperTrade && strategy.brokerAccount?.accessToken) {
@@ -243,6 +277,10 @@ export class GammaBlastExpiryEngine {
     const state = this.running.get(strategyId);
     if (state) {
       this.stopRealtimeMonitor(state);
+      if (state.globalTickerUnsubscribe) {
+        state.globalTickerUnsubscribe();
+        state.globalTickerUnsubscribe = undefined;
+      }
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
@@ -381,7 +419,7 @@ export class GammaBlastExpiryEngine {
       this.log(state, `📊 Catch-up analyzing Future session ${targetSessionDateStr} (${sessionCandles.length} 3m candles)...`);
 
       // 3. Fetch Instruments & Filter Weekly Option Chain
-      const instruments = await kite.getInstruments(exchange).catch(() => []);
+      const instruments = await client.getInstruments(exchange).catch(() => []);
       const segment = exchange === 'BFO' ? 'BFO-OPT' : 'NFO-OPT';
       const optInstruments = (instruments || []).filter((i: any) =>
         i.name === underlying &&
@@ -399,12 +437,12 @@ export class GammaBlastExpiryEngine {
 
       const [startH, startM] = (state.config.startTime || '13:00').split(':').map(Number);
       const startHhmm = startH * 60 + startM;
-      const [endH, endM] = (state.config.endTime || '15:05').split(':').map(Number);
-      const endHhmm = endH * 60 + endM;
+      const endHhmm = 15 * 60 + 29; // Hold and trail positions through 15:25–15:30 closing candle
       const strikeStep = underlying === 'NIFTY' ? 50 : 100;
-      const minPrem = underlying === 'NIFTY' ? (state.config.minPremiumNifty || 8) : (state.config.minPremiumSensex || 12);
-      const maxPrem = underlying === 'NIFTY' ? (state.config.maxPremiumNifty || 15) : (state.config.maxPremiumSensex || 25);
+      const minPrem = underlying === 'NIFTY' ? 8 : 15;
+      const maxPrem = underlying === 'NIFTY' ? 18 : 30;
 
+      const optHistoryCache = new Map<string, any[]>();
       let catchupTradePlaced = 0;
       let catchupPnl = 0;
       let inCatchupPosition = false;
@@ -546,27 +584,33 @@ export class GammaBlastExpiryEngine {
 
         const atmStrike = Math.round(currentFuture / strikeStep) * strikeStep;
         let signalType: 'CALL_BLAST' | 'PUT_BLAST' | null = null;
-        let selectedStrike = atmStrike;
         let selectedOptType: 'CE' | 'PE' = 'CE';
 
         if (currentFutureHigh >= rangeData.high && currentFuture >= rangeData.vwap) {
           signalType = 'CALL_BLAST';
           selectedOptType = 'CE';
-          selectedStrike = atmStrike + strikeStep;
         } else if (currentFutureLow <= rangeData.low && currentFuture <= rangeData.vwap) {
           signalType = 'PUT_BLAST';
           selectedOptType = 'PE';
-          selectedStrike = atmStrike - strikeStep;
         }
 
         if (signalType) {
-          const matchingOpt = weeklyOptions.find((o: any) => Number(o.strike) === selectedStrike && o.instrument_type === selectedOptType);
-          const optSymbol = matchingOpt?.tradingsymbol || `${underlying}${targetSessionDateStr.replace(/-/g, '').slice(2)}${selectedStrike}${selectedOptType}`;
+          // Dynamic OTM strike selection matching the target premium range
+          const otmOffset = underlying === 'SENSEX' ? 7 : 3;
+          const preferredStrike = selectedOptType === 'CE' ? (atmStrike + (strikeStep * otmOffset)) : (atmStrike - (strikeStep * otmOffset));
+          const matchingOpt = weeklyOptions.find((o: any) => Number(o.strike) === preferredStrike && o.instrument_type === selectedOptType)
+            || weeklyOptions.find((o: any) => o.instrument_type === selectedOptType)
+            || weeklyOptions[0];
+          const optSymbol = matchingOpt?.tradingsymbol || `${underlying}${targetSessionDateStr.replace(/-/g, '').slice(2)}${preferredStrike}${selectedOptType}`;
 
-          // Fetch REAL historical option candles from Kite for the entire session
-          const sessionFrom = new Date(`${targetSessionDateStr}T09:15:00.000+05:30`);
-          const sessionTo = new Date(`${targetSessionDateStr}T15:30:00.000+05:30`);
-          const rawOptData = await client.getHistoricalData(optSymbol, exchange, '3minute', sessionFrom, sessionTo).catch(() => []);
+          // Fetch REAL historical option candles from Kite for the entire session (cached)
+          let rawOptData = optHistoryCache.get(optSymbol);
+          if (!rawOptData) {
+            const sessionFrom = new Date(`${targetSessionDateStr}T09:15:00.000+05:30`);
+            const sessionTo = new Date(`${targetSessionDateStr}T15:30:00.000+05:30`);
+            rawOptData = await client.getHistoricalData(optSymbol, exchange, '3minute', sessionFrom, sessionTo).catch(() => []);
+            optHistoryCache.set(optSymbol, rawOptData || []);
+          }
 
           const entryOptCandle = (rawOptData || []).find((oc: any) => new Date(oc.date).getTime() === c.date.getTime()) || rawOptData[0];
           const actualEntryPrice = entryOptCandle ? Number(entryOptCandle.open || entryOptCandle.close) : ((minPrem + maxPrem) / 2);
@@ -630,30 +674,36 @@ export class GammaBlastExpiryEngine {
     const kite = client['kite'] || client;
     const now = new Date();
     const hhmm = this.getIstHhmm(now);
+    const currentSeconds = now.getSeconds();
 
-    const [endH, endM] = (state.config.endTime || '15:05').split(':').map(Number);
+    const [endH, endM] = (state.config.endTime || '15:25').split(':').map(Number);
     const endHhmm = endH * 60 + endM;
 
     // ── 1. Hard Mandatory EOD Square-Off & Standby ──────────────
-    if (hhmm >= endHhmm || hhmm < 9 * 60 + 15) {
-      if (state.entryTriggered) {
-        const exitPrice = state.currentLtp || state.entryPrice || 0;
-        this.log(state, `⏰ ${state.config.endTime || '15:05'} Hard Cutoff Reached! Auto-squaring off position @ ₹${exitPrice.toFixed(2)} to secure profits...`);
-        await this.exitPosition(state, client, exitPrice, 'TIME_CUTOFF');
+    // Auto square-off at 15:29:30 IST (on the 15:25–15:30 closing candle right before market close)
+    const isSquareOffTime = hhmm > 15 * 60 + 29 || (hhmm === 15 * 60 + 29 && currentSeconds >= 30) || hhmm >= 15 * 60 + 30;
+    const isMarketClosed = hhmm >= 15 * 60 + 30 || hhmm < 9 * 60 + 15;
+
+    if (isSquareOffTime && state.entryTriggered) {
+      const exitPrice = state.currentLtp || state.entryPrice || 0;
+      this.log(state, `⏰ 15:29:30 IST Closing Candle Reached! Auto-squaring off position @ ₹${exitPrice.toFixed(2)} to secure profits before CAS close...`);
+      await this.exitPosition(state, client, exitPrice, 'TIME_CUTOFF');
+      await this.persistLogs(state);
+      return;
+    }
+
+    if (isMarketClosed) {
+      if (!state.hasLoggedStandby) {
+        state.hasLoggedStandby = true;
+        this.log(state, `🌙 Market is currently closed (09:15 AM – 15:30 IST). Strategy is standing by for the next session.`);
         await this.persistLogs(state);
-      } else {
-        if (!state.hasLoggedStandby) {
-          state.hasLoggedStandby = true;
-          this.log(state, `🌙 Market is currently closed (09:15 AM – ${state.config.endTime || '15:05'} IST). Strategy is standing by for the next session.`);
-          await this.persistLogs(state);
-        }
       }
       return;
     }
 
     state.hasLoggedStandby = false; // Reset flag when inside active trading hours
 
-    // If position is active, monitorPosition safety net handles it
+    // If position is active, monitorPosition safety net handles it (holds and trails through 15:25–15:29)
     if (state.entryTriggered) {
       await this.monitorPosition(state, client, kite);
       await this.persistLogs(state);
@@ -678,8 +728,9 @@ export class GammaBlastExpiryEngine {
       return;
     }
 
+    // Beyond configured entry window (default 15:25), do not open new trades
     if (hhmm > endHhmm) {
-      return; // Past configured endTime, do not open new trades
+      return; // Past configured endTime, wait for active position or 15:30 close
     }
 
     // ── 3. Range Compression & Confluence Trigger Evaluation ──────────────────
@@ -689,6 +740,69 @@ export class GammaBlastExpiryEngine {
     } catch (e: any) {
       this.logger.error(`Gamma evaluation error: ${e.message}`);
     }
+  }
+
+  // ── Auto-Adaptive Gamma Strike Selection ───────────────────────────────────
+
+  private autoSelectGammaStrike(
+    optionQuotes: OptionQuoteInfo[],
+    type: 'CE' | 'PE',
+    atmStrike: number,
+    underlying: 'NIFTY' | 'SENSEX',
+    config: GammaBlastExpiryConfig
+  ): OptionQuoteInfo | null {
+    const strikeStep = underlying === 'NIFTY' ? 50 : 100;
+
+    // Prioritize Near-OTM strikes (1 to 3 strikes away from Spot ATM, e.g. 76300 PE or 76200 PE on Sensex 76600 Spot)
+    // Near-OTM strikes quickly cross into ITM upon a 200-400 pt breakout and retain intrinsic cash value,
+    // preventing the option from expiring worthless at 0 in the final minutes!
+    const minOtmDistance = strikeStep * 1;
+    const maxOtmDistance = strikeStep * (underlying === 'NIFTY' ? 2 : 3);
+
+    // Premium sweet spot for 2-3 strike Near-OTM contracts:
+    // SENSEX: ₹22 – ₹60 (ideal ~₹32, e.g. 76300 PE @ ₹28-₹35 / 76200 PE @ ₹24)
+    // NIFTY: ₹12 – ₹35 (ideal ~₹20)
+    const minTarget = underlying === 'NIFTY'
+      ? (config.minPremiumNifty ?? (config as any).minPremium ?? 12)
+      : (config.minPremiumSensex ?? (config as any).minPremium ?? 22);
+    const maxTarget = underlying === 'NIFTY'
+      ? (config.maxPremiumNifty ?? (config as any).maxPremium ?? 35)
+      : (config.maxPremiumSensex ?? (config as any).maxPremium ?? 60);
+    const idealTarget = underlying === 'NIFTY' ? 20 : 32;
+
+    // Filter matching option type & strictly Near-OTM direction (1 to 3 strikes OTM)
+    const candidates = optionQuotes.filter(o => {
+      if (o.type !== type || o.ltp <= 0.5) return false;
+      const isOtm = type === 'CE' ? (o.strike > atmStrike) : (o.strike < atmStrike);
+      if (!isOtm) return false;
+      const dist = Math.abs(o.strike - atmStrike);
+      return dist >= minOtmDistance && dist <= maxOtmDistance;
+    });
+
+    if (candidates.length === 0) {
+      // Fallback to any valid OTM if no strictly Near-OTM is found
+      const fallback = optionQuotes.filter(o => {
+        if (o.type !== type || o.ltp <= 0.5) return false;
+        return type === 'CE' ? (o.strike >= atmStrike) : (o.strike <= atmStrike);
+      });
+      return fallback.sort((a, b) => Math.abs(a.ltp - idealTarget) - Math.abs(b.ltp - idealTarget))[0] || null;
+    }
+
+    // Tier 1: Near-OTM contracts in the sweet spot premium range [minTarget, maxTarget]
+    const sweetSpot = candidates.filter(o => o.ltp >= minTarget && o.ltp <= maxTarget);
+    if (sweetSpot.length > 0) {
+      return sweetSpot.sort((a, b) => {
+        const distA = Math.abs(a.ltp - idealTarget);
+        const distB = Math.abs(b.ltp - idealTarget);
+        if (Math.abs(distA - distB) < 5) {
+          return (b.volume + b.oi) - (a.volume + a.oi);
+        }
+        return distA - distB;
+      })[0];
+    }
+
+    // Tier 2: Nearest OTM contract to idealTarget
+    return candidates.sort((a, b) => Math.abs(a.ltp - idealTarget) - Math.abs(b.ltp - idealTarget))[0];
   }
 
   // ── Confluence & Live Option Chain Analysis ────────────────────────────────
@@ -702,11 +816,31 @@ export class GammaBlastExpiryEngine {
       const res = await this.findFutureSymbol(client, underlying);
       state.futureSymbol = res.symbol;
       state.futureExchange = res.exchange as any;
+      if (state.futureSymbol) {
+        this.tickerService.subscribeSymbol(state.brokerAccountId, state.futureSymbol).catch(() => {});
+      }
     }
 
-    // 2. Fetch Future 3m candles for Range Compression calculation
-    const candles = await this.fetchFutureCandles(client, state.futureSymbol!, state.futureExchange || exchange, now);
-    if (!candles || candles.length < 15) return;
+    // 2. Fetch Future 3m candles for Range Compression calculation (Cached/throttled to save API calls)
+    let candles = state.candlesCache;
+    const lastFetch = state.lastCandleFetchTime || 0;
+    if (!candles || candles.length < 10 || (Date.now() - lastFetch > 60000)) {
+      candles = await this.fetchFutureCandles(client, state.futureSymbol!, state.futureExchange || exchange, now);
+      if (candles && candles.length >= 10) {
+        state.candlesCache = candles;
+        state.lastCandleFetchTime = Date.now();
+      }
+    }
+    if (!candles || candles.length < 10) return;
+
+    // Blend live WebSocket tick into latest candle for zero-latency breakout detection
+    const liveFut = state.liveFuturePrice;
+    if (liveFut && candles.length > 0) {
+      const lastCandle = candles[candles.length - 1];
+      lastCandle.close = liveFut;
+      if (liveFut > lastCandle.high) lastCandle.high = liveFut;
+      if (liveFut < lastCandle.low) lastCandle.low = liveFut;
+    }
 
     // Calculate compression range on Future based on configured window
     const rangeData = this.calculateCompressionRange(candles, now, state.config.startTime || '13:00');
@@ -721,7 +855,8 @@ export class GammaBlastExpiryEngine {
     const currentFutureLow = candles[candles.length - 1].low;
 
     // 3. Fetch Instruments & Filter Today's Weekly Option Chain
-    const instruments = await kite.getInstruments(exchange);
+    // Use client.getInstruments (has 6h in-memory cache) to eliminate redundant API calls
+    const instruments = await client.getInstruments(exchange);
     const segment = exchange === 'BFO' ? 'BFO-OPT' : 'NFO-OPT';
     const optInstruments = instruments.filter((i: any) =>
       i.name === underlying &&
@@ -743,13 +878,22 @@ export class GammaBlastExpiryEngine {
       state.targetQty = state.lots * state.lotSize;
     }
 
-    // 4. Resolve ATM Strike from Future Price & Query Live Quotes with Open Interest (OI)
-    const strikeStep = underlying === 'NIFTY' ? 50 : 100;
-    const atmStrike = Math.round(currentFuture / strikeStep) * strikeStep;
+    // 4. Resolve ATM Strike from Cash SPOT Price! (Eliminates Future-Spot basis mismatch)
+    let spotPrice = state.liveSpotPrice;
+    if (!spotPrice) {
+      const spotSymbol = underlying === 'SENSEX' ? 'BSE:SENSEX' : 'NSE:NIFTY 50';
+      const spotQuotes = await client.getLTP([spotSymbol]).catch(() => ({}));
+      spotPrice = spotQuotes[spotSymbol] || currentFuture;
+      if (spotQuotes[spotSymbol]) state.liveSpotPrice = spotQuotes[spotSymbol];
+    }
 
-    // Select ATM ± 4 strikes for OI & PCR computation
+    const strikeStep = underlying === 'NIFTY' ? 50 : 100;
+    const atmStrike = Math.round((spotPrice || currentFuture) / strikeStep) * strikeStep;
+
+    // Dynamic OTM candidate strikes: scan up to 15 strikes OTM for SENSEX, 10 strikes for NIFTY
+    const maxOtmStrikes = underlying === 'SENSEX' ? 15 : 10;
     const candidateStrikes: number[] = [];
-    for (let s = atmStrike - (strikeStep * 4); s <= atmStrike + (strikeStep * 4); s += strikeStep) {
+    for (let s = atmStrike - (strikeStep * maxOtmStrikes); s <= atmStrike + (strikeStep * maxOtmStrikes); s += strikeStep) {
       candidateStrikes.push(s);
     }
 
@@ -773,7 +917,17 @@ export class GammaBlastExpiryEngine {
 
     if (targetOptionSymbols.length === 0) return;
 
-    const quotes = await kite.getQuote(targetOptionSymbols).catch(() => null);
+    // Cache batch quotes for 10 seconds to avoid hitting Kite rate limits
+    let quotes: any = null;
+    const quotesCache = state.lastQuotesCache;
+    if (quotesCache && (Date.now() - quotesCache.timestamp < 10000)) {
+      quotes = quotesCache.quotes;
+    } else {
+      quotes = await kite.getQuote(targetOptionSymbols).catch(() => null);
+      if (quotes) {
+        state.lastQuotesCache = { quotes, timestamp: Date.now() };
+      }
+    }
     if (!quotes) return;
 
     // Compute Live Call OI vs Put OI & ATM PCR
@@ -820,21 +974,16 @@ export class GammaBlastExpiryEngine {
     }
     state.bias = bias;
 
-    const minPrem = underlying === 'NIFTY' ? (state.config.minPremiumNifty || 8) : (state.config.minPremiumSensex || 12);
-    const maxPrem = underlying === 'NIFTY' ? (state.config.maxPremiumNifty || 15) : (state.config.maxPremiumSensex || 25);
-
     // ── 5. Trigger Execution Check ───────────────────────────────────────────
 
     // Bullish Call Blast: Future breaks Range High
     if (bias === 'BULLISH' && currentFutureHigh >= rangeData.high) {
-      const eligibleCe = optionQuotes
-        .filter(o => o.type === 'CE' && o.ltp >= minPrem && o.ltp <= maxPrem)
-        .sort((a, b) => Math.abs(a.ltp - ((minPrem + maxPrem) / 2)) - Math.abs(b.ltp - ((minPrem + maxPrem) / 2)))[0];
+      const eligibleCe = this.autoSelectGammaStrike(optionQuotes, 'CE', atmStrike, underlying, state.config);
 
       if (eligibleCe && eligibleCe.ltp > 0) {
         const isHighConviction = (pcr >= 1.05 || totalCallOi < totalPutOi) && (eligibleCe.volume >= 2000 || eligibleCe.oi >= 10000);
         this.log(state, `🚀 [GAMMA BLAST SIGNAL - CALL] ${underlying} Future broke Range High (₹${rangeData.high.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}${isHighConviction ? ' | High-Conviction A+ Setup' : ''}`);
-        this.log(state, `🎯 Selected Explosive Strike: ${eligibleCe.tradingsymbol} @ ₹${eligibleCe.ltp.toFixed(2)} (OI: ${(eligibleCe.oi / 1000).toFixed(0)}k, Vol: ${(eligibleCe.volume / 1000).toFixed(0)}k)`);
+        this.log(state, `🎯 Auto-Selected Explosive Strike: ${eligibleCe.tradingsymbol} @ ₹${eligibleCe.ltp.toFixed(2)} (OI: ${(eligibleCe.oi / 1000).toFixed(0)}k, Vol: ${(eligibleCe.volume / 1000).toFixed(0)}k)`);
         await this.placeGammaTrade(state, client, kite, eligibleCe.tradingsymbol, eligibleCe.ltp, 'CALL_BLAST', isHighConviction);
         return;
       }
@@ -842,14 +991,12 @@ export class GammaBlastExpiryEngine {
 
     // Bearish Put Blast: Future breaks Range Low
     if (bias === 'BEARISH' && currentFutureLow <= rangeData.low) {
-      const eligiblePe = optionQuotes
-        .filter(o => o.type === 'PE' && o.ltp >= minPrem && o.ltp <= maxPrem)
-        .sort((a, b) => Math.abs(a.ltp - ((minPrem + maxPrem) / 2)) - Math.abs(b.ltp - ((minPrem + maxPrem) / 2)))[0];
+      const eligiblePe = this.autoSelectGammaStrike(optionQuotes, 'PE', atmStrike, underlying, state.config);
 
       if (eligiblePe && eligiblePe.ltp > 0) {
         const isHighConviction = (pcr <= 0.95 || totalPutOi < totalCallOi) && (eligiblePe.volume >= 2000 || eligiblePe.oi >= 10000);
         this.log(state, `🚀 [GAMMA BLAST SIGNAL - PUT] ${underlying} Future broke Range Low (₹${rangeData.low.toFixed(2)}) @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}${isHighConviction ? ' | High-Conviction A+ Setup' : ''}`);
-        this.log(state, `🎯 Selected Explosive Strike: ${eligiblePe.tradingsymbol} @ ₹${eligiblePe.ltp.toFixed(2)} (OI: ${(eligiblePe.oi / 1000).toFixed(0)}k, Vol: ${(eligiblePe.volume / 1000).toFixed(0)}k)`);
+        this.log(state, `🎯 Auto-Selected Explosive Strike: ${eligiblePe.tradingsymbol} @ ₹${eligiblePe.ltp.toFixed(2)} (OI: ${(eligiblePe.oi / 1000).toFixed(0)}k, Vol: ${(eligiblePe.volume / 1000).toFixed(0)}k)`);
         await this.placeGammaTrade(state, client, kite, eligiblePe.tradingsymbol, eligiblePe.ltp, 'PUT_BLAST', isHighConviction);
         return;
       }
@@ -869,18 +1016,52 @@ export class GammaBlastExpiryEngine {
   ) {
     const exchange = state.activeExchange;
     const baseLots = state.lots || state.config.lots || 1;
+    const maxConvictionLots = state.config.maxConvictionLots || 3;
     const shouldBoost = isHighConviction && state.config.enableHighConvictionBoost !== false;
-    const lots = shouldBoost ? Math.max(baseLots, 2) : baseLots;
+    let targetLots = shouldBoost ? Math.max(baseLots, maxConvictionLots) : baseLots;
+
+    // ── Live Capital & Available Margin Safety Check ────────────────────────
+    if (!state.isPaperTrade && client.getMargins) {
+      try {
+        const margins = await client.getMargins().catch(() => null);
+        const availableCash = margins?.equity?.available?.live_balance
+          ?? margins?.equity?.available?.cash
+          ?? margins?.equity?.net
+          ?? 0;
+
+        if (availableCash > 0) {
+          const costPerLot = (entryPrice + 0.50) * state.lotSize;
+          const requiredCapital = costPerLot * targetLots;
+
+          if (availableCash < requiredCapital) {
+            // Dynamically scale down to the maximum affordable lots
+            const affordableLots = Math.floor((availableCash * 0.95) / costPerLot);
+            if (affordableLots < 1) {
+              this.log(state, `⚠️ [MARGIN INSUFFICIENT] Available Margin: ₹${availableCash.toFixed(2)}, but 1 Lot requires ₹${costPerLot.toFixed(2)}. Trade skipped safely to avoid broker rejection.`);
+              return;
+            }
+            this.log(state, `⚠️ [MARGIN AUTO-ADJUSTMENT] Desired: ${targetLots} Lots (Requires ₹${requiredCapital.toFixed(2)}), but available margin is ₹${availableCash.toFixed(2)}. Dynamically adjusted down to ${affordableLots} Lots.`);
+            targetLots = affordableLots;
+          } else {
+            this.log(state, `💰 [MARGIN VERIFIED] Available: ₹${availableCash.toFixed(2)} | Required for ${targetLots} Lots: ₹${requiredCapital.toFixed(2)} (Sufficient ✓)`);
+          }
+        }
+      } catch (marginErr: any) {
+        this.logger.warn(`Pre-trade margin check warning: ${marginErr.message}`);
+      }
+    }
+
+    const lots = targetLots;
     const qty = lots * state.lotSize;
     state.executedQty = qty;
-    state.isHighConvictionTrade = shouldBoost;
+    state.isHighConvictionTrade = shouldBoost && lots > baseLots;
     state.isPartialExited = false;
 
     const initialSl = this.roundTick(entryPrice * 0.50); // 50% initial SL (e.g. ₹6 on ₹12)
     const product = state.config.product || 'NRML';
 
-    if (shouldBoost) {
-      this.log(state, `🔥 [HIGH-CONVICTION A+ BOOST] Range Compression + Volume Surge + OI Confluence verified! Boosting size to ${lots} Lots (${qty} shares)!`);
+    if (shouldBoost && lots > baseLots) {
+      this.log(state, `🔥 [HIGH-CONVICTION A+ BOOST] Range Breakout + Volume Surge + OI Confluence verified! Scaled size to ${lots} Lots (${qty} shares)!`);
     } else {
       this.log(state, `📋 Placing ${lots}-Lot Order: ${exchange}:${symbol} | Qty: ${qty} | Entry: ₹${entryPrice.toFixed(2)} | Initial SL: ₹${initialSl.toFixed(2)} (Max Loss: ₹${((entryPrice - initialSl) * qty).toFixed(2)})`);
     }
@@ -1029,6 +1210,20 @@ export class GammaBlastExpiryEngine {
             state.stopLossPrice = peakTrailSl;
           }
         }
+      }
+
+      // 4. Expiry Parabolic Profit Harvest Safeguard (15:24+ IST)
+      // On expiry day, deep OTM gamma blast options lose all value after 15:25.
+      // If the trade has exploded by >= 2.0x, lock in massive profits before the 15:27 post-expiry collapse!
+      const istNow = new Date();
+      const istHhmm = this.getIstHhmm(istNow);
+      if (istHhmm >= 15 * 60 + 24 && peak >= entry * 2.0 && !isExiting) {
+        isExiting = true;
+        this.log(state, `⏰ [15:24 IST EXPIRY HARVEST] Locking peak gamma blast profits (+${pnlPct.toFixed(1)}%) @ ₹${currentPrice.toFixed(2)} before closing collapse!`);
+        this.stopRealtimeMonitor(state);
+        await this.exitPosition(state, client, currentPrice, 'TARGET');
+        await this.persistLogs(state);
+        return;
       }
 
       // ── Exit Check ─────────────────────────────────────────────────────────

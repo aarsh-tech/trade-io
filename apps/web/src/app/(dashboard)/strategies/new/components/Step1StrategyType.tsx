@@ -90,12 +90,8 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                   set("product", "NRML");
                   set("lots", "1");
                   set("gbIndex", "AUTO");
-                  set("gbMinPremiumNifty", "8");
-                  set("gbMaxPremiumNifty", "15");
-                  set("gbMinPremiumSensex", "12");
-                  set("gbMaxPremiumSensex", "25");
                   set("gbStartTime", "13:00");
-                  set("gbEndTime", "15:05");
+                  set("gbEndTime", "15:25");
                   set("gbEnableOiFilter", true);
                   set("gbEnableVolumeSurge", true);
                   set("gbEnableRatchetTrailing", true);

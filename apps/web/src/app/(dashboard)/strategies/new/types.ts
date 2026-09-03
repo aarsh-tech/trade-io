@@ -60,6 +60,9 @@ export interface StrategyFormState {
   gbEnableOiFilter: boolean;
   gbEnableVolumeSurge: boolean;
   gbEnableRatchetTrailing: boolean;
+  gbEnableHighConvictionBoost: boolean;
+  gbMaxConvictionLots: string;
+  gbEnablePartialProfitBooking: boolean;
   gbInitialSlPct: string;
   // Broker
   brokerAccountId: string;
