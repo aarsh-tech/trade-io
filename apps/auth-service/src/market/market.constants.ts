@@ -71,10 +71,10 @@ export const NIFTY_500_UNIVERSE = [
 
 export const FO_STOCKS_LIST = [
   // Indices
-  { symbol: 'NIFTY 50', name: 'Nifty 50 Index', exchange: 'NSE', category: 'Indices', lotSize: 25 },
-  { symbol: 'BANKNIFTY', name: 'Nifty Bank Index', exchange: 'NSE', category: 'Indices', lotSize: 15 },
-  { symbol: 'FINNIFTY', name: 'Nifty Financial Services Index', exchange: 'NSE', category: 'Indices', lotSize: 25 },
-  { symbol: 'MIDCPNIFTY', name: 'Nifty Midcap Select Index', exchange: 'NSE', category: 'Indices', lotSize: 50 },
+  { symbol: 'NIFTY 50', name: 'Nifty 50 Index', exchange: 'NSE', category: 'Indices', lotSize: 65 },
+  { symbol: 'BANKNIFTY', name: 'Nifty Bank Index', exchange: 'NSE', category: 'Indices', lotSize: 30 },
+  { symbol: 'FINNIFTY', name: 'Nifty Financial Services Index', exchange: 'NSE', category: 'Indices', lotSize: 60 },
+  { symbol: 'MIDCPNIFTY', name: 'Nifty Midcap Select Index', exchange: 'NSE', category: 'Indices', lotSize: 120 },
   { symbol: 'NIFTY IT', name: 'Nifty IT Index', exchange: 'NSE', category: 'Indices', lotSize: 25 },
 
   // A

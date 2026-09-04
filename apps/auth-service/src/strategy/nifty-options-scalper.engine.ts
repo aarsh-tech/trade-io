@@ -80,8 +80,8 @@ export class NiftyOptionsScalperEngine {
     // Index-Adaptive Scaling Factors based on Index Spot & Lot Size:
     // NIFTY (~25,000 spot, 65 lot size)    -> 7 pt SL, 4 pt Cost trail, 7 pt lock (+5), 10 pt Target, 3.5 pt dynamic trail
     // SENSEX (~81,000 spot, 20 lot size)   -> 22 pt SL, 13 pt Cost trail, 22 pt lock (+16), 32 pt Target, 11.0 pt dynamic trail
-    // BANKNIFTY (~54,000 spot, 15 lot size) -> 15 pt SL, 8 pt Cost trail, 15 pt lock (+10), 22 pt Target, 7.0 pt dynamic trail
-    const defaultLotSize = isSensex ? 20 : (isBankNifty ? 15 : 65);
+    // BANKNIFTY (~54,000 spot, 30 lot size) -> 15 pt SL, 8 pt Cost trail, 15 pt lock (+10), 22 pt Target, 7.0 pt dynamic trail
+    const defaultLotSize = isSensex ? 20 : (isBankNifty ? 30 : 65);
     const stopLossPoints = userConfig?.stopLossPoints || (isSensex ? 22 : (isBankNifty ? 15 : 7));
     const targetPoints = userConfig?.targetPoints || (isSensex ? 32 : (isBankNifty ? 22 : 10));
     const trailCostAtPoints = userConfig?.trailCostAtPoints || (isSensex ? 13 : (isBankNifty ? 8 : 4));
