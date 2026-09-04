@@ -171,16 +171,24 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
       {/* ── NIFTY SCALPER RISK CONTROLS ── */}
       {form.type === "NIFTY_OPTIONS_SCALPER" && (
         <div className="space-y-4">
-          <div className="p-3 rounded-xl bg-purple-50 border border-purple-100 dark:bg-purple-950/20 dark:border-purple-900">
-            <p className="text-xs font-semibold text-purple-700 dark:text-purple-300">⚡ Nifty 10-Point Scalper Risk & Target Controls</p>
-            <p className="text-[11px] text-purple-600 dark:text-purple-400 mt-1">Captures +10 option points per winning trade, automatically trails SL to COST at +5 points, and auto-halts for the day after 1 winning trade.</p>
+          <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-800 dark:text-purple-300">
+            <p className="text-xs font-bold flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+              Dynamic Scalper Risk & Momentum Trailing Active
+            </p>
+            <div className="text-[11px] text-purple-700 dark:text-purple-300/90 mt-1.5 space-y-1">
+              <p>• <strong>Exchange SL Armed</strong>: Initial -7 pts Stop Loss order placed directly on Zerodha exchange servers.</p>
+              <p>• <strong>Breakeven Trail</strong>: Automatically moves SL to COST at +4 points (Guaranteed Risk-Free).</p>
+              <p>• <strong>Profit Lock</strong>: Locks +5 points profit when option reaches +7 points.</p>
+              <p>• <strong>Uncapped Trailing</strong>: At +10 points (Target 1), locks +7 pts and activates 3.5-pt dynamic ratchet trailing behind LTP to ride sharp runners (+20 to +50+ pts).</p>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                 <Target className="h-4 w-4 text-emerald-500" />
-                Target Option Points
+                Target 1 Milestone (Points)
               </label>
               <Input
                 type="number"
@@ -190,13 +198,13 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 className="border-emerald-200 focus:ring-emerald-300 font-semibold"
               />
               <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                Option target in points (default: +10 pts = ₹650 per lot)
+                Activates dynamic momentum trailing once reached (default: +10 pts)
               </p>
             </div>
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
                 <Shield className="h-4 w-4 text-red-500" />
-                Stop Loss Option Points
+                Initial Stop Loss Points
               </label>
               <Input
                 type="number"
@@ -206,7 +214,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 className="border-red-200 focus:ring-red-300 font-semibold"
               />
               <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                Initial Stop Loss in option points (default: -7 pts = ₹455 per lot)
+                Server-side trigger price armed at Zerodha (default: -7 pts)
               </p>
             </div>
           </div>
@@ -216,13 +224,25 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
       {/* ── STANDARD RISK FOR EMA-VWAP & BREAKOUT ── */}
       {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
         <div className="space-y-4">
-          <div className="flex gap-3 p-3 rounded-xl bg-[hsl(var(--primary)/0.06)] border border-[hsl(var(--primary)/0.15)]">
-            <Info className="h-4 w-4 text-[hsl(var(--primary))] mt-0.5 shrink-0" />
-            <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
-              Orders are placed as <strong>Limit</strong> orders for Entry, Stop-Loss (SL-Limit), and Target.
-              Fixed amounts are per trade. Position size is calculated dynamically to adhere to your risk limit.
-            </p>
-          </div>
+          {form.type === "EMA_VWAP_CROSSOVER" ? (
+            <div className="flex gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300">
+              <TrendingUp className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
+              <div className="text-xs space-y-1">
+                <p className="font-bold">Dynamic Margin Sizing & 15-EMA Live Trailing Active</p>
+                <p className="text-[11px] opacity-90 leading-relaxed">
+                  Deploys 85% tradeable margin at 5x MIS leverage (reserves 15% cash buffer). Stop Loss is placed structurally below the entry candle low with a safety buffer and trailed live with 15-EMA directly on Zerodha exchange servers.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-3 p-3 rounded-xl bg-[hsl(var(--primary)/0.06)] border border-[hsl(var(--primary)/0.15)]">
+              <Info className="h-4 w-4 text-[hsl(var(--primary))] mt-0.5 shrink-0" />
+              <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
+                Orders are placed as <strong>Limit</strong> orders for Entry, Stop-Loss (SL-Limit), and Target.
+                Fixed amounts are per trade. Position size is calculated dynamically to adhere to your risk limit.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>

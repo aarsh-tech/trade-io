@@ -736,25 +736,37 @@ function StrategyCard({
           <div className="p-2 rounded-xl bg-secondary/40 border border-border/50 text-center flex flex-col justify-center">
             <span className="text-[10px] font-medium text-muted-foreground">Sizing</span>
             <span className="text-xs font-bold text-foreground truncate mt-0.5">
-              {cfg.symbol === "AUTO"
-                ? "Auto (5x)"
-                : cfg.qty
-                  ? `${cfg.qty} Qty`
-                  : "Dynamic"}
+              {isNiftyScalper
+                ? "Auto Margin"
+                : isEmaVwap && cfg.symbol === "AUTO"
+                  ? "85% Margin (5x)"
+                  : cfg.symbol === "AUTO"
+                    ? "Auto (5x)"
+                    : cfg.qty
+                      ? `${cfg.qty} Qty`
+                      : "Dynamic"}
             </span>
           </div>
 
           <div className="p-2 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center flex flex-col justify-center">
             <span className="text-[10px] font-medium text-rose-500/80">Stop Loss</span>
-            <span className="text-xs font-bold text-rose-600 mt-0.5">
-              ₹{cfg.stopLossRs ?? "500"}
+            <span className="text-xs font-bold text-rose-600 mt-0.5 truncate">
+              {isNiftyScalper
+                ? "-7 Pts (Server SL)"
+                : isEmaVwap
+                  ? "Candle Low (Trailed)"
+                  : `₹${cfg.stopLossRs ?? "500"}`}
             </span>
           </div>
 
           <div className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-center flex flex-col justify-center">
             <span className="text-[10px] font-medium text-emerald-600/80">Target</span>
-            <span className="text-xs font-bold text-emerald-600 mt-0.5">
-              ₹{cfg.targetRs ?? "500"}
+            <span className="text-xs font-bold text-emerald-600 mt-0.5 truncate">
+              {isNiftyScalper
+                ? "+10 Pts + Trail"
+                : isEmaVwap
+                  ? "15-EMA / VWAP"
+                  : `₹${cfg.targetRs ?? "500"}`}
             </span>
           </div>
         </div>

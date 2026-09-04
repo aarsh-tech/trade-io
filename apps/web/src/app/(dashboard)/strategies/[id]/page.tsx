@@ -848,7 +848,18 @@ export default function StrategyDetailPage() {
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-foreground truncate">
-                {cfg.symbol === "AUTO" ? "Auto (5x MIS)" : cfg.qty ? `${cfg.qty} Qty` : "Dynamic"}
+                {isNiftyScalper
+                  ? "Auto Margin"
+                  : isEmaVwap && cfg.symbol === "AUTO"
+                    ? "85% Margin (5x)"
+                    : cfg.symbol === "AUTO"
+                      ? "Auto (5x MIS)"
+                      : cfg.qty
+                        ? `${cfg.qty} Qty`
+                        : "Dynamic"}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {isNiftyScalper ? "Auto Lots" : isEmaVwap ? "MIS 5x" : "Sizing"}
               </span>
             </div>
           </CardContent>
@@ -866,9 +877,15 @@ export default function StrategyDetailPage() {
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-rose-600">
-                ₹{cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}
+                {isNiftyScalper
+                  ? "-7 Points"
+                  : isEmaVwap
+                    ? "Candle Low"
+                    : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
               </span>
-              <span className="text-[10px] text-muted-foreground">Risk Cap</span>
+              <span className="text-[10px] text-muted-foreground">
+                {isNiftyScalper ? "Server SL + Trail" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -885,9 +902,15 @@ export default function StrategyDetailPage() {
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-emerald-600">
-                ₹{cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}
+                {isNiftyScalper
+                  ? "+10 Pts + Trail"
+                  : isEmaVwap
+                    ? "15-EMA / VWAP"
+                    : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
               </span>
-              <span className="text-[10px] text-muted-foreground">1:1 Target</span>
+              <span className="text-[10px] text-muted-foreground">
+                {isNiftyScalper ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
+              </span>
             </div>
           </CardContent>
         </Card>

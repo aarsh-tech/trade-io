@@ -273,10 +273,24 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             </div>
           </div>
 
+          {form.type === "NIFTY_OPTIONS_SCALPER" && (
+            <div className="flex items-start gap-3 p-3.5 rounded-xl border border-purple-500/20 bg-purple-500/5 text-purple-700 dark:text-purple-300">
+              <Sparkles className="h-4 w-4 text-purple-500 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-0.5">
+                <p className="font-bold">Dynamic Margin Lot Sizing Active</p>
+                <p className="text-[11px] opacity-80 leading-relaxed">
+                  Instead of a fixed 1-lot limit, the engine detects your live Zerodha margin, preserves a 15% cash buffer, and deploys 85% tradeable margin into lots (1 Lot = {getLotSize(form.symbol || 'NIFTY')} Qty).
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium block">Number of Lots</label>
+                <label className="text-sm font-medium block">
+                  {form.type === "NIFTY_OPTIONS_SCALPER" ? "Minimum / Base Lots" : "Number of Lots"}
+                </label>
                 <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
                   1 Lot = {getLotSize(form.symbol)} Qty
                 </span>
@@ -288,7 +302,9 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 onChange={(e) => set("lots", e.target.value)}
               />
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                {form.symbol === 'AUTO'
+                {form.type === 'NIFTY_OPTIONS_SCALPER'
+                  ? 'Dynamic Margin Allocation: Auto-scales lots from Zerodha cash (85% deployed)'
+                  : form.symbol === 'AUTO'
                   ? 'Quantity will be dynamically calculated to achieve target'
                   : `Total Quantity: ${Number(form.lots) * getLotSize(form.symbol)} shares`}
               </p>
