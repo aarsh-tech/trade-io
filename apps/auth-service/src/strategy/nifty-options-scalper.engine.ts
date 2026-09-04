@@ -54,6 +54,10 @@ interface ScalperStrategyState {
   currentPnlPct?: number;
   peakPnlRs?: number;
   isCostSlTrailed?: boolean;
+  isProfitLockTrailed?: boolean;
+  isDynamicTrailingActive?: boolean;
+  lastBrokerSlTrigger?: number;
+  lastBrokerSlModifyTime?: number;
 }
 
 @Injectable()
@@ -78,10 +82,10 @@ export class NiftyOptionsScalperEngine {
     if (!strategy) throw new Error('Strategy not found');
 
     const parsedConfig: Partial<NiftyOptionsScalperConfig> = JSON.parse(strategy.config);
-    const lots = parsedConfig.lots || 1;
     const symUpper = (parsedConfig.symbol || 'NIFTY').toUpperCase().trim();
-    const defaultLotSize = symUpper.includes('SENSEX') ? 20 : (symUpper.includes('BANKNIFTY') ? 15 : 25);
-    const qty = parsedConfig.qty || (lots * (parsedConfig.lots ? defaultLotSize : (symUpper.includes('SENSEX') ? 20 : 65)));
+    const defaultLotSize = symUpper.includes('SENSEX') ? 20 : (symUpper.includes('BANKNIFTY') ? 15 : 65);
+    const lots = parsedConfig.lots || 1;
+    const qty = parsedConfig.qty || (lots * defaultLotSize);
     const stopLossPoints = parsedConfig.stopLossPoints || 6;
     const targetPoints = parsedConfig.targetPoints || 8;
     const trailCostAtPoints = parsedConfig.trailCostAtPoints || 4;
@@ -158,6 +162,8 @@ export class NiftyOptionsScalperEngine {
       logs: [],
       lastProcessedTimestamp: 0,
       isCostSlTrailed: false,
+      isProfitLockTrailed: false,
+      isDynamicTrailingActive: false,
     };
 
     this.running.set(strategyId, state);
@@ -345,34 +351,38 @@ export class NiftyOptionsScalperEngine {
             // Step 1: Check +4 Points Cost Trail
             if (optCandle.high >= state.entryPrice! + (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
               state.isCostSlTrailed = true;
-              state.stopLossPrice = state.entryPrice;
+              state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
               this.log(state, `🛡 (Catch-up) Option hit +${state.config.trailCostAtPoints || 4} pts profit! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
             }
 
             // Step 2: Check +7 Points Profit Lock (+5 Pts locked)
             if (optCandle.high >= state.entryPrice! + 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+              state.isProfitLockTrailed = true;
               state.stopLossPrice = state.entryPrice! + 5;
               this.log(state, `🔒 (Catch-up) Option hit +7 pts profit! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
             }
 
-            // Target Check
-            if (optCandle.high >= state.targetPrice!) {
-              const exitPrice = state.targetPrice!;
-              const pnlPoints = exitPrice - state.entryPrice!;
-              const pnlRs = pnlPoints * state.config.qty;
-              this.log(state, `🎯 (Catch-up) Target Hit (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) on ${this.formatTime(currentCandle.date)} @ ₹${exitPrice.toFixed(2)}`);
-              state.winningTradesToday++;
-              await this.exitPositionHistorical(state, client, exitPrice, 'TARGET', currentCandle.date);
-              continue;
+            // Step 3: Check +10 Points Target 1 Milestone & Dynamic Trailing
+            if (optCandle.high >= state.entryPrice! + 10) {
+              state.isDynamicTrailingActive = true;
+              state.winningTradesToday = Math.max(state.winningTradesToday, 1);
+              if (state.stopLossPrice! < state.entryPrice! + 7) {
+                state.stopLossPrice = state.entryPrice! + 7;
+              }
+              const dynamicSl = this.roundTick(optCandle.high - 3.5);
+              if (dynamicSl > state.stopLossPrice!) {
+                state.stopLossPrice = dynamicSl;
+              }
             }
 
-            // Stop Loss Check
+            // Stop Loss / Trailing SL Check
             if (optCandle.low <= state.stopLossPrice!) {
               const exitPrice = state.stopLossPrice!;
               const pnlPoints = exitPrice - state.entryPrice!;
               const pnlRs = pnlPoints * state.config.qty;
-              this.log(state, `🛑 (Catch-up) Stop Loss Hit (${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) on ${this.formatTime(currentCandle.date)} @ ₹${exitPrice.toFixed(2)}`);
-              await this.exitPositionHistorical(state, client, exitPrice, 'SL', currentCandle.date);
+              const isWin = pnlPoints >= 0;
+              this.log(state, `${isWin ? '🎯 (Catch-up) Trailing Profit Hit' : '🛑 (Catch-up) Stop Loss Hit'} (${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) on ${this.formatTime(currentCandle.date)} @ ₹${exitPrice.toFixed(2)}`);
+              await this.exitPositionHistorical(state, client, exitPrice, isWin ? 'TARGET' : 'SL', currentCandle.date);
               continue;
             }
 
@@ -697,6 +707,45 @@ export class NiftyOptionsScalperEngine {
     const sl = this.roundTick(entry - (config.stopLossPoints || 7));
     const tgt = this.roundTick(entry + (config.targetPoints || 10));
 
+    // Dynamic Capital Sizing & Lot Auto-Calculation
+    const isHistorical = !!triggerTime;
+    let capital = (config as any).maxCapital;
+    if (!capital || capital <= 0) {
+      if (client && !state.isPaperTrade && !isHistorical) {
+        try {
+          const k = client['kite'] || client;
+          const liveMargins = await (k.getMargins ? k.getMargins() : client.getMargins?.()).catch(() => null);
+          const liveCash = liveMargins?.equity?.available?.live_balance
+            ?? liveMargins?.equity?.available?.cash
+            ?? liveMargins?.equity?.net
+            ?? liveMargins?.available?.live_balance
+            ?? liveMargins?.available?.cash
+            ?? liveMargins?.net;
+          if (liveCash && liveCash > 0) {
+            capital = Number(liveCash);
+            this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${capital.toLocaleString('en-IN')}`);
+          }
+        } catch { }
+      }
+    }
+    if (!capital || capital <= 0) capital = 15000;
+
+    const symUpper = (config.symbol || 'NIFTY').toUpperCase().trim();
+    const lotSize = symUpper.includes('SENSEX') ? 20 : (symUpper.includes('BANKNIFTY') ? 15 : 65);
+
+    // Dynamic sizing: Reserve 15% cash buffer (min ₹1,000), deploy 85% tradeable margin for option buying
+    const capitalBuffer = Math.max(1000, capital * 0.15);
+    const tradeableCapital = Math.max(2000, capital - capitalBuffer);
+    const perLotCost = entry * lotSize;
+    let dynamicLots = Math.max(1, Math.floor(tradeableCapital / Math.max(1, perLotCost)));
+
+    if (config.lots && config.lots > 1) {
+      dynamicLots = Math.max(config.lots, dynamicLots);
+    }
+    const tradeQty = dynamicLots * lotSize;
+    state.config.qty = tradeQty;
+    state.config.lots = dynamicLots;
+
     state.entryTriggered = 'LONG';
     state.optionSymbol = optSym;
     state.entryPrice = entry;
@@ -705,21 +754,43 @@ export class NiftyOptionsScalperEngine {
     state.targetPrice = tgt;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
     state.isCostSlTrailed = false;
+    state.isProfitLockTrailed = false;
+    state.isDynamicTrailingActive = false;
 
-    this.log(state, `📋 Placed Option Trade: ${exch}:${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+10 pts): ₹${tgt.toFixed(2)} | Initial SL (-7 pts): ₹${sl.toFixed(2)}`);
+    this.log(state, `📋 Placed Option Trade: ${exch}:${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+10 pts): ₹${tgt.toFixed(2)} | Initial SL (-7 pts): ₹${sl.toFixed(2)} | Qty: ${tradeQty} (${dynamicLots} lots, ₹${(tradeQty * entry).toLocaleString('en-IN')} deployed)`);
 
     const tStart = performance.now();
     try {
-      const isHistorical = !!triggerTime;
       const orderId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ symbol: optSym, exchange: exch, product: config.product, qty: config.qty, side: 'BUY', orderType: 'MARKET' });
+        : await client.placeOrder({ symbol: optSym, exchange: exch, product: config.product, qty: tradeQty, side: 'BUY', orderType: 'MARKET' });
 
       const elapsed = (performance.now() - tStart).toFixed(2);
       this.log(state, `⚡ Order punched in ${elapsed} ms [${state.isPaperTrade ? 'Paper Trade' : 'Live Broker Execution'}] (Order ID: ${orderId})`);
 
       // Track order in DB asynchronously (non-blocking for ultra-fast tick startup)
-      this.trackOrderInDB(state, 'BUY', optSym, exch, config.qty, entry, orderId, triggerTime).catch(() => { });
+      this.trackOrderInDB(state, 'BUY', optSym, exch, tradeQty, entry, orderId, triggerTime).catch(() => { });
+
+      // Live Broker SL Order Placement at Zerodha Server
+      if (!state.isPaperTrade && !isHistorical) {
+        const slTriggerPrice = this.roundTick(sl);
+        const slLimitPrice = this.roundTick(Math.max(0.05, sl - 1.00));
+        try {
+          state.slOrderId = await client.placeOrder({
+            symbol: optSym,
+            exchange: exch,
+            product: config.product ?? 'MIS',
+            qty: tradeQty,
+            side: 'SELL',
+            orderType: 'SL',
+            price: slLimitPrice,
+            triggerPrice: slTriggerPrice
+          });
+          this.log(state, `🛡 Armed Zerodha Server SL Order (${state.slOrderId}) for ${tradeQty} shares @ Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)}`);
+        } catch (slErr: any) {
+          this.log(state, `⚠ Failed to arm broker SL order: ${slErr.message}. Realtime monitor will guard position.`);
+        }
+      }
 
       if (!isHistorical) {
         await this.startRealtimeMonitor(state, client);
@@ -757,6 +828,27 @@ export class NiftyOptionsScalperEngine {
       state.currentPnlPct = pnlPct;
       state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
+      // 0. Check if Server SL Order filled at Zerodha
+      if (!state.isPaperTrade && state.slOrderId && client) {
+        const kite = client['kite'] || client;
+        if (kite && kite.getOrders) {
+          try {
+            const orders = await kite.getOrders();
+            const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
+            if (slOrder?.status === 'COMPLETE') {
+              isExiting = true;
+              const avgPrice = Number(slOrder.average_price) || state.stopLossPrice!;
+              const isProfitExit = avgPrice >= state.entryPrice!;
+              this.log(state, `🛑 Zerodha Server SL Order (${state.slOrderId}) filled at ₹${avgPrice.toFixed(2)}`);
+              this.stopRealtimeMonitor(state);
+              await this.exitPosition(state, client, avgPrice, isProfitExit ? 'TARGET' : 'SL');
+              await this.persistLogs(state);
+              return;
+            }
+          } catch { }
+        }
+      }
+
       // 1. 3:05 PM Mandatory Cutoff (Exit safely before Zerodha 3:12 PM RMS cutoff)
       if (this.getIstHhmm(new Date()) >= 15 * 60 + 5) {
         isExiting = true;
@@ -767,23 +859,47 @@ export class NiftyOptionsScalperEngine {
         return;
       }
 
-      // 2. Check +4 Points Breakeven Trail (Step 1)
+      // 2. Step 1: Check +4 Points Breakeven Trail (Trail to COST)
       if (pnlPoints >= (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
         state.isCostSlTrailed = true;
-        state.stopLossPrice = state.entryPrice;
+        state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
         this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints || 4} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+        await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
 
-      // 3. Check +7 Points Profit Lock (Step 2)
+      // 3. Step 2: Check +7 Points Profit Lock (Lock +5 pts)
       if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+        state.isProfitLockTrailed = true;
         state.stopLossPrice = state.entryPrice! + 5;
         this.log(state, `🔒 Option profit hit +7 pts! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
+        await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
 
-      // 4. Stagnant Trade / Theta Decay Timeout (Exit flat trade after 15m without momentum)
+      // 4. Step 3: Target 1 Milestone Reached (+10 pts) -> Activate Uncapped Dynamic Trailing!
+      if (pnlPoints >= 10 && !state.isDynamicTrailingActive) {
+        state.isDynamicTrailingActive = true;
+        state.winningTradesToday = Math.max(state.winningTradesToday, 1);
+        if (state.stopLossPrice! < state.entryPrice! + 7) {
+          state.stopLossPrice = state.entryPrice! + 7;
+        }
+        this.log(state, `🚀 Target-1 Milestone Reached (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}! Activating Uncapped Momentum Trailing. Profit locked at +7 pts (₹${state.stopLossPrice.toFixed(2)}). Trailing tight 3.5 pts behind LTP to catch the big runner!`);
+        await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
+      }
+
+      // 5. Step 4: Beyond +10 Points Dynamic Ratchet Trailing (Trailing 3.5 pts behind LTP)
+      if (state.isDynamicTrailingActive && currentPrice >= state.entryPrice! + 10) {
+        const dynamicSl = this.roundTick(currentPrice - 3.5);
+        if (dynamicSl > state.stopLossPrice!) {
+          state.stopLossPrice = dynamicSl;
+          this.log(state, `📈 Dynamic Momentum Trail: LTP ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts) -> Trailed SL to ₹${dynamicSl.toFixed(2)} (+${(dynamicSl - state.entryPrice!).toFixed(1)} pts / +₹${((dynamicSl - state.entryPrice!) * state.config.qty).toFixed(2)} locked)`);
+          await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
+        }
+      }
+
+      // 6. Stagnant Trade / Theta Decay Timeout (Exit flat trade after 15m without momentum)
       const stagnancyMs = (state.config.stagnancyMinutes || 15) * 60 * 1000;
       const holdingTime = now - (state.setupTimestamp || now);
-      if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs) {
+      if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs && !state.isDynamicTrailingActive) {
         if (pnlPoints >= -3 && pnlPoints <= 2) {
           isExiting = true;
           this.log(state, `⌛ Stagnant Trade Timeout (${Math.round(holdingTime / 60000)}m flat). Exiting at ₹${currentPrice.toFixed(2)} (P&L: ${pnlPoints.toFixed(1)} pts) to prevent theta decay.`);
@@ -794,23 +910,14 @@ export class NiftyOptionsScalperEngine {
         }
       }
 
-      // 5. Check Target (+10 Points)
-      if (currentPrice >= state.targetPrice!) {
-        isExiting = true;
-        this.log(state, `🎯 Target Hit (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}`);
-        state.winningTradesToday++;
-        this.stopRealtimeMonitor(state);
-        await this.exitPosition(state, client, currentPrice, 'TARGET');
-        await this.persistLogs(state);
-        return;
-      }
-
-      // 6. Check Stop Loss
+      // 7. Check Stop Loss / Trailing Stop Trigger
       if (currentPrice <= state.stopLossPrice!) {
         isExiting = true;
-        this.log(state, `🛑 Stop Loss Hit (${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}`);
+        const isProfitExit = state.stopLossPrice! >= state.entryPrice!;
+        const exitType = isProfitExit ? 'TARGET' : 'SL';
+        this.log(state, `${isProfitExit ? '🎯 Trailing Stop Hit' : '🛑 Stop Loss Hit'} (${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}`);
         this.stopRealtimeMonitor(state);
-        await this.exitPosition(state, client, currentPrice, 'SL');
+        await this.exitPosition(state, client, currentPrice, exitType);
         await this.persistLogs(state);
         return;
       }
@@ -835,12 +942,66 @@ export class NiftyOptionsScalperEngine {
     }
   }
 
+  private async updateBrokerSlSafe(client: any, kite: any, state: ScalperStrategyState, symbol: string) {
+    if (state.isPaperTrade || !state.slOrderId || state.slOrderId === 'FAILED' || !state.stopLossPrice) return;
+    try {
+      const triggerPrice = this.roundTick(state.stopLossPrice);
+      const limitPrice = this.roundTick(Math.max(0.05, triggerPrice - 1.00));
+
+      const now = Date.now();
+      if (state.lastBrokerSlModifyTime && (now - state.lastBrokerSlModifyTime < 1500)) return;
+      if (state.lastBrokerSlTrigger && Math.abs(state.lastBrokerSlTrigger - triggerPrice) < 0.25) return;
+
+      const k = kite || client?.['kite'] || client;
+      if (client && client.modifyOrder) {
+        await client.modifyOrder(state.slOrderId, {
+          triggerPrice: triggerPrice,
+          price: limitPrice,
+        }).catch((e: any) => {
+          this.log(state, `⚠ Zerodha SL modify notice: ${e.message}`);
+        });
+        state.lastBrokerSlTrigger = triggerPrice;
+        state.lastBrokerSlModifyTime = now;
+        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+      } else if (k && k.modifyOrder) {
+        await k.modifyOrder('regular', state.slOrderId, {
+          trigger_price: triggerPrice,
+          price: limitPrice,
+        }).catch((e: any) => {
+          this.log(state, `⚠ Zerodha Kite SL modify notice: ${e.message}`);
+        });
+        state.lastBrokerSlTrigger = triggerPrice;
+        state.lastBrokerSlModifyTime = now;
+        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+      }
+    } catch (e: any) {
+      this.logger.warn(`Failed to update broker SL order: ${e.message}`);
+    }
+  }
+
   private async monitorPosition(state: ScalperStrategyState, client: any, kite: any) {
     if (!state.optionSymbol || !state.entryTriggered) return;
 
     const symbol = state.optionSymbol;
     const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     const key = `${exch}:${symbol}`;
+
+    // 0. Check if Server SL Order filled at Zerodha
+    if (!state.isPaperTrade && state.slOrderId && kite) {
+      try {
+        const orders = await kite.getOrders();
+        const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
+        if (slOrder?.status === 'COMPLETE') {
+          const avgPrice = Number(slOrder.average_price) || state.stopLossPrice!;
+          const isProfitExit = avgPrice >= state.entryPrice!;
+          this.log(state, `🛑 Zerodha Server SL Order (${state.slOrderId}) filled at ₹${avgPrice.toFixed(2)}`);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, avgPrice, isProfitExit ? 'TARGET' : 'SL');
+          await this.persistLogs(state);
+          return;
+        }
+      } catch { }
+    }
 
     // 1. 3:05 PM Cutoff
     if (this.getIstHhmm(new Date()) >= 15 * 60 + 5) {
@@ -884,21 +1045,45 @@ export class NiftyOptionsScalperEngine {
     // 2. Breakeven Trailing (+4 pts)
     if (pnlPoints >= (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
       state.isCostSlTrailed = true;
-      state.stopLossPrice = state.entryPrice;
+      state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
       this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints || 4} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+      await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
 
     // 3. Profit Lock (+7 pts)
     if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+      state.isProfitLockTrailed = true;
       state.stopLossPrice = state.entryPrice! + 5;
       this.log(state, `🔒 Option profit hit +7 pts! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
+      await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
 
-    // 4. Stagnant Trade / Theta Decay Timeout
+    // 4. Target 1 Milestone (+10 pts) -> Activate Uncapped Dynamic Trailing
+    if (pnlPoints >= 10 && !state.isDynamicTrailingActive) {
+      state.isDynamicTrailingActive = true;
+      state.winningTradesToday = Math.max(state.winningTradesToday, 1);
+      if (state.stopLossPrice! < state.entryPrice! + 7) {
+        state.stopLossPrice = state.entryPrice! + 7;
+      }
+      this.log(state, `🚀 Target-1 Milestone Reached (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}! Activating Uncapped Momentum Trailing.`);
+      await this.updateBrokerSlSafe(client, kite, state, symbol);
+    }
+
+    // 5. Beyond +10 Points Dynamic Ratchet Trailing
+    if (state.isDynamicTrailingActive && currentPrice >= state.entryPrice! + 10) {
+      const dynamicSl = this.roundTick(currentPrice - 3.5);
+      if (dynamicSl > state.stopLossPrice!) {
+        state.stopLossPrice = dynamicSl;
+        this.log(state, `📈 Dynamic Momentum Trail: LTP ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts) -> Trailed SL to ₹${dynamicSl.toFixed(2)} (+${(dynamicSl - state.entryPrice!).toFixed(1)} pts locked)`);
+        await this.updateBrokerSlSafe(client, kite, state, symbol);
+      }
+    }
+
+    // 6. Stagnant Trade / Theta Decay Timeout
     const now = Date.now();
     const stagnancyMs = (state.config.stagnancyMinutes || 15) * 60 * 1000;
     const holdingTime = now - (state.setupTimestamp || now);
-    if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs) {
+    if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs && !state.isDynamicTrailingActive) {
       if (pnlPoints >= -3 && pnlPoints <= 2) {
         this.log(state, `⌛ Stagnant Trade Timeout in poll (${Math.round(holdingTime / 60000)}m flat). Exiting at ₹${currentPrice.toFixed(2)}.`);
         this.stopRealtimeMonitor(state);
@@ -911,14 +1096,11 @@ export class NiftyOptionsScalperEngine {
     const sign = pnlRs >= 0 ? '+' : '';
     this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | P&L: ${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts (${sign}₹${pnlRs.toFixed(2)}) | SL: ₹${state.stopLossPrice!.toFixed(2)} | Target: ₹${state.targetPrice!.toFixed(2)}`);
 
-    if (currentPrice >= state.targetPrice!) {
-      this.log(state, `🎯 Target Hit at ₹${currentPrice.toFixed(2)}`);
-      state.winningTradesToday++;
-      await this.exitPosition(state, client, currentPrice, 'TARGET');
-      await this.persistLogs(state);
-    } else if (currentPrice <= state.stopLossPrice!) {
-      this.log(state, `🛑 Stop Loss Hit at ₹${currentPrice.toFixed(2)}`);
-      await this.exitPosition(state, client, currentPrice, 'SL');
+    if (currentPrice <= state.stopLossPrice!) {
+      const isProfitExit = state.stopLossPrice! >= state.entryPrice!;
+      const exitType = isProfitExit ? 'TARGET' : 'SL';
+      this.log(state, `${isProfitExit ? '🎯 Trailing Stop Hit' : '🛑 Stop Loss Hit'} at ₹${currentPrice.toFixed(2)}`);
+      await this.exitPosition(state, client, currentPrice, exitType);
       await this.persistLogs(state);
     }
   }
@@ -928,6 +1110,14 @@ export class NiftyOptionsScalperEngine {
     const qty = state.config.qty;
     const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     this.stopRealtimeMonitor(state);
+
+    // Cancel open broker SL order safely to prevent double exits
+    if (!state.isPaperTrade && client && state.slOrderId && state.slOrderId !== 'FAILED') {
+      try {
+        await client.cancelOrder(state.slOrderId).catch(() => { });
+        this.log(state, `🧹 Cancelled pending Zerodha SL order (${state.slOrderId})`);
+      } catch { }
+    }
 
     // ── 0. Prevent Duplicate Exit Order if User Already Exited on Zerodha ──────
     if (!state.isPaperTrade && client) {
@@ -946,7 +1136,10 @@ export class NiftyOptionsScalperEngine {
             state.entryPrice = null;
             state.stopLossPrice = null;
             state.targetPrice = null;
+            state.slOrderId = null;
             state.isCostSlTrailed = false;
+            state.isProfitLockTrailed = false;
+            state.isDynamicTrailingActive = false;
             return;
           }
         }
@@ -969,7 +1162,10 @@ export class NiftyOptionsScalperEngine {
       state.entryPrice = null;
       state.stopLossPrice = null;
       state.targetPrice = null;
+      state.slOrderId = null;
       state.isCostSlTrailed = false;
+      state.isProfitLockTrailed = false;
+      state.isDynamicTrailingActive = false;
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
     }
@@ -992,7 +1188,10 @@ export class NiftyOptionsScalperEngine {
       state.entryPrice = null;
       state.stopLossPrice = null;
       state.targetPrice = null;
+      state.slOrderId = null;
       state.isCostSlTrailed = false;
+      state.isProfitLockTrailed = false;
+      state.isDynamicTrailingActive = false;
     } catch (e) {
       this.log(state, `❌ Historical exit failed: ${e.message}`);
     }
