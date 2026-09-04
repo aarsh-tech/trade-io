@@ -108,7 +108,7 @@ export class NiftyOptionsScalperEngine {
     };
   }
 
-  async start(strategyId: string): Promise<{ executionId: string }> {
+  async start(strategyId: string, replayDate?: Date): Promise<{ executionId: string }> {
     if (this.running.has(strategyId)) return { executionId: this.running.get(strategyId)!.executionId };
 
     const strategy = await this.prisma.strategy.findUnique({
@@ -210,7 +210,7 @@ export class NiftyOptionsScalperEngine {
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 3_000);
     this.timers.set(strategyId, timer);
 
-    this.initialCatchup(strategyId).then(() => {
+    this.initialCatchup(strategyId, replayDate).then(() => {
       this.tick(strategyId).catch(e => this.logger.error(e));
     }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
 
@@ -301,11 +301,11 @@ export class NiftyOptionsScalperEngine {
     return { success: true, message: `Position squared off at ₹${exitPrice.toFixed(2)}` };
   }
 
-  private async initialCatchup(strategyId: string) {
+  public async initialCatchup(strategyId: string, replayDate?: Date) {
     const state = this.running.get(strategyId);
     if (!state) return;
-    const now = new Date();
-    if (this.getIstHhmm(now) < 9 * 60 + 20) return;
+    const now = replayDate || new Date();
+    if (!replayDate && this.getIstHhmm(now) < 9 * 60 + 20) return;
 
     this.log(state, `🔍 Running catch-up for Nifty 10-Point Scalper...`);
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
@@ -332,14 +332,14 @@ export class NiftyOptionsScalperEngine {
       const vwaps = this.calculateVWAP(candles, state.config.vwapSource || 'close');
       const stochRsis = this.calculateStochRSI(candles, 14, 14, 3, 3);
 
-      const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      const todayStr = (replayDate || now).toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
 
-      // Determine target trading session date: if today has candles (weekday), use today; otherwise pick the most recent trading date from fetched candles!
+      // Determine target trading session date: if replayDate provided, use that; otherwise pick the most recent trading date!
       const lastCandle = candles[candles.length - 1];
       const latestCandleDateStr = lastCandle ? lastCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) : todayStr;
 
       const todayCandlesCheck = candles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === todayStr);
-      const targetSessionDateStr = todayCandlesCheck.length > 0 ? todayStr : latestCandleDateStr;
+      const targetSessionDateStr = replayDate ? todayStr : (todayCandlesCheck.length > 0 ? todayStr : latestCandleDateStr);
 
       // Identify 15-min Opening Range (9:15 - 9:30 AM candles) for ORB Trigger
       let orbHigh: number | null = null;
@@ -1469,7 +1469,7 @@ export class NiftyOptionsScalperEngine {
     const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && (i.segment === segment || i.segment === `${exchange}-OPT`));
     if (options.length === 0) return null;
 
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(triggerTime || new Date());
     const getExpiryStr = (expiry: any): string => {
       if (!expiry) return '';
       const d = new Date(expiry);
