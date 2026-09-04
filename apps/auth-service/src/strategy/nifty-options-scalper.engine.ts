@@ -72,6 +72,42 @@ export class NiftyOptionsScalperEngine {
     private tickerService: TickerService,
   ) { }
 
+  getIndexScalpParams(symbol: string, userConfig?: Partial<NiftyOptionsScalperConfig>) {
+    const symUpper = (symbol || 'NIFTY').toUpperCase().trim();
+    const isSensex = symUpper.includes('SENSEX');
+    const isBankNifty = symUpper.includes('BANKNIFTY');
+
+    // Index-Adaptive Scaling Factors based on Index Spot & Lot Size:
+    // NIFTY (~25,000 spot, 65 lot size)    -> 7 pt SL, 4 pt Cost trail, 7 pt lock (+5), 10 pt Target, 3.5 pt dynamic trail
+    // SENSEX (~81,000 spot, 20 lot size)   -> 22 pt SL, 13 pt Cost trail, 22 pt lock (+16), 32 pt Target, 11.0 pt dynamic trail
+    // BANKNIFTY (~54,000 spot, 15 lot size) -> 15 pt SL, 8 pt Cost trail, 15 pt lock (+10), 22 pt Target, 7.0 pt dynamic trail
+    const defaultLotSize = isSensex ? 20 : (isBankNifty ? 15 : 65);
+    const stopLossPoints = userConfig?.stopLossPoints || (isSensex ? 22 : (isBankNifty ? 15 : 7));
+    const targetPoints = userConfig?.targetPoints || (isSensex ? 32 : (isBankNifty ? 22 : 10));
+    const trailCostAtPoints = userConfig?.trailCostAtPoints || (isSensex ? 13 : (isBankNifty ? 8 : 4));
+    const profitLockTriggerPts = isSensex ? 22 : (isBankNifty ? 15 : 7);
+    const profitLockPts = isSensex ? 16 : (isBankNifty ? 10 : 5);
+    const target1LockPts = isSensex ? 22 : (isBankNifty ? 15 : 7);
+    const dynamicTrailBufferPts = isSensex ? 11.0 : (isBankNifty ? 7.0 : 3.5);
+    const minCandleRange = isSensex ? 25 : (isBankNifty ? 18 : 8);
+    const emaPullbackBuffer = isSensex ? 25 : (isBankNifty ? 16 : 8);
+
+    return {
+      isSensex,
+      isBankNifty,
+      defaultLotSize,
+      stopLossPoints,
+      targetPoints,
+      trailCostAtPoints,
+      profitLockTriggerPts,
+      profitLockPts,
+      target1LockPts,
+      dynamicTrailBufferPts,
+      minCandleRange,
+      emaPullbackBuffer,
+    };
+  }
+
   async start(strategyId: string): Promise<{ executionId: string }> {
     if (this.running.has(strategyId)) return { executionId: this.running.get(strategyId)!.executionId };
 
@@ -83,16 +119,16 @@ export class NiftyOptionsScalperEngine {
 
     const parsedConfig: Partial<NiftyOptionsScalperConfig> = JSON.parse(strategy.config);
     const symUpper = (parsedConfig.symbol || 'NIFTY').toUpperCase().trim();
-    const defaultLotSize = symUpper.includes('SENSEX') ? 20 : (symUpper.includes('BANKNIFTY') ? 15 : 65);
+    const params = this.getIndexScalpParams(symUpper, parsedConfig);
     const lots = parsedConfig.lots || 1;
-    const qty = parsedConfig.qty || (lots * defaultLotSize);
-    const stopLossPoints = parsedConfig.stopLossPoints || 6;
-    const targetPoints = parsedConfig.targetPoints || 8;
-    const trailCostAtPoints = parsedConfig.trailCostAtPoints || 4;
+    const qty = parsedConfig.qty || (lots * params.defaultLotSize);
+    const stopLossPoints = params.stopLossPoints;
+    const targetPoints = params.targetPoints;
+    const trailCostAtPoints = params.trailCostAtPoints;
 
     const config: NiftyOptionsScalperConfig = {
       symbol: parsedConfig.symbol || 'NIFTY',
-      exchange: parsedConfig.exchange || (symUpper.includes('SENSEX') ? 'BSE' : 'NSE'),
+      exchange: parsedConfig.exchange || (params.isSensex ? 'BSE' : 'NSE'),
       emaPeriod: parsedConfig.emaPeriod || 15,
       vwapSource: parsedConfig.vwapSource || 'close',
       isOptionBuyingOnly: true,
@@ -341,6 +377,7 @@ export class NiftyOptionsScalperEngine {
 
         // Active Position Management in Catch-up
         if (state.entryTriggered) {
+          const params = this.getIndexScalpParams(state.config.symbol, state.config);
           const optSymbol = state.optionSymbol!;
           const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
           const rawData = await client.getHistoricalData(optSymbol, exch, '5minute', new Date(state.setupTimestamp || currentCandle.date), now);
@@ -348,28 +385,28 @@ export class NiftyOptionsScalperEngine {
           const optCandle = optCandles.find(c => c.date.getTime() === currentCandle.date.getTime());
 
           if (optCandle) {
-            // Step 1: Check +4 Points Cost Trail
-            if (optCandle.high >= state.entryPrice! + (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
+            // Step 1: Check Cost Trail
+            if (optCandle.high >= state.entryPrice! + params.trailCostAtPoints && !state.isCostSlTrailed) {
               state.isCostSlTrailed = true;
               state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
-              this.log(state, `🛡 (Catch-up) Option hit +${state.config.trailCostAtPoints || 4} pts profit! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+              this.log(state, `🛡 (Catch-up) Option hit +${params.trailCostAtPoints} pts profit! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
             }
 
-            // Step 2: Check +7 Points Profit Lock (+5 Pts locked)
-            if (optCandle.high >= state.entryPrice! + 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+            // Step 2: Check Profit Lock
+            if (optCandle.high >= state.entryPrice! + params.profitLockTriggerPts && state.stopLossPrice! < state.entryPrice! + params.profitLockPts) {
               state.isProfitLockTrailed = true;
-              state.stopLossPrice = state.entryPrice! + 5;
-              this.log(state, `🔒 (Catch-up) Option hit +7 pts profit! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
+              state.stopLossPrice = state.entryPrice! + params.profitLockPts;
+              this.log(state, `🔒 (Catch-up) Option hit +${params.profitLockTriggerPts} pts profit! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * state.config.qty).toFixed(2)} Profit Guaranteed!`);
             }
 
-            // Step 3: Check +10 Points Target 1 Milestone & Dynamic Trailing
-            if (optCandle.high >= state.entryPrice! + 10) {
+            // Step 3: Check Target 1 Milestone & Dynamic Trailing
+            if (optCandle.high >= state.entryPrice! + params.targetPoints) {
               state.isDynamicTrailingActive = true;
               state.winningTradesToday = Math.max(state.winningTradesToday, 1);
-              if (state.stopLossPrice! < state.entryPrice! + 7) {
-                state.stopLossPrice = state.entryPrice! + 7;
+              if (state.stopLossPrice! < state.entryPrice! + params.target1LockPts) {
+                state.stopLossPrice = state.entryPrice! + params.target1LockPts;
               }
-              const dynamicSl = this.roundTick(optCandle.high - 3.5);
+              const dynamicSl = this.roundTick(optCandle.high - params.dynamicTrailBufferPts);
               if (dynamicSl > state.stopLossPrice!) {
                 state.stopLossPrice = dynamicSl;
               }
@@ -410,9 +447,10 @@ export class NiftyOptionsScalperEngine {
 
         const prevEma = emas[i - 1], prevVwap = vwaps[i - 1];
         const candleRange = currentCandle.high - currentCandle.low;
+        const scanParams = this.getIndexScalpParams(state.config.symbol, state.config);
 
-        // Skip micro / flat candles (< 8 pts) to avoid choppy sideways whipsaws
-        if (state.config.enableRangeFilter !== false && candleRange < 8) continue;
+        // Skip micro / flat candles to avoid choppy sideways whipsaws
+        if (state.config.enableRangeFilter !== false && candleRange < scanParams.minCandleRange) continue;
 
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';
@@ -434,8 +472,8 @@ export class NiftyOptionsScalperEngine {
             const isBearishRegime = currentEma < currentVwap && currentCandle.close < currentEma && currentCandle.close < currentVwap;
             const isBullishRegime = currentEma > currentVwap && currentCandle.close > currentEma && currentCandle.close > currentVwap;
 
-            const touchedVwapOrEmaBearish = currentCandle.high >= currentEma - 8 && currentCandle.high <= Math.max(currentEma, currentVwap) + 10;
-            const touchedVwapOrEmaBullish = currentCandle.low <= currentEma + 8 && currentCandle.low >= Math.min(currentEma, currentVwap) - 10;
+            const touchedVwapOrEmaBearish = currentCandle.high >= currentEma - scanParams.emaPullbackBuffer && currentCandle.high <= Math.max(currentEma, currentVwap) + (scanParams.emaPullbackBuffer + 2);
+            const touchedVwapOrEmaBullish = currentCandle.low <= currentEma + scanParams.emaPullbackBuffer && currentCandle.low >= Math.min(currentEma, currentVwap) - (scanParams.emaPullbackBuffer + 2);
 
             if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
               triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection'; triggerPriceLevel = currentCandle.low;
@@ -564,6 +602,7 @@ export class NiftyOptionsScalperEngine {
         const currentCandle = closedCandles[lastIdx];
         const prevCandle = closedCandles[lastIdx - 1];
         const candleRange = currentCandle.high - currentCandle.low;
+        const scanParams = this.getIndexScalpParams(config.symbol, config);
 
         const todayStr = this.getIstDateStr(now);
         const currDateStr = this.getIstDateStr(currentCandle.date);
@@ -582,8 +621,8 @@ export class NiftyOptionsScalperEngine {
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';
 
-        // Skip micro / flat candles (< 8 pts) to avoid choppy sideways whipsaws
-        const isRangeValid = config.enableRangeFilter === false || candleRange >= 8;
+        // Skip micro / flat candles to avoid choppy sideways whipsaws
+        const isRangeValid = config.enableRangeFilter === false || candleRange >= scanParams.minCandleRange;
 
         if (isRangeValid) {
           // 1. EMA-VWAP Crossover Trigger (requires price confirmation)
@@ -602,8 +641,8 @@ export class NiftyOptionsScalperEngine {
               const isBearishRegime = currEma < currVwap && currentCandle.close < currEma && currentCandle.close < currVwap;
               const isBullishRegime = currEma > currVwap && currentCandle.close > currEma && currentCandle.close > currVwap;
 
-              const touchedVwapOrEmaBearish = currentCandle.high >= currEma - 8 && currentCandle.high <= Math.max(currEma, currVwap) + 10;
-              const touchedVwapOrEmaBullish = currentCandle.low <= currEma + 8 && currentCandle.low >= Math.min(currEma, currVwap) - 10;
+              const touchedVwapOrEmaBearish = currentCandle.high >= currEma - scanParams.emaPullbackBuffer && currentCandle.high <= Math.max(currEma, currVwap) + (scanParams.emaPullbackBuffer + 2);
+              const touchedVwapOrEmaBullish = currentCandle.low <= currEma + scanParams.emaPullbackBuffer && currentCandle.low >= Math.min(currEma, currVwap) - (scanParams.emaPullbackBuffer + 2);
 
               if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
                 triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection';
@@ -703,9 +742,10 @@ export class NiftyOptionsScalperEngine {
       if (q[`${exch}:${optSym}`]?.last_price) optionEntryPrice = q[`${exch}:${optSym}`].last_price;
     }
 
+    const params = this.getIndexScalpParams(config.symbol, config);
     const entry = this.roundTick(optionEntryPrice);
-    const sl = this.roundTick(entry - (config.stopLossPoints || 7));
-    const tgt = this.roundTick(entry + (config.targetPoints || 10));
+    const sl = this.roundTick(entry - (params.stopLossPoints));
+    const tgt = this.roundTick(entry + (params.targetPoints));
 
     // Dynamic Capital Sizing & Lot Auto-Calculation
     const isHistorical = !!triggerTime;
@@ -730,8 +770,7 @@ export class NiftyOptionsScalperEngine {
     }
     if (!capital || capital <= 0) capital = 15000;
 
-    const symUpper = (config.symbol || 'NIFTY').toUpperCase().trim();
-    const lotSize = symUpper.includes('SENSEX') ? 20 : (symUpper.includes('BANKNIFTY') ? 15 : 65);
+    const lotSize = params.defaultLotSize;
 
     // Dynamic sizing: Reserve 15% cash buffer (min ₹1,000), deploy 85% tradeable margin for option buying
     const capitalBuffer = Math.max(1000, capital * 0.15);
@@ -757,7 +796,7 @@ export class NiftyOptionsScalperEngine {
     state.isProfitLockTrailed = false;
     state.isDynamicTrailingActive = false;
 
-    this.log(state, `📋 Placed Option Trade: ${exch}:${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+10 pts): ₹${tgt.toFixed(2)} | Initial SL (-7 pts): ₹${sl.toFixed(2)} | Qty: ${tradeQty} (${dynamicLots} lots, ₹${(tradeQty * entry).toLocaleString('en-IN')} deployed)`);
+    this.log(state, `📋 Placed Option Trade: ${exch}:${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+${params.targetPoints} pts): ₹${tgt.toFixed(2)} | Initial SL (-${params.stopLossPoints} pts): ₹${sl.toFixed(2)} | Qty: ${tradeQty} (${dynamicLots} lots, ₹${(tradeQty * entry).toLocaleString('en-IN')} deployed)`);
 
     const tStart = performance.now();
     try {
@@ -811,11 +850,12 @@ export class NiftyOptionsScalperEngine {
       return;
     }
 
+    const params = this.getIndexScalpParams(state.config.symbol, state.config);
     state.realtimeActive = true;
     let isExiting = false;
 
     const unsubscribe = this.tickerService.registerListener(async (ticks) => {
-      const currentPrice = ticks[symbol] || ticks[`NFO:${symbol}`];
+      const currentPrice = ticks[symbol] || ticks[`NFO:${symbol}`] || ticks[`BFO:${symbol}`];
       if (!currentPrice || !state.entryTriggered || isExiting) return;
 
       const now = Date.now();
@@ -859,36 +899,36 @@ export class NiftyOptionsScalperEngine {
         return;
       }
 
-      // 2. Step 1: Check +4 Points Breakeven Trail (Trail to COST)
-      if (pnlPoints >= (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
+      // 2. Step 1: Check Breakeven Trail (Trail to COST)
+      if (pnlPoints >= params.trailCostAtPoints && !state.isCostSlTrailed) {
         state.isCostSlTrailed = true;
         state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
-        this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints || 4} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+        this.log(state, `🛡 Option profit hit +${params.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
         await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
 
-      // 3. Step 2: Check +7 Points Profit Lock (Lock +5 pts)
-      if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+      // 3. Step 2: Check Profit Lock
+      if (pnlPoints >= params.profitLockTriggerPts && state.stopLossPrice! < state.entryPrice! + params.profitLockPts) {
         state.isProfitLockTrailed = true;
-        state.stopLossPrice = state.entryPrice! + 5;
-        this.log(state, `🔒 Option profit hit +7 pts! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
+        state.stopLossPrice = state.entryPrice! + params.profitLockPts;
+        this.log(state, `🔒 Option profit hit +${params.profitLockTriggerPts} pts! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * state.config.qty).toFixed(2)} Profit Guaranteed!`);
         await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
 
-      // 4. Step 3: Target 1 Milestone Reached (+10 pts) -> Activate Uncapped Dynamic Trailing!
-      if (pnlPoints >= 10 && !state.isDynamicTrailingActive) {
+      // 4. Step 3: Target 1 Milestone Reached -> Activate Uncapped Dynamic Trailing!
+      if (pnlPoints >= params.targetPoints && !state.isDynamicTrailingActive) {
         state.isDynamicTrailingActive = true;
         state.winningTradesToday = Math.max(state.winningTradesToday, 1);
-        if (state.stopLossPrice! < state.entryPrice! + 7) {
-          state.stopLossPrice = state.entryPrice! + 7;
+        if (state.stopLossPrice! < state.entryPrice! + params.target1LockPts) {
+          state.stopLossPrice = state.entryPrice! + params.target1LockPts;
         }
-        this.log(state, `🚀 Target-1 Milestone Reached (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}! Activating Uncapped Momentum Trailing. Profit locked at +7 pts (₹${state.stopLossPrice.toFixed(2)}). Trailing tight 3.5 pts behind LTP to catch the big runner!`);
+        this.log(state, `🚀 Target-1 Milestone Reached (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}! Activating Uncapped Momentum Trailing. Profit locked at +${params.target1LockPts} pts (₹${state.stopLossPrice.toFixed(2)}). Trailing ${params.dynamicTrailBufferPts} pts behind LTP to catch the big runner!`);
         await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
 
-      // 5. Step 4: Beyond +10 Points Dynamic Ratchet Trailing (Trailing 3.5 pts behind LTP)
-      if (state.isDynamicTrailingActive && currentPrice >= state.entryPrice! + 10) {
-        const dynamicSl = this.roundTick(currentPrice - 3.5);
+      // 5. Step 4: Beyond Target 1 Dynamic Ratchet Trailing
+      if (state.isDynamicTrailingActive && currentPrice >= state.entryPrice! + params.targetPoints) {
+        const dynamicSl = this.roundTick(currentPrice - params.dynamicTrailBufferPts);
         if (dynamicSl > state.stopLossPrice!) {
           state.stopLossPrice = dynamicSl;
           this.log(state, `📈 Dynamic Momentum Trail: LTP ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts) -> Trailed SL to ₹${dynamicSl.toFixed(2)} (+${(dynamicSl - state.entryPrice!).toFixed(1)} pts / +₹${((dynamicSl - state.entryPrice!) * state.config.qty).toFixed(2)} locked)`);
@@ -983,6 +1023,7 @@ export class NiftyOptionsScalperEngine {
     if (!state.optionSymbol || !state.entryTriggered) return;
 
     const symbol = state.optionSymbol;
+    const params = this.getIndexScalpParams(state.config.symbol, state.config);
     const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     const key = `${exch}:${symbol}`;
 
@@ -1042,36 +1083,36 @@ export class NiftyOptionsScalperEngine {
     state.currentPnlPct = pnlPct;
     state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-    // 2. Breakeven Trailing (+4 pts)
-    if (pnlPoints >= (state.config.trailCostAtPoints || 4) && !state.isCostSlTrailed) {
+    // 2. Breakeven Trailing (Trail to COST)
+    if (pnlPoints >= params.trailCostAtPoints && !state.isCostSlTrailed) {
       state.isCostSlTrailed = true;
       state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
-      this.log(state, `🛡 Option profit hit +${state.config.trailCostAtPoints || 4} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+      this.log(state, `🛡 Option profit hit +${params.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
       await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
 
-    // 3. Profit Lock (+7 pts)
-    if (pnlPoints >= 7 && state.stopLossPrice! < state.entryPrice! + 5) {
+    // 3. Profit Lock
+    if (pnlPoints >= params.profitLockTriggerPts && state.stopLossPrice! < state.entryPrice! + params.profitLockPts) {
       state.isProfitLockTrailed = true;
-      state.stopLossPrice = state.entryPrice! + 5;
-      this.log(state, `🔒 Option profit hit +7 pts! Locked +5 pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(5 * state.config.qty).toFixed(2)} Profit Guaranteed!`);
+      state.stopLossPrice = state.entryPrice! + params.profitLockPts;
+      this.log(state, `🔒 Option profit hit +${params.profitLockTriggerPts} pts! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * state.config.qty).toFixed(2)} Profit Guaranteed!`);
       await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
 
-    // 4. Target 1 Milestone (+10 pts) -> Activate Uncapped Dynamic Trailing
-    if (pnlPoints >= 10 && !state.isDynamicTrailingActive) {
+    // 4. Target 1 Milestone -> Activate Uncapped Dynamic Trailing
+    if (pnlPoints >= params.targetPoints && !state.isDynamicTrailingActive) {
       state.isDynamicTrailingActive = true;
       state.winningTradesToday = Math.max(state.winningTradesToday, 1);
-      if (state.stopLossPrice! < state.entryPrice! + 7) {
-        state.stopLossPrice = state.entryPrice! + 7;
+      if (state.stopLossPrice! < state.entryPrice! + params.target1LockPts) {
+        state.stopLossPrice = state.entryPrice! + params.target1LockPts;
       }
       this.log(state, `🚀 Target-1 Milestone Reached (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}! Activating Uncapped Momentum Trailing.`);
       await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
 
-    // 5. Beyond +10 Points Dynamic Ratchet Trailing
-    if (state.isDynamicTrailingActive && currentPrice >= state.entryPrice! + 10) {
-      const dynamicSl = this.roundTick(currentPrice - 3.5);
+    // 5. Beyond Target 1 Dynamic Ratchet Trailing
+    if (state.isDynamicTrailingActive && currentPrice >= state.entryPrice! + params.targetPoints) {
+      const dynamicSl = this.roundTick(currentPrice - params.dynamicTrailBufferPts);
       if (dynamicSl > state.stopLossPrice!) {
         state.stopLossPrice = dynamicSl;
         this.log(state, `📈 Dynamic Momentum Trail: LTP ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts) -> Trailed SL to ₹${dynamicSl.toFixed(2)} (+${(dynamicSl - state.entryPrice!).toFixed(1)} pts locked)`);
