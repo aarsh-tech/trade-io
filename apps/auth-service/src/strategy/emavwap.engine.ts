@@ -63,6 +63,8 @@ interface StrategyState {
   activeSymbol?: string | null;
   dailyRealizedPnlRs?: number;
   dailyTargetLocked?: boolean;
+  lastBrokerSlTrigger?: number;
+  lastBrokerSlModifyTime?: number;
 }
 
 @Injectable()
@@ -1180,8 +1182,7 @@ export class EmaVwapCrossoverEngine {
     let sl: number;
     let tgt: number;
 
-    const maxRiskThresholdRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 500;
-    const maxRiskPointsCap = Math.max(symTickSize * 10, entry * 0.015); // Max 1.5% stock move or max risk per share
+    const maxRiskThresholdRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 1000;
 
     if (isOption) {
       sl = optionMotherLow !== null ? this.roundTick(optionMotherLow, symbol) : this.roundTick(entry - (maxRiskThresholdRs / config.qty), symbol);
@@ -1190,14 +1191,31 @@ export class EmaVwapCrossoverEngine {
       state.spotStopLossPrice = side === 'BUY' ? motherLow : motherHigh;
     } else {
       if (finalSide === 'BUY') {
-        const rawSl = motherLow ? motherLow : (entry - (maxRiskThresholdRs / (config.qty || 1)));
-        sl = this.roundTick(Math.max(rawSl, entry - maxRiskPointsCap), symbol);
+        // True Structural Candle SL: Place comfortably below entry/mother candle low with tick buffer
+        let rawSl: number;
+        if (motherLow && motherLow < entry) {
+          const buffer = Math.max(symTickSize * 5, motherLow * 0.0035);
+          rawSl = motherLow <= (entry - buffer) ? motherLow : (entry - buffer);
+        } else {
+          rawSl = entry - Math.max(symTickSize * 10, entry * 0.015);
+        }
+        // Emergency cap only for extreme wild gap/wicks (>4.5%)
+        const maxEmergencyDist = Math.max(symTickSize * 10, entry * 0.045);
+        sl = this.roundTick(Math.max(rawSl, entry - maxEmergencyDist), symbol);
         if (sl >= entry) sl = this.roundTick(entry - symTickSize * 5, symbol);
         const risk = Math.max(symTickSize, Math.abs(entry - sl));
         tgt = config.enableProfitFloor !== false ? this.roundTick(entry * 1.06, symbol) : this.roundTick(entry + risk * 1.5, symbol);
       } else {
-        const rawSl = motherHigh ? motherHigh : (entry + (maxRiskThresholdRs / (config.qty || 1)));
-        sl = this.roundTick(Math.min(rawSl, entry + maxRiskPointsCap), symbol);
+        // True Structural Candle SL: Place comfortably above entry/mother candle high with tick buffer
+        let rawSl: number;
+        if (motherHigh && motherHigh > entry) {
+          const buffer = Math.max(symTickSize * 5, motherHigh * 0.0035);
+          rawSl = motherHigh >= (entry + buffer) ? motherHigh : (entry + buffer);
+        } else {
+          rawSl = entry + Math.max(symTickSize * 10, entry * 0.015);
+        }
+        const maxEmergencyDist = Math.max(symTickSize * 10, entry * 0.045);
+        sl = this.roundTick(Math.min(rawSl, entry + maxEmergencyDist), symbol);
         if (sl <= entry) sl = this.roundTick(entry + symTickSize * 5, symbol);
         const risk = Math.max(symTickSize, Math.abs(sl - entry));
         tgt = config.enableProfitFloor !== false ? this.roundTick(entry * 0.94, symbol) : this.roundTick(entry - risk * 1.5, symbol);
@@ -1207,7 +1225,6 @@ export class EmaVwapCrossoverEngine {
     const riskPerShare = Math.max(symTickSize, Math.abs(entry - sl));
     const targetPerShare = Math.max(symTickSize, Math.abs(tgt - entry));
     const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
-    const targetQty = Math.ceil(targetThresholdRs / targetPerShare);
 
     // Dynamically query exact live available capital from Zerodha Kite margin API
     let capital = (config as any).maxCapital;
@@ -1231,18 +1248,23 @@ export class EmaVwapCrossoverEngine {
     }
     if (!capital || capital <= 0) capital = 15000;
 
-    // Preserve at least ₹1,500 cash buffer for Expiry Option Buying / Gamma Blast & brokerage charges
-    const capitalBuffer = Math.min(1500, capital * 0.15);
-    const availableCapitalForStock = Math.max(2000, capital - capitalBuffer);
-    const safeCapital = availableCapitalForStock * 0.90; // 90% safe utilization buffer
-    const maxBuyingPower = safeCapital * 5; // Zerodha 5x MIS intraday leverage
+    // Pure percentage-based dynamic sizing: Reserves 15% cash buffer (min ₹1,000)
+    // Deploys 85% of tradeable margin with 5x MIS leverage
+    // Dynamically scales whether account has ₹10k, ₹14k, ₹18k, or ₹50k+ without fixed rupee clamps
+    const capitalBuffer = Math.max(1000, capital * 0.15);
+    const tradeableCapital = Math.max(2000, capital - capitalBuffer);
+    const maxBuyingPower = (capital * 0.90) * 5; // Zerodha 5x MIS leverage (90% safe cap)
+
+    const targetBuyingPower = tradeableCapital * 0.85 * 5;
+    const capitalQty = Math.max(1, Math.floor(targetBuyingPower / entry));
     const maxCapitalQty = Math.floor(maxBuyingPower / entry);
-    const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : (targetThresholdRs * 1.5);
-    const riskQty = Math.max(1, Math.floor(maxRiskRs / riskPerShare));
-    const finalQty = Math.max(1, Math.min(riskQty, targetQty, maxCapitalQty));
+
+    const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 1000;
+    // Quantity sized dynamically by capital allocation, safely bounded by broker margin limit
+    const finalQty = Math.max(1, Math.min(capitalQty, maxCapitalQty));
     state.config.qty = finalQty;
     const potentialMaxLossRs = finalQty * riskPerShare;
-    this.log(state, `⚖ Risk-Managed Position Sizing: ${finalQty} shares (Risk/sh: ₹${riskPerShare.toFixed(2)}, Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [Cap: ₹${maxRiskRs.toFixed(0)}], Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}, Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${capital.toLocaleString('en-IN')} [Reserved ₹${capitalBuffer.toFixed(0)} for Gamma Blast/Options])`);
+    this.log(state, `⚖ Dynamic Capital-Scaled Position Sizing: ${finalQty} shares (Risk/sh: ₹${riskPerShare.toFixed(2)}, Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [SL: ₹${maxRiskRs}], Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}, Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${capital.toLocaleString('en-IN')} [Buffer ₹${capitalBuffer.toFixed(0)}])`);
 
     this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
     try {
@@ -1357,14 +1379,38 @@ export class EmaVwapCrossoverEngine {
       const triggerPrice = this.roundTick(state.stopLossPrice, symbol);
       const price = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symbol);
 
+      // Only modify broker order if trigger price has changed by at least 1 tick
+      if (state.lastBrokerSlTrigger !== undefined && Math.abs(triggerPrice - state.lastBrokerSlTrigger) < symTickSize) {
+        return;
+      }
+
+      // Rate limit order modifications to at most once per 2 seconds to respect broker limits
+      const now = Date.now();
+      if (state.lastBrokerSlModifyTime && (now - state.lastBrokerSlModifyTime) < 2000) {
+        return;
+      }
+
       const k = kite || client?.['kite'] || client;
-      if (k && k.modifyOrder) {
+      if (client && client.modifyOrder) {
+        await client.modifyOrder(state.slOrderId, {
+          triggerPrice: triggerPrice,
+          price: price,
+        }).catch((e: any) => {
+          this.logger.warn(`Broker SL modify notice: ${e.message}`);
+        });
+        state.lastBrokerSlTrigger = triggerPrice;
+        state.lastBrokerSlModifyTime = now;
+        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${price.toFixed(2)}`);
+      } else if (k && k.modifyOrder) {
         await k.modifyOrder('regular', state.slOrderId, {
           trigger_price: triggerPrice,
           price: price,
         }).catch((e: any) => {
           this.logger.warn(`Broker SL modify notice: ${e.message}`);
         });
+        state.lastBrokerSlTrigger = triggerPrice;
+        state.lastBrokerSlModifyTime = now;
+        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${price.toFixed(2)}`);
       }
     } catch (e: any) {
       this.logger.warn(`Failed to update broker SL order: ${e.message}`);
@@ -1742,10 +1788,17 @@ export class EmaVwapCrossoverEngine {
       }
 
       if (dynamicTrailingSl !== null) {
-        state.stopLossPrice = dynamicTrailingSl;
-        const isCrossed = isLong ? (currentPrice < dynamicTrailingSl) : (currentPrice > dynamicTrailingSl);
+        const roundedSl = this.roundTick(dynamicTrailingSl, symbol);
+        const isBetterSl = isLong ? (roundedSl > (state.stopLossPrice || 0)) : (roundedSl < (state.stopLossPrice || Infinity));
+        if (isBetterSl) {
+          state.stopLossPrice = roundedSl;
+          // Synchronize trailing SL order to Zerodha exchange so profits are protected even during power cuts!
+          await this.updateBrokerSlSafe(client, kite, state, symbol);
+        }
+
+        const isCrossed = isLong ? (currentPrice < roundedSl) : (currentPrice > roundedSl);
         if (isCrossed) {
-          this.log(state, `📈 Price crossed Trailing SL line @ ₹${currentPrice.toFixed(2)} (Trailing Level: ₹${dynamicTrailingSl.toFixed(2)}) | Realized P&L: ₹${pnlRs.toFixed(2)}`);
+          this.log(state, `📈 Price crossed Trailing SL line @ ₹${currentPrice.toFixed(2)} (Trailing Level: ₹${roundedSl.toFixed(2)}) | Realized P&L: ₹${pnlRs.toFixed(2)}`);
           await this.exitPosition(state, client, currentPrice, 'TARGET');
           await this.persistLogs(state);
           return;

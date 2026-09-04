@@ -282,6 +282,22 @@ class ZerodhaClient implements IBrokerClient {
     await this.kite.cancelOrder("regular", orderId);
   }
 
+  async modifyOrder(orderId: string, params: { price?: number; triggerPrice?: number; trigger_price?: number; quantity?: number; variety?: string }): Promise<void> {
+    try {
+      const variety = (params.variety || 'regular').toLowerCase();
+      const payload: any = {};
+      if (params.price !== undefined) payload.price = Number(params.price);
+      const trg = params.triggerPrice !== undefined ? params.triggerPrice : params.trigger_price;
+      if (trg !== undefined) payload.trigger_price = Number(trg);
+      if (params.quantity !== undefined) payload.quantity = Number(params.quantity);
+      console.log(`[ZerodhaClient] Modifying order ${orderId}:`, payload);
+      await this.kite.modifyOrder(variety, orderId, payload);
+    } catch (err: any) {
+      console.error(`[ZerodhaClient] modifyOrder failed for ${orderId}:`, err.message);
+      throw err;
+    }
+  }
+
   async getInstruments(exchange: string): Promise<any[]> {
     const now = Date.now();
     const cached = instrumentsCache.get(exchange);

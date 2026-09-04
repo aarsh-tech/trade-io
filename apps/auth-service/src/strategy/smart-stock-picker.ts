@@ -277,12 +277,16 @@ export async function getTopCandidateStocks(
       const trend: 'LONG' | 'SHORT' = longScore >= shortScore ? 'LONG' : 'SHORT';
       const score = Math.max(longScore, shortScore);
 
-      // ── 3. Exact Capital-Constrained Position Sizing ───────────────────────
-      const targetThresholdRs = targetRs && targetRs > 0 ? targetRs : 500;
-      const expectedMovePoints = Math.max(0.50, ltp * 0.012); // ~1.2% target move
-      const targetQty = Math.ceil(targetThresholdRs / expectedMovePoints);
+      // ── 3. Dynamic Capital-Constrained Position Sizing ───────────────────────
+      // Pure percentage-based dynamic sizing: Reserves 15% cash buffer (min ₹1,000)
+      // Deploys 85% of tradeable margin with 5x MIS leverage
+      // Scales dynamically with any capital size (₹10k, ₹14k, ₹18k, ₹50k+)
+      const capitalBuffer = Math.max(1000, (availableCapital || 15000) * 0.15);
+      const tradeableCapital = Math.max(2000, (availableCapital || 15000) - capitalBuffer);
+      const targetBuyingPower = tradeableCapital * 0.85 * 5;
       const maxAffordableQty = Math.max(1, Math.floor(maxBuyingPower / ltp));
-      const qty = Math.min(targetQty, maxAffordableQty);
+      const capitalQty = Math.max(1, Math.floor(targetBuyingPower / ltp));
+      const qty = Math.min(capitalQty, maxAffordableQty);
 
       result.push({
         symbol: sym,
