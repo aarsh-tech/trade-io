@@ -58,6 +58,7 @@ interface ScalperStrategyState {
   isDynamicTrailingActive?: boolean;
   lastBrokerSlTrigger?: number;
   lastBrokerSlModifyTime?: number;
+  lastTrailedCandleTime?: number;
 }
 
 @Injectable()
@@ -89,6 +90,7 @@ export class NiftyOptionsScalperEngine {
     const profitLockPts = isSensex ? 12 : (isBankNifty ? 10 : 5);
     const target1LockPts = isSensex ? 18 : (isBankNifty ? 15 : 7);
     const dynamicTrailBufferPts = isSensex ? 8.5 : (isBankNifty ? 7.0 : 3.5);
+    const candleTrailBufferPts = isSensex ? 2.5 : (isBankNifty ? 2.0 : 1.0);
     const minCandleRange = isSensex ? 25 : (isBankNifty ? 18 : 8);
     const emaPullbackBuffer = isSensex ? 25 : (isBankNifty ? 16 : 8);
 
@@ -103,6 +105,7 @@ export class NiftyOptionsScalperEngine {
       profitLockPts,
       target1LockPts,
       dynamicTrailBufferPts,
+      candleTrailBufferPts,
       minCandleRange,
       emaPullbackBuffer,
     };
@@ -399,16 +402,25 @@ export class NiftyOptionsScalperEngine {
               this.log(state, `🔒 (Catch-up) Option hit +${params.profitLockTriggerPts} pts profit! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * state.config.qty).toFixed(2)} Profit Guaranteed!`);
             }
 
-            // Step 3: Check Target 1 Milestone & Dynamic Trailing
+            // Step 3: Check Target 1 Milestone & Structural Previous Candle Low Trailing
             if (optCandle.high >= state.entryPrice! + params.targetPoints) {
               state.isDynamicTrailingActive = true;
               state.winningTradesToday = Math.max(state.winningTradesToday, 1);
               if (state.stopLossPrice! < state.entryPrice! + params.target1LockPts) {
                 state.stopLossPrice = state.entryPrice! + params.target1LockPts;
               }
-              const dynamicSl = this.roundTick(optCandle.high - params.dynamicTrailBufferPts);
-              if (dynamicSl > state.stopLossPrice!) {
-                state.stopLossPrice = dynamicSl;
+
+              // Previous 5-minute Option Candle Low Trailing
+              const optIdx = optCandles.findIndex(c => c.date.getTime() === currentCandle.date.getTime());
+              if (optIdx > 0) {
+                const prevOpt = optCandles[optIdx - 1];
+                if (prevOpt && prevOpt.close > state.entryPrice!) {
+                  const candleSl = this.roundTick(prevOpt.low - params.candleTrailBufferPts);
+                  if (candleSl > state.stopLossPrice!) {
+                    state.stopLossPrice = candleSl;
+                    this.log(state, `📈 Structural Candle Trail: Trailed SL to previous 5m Low ₹${candleSl.toFixed(2)} (Previous Low: ₹${prevOpt.low.toFixed(2)}, Current High: ₹${optCandle.high.toFixed(2)})`);
+                  }
+                }
               }
             }
 
