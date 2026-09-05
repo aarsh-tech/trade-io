@@ -93,6 +93,22 @@ export interface Breakout15MinConfig {
   enableCprFilter?: boolean;          // Central Pivot Range (CPR) trend/range candidate filter (default: true)
   cprNarrowThresholdPct?: number;     // Narrow CPR threshold % for trend day eligibility (default: 0.18)
   trapSlBufferPts?: number;           // Stop loss buffer points beyond sweep extreme (default: 10)
+
+  // Institutional Timeframe & EMA/VWAP Trailing Upgrades
+  entryTimeframe?: '1min' | '3min' | '5min';   // Lower timeframe for trap/breakout entries (default: '3min')
+  enableEmaVwapTrailing?: boolean;            // Ride trend dynamically along EMA & VWAP (default: true)
+  trailingEmaPeriod?: number;                 // Trailing EMA period, e.g. 9 or 15 (default: 9)
+  trailingVwapSource?: 'both' | 'ema' | 'vwap'; // Trailing support baseline (default: 'both')
+
+  // Systematic Profitability & Capital Preservation Pillars
+  maxLossesPerDay?: number;                   // '1 Loss & Done' shield: Halt on 1 SL hit to prevent chop drawdowns (default: 1)
+  enableMiddayChopFilter?: boolean;          // Skip new entries during 11:45-13:00 European transition chop (default: true)
+  middayDeadZoneStart?: string;              // Dead zone start time IST (default: '11:45')
+  middayDeadZoneEnd?: string;                // Dead zone end time IST (default: '13:00')
+  enablePartialBooking?: boolean;            // The Banker & The Runner: Book 50% at 1.8R, trail remainder on EMA/VWAP (default: true)
+  partialBookingPct?: number;                // Percentage of position to book (default: 50)
+  partialBookingR?: number;                  // R-multiple trigger for partial booking (default: 1.8)
+  enableCprSupportResistance?: boolean;      // Live Zerodha CPR Support/Resistance hurdle & regime gate (default: true)
 }
 
 export interface EmaVwapCrossoverConfig {

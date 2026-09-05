@@ -15,3 +15,5 @@ release
 .DS_Store
 apps/auth-service/data/
 **/whatsapp_sessions/
+scripts/cache_nifty500/
+scripts/*.json

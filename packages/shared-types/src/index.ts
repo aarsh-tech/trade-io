@@ -129,6 +129,18 @@ export interface Breakout15MinConfig {
   stopLossRs: number;
   targetRs: number;
   startTime: string; // "09:15"
+  entryTimeframe?: '1min' | '3min' | '5min';
+  enableEmaVwapTrailing?: boolean;
+  trailingEmaPeriod?: number;
+  trailingVwapSource?: 'both' | 'ema' | 'vwap';
+  maxLossesPerDay?: number;
+  enableMiddayChopFilter?: boolean;
+  middayDeadZoneStart?: string;
+  middayDeadZoneEnd?: string;
+  enablePartialBooking?: boolean;
+  partialBookingPct?: number;
+  partialBookingR?: number;
+  enableCprSupportResistance?: boolean;
 }
 
 export interface EmaVwapCrossoverConfig {

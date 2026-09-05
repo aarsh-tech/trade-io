@@ -374,6 +374,30 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               ))}
             </div>
           </div>
+
+          {/* Lower Timeframe for Traps & Breakout Entries */}
+          <div className="p-3.5 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--secondary)/0.15)] space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-xs font-bold block">Entry & Trap Timeframe</label>
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                  Establishes 15m range (09:15–09:30), then monitors this lower timeframe for liquidity sweep traps & reclaim entries.
+                </p>
+              </div>
+              <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded-full">
+                Multi-Timeframe
+              </span>
+            </div>
+            <select
+              value={form.b15EntryTimeframe || "3min"}
+              onChange={(e) => set("b15EntryTimeframe", e.target.value)}
+              className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-xs text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)] font-semibold"
+            >
+              <option value="3min">3-Minute Candles (Recommended — Optimal Institutional Trap Detection)</option>
+              <option value="1min">1-Minute Candles (High Sensitivity & Fastest Reversal Entry)</option>
+              <option value="5min">5-Minute Candles (Standard Breakout Timeframe)</option>
+            </select>
+          </div>
         </div>
       )}
 

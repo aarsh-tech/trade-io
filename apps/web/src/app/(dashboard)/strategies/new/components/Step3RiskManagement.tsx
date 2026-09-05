@@ -227,22 +227,165 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-800 dark:text-blue-300">
             <p className="text-xs font-bold flex items-center gap-1.5">
               <Zap className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-              Institutional Edge & Stop-Loss Elimination Active (Proven Zero Losses)
+              Institutional Edge &amp; Systematic Profitability Engine Active
             </p>
             <div className="text-[11px] text-blue-700 dark:text-blue-300/90 mt-1.5 space-y-1">
-              <p>• <strong>Structural Candle SL</strong>: Placed tightly at the 5-min breakout candle extreme (45–80 pts on Bank Nifty) rather than the massive 200–350 pt range extreme, slashing risk by 75%.</p>
-              <p>• <strong>Prime Window (09:30–11:30 AM)</strong>: Enforces high-volume morning institutional entry window, automatically filtering out choppy afternoon traps.</p>
-              <p>• <strong>Range Width Exhaustion Cap</strong>: Skips days where the opening 15-minute range is already blown out (&gt;300 pts Bank Nifty, &gt;120 pts Nifty) to avoid mean-reversion whipsaws.</p>
-              <p>• <strong>Early Breakeven (+0.7R)</strong>: Moves SL to COST as soon as trade reaches +0.7R profit, locking ₹0 risk before pullback retests.</p>
-              <p>• <strong>Server SL Armed</strong>: Single SL-L order armed directly on Zerodha exchange servers for sub-second execution.</p>
+              <p>• <strong>Live Zerodha CPR Engine</strong>: Real-time settlement Pivot, TC, BC, R1/S1, R2/S2. Blocks breakouts running into immediate CPR walls; Wide CPR days restrict to Trap Reversals only.</p>
+              <p>• <strong>1-Loss &amp; Done Capital Shield</strong>: Halts strategy immediately after 1 stop-loss hit per day. Completely eliminates double-loss chop spirals and preserves monthly profit.</p>
+              <p>• <strong>The Banker &amp; The Runner Partial Booking</strong>: Locks 50% profit at +1.8R (The Banker), moves SL to COST for a guaranteed risk-free trade, and lets remaining 50% ride on EMA/VWAP (The Runner).</p>
+              <p>• <strong>Midday Dead-Zone Filter (11:45 – 13:00 IST)</strong>: Skips entries during the low-liquidity midday chop zone, reserving capital for high-volume morning and afternoon sessions.</p>
+              <p>• <strong>Structural Candle SL</strong>: Placed tightly at the entry candle extreme (45–80 pts on Bank Nifty) rather than the massive 200–350 pt range extreme, slashing initial risk by 75%.</p>
+              <p>• <strong>Early Breakeven (+0.7R)</strong>: Automatically moves SL to COST as soon as trade hits +0.7R profit, locking ₹0 risk before pullback retests.</p>
             </div>
           </div>
 
           {/* Institutional Edge Toggles */}
           <div className="p-4 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--secondary)/0.2)] space-y-3">
             <p className="text-xs font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
-              Stop-Loss Elimination & High-Conviction Filters
+              Stop-Loss Elimination &amp; High-Conviction Filters
             </p>
+
+            {/* Live Zerodha CPR S/R & Regime Filter */}
+            <div className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-500/5 space-y-2">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div className="flex items-center gap-2.5">
+                  <Target className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300">
+                        Live Zerodha CPR Support / Resistance &amp; Regime Gate
+                      </p>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1 border-indigo-500/40 text-indigo-600">
+                        Live Kite Data
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      Computes Pivot, TC, BC, R1, S1, R2, S2 from previous day Zerodha settlement candles. Restricts Wide CPR days to Trap Reversals only and skips breakouts into immediate CPR hurdles (&lt; 0.35% away).
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={form.b15EnableCprSupportResistance ?? true}
+                  onChange={(e) => set("b15EnableCprSupportResistance", e.target.checked)}
+                  className="h-4 w-4 rounded border-indigo-400 text-indigo-600 focus:ring-indigo-500"
+                />
+              </label>
+            </div>
+
+            {/* Banker & Runner Partial Profit Booking */}
+            <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div className="flex items-center gap-2.5">
+                  <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                        Multi-Lot Partial Profit Booking (&ldquo;The Banker &amp; The Runner&rdquo;)
+                      </p>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1 border-amber-500/40 text-amber-600">
+                        Guaranteed Green Day
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      Secures day&apos;s profit at target milestone, sets Stop Loss to COST (₹0 risk-free trade), and lets the runner capture 100–300+ pt trends.
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={form.b15EnablePartialBooking ?? true}
+                  onChange={(e) => set("b15EnablePartialBooking", e.target.checked)}
+                  className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                />
+              </label>
+
+              {(form.b15EnablePartialBooking ?? true) && (
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-amber-500/20">
+                  <div>
+                    <label className="text-[11px] font-semibold block mb-1">The Banker Booking Target (R)</label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min={1.0}
+                      max={4.0}
+                      value={form.b15PartialBookingR || "1.8"}
+                      onChange={(e) => set("b15PartialBookingR", e.target.value)}
+                      className="font-semibold text-xs h-8"
+                    />
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                      Target R-multiple to lock first batch (default: +1.8R)
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold block mb-1">The Banker Allocation (%)</label>
+                    <Input
+                      type="number"
+                      step="5"
+                      min={25}
+                      max={75}
+                      value={form.b15PartialBookingPct || "50"}
+                      onChange={(e) => set("b15PartialBookingPct", e.target.value)}
+                      className="font-semibold text-xs h-8"
+                    />
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                      % lots squared off at Target (default: 50% Banker, 50% Runner)
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Midday Dead-Zone Filter */}
+            <div className="p-3 rounded-xl border border-slate-500/30 bg-slate-500/5 space-y-3">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div className="flex items-center gap-2.5">
+                  <Activity className="h-4 w-4 text-slate-600 dark:text-slate-400" />
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Midday Dead-Zone Chop Shield (11:45 AM – 13:00 PM)
+                      </p>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1 border-slate-500/40 text-slate-600">
+                        Anti-Whipsaw
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      Blocks new breakout entries during European morning transition chop. Active trailing runners continue without interruption.
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={form.b15EnableMiddayChopFilter ?? true}
+                  onChange={(e) => set("b15EnableMiddayChopFilter", e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-400 text-slate-600 focus:ring-slate-500"
+                />
+              </label>
+
+              {(form.b15EnableMiddayChopFilter ?? true) && (
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-500/20">
+                  <div>
+                    <label className="text-[11px] font-semibold block mb-1">Dead-Zone Start (IST)</label>
+                    <Input
+                      type="text"
+                      value={form.b15MiddayDeadZoneStart || "11:45"}
+                      onChange={(e) => set("b15MiddayDeadZoneStart", e.target.value)}
+                      className="font-semibold text-xs h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold block mb-1">Dead-Zone End (IST)</label>
+                    <Input
+                      type="text"
+                      value={form.b15MiddayDeadZoneEnd || "13:00"}
+                      onChange={(e) => set("b15MiddayDeadZoneEnd", e.target.value)}
+                      className="font-semibold text-xs h-8"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             <label className="flex items-center justify-between p-2.5 rounded-lg bg-[hsl(var(--background))] border border-[hsl(var(--border))] cursor-pointer">
               <div className="flex items-center gap-2.5">
@@ -298,6 +441,63 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               />
             </label>
 
+            {/* 9/15 EMA & VWAP Dynamic Trailing */}
+            <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 space-y-3">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div className="flex items-center gap-2.5">
+                  <TrendingUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                        Dynamic EMA &amp; VWAP Trend Trailing (Uncapped Runner)
+                      </p>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1 border-emerald-500/40 text-emerald-600">
+                        Zero Greed
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      Once in profit, trails SL along dynamic EMA &amp; VWAP support curve. Rides multi-hundred point runners until candle exhaustion.
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={form.b15EnableEmaVwapTrailing ?? true}
+                  onChange={(e) => set("b15EnableEmaVwapTrailing", e.target.checked)}
+                  className="h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500"
+                />
+              </label>
+
+              {(form.b15EnableEmaVwapTrailing ?? true) && (
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-emerald-500/20">
+                  <div>
+                    <label className="text-[11px] font-semibold block mb-1">Trailing EMA Period</label>
+                    <select
+                      value={form.b15TrailingEmaPeriod || "9"}
+                      onChange={(e) => set("b15TrailingEmaPeriod", e.target.value)}
+                      className="flex h-8 w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-2.5 py-1 text-xs text-[hsl(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="9">9 EMA (Fast Dynamic Trailing)</option>
+                      <option value="15">15 EMA (Smooth Trend Rider — Chart Match)</option>
+                      <option value="21">21 EMA (Macro Trend Baseline)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold block mb-1">Trailing Baseline</label>
+                    <select
+                      value={form.b15TrailingVwapSource || "both"}
+                      onChange={(e) => set("b15TrailingVwapSource", e.target.value)}
+                      className="flex h-8 w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-2.5 py-1 text-xs text-[hsl(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="both">Both (Max of EMA &amp; VWAP for Longs)</option>
+                      <option value="ema">EMA Only</option>
+                      <option value="vwap">VWAP Only</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Dual-Edge: Liquidity Sweep Trap Trading */}
             <label className="flex items-center justify-between p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/30 cursor-pointer">
               <div className="flex items-center gap-2.5">
@@ -348,9 +548,9 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               <div className="flex items-center gap-2.5">
                 <Target className="h-4 w-4 text-blue-500" />
                 <div>
-                  <p className="text-xs font-bold">Central Pivot Range (CPR) Trend Day Filter</p>
+                  <p className="text-xs font-bold">Central Pivot Range (CPR) Narrow Trend Filter</p>
                   <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                    Only takes trend breakouts on Narrow CPR days; avoids sideways chop days
+                    Identifies high-momentum trending sessions using CPR bandwidth
                   </p>
                 </div>
               </div>
@@ -363,9 +563,23 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </label>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div>
-              <label className="text-xs font-semibold mb-1.5 block">Max Opening Range (pts)</label>
+              <label className="text-xs font-semibold mb-1.5 block">Max Losses / Day</label>
+              <Input
+                type="number"
+                min={1}
+                max={3}
+                value={form.b15MaxLossesPerDay || "1"}
+                onChange={(e) => set("b15MaxLossesPerDay", e.target.value)}
+                className="font-bold text-xs text-red-600 bg-red-500/5 border-red-500/30"
+              />
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                1-Loss Shield: stops after 1 SL hit
+              </p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold mb-1.5 block">Max Range (pts)</label>
               <Input
                 type="number"
                 min={50}
@@ -375,14 +589,14 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 className="font-semibold text-xs"
               />
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                Skip day if opening bar &gt; limit
+                Skip day if 15m bar &gt; limit
               </p>
             </div>
             <div>
-              <label className="text-xs font-semibold mb-1.5 block">Prime Window Cutoff</label>
+              <label className="text-xs font-semibold mb-1.5 block">Entry Window Cutoff</label>
               <Input
                 type="text"
-                value={form.b15PrimeWindowEndTime || "11:30"}
+                value={form.b15PrimeWindowEndTime || "15:00"}
                 onChange={(e) => set("b15PrimeWindowEndTime", e.target.value)}
                 className="font-semibold text-xs"
               />

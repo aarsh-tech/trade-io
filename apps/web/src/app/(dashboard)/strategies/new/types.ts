@@ -59,6 +59,18 @@ export interface StrategyFormState {
   b15EnableCprFilter: boolean;
   b15CprNarrowThresholdPct: string;
   b15TrapSlBufferPts: string;
+  b15EntryTimeframe: "1min" | "3min" | "5min";
+  b15EnableEmaVwapTrailing: boolean;
+  b15TrailingEmaPeriod: string;
+  b15TrailingVwapSource: "both" | "ema" | "vwap";
+  b15MaxLossesPerDay: string;
+  b15EnableMiddayChopFilter: boolean;
+  b15MiddayDeadZoneStart: string;
+  b15MiddayDeadZoneEnd: string;
+  b15EnablePartialBooking: boolean;
+  b15PartialBookingPct: string;
+  b15PartialBookingR: string;
+  b15EnableCprSupportResistance: boolean;
   // Gamma Blast Expiry Special
   gbIndex: "AUTO" | "NIFTY" | "SENSEX";
   gbMinPremiumNifty: string;

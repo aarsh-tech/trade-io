@@ -80,13 +80,29 @@ interface StrategyState {
     tc: number;
     width: number;
     widthPct: number;
+    topCpr: number;
+    bottomCpr: number;
+    r1: number;
+    s1: number;
+    r2: number;
+    s2: number;
     isNarrow: boolean;
+    isWide: boolean;
   } | null;
   sweptHigh?: boolean;
   sweptHighPrice?: number;
   sweptLow?: boolean;
   sweptLowPrice?: number;
   isTrapTrade?: boolean;
+
+  // 9/15 EMA & VWAP Trailing State
+  lastEma?: number | null;
+  lastVwap?: number | null;
+  isTrailingEma?: boolean;
+
+  // Systematic Profitability & Capital Preservation Pillars
+  dailyLossesCount: number;
+  isPartialBooked?: boolean;
 }
 
 @Injectable()
@@ -153,10 +169,15 @@ export class Breakout15MinEngine {
       dailyRealizedPnlRs: 0,
       lastBreakoutAttempt: null,
       isReversalTrade: false,
+      lastEma: null,
+      lastVwap: null,
+      isTrailingEma: false,
+      dailyLossesCount: 0,
+      isPartialBooked: false,
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Dynamic 15-Min Breakout Strategy started — Symbol: ${config.symbol}:${config.exchange} | Mode: ${state.isPaperTrade ? 'PAPER' : 'LIVE'} | Moneyness: ${config.moneyness ?? 'ITM'} | Dynamic ATR: ${config.enableDynamicAtr !== false ? 'ON' : 'OFF'} | Fakeout Reversal: ${config.enableFakeoutReversal !== false ? 'ON' : 'OFF'}`);
+    this.log(state, `▶ Dynamic 15-Min Breakout Strategy started — Symbol: ${config.symbol}:${config.exchange} | Mode: ${state.isPaperTrade ? 'PAPER' : 'LIVE'} | Entry TF: ${config.entryTimeframe ?? '3min'} | Trailing: ${config.enableEmaVwapTrailing !== false ? `${config.trailingEmaPeriod ?? 9}-EMA & VWAP` : 'Ratchet'} | Moneyness: ${config.moneyness ?? 'ITM'} | Dynamic ATR: ${config.enableDynamicAtr !== false ? 'ON' : 'OFF'} | Traps: ${config.enableTrapReversal !== false ? 'ACTIVE' : 'OFF'}`);
     await this.persistLogs(state);
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
@@ -400,15 +421,20 @@ export class Breakout15MinEngine {
       const rangePts = ref.high - ref.low;
       this.log(state, `📊 (Catch-up) Reference Range Set — H: ₹${ref.high} | L: ₹${ref.low} (Range: ₹${rangePts.toFixed(2)})`);
 
-      // 2.1 Calculate Central Pivot Range (CPR) from Previous Day
-      const prevCandles = candles15.filter(c => this.getIstDateStr(c.date) !== todayStr);
-      if (prevCandles.length > 0) {
-        const prevDayStr = this.getIstDateStr(prevCandles[prevCandles.length - 1].date);
-        const prevDayCandles = prevCandles.filter(c => this.getIstDateStr(c.date) === prevDayStr);
-        state.cprData = this.calculateCPR(prevDayCandles);
-        if (state.cprData) {
-          this.log(state, `🎯 (Catch-up) Central Pivot Range (CPR): Pivot ₹${state.cprData.pivot.toFixed(1)} | CPR Width: ₹${state.cprData.width.toFixed(1)} (${state.cprData.widthPct.toFixed(3)}% — ${state.cprData.isNarrow ? 'NARROW TREND CANDIDATE' : 'AVERAGE/WIDE RANGE CANDIDATE'})`);
+      // 2.1 Calculate Central Pivot Range (CPR) from Previous Day (Official Zerodha Live Daily data)
+      const prevOhlc = await this.fetchPreviousDayOHLC(client, state.futureSymbol, state.futureExchange, now);
+      if (prevOhlc) {
+        state.cprData = this.calculateCPR(prevOhlc);
+      } else {
+        const prevCandles = candles15.filter(c => this.getIstDateStr(c.date) !== todayStr);
+        if (prevCandles.length > 0) {
+          const prevDayStr = this.getIstDateStr(prevCandles[prevCandles.length - 1].date);
+          const prevDayCandles = prevCandles.filter(c => this.getIstDateStr(c.date) === prevDayStr);
+          state.cprData = this.calculateCPR(prevDayCandles);
         }
+      }
+      if (state.cprData) {
+        this.log(state, `🎯 (Catch-up) Live Zerodha CPR: Pivot ₹${state.cprData.pivot.toFixed(1)} | TC: ₹${state.cprData.tc.toFixed(1)}, BC: ₹${state.cprData.bc.toFixed(1)} (Corridor: ₹${state.cprData.bottomCpr.toFixed(1)} - ₹${state.cprData.topCpr.toFixed(1)}, Width: ₹${state.cprData.width.toFixed(1)} / ${state.cprData.widthPct.toFixed(3)}%) | R1: ₹${state.cprData.r1.toFixed(1)}, S1: ₹${state.cprData.s1.toFixed(1)} — Regime: ${state.cprData.isNarrow ? '🔥 NARROW (HIGH TREND/BREAKOUT CONVICTION)' : (state.cprData.isWide ? '🛡 WIDE (CHOP REGIME — TRAPS ONLY)' : '⚖ AVERAGE CPR')}`);
       }
 
       // ─── Opening Range Width Filter (Skip exhausted blowout days) ────────
@@ -421,8 +447,11 @@ export class Breakout15MinEngine {
         return;
       }
 
-      // 3. Scan 5-min candles for breakout (STRICTLY FROM TODAY after 9:30 AM)
-      const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
+      // 3. Scan lower timeframe candles for traps & breakouts (STRICTLY FROM TODAY after 9:30 AM)
+      const entryTf = state.config.entryTimeframe || '3min';
+      const tfInterval = entryTf === '1min' ? 'minute' : (entryTf === '3min' ? '3minute' : '5minute');
+      const tfDurationMs = (entryTf === '1min' ? 1 : (entryTf === '3min' ? 3 : 5)) * 60 * 1000;
+      const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, tfInterval, now, state.futureExchange);
       const today5Candles = candles5.filter(c => this.getIstDateStr(c.date) === todayStr);
       const breakoutCandidates = today5Candles.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
 
@@ -432,6 +461,8 @@ export class Breakout15MinEngine {
 
       const buffer = (state.config.enableDynamicAtr !== false) ? Math.max(0.05, currentAtr * (state.config.atrBufferMultiplier ?? 0.15)) : 0;
       const vwaps = this.calculateVWAP(candles5);
+      const trailingPeriod = state.config.trailingEmaPeriod || 9;
+      const emaTrailing = this.calculateEMA(candles5, trailingPeriod);
       const ema9 = this.calculateEMA(candles5, 9);
       const ema21 = this.calculateEMA(candles5, 21);
       const rsis = this.calculateRSI(candles5, 14);
@@ -505,6 +536,27 @@ export class Breakout15MinEngine {
               this.log(state, `🛡 (Catch-up Protection) Position reached +${(state.config.breakevenTriggerR ?? 0.7).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
             }
 
+            // Multi-Lot Partial Profit Booking ("The Banker & The Runner") in Catch-up
+            const enablePartial = state.config.enablePartialBooking !== false;
+            const partialR = state.config.partialBookingR ?? 1.8;
+            const symClean = (state.config.symbol || state.futureSymbol || '').toUpperCase().trim();
+            const lotSize = this.getLotSizeForUnderlying(symClean);
+            const currentTotalQty = state.config.qty;
+
+            if (enablePartial && !state.isPartialBooked && currentPnlPoints >= ((state.initialRiskPoints ?? 5) * partialR) && currentTotalQty >= 2 * lotSize && state.entryPrice) {
+              const targetPct = (state.config.partialBookingPct ?? 50) / 100;
+              const bookLots = Math.max(1, Math.floor((currentTotalQty / lotSize) * targetPct));
+              const bookQty = bookLots * lotSize;
+              const remainingQty = currentTotalQty - bookQty;
+              if (bookQty > 0 && remainingQty > 0) {
+                state.isPartialBooked = true;
+                state.executedQty = remainingQty;
+                state.stopLossPrice = state.entryPrice;
+                state.isBreakevenTrailed = true;
+                this.log(state, `💰 (Catch-up) [THE BANKER & RUNNER] Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ +${partialR}R (+₹${(currentPnlPoints * bookQty).toFixed(2)})! Remaining ${remainingQty} qty SL moved to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free! Trailing along 9/15-EMA & VWAP.`);
+              }
+            }
+
             const orders = await this.prisma.order.findMany({
               where: { executionId: state.executionId, status: 'OPEN' }
             });
@@ -522,9 +574,10 @@ export class Breakout15MinEngine {
               : (targetOrder && currentOptionPriceLow <= targetOrder.price!);
 
             if (isHitSL) {
-              this.log(state, `🔴 (Catch-up) PAPER SL HIT! ${state.optionSymbol || state.futureSymbol || state.config.symbol} at ₹${effectiveSl}`);
+              state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
+              this.log(state, `🔴 (Catch-up) PAPER SL HIT! ${state.optionSymbol || state.futureSymbol || state.config.symbol} at ₹${effectiveSl} | Daily Losses: ${state.dailyLossesCount}`);
               await this.closePaperTradeHistorical(state, 'SL_HIT', effectiveSl, new Date(currentCandle.date));
-              
+
               // Record failed breakout for Fakeout Reversal monitoring
               state.lastBreakoutAttempt = {
                 side: state.entryTriggered,
@@ -560,17 +613,37 @@ export class Breakout15MinEngine {
           continue;
         }
 
-        // Check if this candle is closed (at least 5 mins passed since its start)
+        // Check if this candle is closed (at least tfDurationMs passed since its start)
         const candleStart = new Date(currentCandle.date).getTime();
-        if ((now.getTime() - candleStart) < 5 * 60 * 1000) continue;
+        if ((now.getTime() - candleStart) < tfDurationMs) continue;
 
-        // Prime Momentum Window check for new breakout entries (default 09:30 to 11:30 AM)
+        // Check Daily Max Loss Limit (1-Loss & Done Capital Preservation Shield)
+        const maxLossesAllowed = state.config.maxLossesPerDay ?? 1;
+        if ((state.dailyLossesCount || 0) >= maxLossesAllowed) {
+          this.log(state, `🛡 (Catch-up) 1-Loss Capital Shield active (${state.dailyLossesCount}/${maxLossesAllowed} losses today). Skipping further entries to prevent chop drawdowns.`);
+          break;
+        }
+
+        // Check Midday Dead-Zone Filter (11:45 AM - 13:00 PM IST)
         const candHhmm = this.getIstHhmm(new Date(currentCandle.date));
-        const primeEndStr = state.config.primeWindowEndTime || '11:30';
-        const [primeH, primeM] = primeEndStr.split(':').map(Number);
-        const primeMinutes = (primeH || 11) * 60 + (primeM || 30);
-        if (!state.entryTriggered && candHhmm > primeMinutes) {
-          continue;
+        if (state.config.enableMiddayChopFilter !== false) {
+          const [deadStartH, deadStartM] = (state.config.middayDeadZoneStart || '11:45').split(':').map(Number);
+          const [deadEndH, deadEndM] = (state.config.middayDeadZoneEnd || '13:00').split(':').map(Number);
+          const deadStartMin = (deadStartH || 11) * 60 + (deadStartM || 45);
+          const deadEndMin = (deadEndH || 13) * 60 + (deadEndM || 0);
+          if (candHhmm >= deadStartMin && candHhmm <= deadEndMin) {
+            continue;
+          }
+        }
+
+        // Entry Window Cutoff check for new entries (default: all day until 15:00)
+        const primeEndStr = state.config.primeWindowEndTime || '15:00';
+        if (primeEndStr && primeEndStr !== 'ALL_DAY') {
+          const [primeH, primeM] = primeEndStr.split(':').map(Number);
+          const primeMinutes = (primeH || 15) * 60 + (primeM || 0);
+          if (!state.entryTriggered && candHhmm > primeMinutes) {
+            continue;
+          }
         }
 
         // ─── Track Liquidity Sweeps Beyond 15-min Range ────────────────────
@@ -596,34 +669,38 @@ export class Breakout15MinEngine {
         }
 
         const curVwap = candleIdxInFull >= 0 ? vwaps[candleIdxInFull] : null;
+        const curTrailingEma = candleIdxInFull >= 0 ? emaTrailing[candleIdxInFull] : null;
         const curEma9 = candleIdxInFull >= 0 ? ema9[candleIdxInFull] : null;
         const curEma21 = candleIdxInFull >= 0 ? ema21[candleIdxInFull] : null;
         const curRsi = candleIdxInFull >= 0 ? rsis[candleIdxInFull] : null;
 
+        state.lastEma = curTrailingEma;
+        state.lastVwap = curVwap;
+
         // ─── 1. Dual-Edge: Liquidity Sweep Trap Reversals (Turtle Soup / 2B) ────
         if (state.config.enableTrapReversal !== false && !state.entryTriggered) {
           const isVwapBear = !curVwap || currentCandle.close < curVwap;
-          const isEmaBear = !curEma9 || currentCandle.close <= curEma9;
+          const isEmaBear = !curTrailingEma || currentCandle.close <= curTrailingEma;
           const isVwapBull = !curVwap || currentCandle.close > curVwap;
-          const isEmaBull = !curEma9 || currentCandle.close >= curEma9;
+          const isEmaBull = !curTrailingEma || currentCandle.close >= curTrailingEma;
           const isRsiBear = curRsi === null || curRsi <= 55;
-          const isRsiBull = curRsi === null || curRsi >= 45;
+          const isRsiBull = curRsi === null || curRsi >= 40;
           const isStrongBear = curEma9 && curEma21 ? curEma9 < curEma21 : true;
           const isStrongBull = curEma9 && curEma21 ? curEma9 > curEma21 : true;
           const canTakeBearishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBear;
           const canTakeBullishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBull;
 
-          // Bull Trap (Price swept above 15m high, but fails and closes back inside below VWAP)
-          if (state.sweptHigh && currentCandle.close < state.refHigh! && isVwapBear && isEmaBear && currentCandle.close < currentCandle.open && isRsiBear && canTakeBearishTrap) {
-            this.log(state, `⚡ (Catch-up) BULL TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept above 15m high (₹${state.refHigh}, peak ₹${state.sweptHighPrice?.toFixed(1)}), failed and closed back inside range below VWAP (₹${curVwap?.toFixed(1)}). Entering SHORT to ride reversal to range bottom!`);
+          // Bull Trap (Price swept above 15m high, but fails and closes back inside below VWAP/EMA)
+          if (state.sweptHigh && currentCandle.close < state.refHigh! && (isVwapBear || isEmaBear) && currentCandle.close < currentCandle.open && isRsiBear && canTakeBearishTrap) {
+            this.log(state, `⚡ (Catch-up) BULL TRAP (LIQUIDITY SWEEP) TRIGGERED on ${entryTf}! Price swept above 15m high (₹${state.refHigh}, peak ₹${state.sweptHighPrice?.toFixed(1)}), failed and closed back inside range @ ₹${currentCandle.close} (VWAP: ₹${curVwap?.toFixed(1)}, ${trailingPeriod}-EMA: ₹${curTrailingEma?.toFixed(1)}). Entering SHORT to ride reversal to range bottom!`);
             state.sweptHigh = false;
             state.isTrapTrade = true;
             await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh, currentCandle);
             continue;
           }
-          // Bear Trap (Price swept below 15m low, but fails and reclaims range above VWAP)
-          else if (state.sweptLow && currentCandle.close > state.refLow! && isVwapBull && isEmaBull && currentCandle.close > currentCandle.open && isRsiBull && canTakeBullishTrap) {
-            this.log(state, `⚡ (Catch-up) BEAR TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept below 15m low (₹${state.refLow}, trough ₹${state.sweptLowPrice?.toFixed(1)}), failed and reclaimed range above VWAP (₹${curVwap?.toFixed(1)}). Entering LONG to ride reversal to range top!`);
+          // Bear Trap (Price swept below 15m low, but fails and reclaims range above VWAP/EMA)
+          else if (state.sweptLow && currentCandle.close > state.refLow! && (isVwapBull || isEmaBull) && currentCandle.close > currentCandle.open && isRsiBull && canTakeBullishTrap) {
+            this.log(state, `⚡ (Catch-up) BEAR TRAP (LIQUIDITY SWEEP) TRIGGERED on ${entryTf}! Price swept below 15m low (₹${state.refLow}, trough ₹${state.sweptLowPrice?.toFixed(1)}), failed and reclaimed range @ ₹${currentCandle.close} (VWAP: ₹${curVwap?.toFixed(1)}, ${trailingPeriod}-EMA: ₹${curTrailingEma?.toFixed(1)}). Entering LONG to ride reversal to range top!`);
             state.sweptLow = false;
             state.isTrapTrade = true;
             await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh, currentCandle);
@@ -637,14 +714,27 @@ export class Breakout15MinEngine {
         const bodyRatio = candBody / candRange;
         const isRetestOk = state.config.enableRetestConfirmation === false || bodyRatio >= 0.40;
         const isCprOk = state.config.enableCprFilter === false || !state.cprData || state.cprData.isNarrow;
+        const isCprWide = state.config.enableCprSupportResistance !== false && state.cprData && state.cprData.isWide;
+        const nearCprResistance = state.config.enableCprSupportResistance !== false && state.cprData && (
+          (state.cprData.pivot > currentCandle.close && (state.cprData.pivot - currentCandle.close) < 25) ||
+          (state.cprData.topCpr > currentCandle.close && (state.cprData.topCpr - currentCandle.close) < 25)
+        );
+        const nearCprSupport = state.config.enableCprSupportResistance !== false && state.cprData && (
+          (currentCandle.close > state.cprData.pivot && (currentCandle.close - state.cprData.pivot) < 25) ||
+          (currentCandle.close > state.cprData.bottomCpr && (currentCandle.close - state.cprData.bottomCpr) < 25)
+        );
 
         if (currentCandle.close > (state.refHigh! + buffer)) {
           const isVwapOk = state.config.enableVwapFilter === false || !curVwap || currentCandle.close >= curVwap;
           const isEmaOk = !curEma9 || !curEma21 || curEma9 >= curEma21;
           const isRsiOk = state.config.enableRsiFilter === false || curRsi === null || curRsi >= 55;
 
-          if (!isCprOk) {
+          if (isCprWide) {
+            this.log(state, `⏳ (Catch-up) CPR Regime Gate: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Breakout chasing blocked to avoid retail chop traps. Prioritizing Liquidity Sweep Trap Reversals!`);
+          } else if (!isCprOk) {
             this.log(state, `⏳ (Catch-up) CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakout to prevent chop; waiting for trap reversals.`);
+          } else if (nearCprResistance) {
+            this.log(state, `⏳ (Catch-up) CPR S/R Hurdle: Long breakout @ ₹${currentCandle.close} is directly beneath CPR resistance overhead (Pivot ₹${state.cprData?.pivot.toFixed(1)}, Top CPR ₹${state.cprData?.topCpr.toFixed(1)}). Waiting for clean breakout.`);
           } else if (!isRetestOk) {
             this.log(state, `⏳ (Catch-up) Breakout candle closed with weak body conviction (${(bodyRatio * 100).toFixed(0)}% body). Waiting for confirmed retest bounce.`);
           } else if (isVwapOk && isEmaOk && isRsiOk) {
@@ -656,8 +746,12 @@ export class Breakout15MinEngine {
           const isEmaOk = !curEma9 || !curEma21 || curEma9 <= curEma21;
           const isRsiOk = state.config.enableRsiFilter === false || curRsi === null || curRsi <= 45;
 
-          if (!isCprOk) {
+          if (isCprWide) {
+            this.log(state, `⏳ (Catch-up) CPR Regime Gate: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Breakdown chasing blocked to avoid retail chop traps. Prioritizing Liquidity Sweep Trap Reversals!`);
+          } else if (!isCprOk) {
             this.log(state, `⏳ (Catch-up) CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakdown to prevent chop; waiting for trap reversals.`);
+          } else if (nearCprSupport) {
+            this.log(state, `⏳ (Catch-up) CPR S/R Hurdle: Short breakdown @ ₹${currentCandle.close} is directly above CPR support underneath (Pivot ₹${state.cprData?.pivot.toFixed(1)}, Bottom CPR ₹${state.cprData?.bottomCpr.toFixed(1)}). Waiting for clean breakdown.`);
           } else if (!isRetestOk) {
             this.log(state, `⏳ (Catch-up) Breakdown candle closed with weak body conviction (${(bodyRatio * 100).toFixed(0)}% body). Waiting for confirmed retest bounce.`);
           } else if (isVwapOk && isEmaOk && isRsiOk) {
@@ -738,7 +832,7 @@ export class Breakout15MinEngine {
               state.peakPnlRs = Math.max(state.peakPnlRs || 0, state.currentPnlRs);
             }
           }
-        } catch {}
+        } catch { }
       }
       return;
     }
@@ -800,6 +894,22 @@ export class Breakout15MinEngine {
           state.refLow = ref.low;
           state.refCandleSet = true;
           this.log(state, `📊 FUTURE Range Set — H: ₹${ref.high} | L: ₹${ref.low} (Range: ₹${(ref.high - ref.low).toFixed(2)})`);
+
+          // Calculate Live Zerodha Central Pivot Range (CPR)
+          const prevOhlc = await this.fetchPreviousDayOHLC(client, state.futureSymbol, state.futureExchange, now);
+          if (prevOhlc) {
+            state.cprData = this.calculateCPR(prevOhlc);
+          } else {
+            const prevCandles = candles15.filter(c => this.getIstDateStr(c.date) !== todayStr);
+            if (prevCandles.length > 0) {
+              const prevDayStr = this.getIstDateStr(prevCandles[prevCandles.length - 1].date);
+              const prevDayCandles = prevCandles.filter(c => this.getIstDateStr(c.date) === prevDayStr);
+              state.cprData = this.calculateCPR(prevDayCandles);
+            }
+          }
+          if (state.cprData) {
+            this.log(state, `🎯 Live Zerodha CPR: Pivot ₹${state.cprData.pivot.toFixed(1)} | TC: ₹${state.cprData.tc.toFixed(1)}, BC: ₹${state.cprData.bc.toFixed(1)} (Corridor: ₹${state.cprData.bottomCpr.toFixed(1)} - ₹${state.cprData.topCpr.toFixed(1)}, Width: ₹${state.cprData.width.toFixed(1)} / ${state.cprData.widthPct.toFixed(3)}%) | R1: ₹${state.cprData.r1.toFixed(1)}, S1: ₹${state.cprData.s1.toFixed(1)} — Regime: ${state.cprData.isNarrow ? '🔥 NARROW (HIGH TREND/BREAKOUT CONVICTION)' : (state.cprData.isWide ? '🛡 WIDE (CHOP REGIME — TRAPS ONLY)' : '⚖ AVERAGE CPR')}`);
+          }
         }
       } catch (err: any) {
         this.log(state, `❌ 15-min error: ${err.message}`);
@@ -844,6 +954,19 @@ export class Breakout15MinEngine {
     // ─── Paper/Real Trade Monitoring (safety polling loop) ────
     if (state.entryTriggered) {
       try {
+        try {
+          const entryTf = config.entryTimeframe || '3min';
+          const tfInterval = entryTf === '1min' ? 'minute' : (entryTf === '3min' ? '3minute' : '5minute');
+          const lowerCandles = await this.fetchCandlesForSymbol(client, state.futureSymbol || config.symbol, tfInterval, now, state.futureExchange || config.exchange);
+          if (lowerCandles.length > 0) {
+            const vwaps = this.calculateVWAP(lowerCandles);
+            const trailingPeriod = config.trailingEmaPeriod || 9;
+            const emaTrailing = this.calculateEMA(lowerCandles, trailingPeriod);
+            state.lastVwap = vwaps[vwaps.length - 1];
+            state.lastEma = emaTrailing[emaTrailing.length - 1];
+          }
+        } catch { }
+
         if (state.isPaperTrade) {
           await this.monitorPaperTrade(state, kite);
         } else {
@@ -862,6 +985,32 @@ export class Breakout15MinEngine {
       return;
     }
 
+    // ─── 0.1 Capital Shield: 1-Loss & Done ─────────────────────────────────────
+    const maxLossesAllowed = config.maxLossesPerDay ?? 1;
+    if ((state.dailyLossesCount || 0) >= maxLossesAllowed) {
+      if (hhmm % 30 === 0 && !state.logs.some(l => l.includes(`1-Loss Shield active`))) {
+        this.log(state, `🛡 [1-LOSS SHIELD ACTIVE] Daily max loss limit reached (${state.dailyLossesCount}/${maxLossesAllowed}). Halting all new entries today to protect capital from choppy markets.`);
+      }
+      await this.persistLogs(state);
+      return;
+    }
+
+    // ─── 0.2 Midday Dead-Zone Filter (11:45 AM - 13:00 PM IST European Transition) ─
+    if (config.enableMiddayChopFilter !== false) {
+      const [deadStartH, deadStartM] = (config.middayDeadZoneStart || '11:45').split(':').map(Number);
+      const [deadEndH, deadEndM] = (config.middayDeadZoneEnd || '13:00').split(':').map(Number);
+      const deadStartMin = (deadStartH || 11) * 60 + (deadStartM || 45);
+      const deadEndMin = (deadEndH || 13) * 60 + (deadEndM || 0);
+
+      if (hhmm >= deadStartMin && hhmm <= deadEndMin) {
+        if (hhmm % 15 === 0 && !state.logs.some(l => l.includes(`European transition dead-zone`))) {
+          this.log(state, `⏳ [MIDDAY CHOP GATE] Current time (${this.formatTime(now)}) is inside European transition dead-zone (11:45-13:00). Skipping new breakout entries to prevent fakeouts.`);
+        }
+        await this.persistLogs(state);
+        return;
+      }
+    }
+
     // ─── 0. Safety Filters: Opening Range Exhaustion & Prime Momentum Window ─
     if (state.refCandleSet && state.refHigh !== null && state.refLow !== null) {
       const rangePts = state.refHigh - state.refLow;
@@ -878,15 +1027,17 @@ export class Breakout15MinEngine {
       }
     }
 
-    const primeEndStr = config.primeWindowEndTime || '11:30';
-    const [primeH, primeM] = primeEndStr.split(':').map(Number);
-    const primeMinutes = (primeH || 11) * 60 + (primeM || 30);
-    if (hhmm > primeMinutes) {
-      if (hhmm % 30 === 0 && !state.logs.some(l => l.includes(`Past prime morning momentum window`))) {
-        this.log(state, `⏳ Past prime morning momentum window (Cutoff: ${primeEndStr}). Skipping new breakout entries to eliminate midday chop.`);
+    const primeEndStr = config.primeWindowEndTime || '15:00';
+    if (primeEndStr && primeEndStr !== 'ALL_DAY') {
+      const [primeH, primeM] = primeEndStr.split(':').map(Number);
+      const primeMinutes = (primeH || 15) * 60 + (primeM || 0);
+      if (hhmm > primeMinutes) {
+        if (hhmm % 30 === 0 && !state.logs.some(l => l.includes(`Past entry cutoff window`))) {
+          this.log(state, `⏳ Past entry cutoff window (${primeEndStr}). Skipping new entries for the rest of session.`);
+        }
+        await this.persistLogs(state);
+        return;
       }
-      await this.persistLogs(state);
-      return;
     }
 
     try {
@@ -895,35 +1046,44 @@ export class Breakout15MinEngine {
       const currentPrice = ltpData[futureKey]?.last_price;
       if (!currentPrice) { await this.persistLogs(state); return; }
 
-      const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
-      const today5Candles = candles5.filter(c => this.getIstDateStr(c.date) === todayStr);
-      const breakoutCandidates = today5Candles.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
+      const entryTf = config.entryTimeframe || '3min';
+      const tfInterval = entryTf === '1min' ? 'minute' : (entryTf === '3min' ? '3minute' : '5minute');
+      const tfDurationMs = (entryTf === '1min' ? 1 : (entryTf === '3min' ? 3 : 5)) * 60 * 1000;
+      const candlesLower = await this.fetchCandlesForSymbol(client, state.futureSymbol, tfInterval, now, state.futureExchange);
+      const todayLowerCandles = candlesLower.filter(c => this.getIstDateStr(c.date) === todayStr);
+      const breakoutCandidates = todayLowerCandles.filter(c => this.getIstHhmm(new Date(c.date)) >= 9 * 60 + 30);
       if (breakoutCandidates.length === 0) { await this.persistLogs(state); return; }
 
       const lastCandle = breakoutCandidates[breakoutCandidates.length - 1];
-      const isClosed = (now.getTime() - new Date(lastCandle.date).getTime()) >= 5 * 60 * 1000;
+      const isClosed = (now.getTime() - new Date(lastCandle.date).getTime()) >= tfDurationMs;
       const target = isClosed ? lastCandle : (breakoutCandidates.length > 1 ? breakoutCandidates[breakoutCandidates.length - 2] : null);
       if (!target) { await this.persistLogs(state); return; }
 
       // ─── Dynamic Indicator Computations (ATR, VWAP, EMA, RSI) ──────────────
-      const atrs = this.calculateATR(candles5, config.atrPeriod ?? 14);
+      const atrs = this.calculateATR(candlesLower, config.atrPeriod ?? 14);
       const currentAtr = atrs[atrs.length - 1] || Math.max(1, (state.refHigh! - state.refLow!) * 0.5);
       state.dynamicAtr = currentAtr;
 
       const buffer = (config.enableDynamicAtr !== false) ? Math.max(0.05, currentAtr * (config.atrBufferMultiplier ?? 0.15)) : 0;
-      const vwaps = this.calculateVWAP(candles5);
+      const vwaps = this.calculateVWAP(candlesLower);
       const currentVwap = vwaps[vwaps.length - 1];
-      const ema9 = this.calculateEMA(candles5, 9);
-      const ema21 = this.calculateEMA(candles5, 21);
+      const trailingPeriod = config.trailingEmaPeriod || 9;
+      const emaTrailing = this.calculateEMA(candlesLower, trailingPeriod);
+      const curTrailingEma = emaTrailing[emaTrailing.length - 1];
+      const ema9 = this.calculateEMA(candlesLower, 9);
+      const ema21 = this.calculateEMA(candlesLower, 21);
       const curEma9 = ema9[ema9.length - 1];
       const curEma21 = ema21[ema21.length - 1];
-      const rsis = this.calculateRSI(candles5, 14);
+      const rsis = this.calculateRSI(candlesLower, 14);
       const currentRsi = rsis[rsis.length - 1];
+
+      state.lastEma = curTrailingEma;
+      state.lastVwap = currentVwap;
 
       // Periodic scanning heartbeat
       if (hhmm % 5 === 0 && !state.logs.some(l => l.includes(`Scanning for breakout`) && l.includes(`LTP: ₹${currentPrice}`))) {
         const activeSym = state.futureSymbol || config.symbol;
-        this.log(state, `[${activeSym}] 👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ₹${state.refLow} to ₹${state.refHigh} | ATR: ₹${currentAtr.toFixed(2)} | RSI: ${currentRsi?.toFixed(1) ?? 'N/A'} | Buffer: ±₹${buffer.toFixed(2)}`);
+        this.log(state, `[${activeSym}] 👀 Scanning on ${entryTf} (LTP: ₹${currentPrice}) — Range: ₹${state.refLow} to ₹${state.refHigh} | ATR: ₹${currentAtr.toFixed(2)} | RSI: ${currentRsi?.toFixed(1) ?? 'N/A'} | ${trailingPeriod}-EMA: ₹${curTrailingEma?.toFixed(1) ?? 'N/A'} | VWAP: ₹${currentVwap?.toFixed(1) ?? 'N/A'}`);
       }
 
       // ─── Track Liquidity Sweeps Beyond 15-min Range ────────────────────
@@ -951,28 +1111,28 @@ export class Breakout15MinEngine {
       // ─── 1. DUAL-EDGE: LIQUIDITY SWEEP TRAP REVERSALS (TURTLE SOUP / 2B) ──
       if (config.enableTrapReversal !== false && !state.entryTriggered) {
         const isVwapBear = !currentVwap || target.close < currentVwap;
-        const isEmaBear = !curEma9 || target.close <= curEma9;
+        const isEmaBear = !curTrailingEma || target.close <= curTrailingEma;
         const isVwapBull = !currentVwap || target.close > currentVwap;
-        const isEmaBull = !curEma9 || target.close >= curEma9;
+        const isEmaBull = !curTrailingEma || target.close >= curTrailingEma;
         const isRsiBear = currentRsi === null || currentRsi <= 55;
-        const isRsiBull = currentRsi === null || currentRsi >= 45;
+        const isRsiBull = currentRsi === null || currentRsi >= 40;
         const isStrongBear = curEma9 && curEma21 ? curEma9 < curEma21 : true;
         const isStrongBull = curEma9 && curEma21 ? curEma9 > curEma21 : true;
         const canTakeBearishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBear;
         const canTakeBullishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBull;
 
-        // Bull Trap (Price swept above 15m high, but fails and closes back inside below VWAP)
-        if (state.sweptHigh && target.close < state.refHigh! && isVwapBear && isEmaBear && target.close < target.open && isRsiBear && canTakeBearishTrap) {
-          this.log(state, `⚡ BULL TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept above 15m high (₹${state.refHigh}, peak ₹${state.sweptHighPrice?.toFixed(1)}), failed and closed back inside range below VWAP (₹${currentVwap?.toFixed(1)}). Entering SHORT to ride reversal to range bottom!`);
+        // Bull Trap (Price swept above 15m high, but fails and closes back inside below VWAP/EMA)
+        if (state.sweptHigh && target.close < state.refHigh! && (isVwapBear || isEmaBear) && target.close < target.open && isRsiBear && canTakeBearishTrap) {
+          this.log(state, `⚡ BULL TRAP (LIQUIDITY SWEEP) TRIGGERED on ${entryTf}! Price swept above 15m high (₹${state.refHigh}, peak ₹${state.sweptHighPrice?.toFixed(1)}), failed and closed back inside range @ ₹${target.close} (VWAP: ₹${currentVwap?.toFixed(1)}, ${trailingPeriod}-EMA: ₹${curTrailingEma?.toFixed(1)}). Entering SHORT to ride reversal to range bottom!`);
           state.sweptHigh = false;
           state.isTrapTrade = true;
           await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh, target);
           await this.persistLogs(state);
           return;
         }
-        // Bear Trap (Price swept below 15m low, but fails and reclaims range above VWAP)
-        else if (state.sweptLow && target.close > state.refLow! && isVwapBull && isEmaBull && target.close > target.open && isRsiBull && canTakeBullishTrap) {
-          this.log(state, `⚡ BEAR TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept below 15m low (₹${state.refLow}, trough ₹${state.sweptLowPrice?.toFixed(1)}), failed and reclaimed range above VWAP (₹${currentVwap?.toFixed(1)}). Entering LONG to ride reversal to range top!`);
+        // Bear Trap (Price swept below 15m low, but fails and reclaims range above VWAP/EMA)
+        else if (state.sweptLow && target.close > state.refLow! && (isVwapBull || isEmaBull) && target.close > target.open && isRsiBull && canTakeBullishTrap) {
+          this.log(state, `⚡ BEAR TRAP (LIQUIDITY SWEEP) TRIGGERED on ${entryTf}! Price swept below 15m low (₹${state.refLow}, trough ₹${state.sweptLowPrice?.toFixed(1)}), failed and reclaimed range @ ₹${target.close} (VWAP: ₹${currentVwap?.toFixed(1)}, ${trailingPeriod}-EMA: ₹${curTrailingEma?.toFixed(1)}). Entering LONG to ride reversal to range top!`);
           state.sweptLow = false;
           state.isTrapTrade = true;
           await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh, target);
@@ -996,6 +1156,15 @@ export class Breakout15MinEngine {
       const isStrongBear = (target.high - target.close) / candleRange >= 0.55;
       const isRetestOk = config.enableRetestConfirmation === false || bodyRatio >= 0.40;
       const isCprOk = config.enableCprFilter === false || !state.cprData || state.cprData.isNarrow;
+      const isCprWide = config.enableCprSupportResistance !== false && state.cprData && state.cprData.isWide;
+      const nearCprResistance = config.enableCprSupportResistance !== false && state.cprData && (
+        (state.cprData.pivot > target.close && (state.cprData.pivot - target.close) < 25) ||
+        (state.cprData.topCpr > target.close && (state.cprData.topCpr - target.close) < 25)
+      );
+      const nearCprSupport = config.enableCprSupportResistance !== false && state.cprData && (
+        (target.close > state.cprData.pivot && (target.close - state.cprData.pivot) < 25) ||
+        (target.close > state.cprData.bottomCpr && (target.close - state.cprData.bottomCpr) < 25)
+      );
 
       // ─── 3. DYNAMIC LONG BREAKOUT ──────────────────────────────────────────
       if (target.close > (state.refHigh! + buffer)) {
@@ -1003,8 +1172,12 @@ export class Breakout15MinEngine {
         const isEmaOk = !curEma9 || !curEma21 || curEma9 >= curEma21;
         const isRsiOk = config.enableRsiFilter === false || currentRsi === null || currentRsi >= 55;
 
-        if (!isCprOk) {
+        if (isCprWide) {
+          this.log(state, `⏳ CPR Regime Gate: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Pure breakout chasing blocked to avoid retail chop traps. Prioritizing Liquidity Sweep Trap Reversals!`);
+        } else if (!isCprOk) {
           this.log(state, `⏳ CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakout to prevent chop; waiting for trap reversals.`);
+        } else if (nearCprResistance) {
+          this.log(state, `⏳ CPR S/R Hurdle: Long breakout @ ₹${target.close} is directly beneath CPR resistance overhead (Pivot ₹${state.cprData?.pivot.toFixed(1)}, Top CPR ₹${state.cprData?.topCpr.toFixed(1)}). Waiting for clean breakout.`);
         } else if (!isVolumeConfirmed) {
           this.log(state, `⏳ Breakout above ₹${state.refHigh} detected, but volume (${target.volume}) is below required ${(config.minRvol ?? 1.2)}x threshold. Skipping weak breakout.`);
         } else if (!isRetestOk || !isStrongBull) {
@@ -1032,8 +1205,12 @@ export class Breakout15MinEngine {
         const isEmaOk = !curEma9 || !curEma21 || curEma9 <= curEma21;
         const isRsiOk = config.enableRsiFilter === false || currentRsi === null || currentRsi <= 45;
 
-        if (!isCprOk) {
+        if (isCprWide) {
+          this.log(state, `⏳ CPR Regime Gate: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Breakdown chasing blocked to avoid retail chop traps. Prioritizing Liquidity Sweep Trap Reversals!`);
+        } else if (!isCprOk) {
           this.log(state, `⏳ CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakdown to prevent chop; waiting for trap reversals.`);
+        } else if (nearCprSupport) {
+          this.log(state, `⏳ CPR S/R Hurdle: Short breakdown @ ₹${target.close} is directly above CPR support underneath (Pivot ₹${state.cprData?.pivot.toFixed(1)}, Bottom CPR ₹${state.cprData?.bottomCpr.toFixed(1)}). Waiting for clean breakdown.`);
         } else if (!isVolumeConfirmed) {
           this.log(state, `⏳ Breakdown below ₹${state.refLow} detected, but volume (${target.volume}) is below required ${(config.minRvol ?? 1.2)}x threshold. Skipping weak breakdown.`);
         } else if (!isRetestOk || !isStrongBear) {
@@ -1150,6 +1327,62 @@ export class Breakout15MinEngine {
         }
       }
 
+      // ── 3.5 Multi-Lot Partial Profit Booking ("The Banker & The Runner") ──
+      const partialR = state.config.partialBookingR ?? 1.8;
+      const enablePartial = state.config.enablePartialBooking !== false;
+      const cleanUnderlying = (state.config.symbol || state.futureSymbol || '').toUpperCase().trim();
+      const lotSize = this.getLotSizeForUnderlying(cleanUnderlying);
+      const activeQty = state.executedQty || state.config.qty;
+
+      if (enablePartial && !state.isPartialBooked && pnlPoints >= (risk * partialR) && activeQty >= 2 * lotSize && state.entryPrice) {
+        state.isPartialBooked = true;
+        const targetPct = (state.config.partialBookingPct ?? 50) / 100;
+        let bookLots = Math.max(1, Math.floor((activeQty / lotSize) * targetPct));
+        const bookQty = bookLots * lotSize;
+        const remainingQty = activeQty - bookQty;
+
+        if (bookQty > 0 && remainingQty > 0) {
+          state.executedQty = remainingQty;
+          const exitSide = isLong ? 'SELL' : 'BUY';
+
+          if (state.isPaperTrade) {
+            this.log(state, `💰 [THE BANKER & RUNNER] Paper Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (+${partialR}R / +₹${(pnlPoints * bookQty).toFixed(2)})!`);
+          } else if (client) {
+            try {
+              const partId = await client.placeOrder({
+                symbol,
+                exchange,
+                side: exitSide,
+                orderType: 'MARKET',
+                product: state.config.product ?? 'MIS',
+                qty: bookQty,
+              });
+              this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} | Order: ${partId}`);
+            } catch (err: any) {
+              this.log(state, `⚠ Partial profit exit order notice: ${err.message}`);
+            }
+
+            // Sync remaining broker Stop Loss order quantity
+            if (state.slOrderId && state.slOrderId !== 'FAILED') {
+              try {
+                const k = client?.['kite'] || client;
+                if (client.modifyOrder) {
+                  await client.modifyOrder(state.slOrderId, { quantity: remainingQty }).catch(() => { });
+                } else if (k && k.modifyOrder) {
+                  await k.modifyOrder('regular', state.slOrderId, { quantity: remainingQty }).catch(() => { });
+                }
+              } catch { }
+            }
+          }
+
+          // Move Stop Loss of remaining runner to Cost (Risk-Free)
+          state.stopLossPrice = state.entryPrice;
+          state.isBreakevenTrailed = true;
+          this.log(state, `🛡 [THE RUNNER ACTIVATED] Remaining ${remainingQty} qty SL moved to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free Trade! Trailing on 9/15-EMA & VWAP.`);
+          await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
+        }
+      }
+
       // ── 4. Target 1 Milestone (+2R) -> Activate Uncapped Momentum Trailing ─
       const targetR = state.config.riskRewardRatio ?? 2.0;
       if (pnlPoints >= (risk * targetR) && !state.isDynamicTrailingActive) {
@@ -1181,6 +1414,35 @@ export class Breakout15MinEngine {
             state.stopLossPrice = newSl;
             this.log(state, `📈 Dynamic Momentum Trail: Low ₹${state.lowestPriceReached.toFixed(2)} -> Trailed SL to ₹${newSl.toFixed(2)}`);
             await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
+          }
+        }
+      }
+
+      // ── 5.1 Dynamic 9/15 EMA & VWAP Trailing ─────────────────────────────
+      if (state.config.enableEmaVwapTrailing !== false && (state.isDynamicTrailingActive || state.isBreakevenTrailed || pnlPoints > 0) && state.entryPrice) {
+        const vwapSource = state.config.trailingVwapSource || 'both';
+        let trendSupport: number | null = null;
+        if (vwapSource === 'both') {
+          trendSupport = (state.lastEma && state.lastVwap)
+            ? (isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap))
+            : (state.lastEma || state.lastVwap || null);
+        } else if (vwapSource === 'ema') {
+          trendSupport = state.lastEma || null;
+        } else if (vwapSource === 'vwap') {
+          trendSupport = state.lastVwap || null;
+        }
+
+        if (trendSupport !== null && !isOption) {
+          const isSupportInProfit = isLong ? (trendSupport > state.entryPrice) : (trendSupport < state.entryPrice);
+          if (isSupportInProfit) {
+            const roundedSl = this.roundTick(trendSupport, symTickSize);
+            const isBetterSl = isLong ? (roundedSl > (state.stopLossPrice || 0)) : (roundedSl < (state.stopLossPrice || Infinity));
+            if (isBetterSl) {
+              state.stopLossPrice = roundedSl;
+              state.isTrailingEma = true;
+              this.log(state, `📈 [${state.config.trailingEmaPeriod || 9}-EMA & VWAP TRAIL] Dynamic trend support advanced to ₹${roundedSl.toFixed(2)} (in profit)! Trailing SL to lock gains.`);
+              await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
+            }
           }
         }
       }
@@ -1377,6 +1639,12 @@ export class Breakout15MinEngine {
     this.log(state, `🏁 Trade cycle complete (${reason}) @ ₹${actualExitPrice.toFixed(2)} | Realized P&L: ${tradePnlRs >= 0 ? '+' : ''}₹${tradePnlRs.toFixed(2)} (${tradePnlPoints >= 0 ? '+' : ''}${tradePnlPoints.toFixed(2)} pts)${slippage !== 0 ? ` [Slippage: ${slippage > 0 ? '+' : ''}₹${slippage.toFixed(2)}]` : ''}`);
 
     if (reason === 'SL') {
+      state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
+      const maxLossesAllowed = config.maxLossesPerDay ?? 1;
+      this.log(state, `🛑 Daily SL Hit #${state.dailyLossesCount} recorded.`);
+      if (state.dailyLossesCount >= maxLossesAllowed) {
+        this.log(state, `🛡 [1-LOSS CAPITAL SHIELD ACTIVATED] Daily max allowable loss limit reached (${state.dailyLossesCount}/${maxLossesAllowed}). Halting all new entries today to preserve capital and eliminate chop drawdowns.`);
+      }
       state.lastBreakoutAttempt = {
         side: state.entryTriggered!,
         timestamp: Date.now(),
@@ -1399,6 +1667,8 @@ export class Breakout15MinEngine {
     state.isBreakevenTrailed = false;
     state.isProfitLockTrailed = false;
     state.isDynamicTrailingActive = false;
+    state.isPartialBooked = false;
+    state.executedQty = undefined;
     state.currentPnlRs = 0;
     state.currentPnlPct = 0;
 
@@ -1628,7 +1898,7 @@ export class Breakout15MinEngine {
     const instruments = await client.getInstruments(exchange);
     const futures = instruments.filter((i: any) => i.name === underlying && i.instrument_type === 'FUT' && i.segment === segment);
     if (futures.length === 0) throw new Error(`No ${exchange} future for ${baseSymbol}`);
-    
+
     const todayStr = this.getIstDateStr(new Date());
     const validFutures = futures.filter((i: any) => {
       const exp = this.getExpiryStr(i.expiry);
@@ -1740,14 +2010,17 @@ export class Breakout15MinEngine {
               ? this.roundTick(Math.max(2.0, entry * 0.12))
               : this.roundTick(Math.max(2.0, config.stopLossRs ? (config.stopLossRs / config.qty) : (entry * 0.15)));
 
-            // Structural Candle SL for Option Buying (Tied to underlying breakout candle + Delta)
-            if (config.useStructuralCandleSl !== false && breakoutCandle) {
+            // Structural Candle / Sweep SL for Option Buying (Tied to underlying sweep extreme + Delta)
+            if (config.useStructuralCandleSl !== false && (breakoutCandle || state.isTrapTrade)) {
+              const sweepExtreme = side === 'BUY'
+                ? (state.isTrapTrade && state.sweptLowPrice ? state.sweptLowPrice : breakoutCandle?.low || triggerPrice)
+                : (state.isTrapTrade && state.sweptHighPrice ? state.sweptHighPrice : breakoutCandle?.high || triggerPrice);
               const underlyingRisk = side === 'BUY'
-                ? Math.max(15, triggerPrice - breakoutCandle.low)
-                : Math.max(15, breakoutCandle.high - triggerPrice);
-              const deltaRisk = this.roundTick(Math.max(8.0, Math.min(entry * 0.15, underlyingRisk * 0.52)));
+                ? Math.max(10, triggerPrice - sweepExtreme)
+                : Math.max(10, sweepExtreme - triggerPrice);
+              const deltaRisk = this.roundTick(Math.max(6.0, Math.min(entry * 0.15, underlyingRisk * 0.52)));
               optionRisk = deltaRisk;
-              this.log(state, `🛡 Structural Candle SL for Option: Underlying risk ${underlyingRisk.toFixed(1)} pts -> Option SL Risk: ${optionRisk.toFixed(1)} pts (vs wide range SL)`);
+              this.log(state, `🛡 ${state.isTrapTrade ? '⚡ Liquidity Sweep Trap SL' : 'Structural Candle SL'} for Option: Underlying risk ${underlyingRisk.toFixed(1)} pts (Sweep Extreme: ₹${sweepExtreme.toFixed(2)}) -> Option SL Risk: ${optionRisk.toFixed(1)} pts.`);
             }
 
             const sl = this.roundTick(Math.max(1.0, entry - optionRisk));
@@ -1795,7 +2068,11 @@ export class Breakout15MinEngine {
     const maxRisk = isBankNifty ? 85 : (isNifty ? 35 : Math.max(2.0, entry * 0.015));
 
     if (side === 'BUY') {
-      if (config.useStructuralCandleSl !== false && breakoutCandle) {
+      if (state.isTrapTrade && state.sweptLowPrice) {
+        const buffer = config.trapSlBufferPts ?? Math.max(5, dynamicAtr * 0.1);
+        sl = this.roundTick(state.sweptLowPrice - buffer);
+        this.log(state, `🛡 Institutional Liquidity Sweep SL (Bear Trap): Sweep Low ₹${state.sweptLowPrice.toFixed(2)} - ₹${buffer} buffer -> SL: ₹${sl.toFixed(2)} (${(entry - sl).toFixed(1)} pts risk vs ₹${stopLow ? (entry - stopLow).toFixed(1) : 'N/A'} pts range risk).`);
+      } else if (config.useStructuralCandleSl !== false && breakoutCandle) {
         const buffer = Math.max(0.05, dynamicAtr * 0.05);
         const candleLow = breakoutCandle.low - buffer;
         const rawRisk = entry - candleLow;
@@ -1815,7 +2092,11 @@ export class Breakout15MinEngine {
       tgt = this.roundTick(entry + (risk * rr));
       state.initialRiskPoints = risk;
     } else {
-      if (config.useStructuralCandleSl !== false && breakoutCandle) {
+      if (state.isTrapTrade && state.sweptHighPrice) {
+        const buffer = config.trapSlBufferPts ?? Math.max(5, dynamicAtr * 0.1);
+        sl = this.roundTick(state.sweptHighPrice + buffer);
+        this.log(state, `🛡 Institutional Liquidity Sweep SL (Bull Trap): Sweep High ₹${state.sweptHighPrice.toFixed(2)} + ₹${buffer} buffer -> SL: ₹${sl.toFixed(2)} (${(sl - entry).toFixed(1)} pts risk vs ₹${stopHigh ? (stopHigh - entry).toFixed(1) : 'N/A'} pts range risk).`);
+      } else if (config.useStructuralCandleSl !== false && breakoutCandle) {
         const buffer = Math.max(0.05, dynamicAtr * 0.05);
         const candleHigh = breakoutCandle.high + buffer;
         const rawRisk = candleHigh - entry;
@@ -1829,7 +2110,7 @@ export class Breakout15MinEngine {
       } else if (config.enableDynamicAtr !== false) {
         sl = this.roundTick(entry + dynamicRisk);
       } else {
-        sl = stopHigh ? this.roundTick(stopHigh) : this.roundTick(entry + config.stopLossRs / config.qty);
+        sl = stopHigh ? this.roundTick(stopHigh) : this.roundTick(entry - config.stopLossRs / config.qty);
       }
       const risk = Math.max(0.50, Math.abs(sl - entry));
       tgt = this.roundTick(entry - (risk * rr));
@@ -2263,7 +2544,7 @@ export class Breakout15MinEngine {
         logs: state.logs,
         state: this.getState(state.strategyId),
       });
-    } catch {}
+    } catch { }
   }
 
   private async trackOrder(state: StrategyState, account: any, executionId: string, params: any, brokerOrderId: string, strategyId: string, createdAt?: Date) {
@@ -2291,23 +2572,80 @@ export class Breakout15MinEngine {
     } catch (err: any) { this.log(state, `⚠ DB track failed: ${err.message}`); }
   }
 
-  private calculateCPR(prevDayCandles: Candle[]) {
-    if (!prevDayCandles || prevDayCandles.length === 0) return null;
-    const high = Math.max(...prevDayCandles.map(c => c.high));
-    const low = Math.min(...prevDayCandles.map(c => c.low));
-    const close = prevDayCandles[prevDayCandles.length - 1].close;
+  private async fetchPreviousDayOHLC(client: any, symbol: string, exchange: string, now: Date): Promise<{ high: number; low: number; close: number } | null> {
+    const todayStr = this.getIstDateStr(now);
+    try {
+      const dailyCandles = await this.fetchCandlesForSymbol(client, symbol, 'day', now, exchange);
+      const pastDaily = dailyCandles.filter(c => this.getIstDateStr(c.date) !== todayStr);
+      if (pastDaily.length > 0) {
+        const lastDay = pastDaily[pastDaily.length - 1];
+        return { high: lastDay.high, low: lastDay.low, close: lastDay.close };
+      }
+    } catch (e: any) {
+      this.logger.debug?.(`Daily candle fetch notice: ${e.message}`);
+    }
+
+    try {
+      const candles15 = await this.fetchCandlesForSymbol(client, symbol, '15minute', now, exchange);
+      const past15 = candles15.filter(c => this.getIstDateStr(c.date) !== todayStr);
+      if (past15.length > 0) {
+        const prevDayStr = this.getIstDateStr(past15[past15.length - 1].date);
+        const prevDayCandles = past15.filter(c => this.getIstDateStr(c.date) === prevDayStr);
+        if (prevDayCandles.length > 0) {
+          const high = Math.max(...prevDayCandles.map(c => c.high));
+          const low = Math.min(...prevDayCandles.map(c => c.low));
+          const close = prevDayCandles[prevDayCandles.length - 1].close;
+          return { high, low, close };
+        }
+      }
+    } catch (e: any) {
+      this.logger.debug?.(`15m candle CPR fallback notice: ${e.message}`);
+    }
+
+    return null;
+  }
+
+  private calculateCPR(prevDay: { high: number; low: number; close: number } | Candle[]) {
+    let high = 0, low = 0, close = 0;
+    if (Array.isArray(prevDay)) {
+      if (prevDay.length === 0) return null;
+      high = Math.max(...prevDay.map(c => c.high));
+      low = Math.min(...prevDay.map(c => c.low));
+      close = prevDay[prevDay.length - 1].close;
+    } else if (prevDay && typeof prevDay.high === 'number') {
+      high = prevDay.high;
+      low = prevDay.low;
+      close = prevDay.close;
+    } else {
+      return null;
+    }
+
     const pivot = (high + low + close) / 3;
     const bc = (high + low) / 2;
     const tc = (pivot - bc) + pivot;
     const width = Math.abs(tc - bc);
     const widthPct = (width / pivot) * 100;
+    const topCpr = Math.max(tc, bc);
+    const bottomCpr = Math.min(tc, bc);
+    const r1 = (2 * pivot) - low;
+    const s1 = (2 * pivot) - high;
+    const r2 = pivot + (high - low);
+    const s2 = pivot - (high - low);
+
     return {
       pivot,
       bc,
       tc,
       width,
       widthPct,
+      topCpr,
+      bottomCpr,
+      r1,
+      s1,
+      r2,
+      s2,
       isNarrow: widthPct <= 0.18,
+      isWide: widthPct > 0.22,
     };
   }
 
@@ -2339,6 +2677,8 @@ export class Breakout15MinEngine {
     state.sweptLow = false;
     state.sweptLowPrice = undefined;
     state.isTrapTrade = false;
+    state.dailyLossesCount = 0;
+    state.isPartialBooked = false;
     this.stopRealtimeMonitor(state);
   }
 }

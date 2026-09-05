@@ -1493,9 +1493,9 @@ export default function StrategyDetailPage() {
                     type="number"
                   />
                   <Field
-                    label="Prime Window Cutoff"
+                    label="Entry Window Cutoff"
                     editing={editing}
-                    value={editing ? String(editConfig.primeWindowEndTime ?? cfg.primeWindowEndTime ?? "11:30") : `${cfg.primeWindowEndTime ?? "11:30"} IST`}
+                    value={editing ? String(editConfig.primeWindowEndTime ?? cfg.primeWindowEndTime ?? "15:00") : `${cfg.primeWindowEndTime ?? "15:00"} IST`}
                     onChange={(v) => setEditConfig((e) => ({ ...e, primeWindowEndTime: v }))}
                   />
                   <div>
@@ -1532,6 +1532,30 @@ export default function StrategyDetailPage() {
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">CPR Trend Day Filter</p>
                     <p className="text-sm font-bold text-blue-600">
                       {cfg.enableCprFilter !== false ? `Active (Narrow CPR < ${cfg.cprNarrowThresholdPct ?? 0.18}%)` : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Live Zerodha CPR S/R &amp; Regime</p>
+                    <p className="text-sm font-bold text-indigo-600">
+                      {cfg.enableCprSupportResistance !== false ? "Active (Pivot/TC/BC/R1/S1 + Regime Gate)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Banker &amp; Runner Partial Booking</p>
+                    <p className="text-sm font-bold text-amber-600">
+                      {cfg.enablePartialBooking !== false ? `Active (${cfg.partialBookingPct ?? 50}% @ +${cfg.partialBookingR ?? 1.8}R -> COST)` : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Dead-Zone Chop Filter</p>
+                    <p className="text-sm font-bold text-slate-600">
+                      {cfg.enableMiddayChopFilter !== false ? `Active (${cfg.middayDeadZoneStart ?? "11:45"} - ${cfg.middayDeadZoneEnd ?? "13:00"} IST)` : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">1-Loss &amp; Done Capital Shield</p>
+                    <p className="text-sm font-bold text-red-600">
+                      Max {cfg.maxLossesPerDay ?? 1} SL / Day
                     </p>
                   </div>
                 </>

@@ -215,8 +215,8 @@ export async function getTopCandidateStocks(
       const ltp = quote.last_price;
 
       // ── 1. Capital-Constrained Price Filter ────────────────────────────────
-      // Allow any liquid F&O stock affordable by user's 5x MIS leverage (including high-beta movers like POWERINDIA @ ₹32k)
-      if (ltp < 50 || ltp > maxBuyingPower) continue;
+      // Allow any liquid F&O or NIFTY 500 stock affordable by user's 5x MIS leverage (min ₹15 to exclude non-tradable illiquid pennies)
+      if (ltp < 15 || ltp > maxBuyingPower) continue;
 
       const prevClose = quote.ohlc.close;
       const todayOpen = quote.ohlc.open || ltp;
