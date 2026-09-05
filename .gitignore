@@ -17,3 +17,4 @@ apps/auth-service/data/
 **/whatsapp_sessions/
 scripts/cache_nifty500/
 scripts/*.json
+scripts/compare_25d_upgrades.js
