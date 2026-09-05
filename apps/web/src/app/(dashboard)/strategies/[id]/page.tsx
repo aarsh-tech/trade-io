@@ -850,16 +850,18 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-foreground truncate">
                 {isNiftyScalper
                   ? "Auto Margin"
-                  : isEmaVwap && cfg.symbol === "AUTO"
+                  : is15Min
                     ? "85% Margin (5x)"
-                    : cfg.symbol === "AUTO"
-                      ? "Auto (5x MIS)"
-                      : cfg.qty
-                        ? `${cfg.qty} Qty`
-                        : "Dynamic"}
+                    : isEmaVwap && cfg.symbol === "AUTO"
+                      ? "85% Margin (5x)"
+                      : cfg.symbol === "AUTO"
+                        ? "Auto (5x MIS)"
+                        : cfg.qty
+                          ? `${cfg.qty} Qty`
+                          : "Dynamic"}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Auto Lots" : isEmaVwap ? "MIS 5x" : "Sizing"}
+                {isNiftyScalper ? "Auto Lots" : is15Min ? "MIS 5x / Lots" : isEmaVwap ? "MIS 5x" : "Sizing"}
               </span>
             </div>
           </CardContent>
@@ -879,12 +881,14 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-rose-600">
                 {isNiftyScalper
                   ? "-7 Points"
-                  : isEmaVwap
-                    ? "Candle Low"
-                    : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
+                  : is15Min
+                    ? "Candle SL"
+                    : isEmaVwap
+                      ? "Candle Low"
+                      : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Server SL + Trail" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
+                {isNiftyScalper ? "Server SL + Trail" : is15Min ? "Server SL Armed" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
               </span>
             </div>
           </CardContent>
@@ -904,12 +908,14 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-emerald-600">
                 {isNiftyScalper
                   ? "+10 Pts + Trail"
-                  : isEmaVwap
-                    ? "15-EMA / VWAP"
-                    : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
+                  : is15Min
+                    ? "1:2 RR + Trail"
+                    : isEmaVwap
+                      ? "15-EMA / VWAP"
+                      : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
+                {isNiftyScalper ? "Uncapped Momentum" : is15Min ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
               </span>
             </div>
           </CardContent>
@@ -1162,6 +1168,38 @@ export default function StrategyDetailPage() {
                             <span className="text-muted-foreground">Dynamic ATR(14)</span>
                             <span className="font-bold text-blue-600 dark:text-blue-400">
                               ₹{Number(liveState.dynamicAtr).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {liveState.isDynamicTrailingActive && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/40">
+                            <span className="text-muted-foreground">Trailing Mode</span>
+                            <span className="font-bold text-purple-600 dark:text-purple-400">
+                              🚀 Uncapped Momentum Trail Active
+                            </span>
+                          </div>
+                        )}
+                        {liveState.isProfitLockTrailed && !liveState.isDynamicTrailingActive && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/40">
+                            <span className="text-muted-foreground">Trailing Mode</span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                              🔒 +1.5R Profit Locked (+0.75R)
+                            </span>
+                          </div>
+                        )}
+                        {liveState.isBreakevenTrailed && !liveState.isProfitLockTrailed && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/40">
+                            <span className="text-muted-foreground">Trailing Mode</span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                              🛡 Cost SL Trailed (Risk-Free)
+                            </span>
+                          </div>
+                        )}
+                        {liveState.dailyRealizedPnlRs !== undefined && liveState.dailyRealizedPnlRs !== 0 && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/40">
+                            <span className="text-muted-foreground">Realized Daily P&L</span>
+                            <span className={cn("font-bold", liveState.dailyRealizedPnlRs >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                              {liveState.dailyRealizedPnlRs >= 0 ? "+" : ""}₹{Number(liveState.dailyRealizedPnlRs).toFixed(2)}
                             </span>
                           </div>
                         )}
@@ -1447,9 +1485,54 @@ export default function StrategyDetailPage() {
                     onChange={(v) => setEditConfig((e) => ({ ...e, riskRewardRatio: Number(v) }))}
                     type="number"
                   />
+                  <Field
+                    label="Max Opening Range Cap"
+                    editing={editing}
+                    value={editing ? String(editConfig.maxOpeningRangePts ?? cfg.maxOpeningRangePts ?? 300) : `${cfg.maxOpeningRangePts ?? 300} pts`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, maxOpeningRangePts: Number(v) }))}
+                    type="number"
+                  />
+                  <Field
+                    label="Prime Window Cutoff"
+                    editing={editing}
+                    value={editing ? String(editConfig.primeWindowEndTime ?? cfg.primeWindowEndTime ?? "11:30") : `${cfg.primeWindowEndTime ?? "11:30"} IST`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, primeWindowEndTime: v }))}
+                  />
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Dynamic ATR Trailing</p>
-                    <p className="text-sm font-bold text-blue-600">Active Scaling (±15% Buffer)</p>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Structural Candle SL</p>
+                    <p className="text-sm font-bold text-emerald-600">
+                      {cfg.useStructuralCandleSl !== false ? "Active (Tight 45–80 pt Risk)" : "Wide 15m Range Extreme"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Early Breakeven Lock</p>
+                    <p className="text-sm font-bold text-amber-600">
+                      +{cfg.breakevenTriggerR ?? 0.7}R -&gt; COST (Risk-Free)
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">RSI(14) Momentum Filter</p>
+                    <p className="text-sm font-bold text-indigo-600">
+                      {cfg.enableRsiFilter !== false ? "Active (>55 Long, <45 Short)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Liquidity Sweep Trap Trading</p>
+                    <p className="text-sm font-bold text-purple-600">
+                      {cfg.enableTrapReversal !== false ? "Active (Turtle Soup / 2B Reversal)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Breakout Retest Confirmation</p>
+                    <p className="text-sm font-bold text-sky-600">
+                      {cfg.enableRetestConfirmation !== false ? "Active (Body >= 40% & Retest)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">CPR Trend Day Filter</p>
+                    <p className="text-sm font-bold text-blue-600">
+                      {cfg.enableCprFilter !== false ? `Active (Narrow CPR < ${cfg.cprNarrowThresholdPct ?? 0.18}%)` : "Disabled"}
+                    </p>
                   </div>
                 </>
               )}

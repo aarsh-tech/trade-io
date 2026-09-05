@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { Breakout15MinConfig } from './dto/strategy.dto';
-import { autoSelectStock } from './smart-stock-picker';
+import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
 
@@ -34,6 +34,7 @@ interface StrategyState {
   stopLossPrice?: number | null;
   targetPrice?: number | null;
   entryPrice?: number | null;
+  initialSlPrice?: number | null;
   entryFilled?: boolean;
   setupTimestamp: number | null;
   tradesPlacedToday: number;
@@ -57,12 +58,35 @@ interface StrategyState {
   currentPnlPct?: number;
   peakPnlRs?: number;
 
+  // Enterprise Dynamic Sizing & Exchange SL Tracking State
+  executedQty?: number;
+  lastBrokerSlTrigger?: number;
+  lastBrokerSlModifyTime?: number;
+  isProfitLockTrailed?: boolean;
+  isDynamicTrailingActive?: boolean;
+  dailyRealizedPnlRs?: number;
+
   // Real-Time WebSocket & Ticker Tracking State
   realtimeActive?: boolean;
   lastTickTime?: number;
   lastPnlLogTime?: number;
   lastEmitTime?: number;
   tickerUnsubscribe?: () => void;
+
+  // Dual-Edge & Liquidity Sweep Trap Tracking State
+  cprData?: {
+    pivot: number;
+    bc: number;
+    tc: number;
+    width: number;
+    widthPct: number;
+    isNarrow: boolean;
+  } | null;
+  sweptHigh?: boolean;
+  sweptHighPrice?: number;
+  sweptLow?: boolean;
+  sweptLowPrice?: number;
+  isTrapTrade?: boolean;
 }
 
 @Injectable()
@@ -124,6 +148,9 @@ export class Breakout15MinEngine {
       tradesPlacedToday: 0,
       logs: [],
       isBreakevenTrailed: false,
+      isProfitLockTrailed: false,
+      isDynamicTrailingActive: false,
+      dailyRealizedPnlRs: 0,
       lastBreakoutAttempt: null,
       isReversalTrade: false,
     };
@@ -166,7 +193,7 @@ export class Breakout15MinEngine {
 
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-200)) },
       });
     }
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
@@ -195,7 +222,7 @@ export class Breakout15MinEngine {
 
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-200)) },
       });
     }
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
@@ -216,7 +243,8 @@ export class Breakout15MinEngine {
     const ltp = s.currentLtp || s.entryPrice || 0;
     const entry = s.entryPrice || 0;
     const pnlPoints = entry > 0 && ltp > 0 ? (isLong ? (ltp - entry) : (entry - ltp)) : 0;
-    const calculatedPnlRs = pnlPoints * s.config.qty;
+    const currentQty = s.executedQty || s.config.qty;
+    const calculatedPnlRs = pnlPoints * currentQty;
     const calculatedPnlPct = entry > 0 ? (pnlPoints / entry) * 100 : 0;
 
     return {
@@ -231,11 +259,15 @@ export class Breakout15MinEngine {
       pnlRs: s.currentPnlRs !== undefined && s.currentPnlRs !== 0 ? s.currentPnlRs : calculatedPnlRs,
       pnlPct: s.currentPnlPct !== undefined && s.currentPnlPct !== 0 ? s.currentPnlPct : calculatedPnlPct,
       peakPnlRs: s.peakPnlRs ?? 0,
-      qty: s.config.qty,
+      qty: currentQty,
+      executedQty: s.executedQty,
       refHigh: s.refHigh,
       refLow: s.refLow,
       dynamicAtr: s.dynamicAtr,
       isBreakevenTrailed: s.isBreakevenTrailed,
+      isProfitLockTrailed: s.isProfitLockTrailed,
+      isDynamicTrailingActive: s.isDynamicTrailingActive,
+      dailyRealizedPnlRs: s.dailyRealizedPnlRs || 0,
       isPaperTrade: s.isPaperTrade,
     };
   }
@@ -256,17 +288,38 @@ export class Breakout15MinEngine {
         const ltpData = await client['kite'].getLTP([`${exchange}:${symbol}`]);
         exitPrice = ltpData[`${exchange}:${symbol}`]?.last_price || exitPrice;
       } catch { }
+
+      // 1. Cancel pending broker SL order
       await this.cancelBrokerOrderSafe(client, state.slOrderId);
       await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-      const exitSide = (state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY'));
-      await client.placeOrder({
-        symbol,
-        exchange,
-        side: exitSide,
-        orderType: 'MARKET',
-        product: state.config.product,
-        qty: state.config.qty,
-      }).catch((e: any) => this.log(state, `❌ Square-Off exit order notice: ${e.message}`));
+
+      // 2. Check if position was already closed manually on Zerodha
+      let isAlreadyClosed = false;
+      try {
+        const kite = client['kite'];
+        if (kite && kite.getPositions) {
+          const pos = await kite.getPositions().catch(() => null);
+          const allPos = [...(pos?.net || []), ...(pos?.day || [])];
+          const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
+          const liveNetQty = currentPos ? Math.abs(currentPos.quantity) : 0;
+          if (liveNetQty === 0) {
+            isAlreadyClosed = true;
+            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha. Skipping duplicate exit order.`);
+          }
+        }
+      } catch { }
+
+      if (!isAlreadyClosed) {
+        const exitSide = (state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY'));
+        await client.placeOrder({
+          symbol,
+          exchange,
+          side: exitSide,
+          orderType: 'MARKET',
+          product: state.config.product,
+          qty: state.executedQty || state.config.qty,
+        }).catch((e: any) => this.log(state, `❌ Square-Off exit order notice: ${e.message}`));
+      }
     }
 
     this.log(state, `⚡ Manual Instant Square-Off requested by user @ ₹${exitPrice.toFixed(2)}`);
@@ -277,6 +330,9 @@ export class Breakout15MinEngine {
       state.entryFilled = false;
       state.slOrderId = null;
       state.targetOrderId = null;
+      state.isBreakevenTrailed = false;
+      state.isProfitLockTrailed = false;
+      state.isDynamicTrailingActive = false;
       this.stopRealtimeMonitor(state);
     }
     await this.persistLogs(state);
@@ -341,7 +397,29 @@ export class Breakout15MinEngine {
       state.refHigh = ref.high;
       state.refLow = ref.low;
       state.refCandleSet = true;
-      this.log(state, `📊 (Catch-up) Reference Range Set — H: ₹${ref.high} | L: ₹${ref.low} (Range: ₹${(ref.high - ref.low).toFixed(2)})`);
+      const rangePts = ref.high - ref.low;
+      this.log(state, `📊 (Catch-up) Reference Range Set — H: ₹${ref.high} | L: ₹${ref.low} (Range: ₹${rangePts.toFixed(2)})`);
+
+      // 2.1 Calculate Central Pivot Range (CPR) from Previous Day
+      const prevCandles = candles15.filter(c => this.getIstDateStr(c.date) !== todayStr);
+      if (prevCandles.length > 0) {
+        const prevDayStr = this.getIstDateStr(prevCandles[prevCandles.length - 1].date);
+        const prevDayCandles = prevCandles.filter(c => this.getIstDateStr(c.date) === prevDayStr);
+        state.cprData = this.calculateCPR(prevDayCandles);
+        if (state.cprData) {
+          this.log(state, `🎯 (Catch-up) Central Pivot Range (CPR): Pivot ₹${state.cprData.pivot.toFixed(1)} | CPR Width: ₹${state.cprData.width.toFixed(1)} (${state.cprData.widthPct.toFixed(3)}% — ${state.cprData.isNarrow ? 'NARROW TREND CANDIDATE' : 'AVERAGE/WIDE RANGE CANDIDATE'})`);
+        }
+      }
+
+      // ─── Opening Range Width Filter (Skip exhausted blowout days) ────────
+      const symUpper = (state.config.symbol || '').toUpperCase().trim();
+      const defaultMaxRange = symUpper.includes('BANKNIFTY') ? 300 : (symUpper.includes('NIFTY') ? 120 : (ref.high * 0.012));
+      const maxRangeAllowed = state.config.maxOpeningRangePts ?? defaultMaxRange;
+      if (rangePts > maxRangeAllowed) {
+        this.log(state, `⛔ (Catch-up) Opening 15-min range (₹${rangePts.toFixed(1)} pts) exceeds max allowable threshold (₹${maxRangeAllowed} pts). Volatility exhausted; skipping day to prevent SL whipsaws.`);
+        await this.persistLogs(state);
+        return;
+      }
 
       // 3. Scan 5-min candles for breakout (STRICTLY FROM TODAY after 9:30 AM)
       const candles5 = await this.fetchCandlesForSymbol(client, state.futureSymbol, '5minute', now, state.futureExchange);
@@ -356,6 +434,7 @@ export class Breakout15MinEngine {
       const vwaps = this.calculateVWAP(candles5);
       const ema9 = this.calculateEMA(candles5, 9);
       const ema21 = this.calculateEMA(candles5, 21);
+      const rsis = this.calculateRSI(candles5, 14);
 
       let optionCandles: Candle[] = [];
       let optionCandleSymbol = '';
@@ -415,15 +494,15 @@ export class Breakout15MinEngine {
             state.currentPnlPct = state.entryPrice ? (closePnlPoints / state.entryPrice) * 100 : 0;
             state.peakPnlRs = Math.max(state.peakPnlRs || 0, state.currentPnlRs);
 
-            // Check Dynamic Breakeven Ratchet (+1R -> SL to Cost)
+            // Check Dynamic Breakeven Ratchet (+0.7R -> SL to Cost)
             const evalHighPrice = isLong ? currentOptionPriceHigh : currentOptionPriceLow;
             const currentPnlPoints = isLong ? (evalHighPrice - state.entryPrice!) : (state.entryPrice! - evalHighPrice);
-            const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+            const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 0.7);
 
             if (!state.isBreakevenTrailed && currentPnlPoints >= breakevenPoints && state.entryPrice) {
               state.stopLossPrice = state.entryPrice;
               state.isBreakevenTrailed = true;
-              this.log(state, `🛡 (Catch-up Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
+              this.log(state, `🛡 (Catch-up Protection) Position reached +${(state.config.breakevenTriggerR ?? 0.7).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
             }
 
             const orders = await this.prisma.order.findMany({
@@ -485,43 +564,105 @@ export class Breakout15MinEngine {
         const candleStart = new Date(currentCandle.date).getTime();
         if ((now.getTime() - candleStart) < 5 * 60 * 1000) continue;
 
-        // ─── Fakeout Reversal Check in Catch-up ──────────────────────────────
-        if (state.config.enableFakeoutReversal !== false && state.lastBreakoutAttempt?.failed && !state.entryTriggered) {
-          if (state.lastBreakoutAttempt.side === 'LONG' && currentCandle.close < state.refLow!) {
-            this.log(state, `⚡ (Catch-up) BULL TRAP DETECTED! Long breakout failed and price plunged below ₹${state.refLow}. Triggering SHORT Reversal Trade!`);
-            state.lastBreakoutAttempt = null;
-            state.isReversalTrade = true;
-            await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+        // Prime Momentum Window check for new breakout entries (default 09:30 to 11:30 AM)
+        const candHhmm = this.getIstHhmm(new Date(currentCandle.date));
+        const primeEndStr = state.config.primeWindowEndTime || '11:30';
+        const [primeH, primeM] = primeEndStr.split(':').map(Number);
+        const primeMinutes = (primeH || 11) * 60 + (primeM || 30);
+        if (!state.entryTriggered && candHhmm > primeMinutes) {
+          continue;
+        }
+
+        // ─── Track Liquidity Sweeps Beyond 15-min Range ────────────────────
+        const sym = state.config.symbol || state.futureSymbol || '';
+        const isSensex = sym.includes('SENSEX') || sym.includes('BSESN');
+        const maxSweepPts = isSensex ? 90 : 65;
+
+        if (currentCandle.high > state.refHigh!) {
+          if ((currentCandle.high - state.refHigh!) <= maxSweepPts) {
+            state.sweptHigh = true;
+            state.sweptHighPrice = Math.max(state.sweptHighPrice || 0, currentCandle.high);
+          } else {
+            state.sweptHigh = false;
+          }
+        }
+        if (currentCandle.low < state.refLow!) {
+          if ((state.refLow! - currentCandle.low) <= maxSweepPts) {
+            state.sweptLow = true;
+            state.sweptLowPrice = state.sweptLowPrice ? Math.min(state.sweptLowPrice, currentCandle.low) : currentCandle.low;
+          } else {
+            state.sweptLow = false;
+          }
+        }
+
+        const curVwap = candleIdxInFull >= 0 ? vwaps[candleIdxInFull] : null;
+        const curEma9 = candleIdxInFull >= 0 ? ema9[candleIdxInFull] : null;
+        const curEma21 = candleIdxInFull >= 0 ? ema21[candleIdxInFull] : null;
+        const curRsi = candleIdxInFull >= 0 ? rsis[candleIdxInFull] : null;
+
+        // ─── 1. Dual-Edge: Liquidity Sweep Trap Reversals (Turtle Soup / 2B) ────
+        if (state.config.enableTrapReversal !== false && !state.entryTriggered) {
+          const isVwapBear = !curVwap || currentCandle.close < curVwap;
+          const isEmaBear = !curEma9 || currentCandle.close <= curEma9;
+          const isVwapBull = !curVwap || currentCandle.close > curVwap;
+          const isEmaBull = !curEma9 || currentCandle.close >= curEma9;
+          const isRsiBear = curRsi === null || curRsi <= 55;
+          const isRsiBull = curRsi === null || curRsi >= 45;
+          const isStrongBear = curEma9 && curEma21 ? curEma9 < curEma21 : true;
+          const isStrongBull = curEma9 && curEma21 ? curEma9 > curEma21 : true;
+          const canTakeBearishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBear;
+          const canTakeBullishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBull;
+
+          // Bull Trap (Price swept above 15m high, but fails and closes back inside below VWAP)
+          if (state.sweptHigh && currentCandle.close < state.refHigh! && isVwapBear && isEmaBear && currentCandle.close < currentCandle.open && isRsiBear && canTakeBearishTrap) {
+            this.log(state, `⚡ (Catch-up) BULL TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept above 15m high (₹${state.refHigh}, peak ₹${state.sweptHighPrice?.toFixed(1)}), failed and closed back inside range below VWAP (₹${curVwap?.toFixed(1)}). Entering SHORT to ride reversal to range bottom!`);
+            state.sweptHigh = false;
+            state.isTrapTrade = true;
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh, currentCandle);
             continue;
-          } else if (state.lastBreakoutAttempt.side === 'SHORT' && currentCandle.close > state.refHigh!) {
-            this.log(state, `⚡ (Catch-up) BEAR TRAP DETECTED! Short breakdown failed and price broke above ₹${state.refHigh}. Triggering LONG Reversal Trade!`);
-            state.lastBreakoutAttempt = null;
-            state.isReversalTrade = true;
-            await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+          }
+          // Bear Trap (Price swept below 15m low, but fails and reclaims range above VWAP)
+          else if (state.sweptLow && currentCandle.close > state.refLow! && isVwapBull && isEmaBull && currentCandle.close > currentCandle.open && isRsiBull && canTakeBullishTrap) {
+            this.log(state, `⚡ (Catch-up) BEAR TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept below 15m low (₹${state.refLow}, trough ₹${state.sweptLowPrice?.toFixed(1)}), failed and reclaimed range above VWAP (₹${curVwap?.toFixed(1)}). Entering LONG to ride reversal to range top!`);
+            state.sweptLow = false;
+            state.isTrapTrade = true;
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh, currentCandle);
             continue;
           }
         }
 
-        // ─── Regular Dynamic Breakout Check ─────────────────────────────────
-        const curVwap = candleIdxInFull >= 0 ? vwaps[candleIdxInFull] : null;
-        const curEma9 = candleIdxInFull >= 0 ? ema9[candleIdxInFull] : null;
-        const curEma21 = candleIdxInFull >= 0 ? ema21[candleIdxInFull] : null;
+        // ─── 2. Regular Dynamic Breakout Check with Retest & CPR Confirmation ──
+        const candRange = Math.max(0.1, currentCandle.high - currentCandle.low);
+        const candBody = Math.abs(currentCandle.close - currentCandle.open);
+        const bodyRatio = candBody / candRange;
+        const isRetestOk = state.config.enableRetestConfirmation === false || bodyRatio >= 0.40;
+        const isCprOk = state.config.enableCprFilter === false || !state.cprData || state.cprData.isNarrow;
 
         if (currentCandle.close > (state.refHigh! + buffer)) {
           const isVwapOk = state.config.enableVwapFilter === false || !curVwap || currentCandle.close >= curVwap;
           const isEmaOk = !curEma9 || !curEma21 || curEma9 >= curEma21;
+          const isRsiOk = state.config.enableRsiFilter === false || curRsi === null || curRsi >= 55;
 
-          if (isVwapOk && isEmaOk) {
-            this.log(state, `🚀 (Catch-up) Dynamic BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${(state.refHigh! + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
-            await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+          if (!isCprOk) {
+            this.log(state, `⏳ (Catch-up) CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakout to prevent chop; waiting for trap reversals.`);
+          } else if (!isRetestOk) {
+            this.log(state, `⏳ (Catch-up) Breakout candle closed with weak body conviction (${(bodyRatio * 100).toFixed(0)}% body). Waiting for confirmed retest bounce.`);
+          } else if (isVwapOk && isEmaOk && isRsiOk) {
+            this.log(state, `🚀 (Catch-up) Dynamic BREAKOUT! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} > ₹${(state.refHigh! + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, RSI: ${curRsi?.toFixed(1) ?? 'N/A'})`);
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh, currentCandle);
           }
         } else if (currentCandle.close < (state.refLow! - buffer)) {
           const isVwapOk = state.config.enableVwapFilter === false || !curVwap || currentCandle.close <= curVwap;
           const isEmaOk = !curEma9 || !curEma21 || curEma9 <= curEma21;
+          const isRsiOk = state.config.enableRsiFilter === false || curRsi === null || curRsi <= 45;
 
-          if (isVwapOk && isEmaOk) {
-            this.log(state, `🚀 (Catch-up) Dynamic BREAKDOWN! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${(state.refLow! - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)})`);
-            await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh);
+          if (!isCprOk) {
+            this.log(state, `⏳ (Catch-up) CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakdown to prevent chop; waiting for trap reversals.`);
+          } else if (!isRetestOk) {
+            this.log(state, `⏳ (Catch-up) Breakdown candle closed with weak body conviction (${(bodyRatio * 100).toFixed(0)}% body). Waiting for confirmed retest bounce.`);
+          } else if (isVwapOk && isEmaOk && isRsiOk) {
+            this.log(state, `🚀 (Catch-up) Dynamic BREAKDOWN! 5-min candle (${this.formatTime(new Date(currentCandle.date))}) closed at ₹${currentCandle.close} < ₹${(state.refLow! - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, RSI: ${curRsi?.toFixed(1) ?? 'N/A'})`);
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentCandle.close, new Date(currentCandle.date), state.refLow, state.refHigh, currentCandle);
           }
         }
       }
@@ -609,11 +750,11 @@ export class Breakout15MinEngine {
     const kite = client['kite'];
     const { config } = state;
     const todayStr = this.getIstDateStr(now);
+    const upper = (config.symbol || '').toUpperCase().trim();
+    const clean = upper.replace(/:NSE|:BSE|:NFO|:BFO/g, '').trim();
+    const isIndex = (config.instrumentType as string) === 'INDEX' || (config.instrumentType as string) === 'OPTION' || clean.includes('NIFTY') || clean.includes('SENSEX') || clean.includes('BANKNIFTY') || clean.includes('FINNIFTY') || clean.includes('MIDCPNIFTY');
 
     if (!state.futureSymbol) {
-      const upper = config.symbol.toUpperCase().trim();
-      const clean = upper.replace(/:NSE|:BSE|:NFO|:BFO/g, '').trim();
-      const isIndex = (config.instrumentType as string) === 'INDEX' || (config.instrumentType as string) === 'OPTION' || clean.includes('NIFTY') || clean.includes('SENSEX') || clean.includes('BANKNIFTY') || clean.includes('FINNIFTY') || clean.includes('MIDCPNIFTY');
       if (isIndex) {
         try {
           const res = await this.findFutureSymbol(client, config.symbol);
@@ -721,6 +862,33 @@ export class Breakout15MinEngine {
       return;
     }
 
+    // ─── 0. Safety Filters: Opening Range Exhaustion & Prime Momentum Window ─
+    if (state.refCandleSet && state.refHigh !== null && state.refLow !== null) {
+      const rangePts = state.refHigh - state.refLow;
+      const upperSym = (config.symbol || '').toUpperCase().trim();
+      const defaultMaxRange = upperSym.includes('BANKNIFTY') ? 300 : (upperSym.includes('NIFTY') ? 120 : (state.refHigh * 0.012));
+      const maxRangeAllowed = config.maxOpeningRangePts ?? defaultMaxRange;
+
+      if (rangePts > maxRangeAllowed) {
+        if (hhmm % 15 === 0 && !state.logs.some(l => l.includes(`Opening 15-min range exceeds max allowable`))) {
+          this.log(state, `⛔ Opening 15-min range (₹${rangePts.toFixed(1)} pts) exceeds max allowable threshold (₹${maxRangeAllowed} pts). Daily volatility exhausted; day skipped to eliminate SL traps.`);
+        }
+        await this.persistLogs(state);
+        return;
+      }
+    }
+
+    const primeEndStr = config.primeWindowEndTime || '11:30';
+    const [primeH, primeM] = primeEndStr.split(':').map(Number);
+    const primeMinutes = (primeH || 11) * 60 + (primeM || 30);
+    if (hhmm > primeMinutes) {
+      if (hhmm % 30 === 0 && !state.logs.some(l => l.includes(`Past prime morning momentum window`))) {
+        this.log(state, `⏳ Past prime morning momentum window (Cutoff: ${primeEndStr}). Skipping new breakout entries to eliminate midday chop.`);
+      }
+      await this.persistLogs(state);
+      return;
+    }
+
     try {
       const futureKey = `${state.futureExchange}:${state.futureSymbol}`;
       const ltpData = await kite.getLTP([futureKey]);
@@ -737,7 +905,7 @@ export class Breakout15MinEngine {
       const target = isClosed ? lastCandle : (breakoutCandidates.length > 1 ? breakoutCandidates[breakoutCandidates.length - 2] : null);
       if (!target) { await this.persistLogs(state); return; }
 
-      // ─── Dynamic Indicator Computations (ATR, VWAP, EMA) ───────────────────
+      // ─── Dynamic Indicator Computations (ATR, VWAP, EMA, RSI) ──────────────
       const atrs = this.calculateATR(candles5, config.atrPeriod ?? 14);
       const currentAtr = atrs[atrs.length - 1] || Math.max(1, (state.refHigh! - state.refLow!) * 0.5);
       state.dynamicAtr = currentAtr;
@@ -749,27 +917,65 @@ export class Breakout15MinEngine {
       const ema21 = this.calculateEMA(candles5, 21);
       const curEma9 = ema9[ema9.length - 1];
       const curEma21 = ema21[ema21.length - 1];
+      const rsis = this.calculateRSI(candles5, 14);
+      const currentRsi = rsis[rsis.length - 1];
 
       // Periodic scanning heartbeat
       if (hhmm % 5 === 0 && !state.logs.some(l => l.includes(`Scanning for breakout`) && l.includes(`LTP: ₹${currentPrice}`))) {
         const activeSym = state.futureSymbol || config.symbol;
-        this.log(state, `[${activeSym}] 👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ₹${state.refLow} to ₹${state.refHigh} | ATR: ₹${currentAtr.toFixed(2)} | Buffer: ±₹${buffer.toFixed(2)}`);
+        this.log(state, `[${activeSym}] 👀 Scanning for breakout (LTP: ₹${currentPrice}) — Range: ₹${state.refLow} to ₹${state.refHigh} | ATR: ₹${currentAtr.toFixed(2)} | RSI: ${currentRsi?.toFixed(1) ?? 'N/A'} | Buffer: ±₹${buffer.toFixed(2)}`);
       }
 
-      // ─── 1. DYNAMIC FAKEOUT REVERSAL (LIQUIDITY TRAP CAPTURE) ──────────────
-      if (config.enableFakeoutReversal !== false && state.lastBreakoutAttempt?.failed && !state.entryTriggered) {
-        if (state.lastBreakoutAttempt.side === 'LONG' && target.close < state.refLow!) {
-          this.log(state, `⚡ BULL TRAP DETECTED! Long breakout failed and price plunged below 15-min low (₹${state.refLow}). Reversing to SHORT to capture trapped buyer liquidations!`);
-          state.lastBreakoutAttempt = null;
-          state.isReversalTrade = true;
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh);
+      // ─── Track Liquidity Sweeps Beyond 15-min Range ────────────────────
+      const sym = config.symbol || state.futureSymbol || '';
+      const isSensex = sym.includes('SENSEX') || sym.includes('BSESN');
+      const maxSweepPts = isSensex ? 90 : 65;
+
+      if (target.high > state.refHigh!) {
+        if ((target.high - state.refHigh!) <= maxSweepPts) {
+          state.sweptHigh = true;
+          state.sweptHighPrice = Math.max(state.sweptHighPrice || 0, target.high);
+        } else {
+          state.sweptHigh = false;
+        }
+      }
+      if (target.low < state.refLow!) {
+        if ((state.refLow! - target.low) <= maxSweepPts) {
+          state.sweptLow = true;
+          state.sweptLowPrice = state.sweptLowPrice ? Math.min(state.sweptLowPrice, target.low) : target.low;
+        } else {
+          state.sweptLow = false;
+        }
+      }
+
+      // ─── 1. DUAL-EDGE: LIQUIDITY SWEEP TRAP REVERSALS (TURTLE SOUP / 2B) ──
+      if (config.enableTrapReversal !== false && !state.entryTriggered) {
+        const isVwapBear = !currentVwap || target.close < currentVwap;
+        const isEmaBear = !curEma9 || target.close <= curEma9;
+        const isVwapBull = !currentVwap || target.close > currentVwap;
+        const isEmaBull = !curEma9 || target.close >= curEma9;
+        const isRsiBear = currentRsi === null || currentRsi <= 55;
+        const isRsiBull = currentRsi === null || currentRsi >= 45;
+        const isStrongBear = curEma9 && curEma21 ? curEma9 < curEma21 : true;
+        const isStrongBull = curEma9 && curEma21 ? curEma9 > curEma21 : true;
+        const canTakeBearishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBear;
+        const canTakeBullishTrap = !state.cprData || !state.cprData.isNarrow || isStrongBull;
+
+        // Bull Trap (Price swept above 15m high, but fails and closes back inside below VWAP)
+        if (state.sweptHigh && target.close < state.refHigh! && isVwapBear && isEmaBear && target.close < target.open && isRsiBear && canTakeBearishTrap) {
+          this.log(state, `⚡ BULL TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept above 15m high (₹${state.refHigh}, peak ₹${state.sweptHighPrice?.toFixed(1)}), failed and closed back inside range below VWAP (₹${currentVwap?.toFixed(1)}). Entering SHORT to ride reversal to range bottom!`);
+          state.sweptHigh = false;
+          state.isTrapTrade = true;
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh, target);
           await this.persistLogs(state);
           return;
-        } else if (state.lastBreakoutAttempt.side === 'SHORT' && target.close > state.refHigh!) {
-          this.log(state, `⚡ BEAR TRAP DETECTED! Short breakdown failed and price surged above 15-min high (₹${state.refHigh}). Reversing to LONG to capture trapped short-covering!`);
-          state.lastBreakoutAttempt = null;
-          state.isReversalTrade = true;
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh);
+        }
+        // Bear Trap (Price swept below 15m low, but fails and reclaims range above VWAP)
+        else if (state.sweptLow && target.close > state.refLow! && isVwapBull && isEmaBull && target.close > target.open && isRsiBull && canTakeBullishTrap) {
+          this.log(state, `⚡ BEAR TRAP (LIQUIDITY SWEEP) TRIGGERED! Price swept below 15m low (₹${state.refLow}, trough ₹${state.sweptLowPrice?.toFixed(1)}), failed and reclaimed range above VWAP (₹${currentVwap?.toFixed(1)}). Entering LONG to ride reversal to range top!`);
+          state.sweptLow = false;
+          state.isTrapTrade = true;
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh, target);
           await this.persistLogs(state);
           return;
         }
@@ -784,39 +990,69 @@ export class Breakout15MinEngine {
       }
 
       const candleRange = Math.max(0.01, target.high - target.low);
-      const isStrongBull = (target.close - target.low) / candleRange >= 0.60;
-      const isStrongBear = (target.high - target.close) / candleRange >= 0.60;
+      const candleBody = Math.abs(target.close - target.open);
+      const bodyRatio = candleBody / candleRange;
+      const isStrongBull = (target.close - target.low) / candleRange >= 0.55;
+      const isStrongBear = (target.high - target.close) / candleRange >= 0.55;
+      const isRetestOk = config.enableRetestConfirmation === false || bodyRatio >= 0.40;
+      const isCprOk = config.enableCprFilter === false || !state.cprData || state.cprData.isNarrow;
 
       // ─── 3. DYNAMIC LONG BREAKOUT ──────────────────────────────────────────
       if (target.close > (state.refHigh! + buffer)) {
         const isVwapOk = config.enableVwapFilter === false || !currentVwap || target.close >= currentVwap;
         const isEmaOk = !curEma9 || !curEma21 || curEma9 >= curEma21;
+        const isRsiOk = config.enableRsiFilter === false || currentRsi === null || currentRsi >= 55;
 
-        if (!isVolumeConfirmed) {
+        if (!isCprOk) {
+          this.log(state, `⏳ CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakout to prevent chop; waiting for trap reversals.`);
+        } else if (!isVolumeConfirmed) {
           this.log(state, `⏳ Breakout above ₹${state.refHigh} detected, but volume (${target.volume}) is below required ${(config.minRvol ?? 1.2)}x threshold. Skipping weak breakout.`);
-        } else if (!isStrongBull) {
-          this.log(state, `⏳ Breakout candle closed with long upper wick (weak close). Skipping potential false breakout.`);
+        } else if (!isRetestOk || !isStrongBull) {
+          this.log(state, `⏳ Breakout candle closed with weak conviction (${(bodyRatio * 100).toFixed(0)}% body). Waiting for confirmed retest bounce.`);
         } else if (!isVwapOk || !isEmaOk) {
           this.log(state, `⏳ Breakout above ₹${state.refHigh} conflicts with VWAP/EMA trend. Skipping counter-trend trade.`);
+        } else if (!isRsiOk) {
+          this.log(state, `⏳ Breakout above ₹${state.refHigh} detected, but RSI (${currentRsi?.toFixed(1)}) is below 55 (weak momentum). Skipping false breakout trap.`);
         } else {
-          this.log(state, `🚀 DYNAMIC BREAKOUT! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} > ₹${(state.refHigh! + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, Vol: ${target.volume})`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh);
+          if (config.enableMarketTrendFilter !== false && !isIndex) {
+            const trendCheck = await this.checkMarketTrendAlignment(client, 'BUY');
+            if (!trendCheck.isAligned) {
+              this.log(state, `⏳ Market Filter: ${trendCheck.reason}. Skipping long breakout trade to prevent counter-trend trap.`);
+              await this.persistLogs(state);
+              return;
+            }
+          }
+          this.log(state, `🚀 DYNAMIC BREAKOUT! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} > ₹${(state.refHigh! + buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, RSI: ${currentRsi?.toFixed(1) ?? 'N/A'}, Vol: ${target.volume})`);
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', currentPrice, undefined, state.refLow, state.refHigh, target);
         }
       }
       // ─── 4. DYNAMIC SHORT BREAKDOWN ────────────────────────────────────────
       else if (target.close < (state.refLow! - buffer)) {
         const isVwapOk = config.enableVwapFilter === false || !currentVwap || target.close <= currentVwap;
         const isEmaOk = !curEma9 || !curEma21 || curEma9 <= curEma21;
+        const isRsiOk = config.enableRsiFilter === false || currentRsi === null || currentRsi <= 45;
 
-        if (!isVolumeConfirmed) {
+        if (!isCprOk) {
+          this.log(state, `⏳ CPR Filter: Wide CPR (${state.cprData?.widthPct.toFixed(2)}%). Skipping breakdown to prevent chop; waiting for trap reversals.`);
+        } else if (!isVolumeConfirmed) {
           this.log(state, `⏳ Breakdown below ₹${state.refLow} detected, but volume (${target.volume}) is below required ${(config.minRvol ?? 1.2)}x threshold. Skipping weak breakdown.`);
-        } else if (!isStrongBear) {
-          this.log(state, `⏳ Breakdown candle closed with long lower wick (weak close). Skipping potential false breakdown.`);
+        } else if (!isRetestOk || !isStrongBear) {
+          this.log(state, `⏳ Breakdown candle closed with weak conviction (${(bodyRatio * 100).toFixed(0)}% body). Waiting for confirmed retest bounce.`);
         } else if (!isVwapOk || !isEmaOk) {
           this.log(state, `⏳ Breakdown below ₹${state.refLow} conflicts with VWAP/EMA trend. Skipping counter-trend trade.`);
+        } else if (!isRsiOk) {
+          this.log(state, `⏳ Breakdown below ₹${state.refLow} detected, but RSI (${currentRsi?.toFixed(1)}) is above 45 (weak momentum). Skipping false breakdown trap.`);
         } else {
-          this.log(state, `🚀 DYNAMIC BREAKDOWN! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} < ₹${(state.refLow! - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, Vol: ${target.volume})`);
-          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh);
+          if (config.enableMarketTrendFilter !== false && !isIndex) {
+            const trendCheck = await this.checkMarketTrendAlignment(client, 'SELL');
+            if (!trendCheck.isAligned) {
+              this.log(state, `⏳ Market Filter: ${trendCheck.reason}. Skipping short breakdown trade to prevent counter-trend trap.`);
+              await this.persistLogs(state);
+              return;
+            }
+          }
+          this.log(state, `🚀 DYNAMIC BREAKDOWN! 5-min (${this.formatTime(new Date(target.date))}) closed at ₹${target.close} < ₹${(state.refLow! - buffer).toFixed(2)} (ATR: ₹${currentAtr.toFixed(2)}, RSI: ${currentRsi?.toFixed(1) ?? 'N/A'}, Vol: ${target.volume})`);
+          await this.placeBreakoutTrade(strategyId, state, client, account, 'SELL', currentPrice, undefined, state.refLow, state.refHigh, target);
         }
       }
     } catch (err: any) { this.log(state, `❌ Tick error: ${err.message}`); }
@@ -830,6 +1066,9 @@ export class Breakout15MinEngine {
 
     const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
     const exchange = state.optionSymbol ? (symbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
+    const isOption = !!state.optionSymbol;
+    const isLong = isOption || state.entryTriggered === 'LONG';
+    const symTickSize = isOption ? 0.05 : getInstrumentTickSize(symbol, state.entryPrice || 0);
 
     try {
       await this.tickerService.subscribeSymbol(state.brokerAccountId, symbol);
@@ -849,104 +1088,115 @@ export class Breakout15MinEngine {
       state.lastTickTime = now;
       state.currentLtp = currentPrice;
 
-      const isOption = !!state.optionSymbol;
-      const isLong = isOption || state.entryTriggered === 'LONG';
+      const currentQty = state.executedQty || state.config.qty;
       const pnlPoints = isLong ? (currentPrice - state.entryPrice!) : (state.entryPrice! - currentPrice);
-      const pnlRs = pnlPoints * state.config.qty;
+      const pnlRs = pnlPoints * currentQty;
       const pnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
 
       state.currentPnlRs = pnlRs;
       state.currentPnlPct = pnlPct;
       state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-      // ── 1. 3:05 PM Mandatory EOD Cutoff ──
+      // ── 0. Check if Server SL Order filled directly at Zerodha ──────────
+      if (!state.isPaperTrade && state.slOrderId && state.slOrderId !== 'FAILED' && client) {
+        try {
+          const kite = client['kite'];
+          if (kite && kite.getOrders) {
+            const orders = await kite.getOrders().catch(() => []);
+            const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
+            if (slOrder && slOrder.status === 'COMPLETE') {
+              if (isExiting) return;
+              isExiting = true;
+              const avgPrice = Number(slOrder.average_price) || state.stopLossPrice!;
+              const isProfitExit = isLong ? (avgPrice >= state.entryPrice!) : (avgPrice <= state.entryPrice!);
+              this.log(state, `🛑 Zerodha Server SL Order (${state.slOrderId}) filled at ₹${avgPrice.toFixed(2)}`);
+              this.stopRealtimeMonitor(state);
+              await this.exitPosition(state, client, avgPrice, isProfitExit ? 'TARGET' : 'SL');
+              return;
+            }
+          }
+        } catch { }
+      }
+
+      // ── 1. 3:05 PM Mandatory EOD Cutoff ──────────────────────────────────
       const currentHhmm = this.getIstHhmm(new Date());
       if (currentHhmm >= 15 * 60 + 5 && state.entryTriggered) {
         if (isExiting) return;
         isExiting = true;
         this.log(state, `⏰ 3:05 PM Intraday EOD Cutoff reached! Auto-squaring off position (Current P&L: ₹${pnlRs.toFixed(2)})...`);
-        this.stopRealtimeMonitor(state);
-        await this.squareOff(state.strategyId);
-        await this.persistLogs(state);
+        await this.exitPosition(state, client, currentPrice, 'EOD');
         return;
       }
 
-      // ── 2. Breakeven Lock (+1R -> SL to Cost) ──
-      const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+      const risk = state.initialRiskPoints || Math.max(0.50, Math.abs((state.entryPrice || currentPrice) - (state.stopLossPrice || currentPrice)));
+
+      // ── 2. Breakeven Lock (+0.7R profit -> SL to COST) ─────────────────────
+      const breakevenPoints = risk * (state.config.breakevenTriggerR ?? 0.7);
       if (state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && pnlPoints >= breakevenPoints && state.entryPrice) {
         state.stopLossPrice = state.entryPrice;
         state.isBreakevenTrailed = true;
-        if (state.isPaperTrade) {
-          await this.prisma.order.updateMany({
-            where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
-            data: { price: state.entryPrice, triggerPrice: state.entryPrice }
-          });
-        } else if (client.modifyOrder && state.slOrderId && state.slOrderId !== 'FAILED') {
-          await client.modifyOrder(state.slOrderId, { price: state.entryPrice, triggerPrice: state.entryPrice }).catch((e: any) => {
-            this.log(state, `⚠ Live SL modify notice: ${e.message}`);
-          });
-          await this.prisma.order.updateMany({
-            where: { executionId: state.executionId, brokerOrderId: state.slOrderId! },
-            data: { price: state.entryPrice, triggerPrice: state.entryPrice }
-          });
-        }
-        this.log(state, `🛡 (Dynamic Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
+        this.log(state, `🛡 (Dynamic Protection) Position hit +${(state.config.breakevenTriggerR ?? 0.7).toFixed(1)}R profit (+₹${pnlPoints.toFixed(2)} pts)! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free Trade!`);
+        await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
       }
 
-      // ── 3. Dynamic Trailing SL ──
-      if (state.config.enableTrailingSl !== false && state.isBreakevenTrailed) {
+      // ── 3. Profit Lock Milestone (+1.5R profit -> Lock +0.75R) ────────────
+      if (pnlPoints >= (risk * 1.5) && !state.isProfitLockTrailed && state.entryPrice) {
+        state.isProfitLockTrailed = true;
+        const lockPrice = this.roundTick(isLong ? state.entryPrice + (risk * 0.75) : state.entryPrice - (risk * 0.75), symTickSize);
+        if ((isLong && lockPrice > (state.stopLossPrice || 0)) || (!isLong && lockPrice < (state.stopLossPrice || Infinity))) {
+          state.stopLossPrice = lockPrice;
+          this.log(state, `🔒 Profit Lock (+1.5R reached): Trailed SL to ₹${lockPrice.toFixed(2)} (+₹${(risk * 0.75).toFixed(2)} pts locked)`);
+          await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
+        }
+      }
+
+      // ── 4. Target 1 Milestone (+2R) -> Activate Uncapped Momentum Trailing ─
+      const targetR = state.config.riskRewardRatio ?? 2.0;
+      if (pnlPoints >= (risk * targetR) && !state.isDynamicTrailingActive) {
+        state.isDynamicTrailingActive = true;
+        const lockPrice = this.roundTick(isLong ? state.entryPrice + (risk * 1.25) : state.entryPrice - (risk * 1.25), symTickSize);
+        if ((isLong && lockPrice > (state.stopLossPrice || 0)) || (!isLong && lockPrice < (state.stopLossPrice || Infinity))) {
+          state.stopLossPrice = lockPrice;
+        }
+        this.log(state, `🚀 Target 1 Milestone Hit (+${pnlPoints.toFixed(2)} pts / ₹${pnlRs.toFixed(2)})! Activating Uncapped Momentum Trailing to ride full trend runner.`);
+        await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
+      }
+
+      // ── 5. Dynamic Ratchet Trailing (Beyond Target 1 or when trailing) ────
+      if (state.config.enableTrailingSl !== false && (state.isDynamicTrailingActive || state.isBreakevenTrailed)) {
         if (isLong) {
           state.highestPriceReached = Math.max(state.highestPriceReached || currentPrice, currentPrice);
-          const trailDist = (state.initialRiskPoints ?? 5) * 0.8;
-          const newSl = this.roundTick(state.highestPriceReached - trailDist);
+          const trailDist = state.isDynamicTrailingActive ? (risk * 0.60) : (risk * 0.80);
+          const newSl = this.roundTick(state.highestPriceReached - trailDist, symTickSize);
           if (newSl > (state.stopLossPrice || 0)) {
             state.stopLossPrice = newSl;
-            if (state.isPaperTrade) {
-              await this.prisma.order.updateMany({
-                where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
-                data: { price: newSl, triggerPrice: newSl }
-              });
-            }
-            this.log(state, `📈 (Dynamic Trailing) High ₹${state.highestPriceReached.toFixed(2)}. Trailed SL to ₹${newSl.toFixed(2)} to lock in gains.`);
+            this.log(state, `📈 Dynamic Momentum Trail: Peak ₹${state.highestPriceReached.toFixed(2)} -> Trailed SL to ₹${newSl.toFixed(2)}`);
+            await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
+          }
+        } else {
+          state.lowestPriceReached = Math.min(state.lowestPriceReached || currentPrice, currentPrice);
+          const trailDist = state.isDynamicTrailingActive ? (risk * 0.60) : (risk * 0.80);
+          const newSl = this.roundTick(state.lowestPriceReached + trailDist, symTickSize);
+          if (newSl < (state.stopLossPrice || Infinity)) {
+            state.stopLossPrice = newSl;
+            this.log(state, `📈 Dynamic Momentum Trail: Low ₹${state.lowestPriceReached.toFixed(2)} -> Trailed SL to ₹${newSl.toFixed(2)}`);
+            await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
           }
         }
       }
 
-      // ── 4. Check SL & Target Hits for Paper Trade ──
-      if (state.isPaperTrade) {
-        const isHitSL = isLong ? (currentPrice <= (state.stopLossPrice || 0)) : (currentPrice >= (state.stopLossPrice || Infinity));
-        const isHitTarget = isLong ? (state.targetPrice && currentPrice >= state.targetPrice) : (state.targetPrice && currentPrice <= state.targetPrice);
-
-        if (isHitSL) {
-          if (isExiting) return;
-          isExiting = true;
-          this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${currentPrice.toFixed(2)} (Trigger: ₹${(state.stopLossPrice || 0).toFixed(2)}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
-          this.stopRealtimeMonitor(state);
-          await this.closePaperTrade(state, 'SL_HIT', currentPrice);
-          state.lastBreakoutAttempt = {
-            side: state.entryTriggered!,
-            timestamp: Date.now(),
-            failed: true,
-            breakoutPrice: state.entryPrice || 0
-          };
-          this.log(state, `⚠ Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
-          await this.persistLogs(state);
-          return;
-        }
-
-        if (isHitTarget) {
-          if (isExiting) return;
-          isExiting = true;
-          this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${currentPrice.toFixed(2)} (Target: ₹${state.targetPrice!.toFixed(2)}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
-          this.stopRealtimeMonitor(state);
-          await this.closePaperTrade(state, 'TARGET_HIT', currentPrice);
-          state.lastBreakoutAttempt = null;
-          await this.persistLogs(state);
-          return;
-        }
+      // ── 6. Stop Loss Hit Trigger ──────────────────────────────────────────
+      const isHitSL = isLong ? (currentPrice <= (state.stopLossPrice || 0)) : (currentPrice >= (state.stopLossPrice || Infinity));
+      if (isHitSL) {
+        if (isExiting) return;
+        isExiting = true;
+        const isProfitExit = isLong ? (currentPrice >= state.entryPrice!) : (currentPrice <= state.entryPrice!);
+        this.log(state, `${isProfitExit ? '🎯 Trailing Stop Hit' : '🛑 Stop Loss Hit'} at ₹${currentPrice.toFixed(2)} (Trigger: ₹${(state.stopLossPrice || 0).toFixed(2)}) | P&L: ₹${pnlRs.toFixed(2)}`);
+        await this.exitPosition(state, client, currentPrice, isProfitExit ? 'TARGET' : 'SL');
+        return;
       }
 
-      // ── Real-Time WebSocket State Broadcast (500ms throttle) ──
+      // ── Real-Time WebSocket State Broadcast (500ms throttle) ─────────────
       if (now - (state.lastEmitTime || 0) >= 500) {
         state.lastEmitTime = now;
         strategyEvents.emit('strategy.update', {
@@ -956,7 +1206,7 @@ export class Breakout15MinEngine {
         });
       }
 
-      // ── Throttled Live P&L Logging (every 15 seconds) ──
+      // ── Throttled Live P&L Logging (every 15 seconds) ─────────────────────
       if (now - (state.lastPnlLogTime || 0) >= 15000) {
         state.lastPnlLogTime = now;
         const sign = pnlRs >= 0 ? '+' : '';
@@ -978,6 +1228,198 @@ export class Breakout15MinEngine {
     }
   }
 
+  private async updateBrokerSlSafe(client: any, kite: any, state: StrategyState, symbol: string) {
+    if (state.isPaperTrade || !state.slOrderId || state.slOrderId === 'FAILED' || !state.stopLossPrice) return;
+    try {
+      const symTickSize = state.optionSymbol ? 0.05 : getInstrumentTickSize(symbol, state.stopLossPrice);
+      const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
+      const triggerPrice = this.roundTick(state.stopLossPrice, symTickSize);
+      const limitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
+
+      if (state.lastBrokerSlTrigger !== undefined && Math.abs(triggerPrice - state.lastBrokerSlTrigger) < symTickSize) {
+        return;
+      }
+
+      const now = Date.now();
+      if (state.lastBrokerSlModifyTime && (now - state.lastBrokerSlModifyTime) < 2000) {
+        return;
+      }
+
+      const k = kite || client?.['kite'] || client;
+      if (client && client.modifyOrder) {
+        await client.modifyOrder(state.slOrderId, {
+          triggerPrice,
+          price: limitPrice,
+        }).catch((e: any) => {
+          this.logger.warn(`Broker SL modify notice: ${e.message}`);
+        });
+        state.lastBrokerSlTrigger = triggerPrice;
+        state.lastBrokerSlModifyTime = now;
+        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+      } else if (k && k.modifyOrder) {
+        await k.modifyOrder('regular', state.slOrderId, {
+          trigger_price: triggerPrice,
+          price: limitPrice,
+        }).catch((e: any) => {
+          this.logger.warn(`Broker SL modify notice: ${e.message}`);
+        });
+        state.lastBrokerSlTrigger = triggerPrice;
+        state.lastBrokerSlModifyTime = now;
+        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+      }
+    } catch (e: any) {
+      this.logger.warn(`Failed to update broker SL order: ${e.message}`);
+    }
+  }
+
+  private async exitPosition(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE' | 'EOD') {
+    const { config } = state;
+    const symbol = state.optionSymbol || state.futureSymbol || config.symbol;
+    const exchange = state.optionSymbol ? (symbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || config.exchange);
+    const isOption = !!state.optionSymbol;
+    const isLong = isOption || state.entryTriggered === 'LONG';
+    const exitSide = isLong ? 'SELL' : 'BUY';
+    const qty = state.executedQty || config.qty;
+
+    this.stopRealtimeMonitor(state);
+
+    let actualExitPrice = exitPrice;
+    let exitOrderId = '';
+    let exitOrderType: 'MARKET' | 'LIMIT' | 'SL' = 'MARKET';
+
+    if (state.isPaperTrade) {
+      exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      await this.prisma.order.updateMany({
+        where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
+        data: { status: 'COMPLETE', price: actualExitPrice }
+      });
+      this.log(state, `🏁 Paper trade closed (${reason}) at ₹${actualExitPrice.toFixed(2)}`);
+    } else {
+      const kite = client?.['kite'] || client;
+      let isAlreadyFilledAtBroker = false;
+
+      // 1. Check if server SL order completed at broker
+      if (kite && state.slOrderId && state.slOrderId !== 'FAILED') {
+        try {
+          const orders = await kite.getOrders().catch(() => []);
+          const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
+          if (slOrder && slOrder.status === 'COMPLETE') {
+            isAlreadyFilledAtBroker = true;
+            exitOrderId = state.slOrderId;
+            exitOrderType = 'SL';
+            if (slOrder.average_price && Number(slOrder.average_price) > 0) {
+              actualExitPrice = Number(slOrder.average_price);
+            }
+            this.log(state, `🛑 Confirmed Broker SL Order executed: ${exitOrderId} @ ₹${actualExitPrice.toFixed(2)}`);
+          }
+        } catch { }
+      }
+
+      if (!isAlreadyFilledAtBroker) {
+        // Cancel pending broker SL order before placing market exit
+        await this.cancelBrokerOrderSafe(client, state.slOrderId);
+        await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+
+        // Check if user already manually squared off on Zerodha mobile app
+        let isManuallyClosed = false;
+        try {
+          if (kite && kite.getPositions) {
+            const pos = await kite.getPositions().catch(() => null);
+            const allPos = [...(pos?.net || []), ...(pos?.day || [])];
+            const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
+            const liveNetQty = currentPos ? Math.abs(currentPos.quantity) : 0;
+            if (liveNetQty === 0 && reason !== 'FORCE_CLOSE') {
+              isManuallyClosed = true;
+              this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha. Skipping duplicate exit order.`);
+            }
+          }
+        } catch { }
+
+        if (!isManuallyClosed && client) {
+          try {
+            exitOrderId = await client.placeOrder({
+              symbol,
+              exchange,
+              product: config.product ?? 'MIS',
+              qty,
+              side: exitSide,
+              orderType: 'MARKET',
+            });
+            exitOrderType = 'MARKET';
+            this.log(state, `✅ Live Market Exit Order placed (${reason}): ${exitOrderId}`);
+          } catch (err: any) {
+            this.log(state, `❌ Live Market Exit Order failed (${reason}): ${err.message}`);
+          }
+        }
+      }
+
+      // Track exit order in DB
+      try {
+        const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+        if (account) {
+          await this.trackOrder(state, account, state.executionId, {
+            symbol,
+            exchange,
+            side: exitSide,
+            orderType: exitOrderType,
+            product: config.product ?? 'MIS',
+            qty,
+            price: actualExitPrice
+          }, exitOrderId || `EXIT_${Date.now()}`, state.strategyId);
+        }
+      } catch { }
+    }
+
+    const tradePnlPoints = isLong ? (actualExitPrice - (state.entryPrice || actualExitPrice)) : ((state.entryPrice || actualExitPrice) - actualExitPrice);
+    const tradePnlRs = tradePnlPoints * qty;
+    state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnlRs;
+    const slippage = actualExitPrice - exitPrice;
+    this.log(state, `🏁 Trade cycle complete (${reason}) @ ₹${actualExitPrice.toFixed(2)} | Realized P&L: ${tradePnlRs >= 0 ? '+' : ''}₹${tradePnlRs.toFixed(2)} (${tradePnlPoints >= 0 ? '+' : ''}${tradePnlPoints.toFixed(2)} pts)${slippage !== 0 ? ` [Slippage: ${slippage > 0 ? '+' : ''}₹${slippage.toFixed(2)}]` : ''}`);
+
+    if (reason === 'SL') {
+      state.lastBreakoutAttempt = {
+        side: state.entryTriggered!,
+        timestamp: Date.now(),
+        failed: true,
+        breakoutPrice: state.entryPrice || 0
+      };
+      this.log(state, `⚠ Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
+    } else {
+      state.lastBreakoutAttempt = null;
+    }
+
+    // Reset position state
+    state.entryTriggered = null;
+    state.entryFilled = false;
+    state.entryPrice = null;
+    state.stopLossPrice = null;
+    state.targetPrice = null;
+    state.slOrderId = null;
+    state.targetOrderId = null;
+    state.isBreakevenTrailed = false;
+    state.isProfitLockTrailed = false;
+    state.isDynamicTrailingActive = false;
+    state.currentPnlRs = 0;
+    state.currentPnlPct = 0;
+
+    // Check Daily P&L Target or Max Loss Lock (One-and-Done)
+    const targetRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 1500;
+    const maxLossRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 1000;
+    if (config.enableDailyPnLLock !== false) {
+      if (state.dailyRealizedPnlRs >= targetRs) {
+        this.log(state, `🏆 Daily Profit Target Reached (+₹${state.dailyRealizedPnlRs.toFixed(2)} >= ₹${targetRs})! One-and-Done rule locking strategy for the day.`);
+        await this.stopWithStatus(state.strategyId, 'COMPLETED', `Daily Profit Target achieved (+₹${state.dailyRealizedPnlRs.toFixed(2)})`);
+        return;
+      } else if (state.dailyRealizedPnlRs <= -maxLossRs) {
+        this.log(state, `🛑 Daily Max Loss Threshold Hit (-₹${Math.abs(state.dailyRealizedPnlRs).toFixed(2)} >= ₹${maxLossRs})! Halting strategy for capital preservation.`);
+        await this.stopWithStatus(state.strategyId, 'STOPPED', `Daily Max Loss limit reached (-₹${Math.abs(state.dailyRealizedPnlRs).toFixed(2)})`);
+        return;
+      }
+    }
+
+    await this.persistLogs(state);
+  }
+
   private async monitorPaperTrade(state: StrategyState, kite: any) {
     if (!state.entryTriggered) return;
 
@@ -995,70 +1437,46 @@ export class Breakout15MinEngine {
 
       state.currentLtp = ltp;
       const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
+      const currentQty = state.executedQty || state.config.qty;
       const currentPnlPoints = isLong ? (ltp - state.entryPrice!) : (state.entryPrice! - ltp);
-      const pnlRs = currentPnlPoints * state.config.qty;
+      const pnlRs = currentPnlPoints * currentQty;
       const pnlPct = state.entryPrice ? (currentPnlPoints / state.entryPrice) * 100 : 0;
       state.currentPnlRs = pnlRs;
       state.currentPnlPct = pnlPct;
       state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-      const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
+      const risk = state.initialRiskPoints || Math.max(0.50, Math.abs((state.entryPrice || ltp) - (state.stopLossPrice || ltp)));
+      const breakevenPoints = risk * (state.config.breakevenTriggerR ?? 0.7);
 
-      // ─── Dynamic Breakeven Shield (+1R -> SL to Cost) ──────────────────────
+      // Breakeven Trail
       if (state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && currentPnlPoints >= breakevenPoints && state.entryPrice) {
         state.stopLossPrice = state.entryPrice;
         state.isBreakevenTrailed = true;
-        await this.prisma.order.updateMany({
-          where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
-          data: { price: state.entryPrice, triggerPrice: state.entryPrice }
-        });
-        this.log(state, `🛡 (Dynamic Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit (+₹${currentPnlPoints.toFixed(2)} pts)! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free Trade!`);
+        this.log(state, `🛡 (Paper Protection) Position hit +${(state.config.breakevenTriggerR ?? 0.7).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
       }
 
-      // ─── Dynamic Trailing SL ───────────────────────────────────────────────
+      // Dynamic Trailing
       if (state.config.enableTrailingSl !== false && state.isBreakevenTrailed) {
         if (isLong) {
           state.highestPriceReached = Math.max(state.highestPriceReached || ltp, ltp);
-          const trailDist = (state.initialRiskPoints ?? 5) * 0.8;
+          const trailDist = risk * 0.8;
           const newSl = this.roundTick(state.highestPriceReached - trailDist);
           if (newSl > (state.stopLossPrice || 0)) {
             state.stopLossPrice = newSl;
-            await this.prisma.order.updateMany({
-              where: { executionId: state.executionId, isPaperTrade: true, orderType: 'SL', status: 'OPEN' },
-              data: { price: newSl, triggerPrice: newSl }
-            });
-            this.log(state, `📈 (Dynamic Trailing) High ₹${state.highestPriceReached.toFixed(2)}. Trailed SL to ₹${newSl.toFixed(2)} to lock in gains.`);
+            this.log(state, `📈 (Paper Trailing) High ₹${state.highestPriceReached.toFixed(2)}. Trailed SL to ₹${newSl.toFixed(2)}`);
           }
         }
       }
 
-      for (const order of orders) {
-        if (order.orderType === 'SL') {
-          const hit = order.side === 'SELL' ? (ltp <= (state.stopLossPrice || order.triggerPrice!)) : (ltp >= (state.stopLossPrice || order.triggerPrice!));
-          if (hit) {
-            const exitP = state.stopLossPrice || order.triggerPrice!;
-            this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp} (Trigger: ₹${exitP}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
-            await this.closePaperTrade(state, 'SL_HIT', ltp);
+      const isHitSL = isLong ? (ltp <= (state.stopLossPrice || 0)) : (ltp >= (state.stopLossPrice || Infinity));
+      const isHitTarget = isLong ? (state.targetPrice && ltp >= state.targetPrice) : (state.targetPrice && ltp <= state.targetPrice);
 
-            // Record failed breakout for Fakeout Reversal monitoring
-            state.lastBreakoutAttempt = {
-              side: state.entryTriggered,
-              timestamp: Date.now(),
-              failed: true,
-              breakoutPrice: state.entryPrice || 0
-            };
-            this.log(state, `⚠ Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
-            break;
-          }
-        } else if (order.orderType === 'LIMIT' && order.brokerOrderId.includes('TARGET')) {
-          const hit = order.side === 'SELL' ? (ltp >= order.price!) : (ltp <= order.price!);
-          if (hit) {
-            this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp} (Target: ₹${order.price}) | Final P&L: ₹${pnlRs.toFixed(2)}`);
-            await this.closePaperTrade(state, 'TARGET_HIT', ltp);
-            state.lastBreakoutAttempt = null;
-            break;
-          }
-        }
+      if (isHitSL) {
+        this.log(state, `🔴 PAPER SL HIT! ${symbol} at ₹${ltp} | Final P&L: ₹${pnlRs.toFixed(2)}`);
+        await this.exitPosition(state, null, ltp, 'SL');
+      } else if (isHitTarget) {
+        this.log(state, `🟢 PAPER TARGET HIT! ${symbol} at ₹${ltp} | Final P&L: ₹${pnlRs.toFixed(2)}`);
+        await this.exitPosition(state, null, ltp, 'TARGET');
       }
     } catch (err: any) {
       this.logger.error(`Paper monitor error: ${err.message}`);
@@ -1074,30 +1492,57 @@ export class Breakout15MinEngine {
         const entryOrder = await client.getOrder(state.entryOrderId);
         if (entryOrder.status === 'COMPLETE') {
           state.entryFilled = true;
-          const fillPrice = entryOrder.average_price || entryOrder.price;
-          this.log(state, `🛒 Entry Order FILLED at ₹${fillPrice}. Now placing SL & Target orders...`);
+          const fillPrice = Number(entryOrder.average_price) || Number(entryOrder.price) || state.entryPrice!;
+          state.entryPrice = fillPrice;
+          this.log(state, `🛒 Entry Order FILLED at ₹${fillPrice.toFixed(2)}. Arming Server Stop Loss order at Zerodha...`);
           await this.prisma.order.updateMany({
             where: { executionId: state.executionId, brokerOrderId: state.entryOrderId },
             data: { status: 'COMPLETE', price: fillPrice }
           });
 
-          // Place SL and Target now that entry is filled!
+          // Arm server-side Stop Loss on Zerodha
           const { config, executionId } = state;
           const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
           const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
           const exchange = state.optionSymbol ? (symbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
-          const exitSide = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
+          const isOption = !!state.optionSymbol;
+          const isLong = isOption || state.entryTriggered === 'LONG';
+          const exitSide = isLong ? 'SELL' : 'BUY';
+          const symTickSize = isOption ? 0.05 : getInstrumentTickSize(symbol, fillPrice);
           const sl = state.stopLossPrice!;
-          const tgt = state.targetPrice!;
+          const triggerPrice = this.roundTick(sl, symTickSize);
+          const limitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
+          const qty = state.executedQty || config.qty;
 
-          const slId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }).catch(() => 'FAILED');
+          const slId = await client.placeOrder({
+            symbol,
+            exchange,
+            side: exitSide,
+            orderType: 'SL',
+            product: config.product ?? 'MIS',
+            qty,
+            price: limitPrice,
+            triggerPrice,
+          }).catch((e: any) => {
+            this.log(state, `❌ SL Order Failed: ${e.message}`);
+            return 'FAILED';
+          });
           state.slOrderId = slId;
-          await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, state.executionId);
+          state.lastBrokerSlTrigger = triggerPrice;
+          state.lastBrokerSlModifyTime = Date.now();
 
-          const tgtId = await client.placeOrder({ symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }).catch(() => 'FAILED');
-          state.targetOrderId = tgtId;
-          await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, state.executionId);
-          this.log(state, `🛡 Placed Bracket Protection: SL (${slId} @ ₹${sl}) & Target (${tgtId} @ ₹${tgt})`);
+          await this.trackOrder(state, account, executionId, {
+            symbol,
+            exchange,
+            side: exitSide,
+            orderType: 'SL',
+            product: config.product,
+            qty,
+            price: limitPrice,
+            triggerPrice
+          }, slId, state.executionId);
+
+          this.log(state, `🛡 Server Stop Loss Armed at Zerodha (${qty} qty): Trigger ₹${triggerPrice.toFixed(2)}, Limit ₹${limitPrice.toFixed(2)} | OrderId: ${slId}. Target 1 (₹${state.targetPrice?.toFixed(2)}) will activate Uncapped Momentum Trailing.`);
           return;
         } else if (entryOrder.status === 'REJECTED' || entryOrder.status === 'CANCELLED') {
           this.log(state, `❌ Entry order was ${entryOrder.status}. Reason: ${entryOrder.status_message || 'N/A'}`);
@@ -1111,116 +1556,13 @@ export class Breakout15MinEngine {
           return;
         }
       }
-
-      // 2. If entry is filled, monitor exit SL and Target orders for execution (strict OCO)
-      if (state.entryFilled) {
-        // Real-time Breakeven Ratchet for live orders
-        if (state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && state.entryPrice) {
-          const kite = client['kite'];
-          const quotes = await kite.getLTP([`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]).catch(() => ({}));
-          const ltp = quotes[`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]?.last_price;
-          const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
-          const currentPnlPoints = ltp ? (isLong ? (ltp - state.entryPrice) : (state.entryPrice - ltp)) : 0;
-          const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 1.0);
-
-          if (ltp) {
-            state.currentLtp = ltp;
-            state.currentPnlRs = currentPnlPoints * state.config.qty;
-            state.currentPnlPct = state.entryPrice ? (currentPnlPoints / state.entryPrice) * 100 : 0;
-            state.peakPnlRs = Math.max(state.peakPnlRs || 0, state.currentPnlRs);
-          }
-
-          if (ltp && currentPnlPoints >= breakevenPoints) {
-            state.stopLossPrice = state.entryPrice;
-            state.isBreakevenTrailed = true;
-            if (client.modifyOrder && state.slOrderId && state.slOrderId !== 'FAILED') {
-              await client.modifyOrder(state.slOrderId, { price: state.entryPrice, triggerPrice: state.entryPrice }).catch((e: any) => {
-                this.log(state, `⚠ Live SL modify notice: ${e.message}`);
-              });
-            }
-            await this.prisma.order.updateMany({
-              where: { executionId: state.executionId, brokerOrderId: state.slOrderId! },
-              data: { price: state.entryPrice, triggerPrice: state.entryPrice }
-            });
-            this.log(state, `🛡 (Live Protection) Position reached +${(state.config.breakevenTriggerR ?? 1).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
-          }
-        }
-
-        if (state.slOrderId && state.slOrderId !== 'FAILED') {
-          const slOrder = await client.getOrder(state.slOrderId);
-          if (slOrder.status === 'COMPLETE') {
-            const fillPrice = slOrder.average_price || slOrder.price;
-            this.log(state, `🔴 Stop Loss Hit at ₹${fillPrice}!`);
-            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-            await this.prisma.order.updateMany({
-              where: { executionId: state.executionId, brokerOrderId: state.slOrderId },
-              data: { status: 'COMPLETE', price: fillPrice }
-            });
-            await this.prisma.order.updateMany({
-              where: { executionId: state.executionId, brokerOrderId: state.targetOrderId! },
-              data: { status: 'CANCELLED' }
-            });
-
-            // Record failed breakout for Fakeout Reversal monitoring
-            state.lastBreakoutAttempt = {
-              side: state.entryTriggered!,
-              timestamp: Date.now(),
-              failed: true,
-              breakoutPrice: state.entryPrice || 0
-            };
-            this.log(state, `⚠ Live Trade stopped out. Flagged ${state.entryTriggered} breakout as FAILED. Monitoring for Liquidity Trap Reversal.`);
-
-            state.entryTriggered = null;
-            state.entryFilled = false;
-            state.slOrderId = null;
-            state.targetOrderId = null;
-            this.stopRealtimeMonitor(state);
-            this.log(state, `🏁 Trade cycle complete (SL exit).`);
-            return;
-          }
-        }
-
-        if (state.targetOrderId && state.targetOrderId !== 'FAILED') {
-          const tgtOrder = await client.getOrder(state.targetOrderId);
-          if (tgtOrder.status === 'COMPLETE') {
-            const fillPrice = tgtOrder.average_price || tgtOrder.price;
-            this.log(state, `🟢 Target Hit at ₹${fillPrice}!`);
-            await this.cancelBrokerOrderSafe(client, state.slOrderId);
-            await this.prisma.order.updateMany({
-              where: { executionId: state.executionId, brokerOrderId: state.targetOrderId },
-              data: { status: 'COMPLETE', price: fillPrice }
-            });
-            await this.prisma.order.updateMany({
-              where: { executionId: state.executionId, brokerOrderId: state.slOrderId! },
-              data: { status: 'CANCELLED' }
-            });
-            state.entryTriggered = null;
-            state.entryFilled = false;
-            state.slOrderId = null;
-            state.targetOrderId = null;
-            state.lastBreakoutAttempt = null;
-            this.stopRealtimeMonitor(state);
-            this.log(state, `🏁 Trade cycle complete (Target exit).`);
-            return;
-          }
-        }
-      }
     } catch (err: any) {
       this.logger.error(`Real trade monitor error: ${err.message}`);
     }
   }
 
   private async closePaperTrade(state: StrategyState, reason: string, price: number) {
-    await this.prisma.order.updateMany({
-      where: { executionId: state.executionId, isPaperTrade: true, status: 'OPEN' },
-      data: { status: 'COMPLETE', price }
-    });
-    this.log(state, `🏁 Paper trade closed (${reason}) at ₹${price.toFixed(2)}`);
-    state.entryTriggered = null;
-    state.entryPrice = null;
-    state.setupTimestamp = null;
-    state.isBreakevenTrailed = false;
-    this.stopRealtimeMonitor(state);
+    await this.exitPosition(state, null, price, reason === 'TARGET_HIT' ? 'TARGET' : 'SL');
   }
 
   private async closePaperTradeHistorical(state: StrategyState, reason: string, price: number, timestamp: Date) {
@@ -1234,6 +1576,45 @@ export class Breakout15MinEngine {
     state.setupTimestamp = null;
     state.isBreakevenTrailed = false;
     this.stopRealtimeMonitor(state);
+  }
+
+  private async checkMarketTrendAlignment(client: any, trend: 'BUY' | 'SELL'): Promise<{ isAligned: boolean; reason?: string }> {
+    try {
+      const kite = client?.['kite'] || client;
+      if (!kite || !kite.getQuote) return { isAligned: true };
+      const quotes = await kite.getQuote(['NSE:NIFTY 50']).catch(() => null);
+      const nifty = quotes?.['NSE:NIFTY 50'];
+      if (!nifty?.last_price || !nifty?.ohlc?.open) return { isAligned: true };
+
+      const ltp = nifty.last_price;
+      const open = nifty.ohlc.open;
+      const changePct = ((ltp - open) / open) * 100;
+
+      if (trend === 'BUY' && changePct < -0.30) {
+        return {
+          isAligned: false,
+          reason: `NIFTY 50 is in sharp decline (${changePct.toFixed(2)}% from Open: ₹${open.toFixed(1)} -> ₹${ltp.toFixed(1)})`
+        };
+      }
+      if (trend === 'SELL' && changePct > 0.30) {
+        return {
+          isAligned: false,
+          reason: `NIFTY 50 is in strong bull rally (${changePct.toFixed(2)}% from Open: ₹${open.toFixed(1)} -> ₹${ltp.toFixed(1)})`
+        };
+      }
+      return { isAligned: true };
+    } catch {
+      return { isAligned: true };
+    }
+  }
+
+  private getLotSizeForUnderlying(underlying: string): number {
+    const upper = (underlying || '').toUpperCase().trim();
+    if (upper.includes('BANKNIFTY')) return 30;
+    if (upper.includes('FINNIFTY')) return 65;
+    if (upper.includes('MIDCPNIFTY')) return 120;
+    if (upper.includes('SENSEX')) return 20;
+    return 65; // Nifty default
   }
 
   private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
@@ -1291,9 +1672,9 @@ export class Breakout15MinEngine {
     return this.getIstDateStr(d);
   }
 
-  private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, refLow?: number, refHigh?: number) {
+  private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, refLow?: number, refHigh?: number, breakoutCandle?: Candle) {
     const { config } = state;
-    const kite = client['kite'];
+    const kite = client['kite'] || client;
     let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
 
     const stopLow = refLow ?? state.refLow;
@@ -1304,6 +1685,27 @@ export class Breakout15MinEngine {
     const isIndex = (config.instrumentType as string) === 'INDEX' || (config.instrumentType as string) === 'OPTION' || clean.includes('NIFTY') || clean.includes('SENSEX') || clean.includes('BANKNIFTY') || clean.includes('FINNIFTY') || clean.includes('MIDCPNIFTY');
     const dynamicAtr = state.dynamicAtr || (Math.abs((stopHigh || 0) - (stopLow || 0)) * 0.5) || 20;
     const rr = config.riskRewardRatio ?? 2.0;
+
+    // ─── Query Live Zerodha Available Capital & Dynamic Margin Sizing ───────
+    let capital = (config as any).maxCapital;
+    if (!capital || capital <= 0) {
+      if (client && !state.isPaperTrade && !triggerTime) {
+        try {
+          const liveMargins = await (kite.getMargins ? kite.getMargins() : client.getMargins?.()).catch(() => null);
+          const liveCash = liveMargins?.equity?.available?.live_balance
+            ?? liveMargins?.equity?.available?.cash
+            ?? liveMargins?.equity?.net
+            ?? liveMargins?.available?.live_balance
+            ?? liveMargins?.available?.cash
+            ?? liveMargins?.net;
+          if (liveCash && liveCash > 0) {
+            capital = Number(liveCash);
+            this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${capital.toLocaleString('en-IN')}`);
+          }
+        } catch { }
+      }
+    }
+    if (!capital || capital <= 0) capital = 15000;
 
     if (isIndex) {
       try {
@@ -1334,13 +1736,38 @@ export class Breakout15MinEngine {
           if (ltp) {
             const entry = this.roundTick(ltp);
             // Option Dynamic Risk (Default to 12% of premium or stopLossRs)
-            const optionRisk = config.enableDynamicAtr !== false
+            let optionRisk = config.enableDynamicAtr !== false
               ? this.roundTick(Math.max(2.0, entry * 0.12))
               : this.roundTick(Math.max(2.0, config.stopLossRs ? (config.stopLossRs / config.qty) : (entry * 0.15)));
+
+            // Structural Candle SL for Option Buying (Tied to underlying breakout candle + Delta)
+            if (config.useStructuralCandleSl !== false && breakoutCandle) {
+              const underlyingRisk = side === 'BUY'
+                ? Math.max(15, triggerPrice - breakoutCandle.low)
+                : Math.max(15, breakoutCandle.high - triggerPrice);
+              const deltaRisk = this.roundTick(Math.max(8.0, Math.min(entry * 0.15, underlyingRisk * 0.52)));
+              optionRisk = deltaRisk;
+              this.log(state, `🛡 Structural Candle SL for Option: Underlying risk ${underlyingRisk.toFixed(1)} pts -> Option SL Risk: ${optionRisk.toFixed(1)} pts (vs wide range SL)`);
+            }
+
             const sl = this.roundTick(Math.max(1.0, entry - optionRisk));
             const risk = Math.max(0.50, entry - sl);
             const tgt = this.roundTick(entry + (risk * rr));
             state.initialRiskPoints = risk;
+
+            // Dynamic Option Lot Sizing
+            const lotSize = this.getLotSizeForUnderlying(clean);
+            const capitalBuffer = Math.max(1000, capital * 0.15);
+            const tradeableCapital = Math.max(2000, capital - capitalBuffer);
+            const perLotCost = entry * lotSize;
+            let dynamicLots = Math.max(1, Math.floor(tradeableCapital / Math.max(1, perLotCost)));
+            if (config.lots && config.lots > 1) {
+              dynamicLots = Math.max(config.lots, dynamicLots);
+            }
+            const tradeQty = dynamicLots * lotSize;
+            state.config.qty = tradeQty;
+            state.config.lots = dynamicLots;
+            this.log(state, `⚖ Dynamic Option Sizing: ${dynamicLots} lots (${tradeQty} qty, ₹${(tradeQty * entry).toLocaleString('en-IN')} deployed / ₹${capital.toLocaleString('en-IN')} capital [Buffer: ₹${capitalBuffer.toFixed(0)}])`);
 
             await this.executeOrders(strategyId, state, client, account, symbol, exchange, finalSide, entry, sl, tgt, triggerTime);
             return;
@@ -1358,21 +1785,67 @@ export class Breakout15MinEngine {
       ? Math.max(0.50, dynamicAtr * (config.atrSlMultiplier ?? 1.0))
       : (config.stopLossRs / config.qty);
 
+    // Adaptive structural SL & Candle Range
+    const candleRangePct = (stopHigh && stopLow && entry > 0) ? ((stopHigh - stopLow) / entry) * 100 : 0;
+    const isWideCandle = candleRangePct > 0.80;
+
+    const isBankNifty = clean.includes('BANKNIFTY');
+    const isNifty = clean.includes('NIFTY');
+    const minRisk = isBankNifty ? 40 : (isNifty ? 18 : Math.max(0.5, entry * 0.003));
+    const maxRisk = isBankNifty ? 85 : (isNifty ? 35 : Math.max(2.0, entry * 0.015));
+
     if (side === 'BUY') {
-      sl = config.enableDynamicAtr !== false
-        ? this.roundTick(entry - dynamicRisk)
-        : (stopLow ? this.roundTick(stopLow) : this.roundTick(entry - config.stopLossRs / config.qty));
+      if (config.useStructuralCandleSl !== false && breakoutCandle) {
+        const buffer = Math.max(0.05, dynamicAtr * 0.05);
+        const candleLow = breakoutCandle.low - buffer;
+        const rawRisk = entry - candleLow;
+        const clampedRisk = Math.max(minRisk, Math.min(maxRisk, rawRisk));
+        sl = this.roundTick(entry - clampedRisk);
+        this.log(state, `🛡 Structural Candle SL: Breakout candle low ₹${breakoutCandle.low.toFixed(2)} -> SL: ₹${sl.toFixed(2)} (${clampedRisk.toFixed(1)} pts tight risk vs ₹${stopLow ? (entry - stopLow).toFixed(1) : 'N/A'} pts range risk).`);
+      } else if (isWideCandle && stopHigh && stopLow) {
+        const midpoint = (stopHigh + stopLow) / 2;
+        sl = this.roundTick(midpoint);
+        this.log(state, `📏 Wide Reference Candle (${candleRangePct.toFixed(2)}% range). Using adaptive 50% midpoint SL at ₹${sl.toFixed(2)} instead of extreme low (₹${stopLow.toFixed(2)}).`);
+      } else if (config.enableDynamicAtr !== false) {
+        sl = this.roundTick(entry - dynamicRisk);
+      } else {
+        sl = stopLow ? this.roundTick(stopLow) : this.roundTick(entry - config.stopLossRs / config.qty);
+      }
       const risk = Math.max(0.50, Math.abs(entry - sl));
       tgt = this.roundTick(entry + (risk * rr));
       state.initialRiskPoints = risk;
     } else {
-      sl = config.enableDynamicAtr !== false
-        ? this.roundTick(entry + dynamicRisk)
-        : (stopHigh ? this.roundTick(stopHigh) : this.roundTick(entry + config.stopLossRs / config.qty));
+      if (config.useStructuralCandleSl !== false && breakoutCandle) {
+        const buffer = Math.max(0.05, dynamicAtr * 0.05);
+        const candleHigh = breakoutCandle.high + buffer;
+        const rawRisk = candleHigh - entry;
+        const clampedRisk = Math.max(minRisk, Math.min(maxRisk, rawRisk));
+        sl = this.roundTick(entry + clampedRisk);
+        this.log(state, `🛡 Structural Candle SL: Breakout candle high ₹${breakoutCandle.high.toFixed(2)} -> SL: ₹${sl.toFixed(2)} (${clampedRisk.toFixed(1)} pts tight risk vs ₹${stopHigh ? (stopHigh - entry).toFixed(1) : 'N/A'} pts range risk).`);
+      } else if (isWideCandle && stopHigh && stopLow) {
+        const midpoint = (stopHigh + stopLow) / 2;
+        sl = this.roundTick(midpoint);
+        this.log(state, `📏 Wide Reference Candle (${candleRangePct.toFixed(2)}% range). Using adaptive 50% midpoint SL at ₹${sl.toFixed(2)} instead of extreme high (₹${stopHigh.toFixed(2)}).`);
+      } else if (config.enableDynamicAtr !== false) {
+        sl = this.roundTick(entry + dynamicRisk);
+      } else {
+        sl = stopHigh ? this.roundTick(stopHigh) : this.roundTick(entry + config.stopLossRs / config.qty);
+      }
       const risk = Math.max(0.50, Math.abs(sl - entry));
       tgt = this.roundTick(entry - (risk * rr));
       state.initialRiskPoints = risk;
     }
+
+    // Dynamic Margin Allocation for Equity (5x MIS Leverage with 15% Cash Buffer)
+    const capitalBuffer = Math.max(1000, capital * 0.15);
+    const tradeableCapital = Math.max(2000, capital - capitalBuffer);
+    const maxBuyingPower = (capital * 0.90) * 5; // Zerodha 5x MIS leverage
+    const targetBuyingPower = tradeableCapital * 0.85 * 5;
+    const capitalQty = Math.max(1, Math.floor(targetBuyingPower / entry));
+    const maxCapitalQty = Math.floor(maxBuyingPower / entry);
+    const finalQty = Math.max(1, Math.min(capitalQty, maxCapitalQty));
+    state.config.qty = finalQty;
+    this.log(state, `⚖ Dynamic Margin-Scaled Position Sizing (5x MIS): ${finalQty} shares (Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${capital.toLocaleString('en-IN')} [15% Cash Buffer: ₹${capitalBuffer.toFixed(0)}])`);
 
     if (isIndex) {
       this.log(state, `⚠ Falling back to ${symbol} (Spot/Future) as no suitable option was found.`);
@@ -1382,9 +1855,10 @@ export class Breakout15MinEngine {
 
   private async executeOrders(strategyId: string, state: StrategyState, client: any, account: any, symbol: string, exchange: string, side: 'BUY' | 'SELL', entry: number, sl: number, tgt: number, triggerTime?: Date) {
     const { config, executionId } = state;
-    this.log(state, `📋 Placing ${state.isReversalTrade ? '⚡ REVERSAL' : '🚀 BREAKOUT'}: ${symbol} — Entry: ₹${entry.toFixed(2)} | Dynamic SL: ₹${sl.toFixed(2)} | Dynamic Target (1:${(config.riskRewardRatio ?? 2.0).toFixed(1)} RR): ₹${tgt.toFixed(2)}`);
+    this.log(state, `📋 Placing ${state.isReversalTrade ? '⚡ REVERSAL' : '🚀 BREAKOUT'}: ${symbol} — Entry: ₹${entry.toFixed(2)} | Dynamic SL: ₹${sl.toFixed(2)} | Target (1:${(config.riskRewardRatio ?? 2.0).toFixed(1)} RR + Uncapped Trail): ₹${tgt.toFixed(2)}`);
 
     state.stopLossPrice = sl;
+    state.initialSlPrice = sl;
     state.targetPrice = tgt;
     state.entryPrice = entry;
     state.currentLtp = entry;
@@ -1397,23 +1871,24 @@ export class Breakout15MinEngine {
     if (!triggerTime) state.tradesPlacedToday += 1;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
     state.isBreakevenTrailed = false;
+    state.isProfitLockTrailed = false;
+    state.isDynamicTrailingActive = false;
     state.highestPriceReached = entry;
     state.lowestPriceReached = entry;
+    const symTickSize = isOption ? 0.05 : getInstrumentTickSize(symbol, entry);
 
     if (state.isPaperTrade || triggerTime) {
       const entryId = `PAPER_ENTRY_${Math.random().toString(36).substring(7).toUpperCase()}`;
       state.entryOrderId = entryId;
       state.entryFilled = true;
+      state.executedQty = config.qty;
       const exitSide = side === 'BUY' ? 'SELL' : 'BUY';
       const slId = `PAPER_SL_${Math.random().toString(36).substring(7).toUpperCase()}`;
-      const tgtId = `PAPER_TARGET_${Math.random().toString(36).substring(7).toUpperCase()}`;
       state.slOrderId = slId;
-      state.targetOrderId = tgtId;
 
-      this.log(state, `✅ Paper Entry Order (Simulated @ ₹${entry.toFixed(2)}): ${entryId}`);
+      this.log(state, `✅ Paper Entry Order (Simulated @ ₹${entry.toFixed(2)}): ${entryId} (${config.qty} qty)`);
       await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: entry, triggerPrice: entry }, entryId, strategyId, triggerTime);
       await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'SL', product: config.product, qty: config.qty, price: sl, triggerPrice: sl }, slId, strategyId, triggerTime);
-      await this.trackOrder(state, account, executionId, { symbol, exchange, side: exitSide, orderType: 'LIMIT', product: config.product, qty: config.qty, price: tgt }, tgtId, strategyId, triggerTime);
 
       // Start real-time tracking if placed live
       if (!triggerTime) {
@@ -1423,12 +1898,94 @@ export class Breakout15MinEngine {
     }
 
     // LIVE ORDER EXECUTION:
-    const limitPrice = side === 'BUY' ? this.roundTick(entry + 0.20) : this.roundTick(entry - 0.20);
-    const entryId = await client.placeOrder({ symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: limitPrice });
+    const limitPrice = side === 'BUY' ? this.roundTick(entry + symTickSize * 3, symTickSize) : this.roundTick(entry - symTickSize * 3, symTickSize);
+    const entryId = await client.placeOrder({ symbol, exchange, side, orderType: 'LIMIT', product: config.product ?? 'MIS', qty: config.qty, price: limitPrice });
     state.entryOrderId = entryId;
-    state.entryFilled = false;
     this.log(state, `✅ Live Entry Order placed (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
     await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: limitPrice }, entryId, strategyId, triggerTime);
+
+    let executedQty = config.qty;
+    let actualEntryPrice = entry;
+    const kite = client?.['kite'] || client;
+
+    if (kite) {
+      await new Promise(r => setTimeout(r, 600));
+      try {
+        const orders = await kite.getOrders();
+        const entryOrder = orders.find((o: any) => o.order_id === entryId);
+        if (entryOrder) {
+          const filled = Number(entryOrder.filled_quantity) || 0;
+          const status = entryOrder.status;
+          if (filled > 0) {
+            executedQty = filled;
+            if (entryOrder.average_price && Number(entryOrder.average_price) > 0) {
+              actualEntryPrice = Number(entryOrder.average_price);
+            }
+            state.entryFilled = true;
+            this.log(state, `📊 Broker Entry Status: ${status} | Executed: ${executedQty}/${config.qty} @ Avg ₹${actualEntryPrice.toFixed(2)}`);
+          } else if (status === 'REJECTED' || status === 'CANCELLED') {
+            this.log(state, `❌ Entry order ${entryId} was ${status}: ${entryOrder.status_message || 'Order rejected by broker'}`);
+            state.entryTriggered = null;
+            state.entryOrderId = null;
+            return;
+          } else {
+            this.log(state, `⏳ Entry order ${entryId} is ${status} (0 filled so far). Monitoring for fill confirmation...`);
+            state.entryFilled = false;
+            executedQty = 0;
+          }
+        }
+      } catch (e: any) {
+        this.log(state, `⚠ Order status check notice: ${e.message}`);
+      }
+    }
+
+    state.executedQty = executedQty;
+    state.entryPrice = actualEntryPrice;
+
+    // Recalculate SL and Target based on actualEntryPrice
+    const isLong = side === 'BUY';
+    const exitSide = isLong ? 'SELL' : 'BUY';
+    const risk = Math.max(0.50, Math.abs(actualEntryPrice - sl));
+    state.initialRiskPoints = risk;
+    const tgtPrice = isLong ? this.roundTick(actualEntryPrice + risk * (config.riskRewardRatio ?? 2.0), symTickSize) : this.roundTick(actualEntryPrice - risk * (config.riskRewardRatio ?? 2.0), symTickSize);
+    state.targetPrice = tgtPrice;
+
+    // Arm Server-side SL-L order at Zerodha if shares filled
+    if (state.entryFilled && executedQty > 0) {
+      const triggerPrice = this.roundTick(sl, symTickSize);
+      const slLimitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
+
+      const slId = await client.placeOrder({
+        symbol,
+        exchange,
+        side: exitSide,
+        orderType: 'SL',
+        product: config.product ?? 'MIS',
+        qty: executedQty,
+        price: slLimitPrice,
+        triggerPrice,
+      }).catch((e: any) => {
+        this.log(state, `❌ Server SL Order Failed: ${e.message}`);
+        return 'FAILED';
+      });
+
+      state.slOrderId = slId;
+      state.lastBrokerSlTrigger = triggerPrice;
+      state.lastBrokerSlModifyTime = Date.now();
+
+      await this.trackOrder(state, account, executionId, {
+        symbol,
+        exchange,
+        side: exitSide,
+        orderType: 'SL',
+        product: config.product,
+        qty: executedQty,
+        price: slLimitPrice,
+        triggerPrice
+      }, slId, strategyId, triggerTime);
+
+      this.log(state, `🛡 Server Stop Loss Armed at Zerodha (${executedQty} qty): Trigger ₹${triggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)} | OrderId: ${slId}. Target 1 (₹${tgtPrice.toFixed(2)}) will activate Uncapped Momentum Trailing.`);
+    }
 
     await this.startRealtimeMonitor(state, client);
   }
@@ -1656,6 +2213,42 @@ export class Breakout15MinEngine {
     return emas;
   }
 
+  private calculateRSI(candles: Candle[], period = 14): (number | null)[] {
+    const rsi: (number | null)[] = new Array(candles.length).fill(null);
+    if (candles.length <= period) return rsi;
+
+    let gains = 0;
+    let losses = 0;
+
+    for (let i = 1; i <= period; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      if (diff >= 0) gains += diff;
+      else losses += Math.abs(diff);
+    }
+
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+
+    rsi[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
+
+    for (let i = period + 1; i < candles.length; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      const gain = diff >= 0 ? diff : 0;
+      const loss = diff < 0 ? Math.abs(diff) : 0;
+
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+
+      if (avgLoss === 0) {
+        rsi[i] = 100;
+      } else {
+        const rs = avgGain / avgLoss;
+        rsi[i] = 100 - (100 / (1 + rs));
+      }
+    }
+    return rsi;
+  }
+
   private roundTick(price: number, tick = 0.05) { return Math.round(price / tick) * tick; }
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
@@ -1698,6 +2291,26 @@ export class Breakout15MinEngine {
     } catch (err: any) { this.log(state, `⚠ DB track failed: ${err.message}`); }
   }
 
+  private calculateCPR(prevDayCandles: Candle[]) {
+    if (!prevDayCandles || prevDayCandles.length === 0) return null;
+    const high = Math.max(...prevDayCandles.map(c => c.high));
+    const low = Math.min(...prevDayCandles.map(c => c.low));
+    const close = prevDayCandles[prevDayCandles.length - 1].close;
+    const pivot = (high + low + close) / 3;
+    const bc = (high + low) / 2;
+    const tc = (pivot - bc) + pivot;
+    const width = Math.abs(tc - bc);
+    const widthPct = (width / pivot) * 100;
+    return {
+      pivot,
+      bc,
+      tc,
+      width,
+      widthPct,
+      isNarrow: widthPct <= 0.18,
+    };
+  }
+
   private resetDailyState(state: StrategyState) {
     state.refHigh = null;
     state.refLow = null;
@@ -1709,11 +2322,23 @@ export class Breakout15MinEngine {
     state.entryPrice = null;
     state.dynamicAtr = undefined;
     state.initialRiskPoints = undefined;
+    state.initialSlPrice = null;
     state.isBreakevenTrailed = false;
+    state.isProfitLockTrailed = false;
+    state.isDynamicTrailingActive = false;
+    state.executedQty = undefined;
+    state.lastBrokerSlTrigger = undefined;
+    state.lastBrokerSlModifyTime = undefined;
     state.highestPriceReached = undefined;
     state.lowestPriceReached = undefined;
     state.lastBreakoutAttempt = null;
     state.isReversalTrade = false;
+    state.cprData = null;
+    state.sweptHigh = false;
+    state.sweptHighPrice = undefined;
+    state.sweptLow = false;
+    state.sweptLowPrice = undefined;
+    state.isTrapTrade = false;
     this.stopRealtimeMonitor(state);
   }
 }

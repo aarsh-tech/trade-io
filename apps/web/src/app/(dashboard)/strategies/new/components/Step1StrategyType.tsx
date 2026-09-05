@@ -51,11 +51,11 @@ export function Step1StrategyType({ form, set }: Step1Props) {
     },
     {
       type: "BREAKOUT_15MIN" as const,
-      label: "15-Min Breakout (Single Instrument)",
-      desc: "Enters after 5-min candle closes above/below the first 15-min range for a specific stock or index. Fixed SL & Target.",
+      label: "15-Min Breakout (Dynamic Margin + Server SL + Uncapped Trail)",
+      desc: "Trades high-probability 15-Min Opening Range Breakouts & Breakdowns with false-breakout trap reversal. Deploys 85% tradeable margin at 5x MIS for stocks or dynamic lots for index options, arms server SL-L at Zerodha, trails to Cost (+1R), locks profit (+1.5R), and rides runners with uncapped dynamic momentum trailing.",
       icon: BarChart2,
-      badge: null,
-      badgeColor: "",
+      badge: "85% Margin + Server SL + Uncapped Trail",
+      badgeColor: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-bold border border-blue-300 dark:border-blue-700",
       isAutoStockPreset: false,
     },
   ];
@@ -123,6 +123,16 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                   set("symbol", "AUTO");
                   set("exchange", "NSE");
                   set("instrumentType", "STOCK");
+                } else if (type === "BREAKOUT_15MIN") {
+                  set("name", "15-Min Breakout (Dynamic Margin + Server SL)");
+                  set("symbol", "NIFTY 50");
+                  set("exchange", "NSE");
+                  set("instrumentType", "INDEX");
+                  set("product", "MIS");
+                  set("lots", "1");
+                  set("targetRs", "1500");
+                  set("stopLossRs", "1000");
+                  set("maxTradesPerDay", "2");
                 } else {
                   set("symbol", "NIFTY 50");
                   set("exchange", "NSE");

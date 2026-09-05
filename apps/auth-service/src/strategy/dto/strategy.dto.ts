@@ -68,10 +68,31 @@ export interface Breakout15MinConfig {
   enableVolumeFilter?: boolean;    // Require volume confirmation (default: true)
   minRvol?: number;                // Relative volume threshold (default: 1.2)
   enableFakeoutReversal?: boolean; // Capitalize on failed breakouts / liquidity traps (default: true)
-  enableBreakevenTrail?: boolean;  // Trail SL to cost upon reaching +1R profit (default: true)
-  breakevenTriggerR?: number;      // R-multiple to trigger breakeven (default: 1.0)
+  enableBreakevenTrail?: boolean;  // Trail SL to cost upon reaching +0.7R profit (default: true)
+  breakevenTriggerR?: number;      // R-multiple to trigger breakeven (default: 0.7)
   enableTrailingSl?: boolean;      // Dynamic candle-by-candle trailing (default: true)
   moneyness?: 'ATM' | 'ITM';       // Option strike moneyness (default: 'ITM')
+
+  // Enterprise Dynamic Sizing, Server SL & Uncapped Trailing Upgrades
+  maxCapital?: number;             // Dynamic capital allocation in INR (default: account margin or 15,000)
+  lots?: number;                   // Lots for index options (default: 1)
+  enableServerSl?: boolean;        // Arm server-side Stop Loss directly on Zerodha exchange (default: true)
+  enableUncappedMomentum?: boolean;// Ride momentum runners past Target 1 milestone with dynamic trailing (default: true)
+  enableMarketTrendFilter?: boolean;// Align stock breakouts with broader NIFTY 50 trend (default: true)
+  enableDailyPnLLock?: boolean;    // Lock trading for the day upon achieving target or max loss (default: true)
+
+  // Institutional Edge & Stop-Loss Elimination Upgrades
+  useStructuralCandleSl?: boolean;  // Set SL to breakout candle extreme (45-80 pts) instead of wide 15m range (default: true)
+  maxOpeningRangePts?: number;      // Skip days where 15m opening range is overstretched (>300 Bank Nifty, >120 Nifty) (default: 300)
+  primeWindowEndTime?: string;      // Restrict breakout entries to morning momentum window (default: '11:30')
+  enableRsiFilter?: boolean;        // Momentum trend alignment: RSI(14) > 55 for Long, < 45 for Short (default: true)
+
+  // Dual-Edge Institutional Upgrade: Breakout Retest + Liquidity Sweep Trap Engine
+  enableTrapReversal?: boolean;       // Capitalize on failed breakouts / liquidity sweep traps (Turtle Soup / 2B) (default: true)
+  enableRetestConfirmation?: boolean; // Require retest bounce or follow-through before entering trend breakout (default: true)
+  enableCprFilter?: boolean;          // Central Pivot Range (CPR) trend/range candidate filter (default: true)
+  cprNarrowThresholdPct?: number;     // Narrow CPR threshold % for trend day eligibility (default: 0.18)
+  trapSlBufferPts?: number;           // Stop loss buffer points beyond sweep extreme (default: 10)
 }
 
 export interface EmaVwapCrossoverConfig {

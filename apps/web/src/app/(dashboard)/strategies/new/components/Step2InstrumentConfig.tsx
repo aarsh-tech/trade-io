@@ -285,11 +285,23 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             </div>
           )}
 
+          {form.type === "BREAKOUT_15MIN" && (
+            <div className="flex items-start gap-3 p-3.5 rounded-xl border border-blue-500/20 bg-blue-500/5 text-blue-700 dark:text-blue-300">
+              <Sparkles className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-0.5">
+                <p className="font-bold">Dynamic Margin & Exchange Server SL Active</p>
+                <p className="text-[11px] opacity-80 leading-relaxed">
+                  Automatically queries live Zerodha cash margin (reserving 15% buffer). Sizes 85% tradeable margin at 5x MIS leverage for stocks or affordable lots for index options. Arms a server-side SL-L order at Zerodha on entry fill and monitors Target 1 (+2R) for uncapped momentum trailing.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium block">
-                  {form.type === "NIFTY_OPTIONS_SCALPER" ? "Minimum / Base Lots" : "Number of Lots"}
+                  {form.type === "NIFTY_OPTIONS_SCALPER" || form.type === "BREAKOUT_15MIN" ? "Minimum / Base Lots" : "Number of Lots"}
                 </label>
                 <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
                   1 Lot = {getLotSize(form.symbol)} Qty
@@ -302,8 +314,8 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 onChange={(e) => set("lots", e.target.value)}
               />
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                {form.type === 'NIFTY_OPTIONS_SCALPER'
-                  ? 'Dynamic Margin Allocation: Auto-scales lots from Zerodha cash (85% deployed)'
+                {form.type === 'NIFTY_OPTIONS_SCALPER' || form.type === 'BREAKOUT_15MIN'
+                  ? 'Dynamic Margin Allocation: Auto-scales lots from Zerodha cash (85% deployed, 15% buffer)'
                   : form.symbol === 'AUTO'
                   ? 'Quantity will be dynamically calculated to achieve target'
                   : `Total Quantity: ${Number(form.lots) * getLotSize(form.symbol)} shares`}
@@ -325,6 +337,46 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
       )}
 
       {/* ── Strategy-Specific Config Sections ── */}
+      {form.type === "BREAKOUT_15MIN" && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
+            <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">🚀 15-Minute Opening Range Breakout Setup</p>
+            <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-1 leading-relaxed">
+              Monitors the first 15-minute candle (09:15–09:30 AM). Enters when a 5-minute candle closes beyond the high or low with volume & VWAP alignment. If a false breakout occurs, it detects the liquidity trap and reverses immediately!
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-semibold mb-2 block">Quick Instrument Presets</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: "NIFTY 50 (Index Option)", sym: "NIFTY 50", exch: "NSE", type: "INDEX" as const },
+                { label: "BANKNIFTY (Index Option)", sym: "BANKNIFTY", exch: "NSE", type: "INDEX" as const },
+                { label: "AUTO Stock Picker", sym: "AUTO", exch: "NSE", type: "STOCK" as const },
+              ].map((p) => (
+                <button
+                  key={p.sym}
+                  type="button"
+                  onClick={() => {
+                    set("symbol", p.sym);
+                    set("exchange", p.exch);
+                    set("instrumentType", p.type);
+                  }}
+                  className={cn(
+                    "text-xs p-2.5 rounded-lg border text-left transition-all font-medium",
+                    form.symbol === p.sym
+                      ? "border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold shadow-sm"
+                      : "border-[hsl(var(--border))] hover:border-blue-400/50 text-[hsl(var(--muted-foreground))]"
+                  )}
+                >
+                  <p className="font-semibold text-xs text-[hsl(var(--foreground))]">{p.label}</p>
+                  <p className="text-[10px] opacity-70 mt-0.5">{p.exch}:{p.sym}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {form.type === "EMA_VWAP_CROSSOVER" && (
         <div className="space-y-4">
           <div>

@@ -49,6 +49,16 @@ export interface StrategyFormState {
   b15EnableVwapFilter: boolean;
   b15EnableBreakevenTrail: boolean;
   b15Moneyness: "ITM" | "ATM";
+  b15UseStructuralCandleSl: boolean;
+  b15MaxOpeningRangePts: string;
+  b15PrimeWindowEndTime: string;
+  b15EnableRsiFilter: boolean;
+  b15BreakevenTriggerR: string;
+  b15EnableTrapReversal: boolean;
+  b15EnableRetestConfirmation: boolean;
+  b15EnableCprFilter: boolean;
+  b15CprNarrowThresholdPct: string;
+  b15TrapSlBufferPts: string;
   // Gamma Blast Expiry Special
   gbIndex: "AUTO" | "NIFTY" | "SENSEX";
   gbMinPremiumNifty: string;

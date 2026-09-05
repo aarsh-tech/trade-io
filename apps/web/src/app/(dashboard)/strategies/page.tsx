@@ -675,7 +675,7 @@ function StrategyCard({
                   : isStockOptions
                     ? "Stock Options"
                     : is15Min
-                      ? "15-Min Breakout"
+                      ? "15-Min Breakout (Dynamic)"
                       : isEmaVwap
                         ? "15-EMA & VWAP"
                         : isDailyScalper
@@ -738,13 +738,15 @@ function StrategyCard({
             <span className="text-xs font-bold text-foreground truncate mt-0.5">
               {isNiftyScalper
                 ? "Auto Margin"
-                : isEmaVwap && cfg.symbol === "AUTO"
+                : is15Min
                   ? "85% Margin (5x)"
-                  : cfg.symbol === "AUTO"
-                    ? "Auto (5x)"
-                    : cfg.qty
-                      ? `${cfg.qty} Qty`
-                      : "Dynamic"}
+                  : isEmaVwap && cfg.symbol === "AUTO"
+                    ? "85% Margin (5x)"
+                    : cfg.symbol === "AUTO"
+                      ? "Auto (5x)"
+                      : cfg.qty
+                        ? `${cfg.qty} Qty`
+                        : "Dynamic"}
             </span>
           </div>
 
@@ -753,9 +755,11 @@ function StrategyCard({
             <span className="text-xs font-bold text-rose-600 mt-0.5 truncate">
               {isNiftyScalper
                 ? "-7 Pts (Server SL)"
-                : isEmaVwap
-                  ? "Candle Low (Trailed)"
-                  : `₹${cfg.stopLossRs ?? "500"}`}
+                : is15Min
+                  ? "Candle SL (Trailed)"
+                  : isEmaVwap
+                    ? "Candle Low (Trailed)"
+                    : `₹${cfg.stopLossRs ?? "500"}`}
             </span>
           </div>
 
@@ -764,9 +768,11 @@ function StrategyCard({
             <span className="text-xs font-bold text-emerald-600 mt-0.5 truncate">
               {isNiftyScalper
                 ? "+10 Pts + Trail"
-                : isEmaVwap
-                  ? "15-EMA / VWAP"
-                  : `₹${cfg.targetRs ?? "500"}`}
+                : is15Min
+                  ? "1:2 RR + Uncapped Trail"
+                  : isEmaVwap
+                    ? "15-EMA / VWAP"
+                    : `₹${cfg.targetRs ?? "500"}`}
             </span>
           </div>
         </div>
