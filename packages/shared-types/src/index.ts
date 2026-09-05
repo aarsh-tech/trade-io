@@ -141,6 +141,9 @@ export interface Breakout15MinConfig {
   partialBookingPct?: number;
   partialBookingR?: number;
   enableCprSupportResistance?: boolean;
+  enableParabolicVwapLock?: boolean;
+  enableTwoCandleEmaConfirmation?: boolean;
+  enableTrendReEntry?: boolean;
 }
 
 export interface EmaVwapCrossoverConfig {
@@ -153,6 +156,9 @@ export interface EmaVwapCrossoverConfig {
   stopLossRs: number;
   targetRs: number;
   isOptionBuyingOnly?: boolean;
+  enableParabolicVwapLock?: boolean;
+  enableTwoCandleEmaConfirmation?: boolean;
+  enableTrendReEntry?: boolean;
 }
 
 export interface CreateStrategyDto {

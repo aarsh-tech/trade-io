@@ -109,6 +109,9 @@ export interface Breakout15MinConfig {
   partialBookingPct?: number;                // Percentage of position to book (default: 50)
   partialBookingR?: number;                  // R-multiple trigger for partial booking (default: 1.8)
   enableCprSupportResistance?: boolean;      // Live Zerodha CPR Support/Resistance hurdle & regime gate (default: true)
+  enableParabolicVwapLock?: boolean;         // Lock profits using VWAP when trade goes parabolic (>2.5% gain or +2R) (default: true)
+  enableTwoCandleEmaConfirmation?: boolean;  // Require 2nd candle confirmation before exiting on EMA to prevent shakeouts (default: true)
+  enableTrendReEntry?: boolean;              // Allow 1 trend continuation re-entry if price reclaims EMA with volume (default: true)
 }
 
 export interface EmaVwapCrossoverConfig {
@@ -131,6 +134,9 @@ export interface EmaVwapCrossoverConfig {
   enableMarketTrendFilter?: boolean;  // Align trades with broader NIFTY 50 trend (default: true)
   enableRvolVolumeFilter?: boolean;   // Require institutional volume spike (RVOL >= 1.25x) (default: true)
   enableDailyPnLLock?: boolean;       // One-and-Done rule: lock day on hitting profit target or max loss (default: true)
+  enableParabolicVwapLock?: boolean;  // Lock profits using VWAP when trade goes parabolic (>2.5% gain or +2R) (default: true)
+  enableTwoCandleEmaConfirmation?: boolean; // Require 2nd candle confirmation before exiting on EMA to prevent shakeouts (default: true)
+  enableTrendReEntry?: boolean;       // Allow 1 trend continuation re-entry if price reclaims EMA with volume (default: true)
 }
 
 export interface NiftyOptionsScalperConfig {

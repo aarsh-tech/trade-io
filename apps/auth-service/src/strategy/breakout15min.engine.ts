@@ -100,6 +100,18 @@ interface StrategyState {
   lastVwap?: number | null;
   isTrailingEma?: boolean;
 
+  // Parabolic Mode & Multi-Candle Confirmation State
+  isParabolicActive?: boolean;
+  emaWarningCandle?: {
+    date: Date;
+    low: number;
+    high: number;
+    close: number;
+  } | null;
+  reEntryEligible?: boolean;
+  reEntrySwingPrice?: number | null;
+  reEntryCountToday?: number;
+
   // Systematic Profitability & Capital Preservation Pillars
   dailyLossesCount: number;
   isPartialBooked?: boolean;
@@ -172,6 +184,11 @@ export class Breakout15MinEngine {
       lastEma: null,
       lastVwap: null,
       isTrailingEma: false,
+      isParabolicActive: false,
+      emaWarningCandle: null,
+      reEntryEligible: false,
+      reEntrySwingPrice: null,
+      reEntryCountToday: 0,
       dailyLossesCount: 0,
       isPartialBooked: false,
     };
@@ -964,6 +981,61 @@ export class Breakout15MinEngine {
             const emaTrailing = this.calculateEMA(lowerCandles, trailingPeriod);
             state.lastVwap = vwaps[vwaps.length - 1];
             state.lastEma = emaTrailing[emaTrailing.length - 1];
+
+            // ── 1. Parabolic VWAP Profit-Lock on Candle Close (TTML Spike Protection) ──
+            const lastCandle = lowerCandles[lowerCandles.length - 1];
+            const isOption = !!state.optionSymbol;
+            const isLong = isOption || state.entryTriggered === 'LONG';
+            const curEma = state.lastEma;
+            const curVwap = state.lastVwap;
+
+            if (state.config.enableParabolicVwapLock !== false && state.isParabolicActive && curVwap && !isOption) {
+              const isVwapBroken = isLong ? (lastCandle.close < curVwap) : (lastCandle.close > curVwap);
+              if (isVwapBroken) {
+                this.log(state, `🎯 [PARABOLIC VWAP LOCK] Candle closed across Session VWAP (₹${lastCandle.close.toFixed(2)} vs VWAP ₹${curVwap.toFixed(2)}). Exiting to protect morning surge gains!`);
+                await this.exitPosition(state, client, lastCandle.close, 'TARGET');
+                await this.persistLogs(state);
+                return;
+              }
+            }
+
+            // ── 2. Two-Candle Confirmation Rule on EMA Exit (CHENNPETRO Shakeout Protection) ──
+            if (state.config.enableTwoCandleEmaConfirmation !== false && state.isTrailingEma && curEma && curVwap && !isOption) {
+              const isEmaBreached = isLong ? (lastCandle.close < curEma) : (lastCandle.close > curEma);
+              const isAboveVwap = isLong ? (lastCandle.close > curVwap) : (lastCandle.close < curVwap);
+
+              if (isEmaBreached) {
+                if (!state.emaWarningCandle) {
+                  // Candle 1: Warning Flag (Don't exit immediately on 1 bar noise)
+                  state.emaWarningCandle = {
+                    date: lastCandle.date,
+                    low: lastCandle.low,
+                    high: lastCandle.high,
+                    close: lastCandle.close,
+                  };
+                  this.log(state, `⚠ [EMA TRAIL WARNING] Candle closed beyond ${trailingPeriod}-EMA (₹${lastCandle.close.toFixed(2)} vs EMA ₹${curEma.toFixed(2)}). Waiting for Candle 2 confirmation before exiting to prevent fakeout.`);
+                } else if (new Date(lastCandle.date).getTime() !== new Date(state.emaWarningCandle.date).getTime()) {
+                  // Candle 2: Confirmation evaluation
+                  const isLowBroken = isLong ? (lastCandle.low < state.emaWarningCandle.low) : (lastCandle.high > state.emaWarningCandle.high);
+                  const isSecondCloseBeyond = isLong ? (lastCandle.close < curEma) : (lastCandle.close > curEma);
+
+                  if (isLowBroken || isSecondCloseBeyond || !isAboveVwap) {
+                    this.log(state, `🛑 [CONFIRMED EMA BREAKDOWN] Candle 2 confirmed breakdown below EMA (Low broken or 2nd close below). Exiting trade.`);
+                    await this.exitPosition(state, client, lastCandle.close, 'TARGET');
+                    await this.persistLogs(state);
+                    return;
+                  } else {
+                    this.log(state, `🟢 [EMA FAKEOUT REJECTED] Candle 2 held support and closed back green! Resetting warning, staying in mega-trend.`);
+                    state.emaWarningCandle = null;
+                  }
+                }
+              } else {
+                if (state.emaWarningCandle) {
+                  this.log(state, `🟢 [EMA RE-CLAIMED] Price firmly back above ${trailingPeriod}-EMA! Warning cleared.`);
+                  state.emaWarningCandle = null;
+                }
+              }
+            }
           }
         } catch { }
 
@@ -975,6 +1047,39 @@ export class Breakout15MinEngine {
       } catch (err: any) { this.log(state, `❌ Monitor error: ${err.message}`); }
       await this.persistLogs(state);
       return;
+    }
+
+    // ─── 0.0 Trend Continuation Re-Entry (Catch Leg 2 on EMA Re-Claim) ────────
+    if (state.config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && hhmm <= (13 * 60 + 30)) {
+      try {
+        const reEntrySym = state.futureSymbol || config.symbol;
+        const reEntryEx = state.futureExchange || config.exchange;
+        const lowerCandles = await this.fetchCandlesForSymbol(client, reEntrySym, '5minute', now, reEntryEx);
+        if (lowerCandles.length >= 2) {
+          const lastCandle = lowerCandles[lowerCandles.length - 1];
+          const vwaps = this.calculateVWAP(lowerCandles);
+          const trailingPeriod = config.trailingEmaPeriod || 15;
+          const emaTrailing = this.calculateEMA(lowerCandles, trailingPeriod);
+          const curVwap = vwaps[vwaps.length - 1];
+          const curEma = emaTrailing[emaTrailing.length - 1];
+
+          // Condition: Price firmly re-claims above 15-EMA & VWAP, and breaks prior swing high
+          const isReClaim = curEma && curVwap && lastCandle.close > curEma && lastCandle.close > curVwap;
+          const isBreakout = lastCandle.close > state.reEntrySwingPrice;
+
+          if (isReClaim && isBreakout) {
+            this.log(state, `🔥 [TREND RE-ENTRY TRIGGERED] ${reEntrySym} re-claimed ${trailingPeriod}-EMA & VWAP and broke swing high (₹${state.reEntrySwingPrice.toFixed(2)}) @ ₹${lastCandle.close.toFixed(2)}! Entering Trend Continuation Leg 2.`);
+            state.reEntryEligible = false;
+            state.reEntryCountToday = (state.reEntryCountToday || 0) + 1;
+            const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+            await this.placeBreakoutTrade(strategyId, state, client, account, 'BUY', lastCandle.close, now, Math.min(lastCandle.low, curEma), state.reEntrySwingPrice, lastCandle);
+            await this.persistLogs(state);
+            return;
+          }
+        }
+      } catch (err: any) {
+        this.logger.debug?.(`Re-entry evaluation notice: ${err.message}`);
+      }
     }
 
     // ─── Breakout Scanning (only when no active trade) ────────────────────────
@@ -1447,6 +1552,24 @@ export class Breakout15MinEngine {
         }
       }
 
+      // ── 5.2 Parabolic Momentum & VWAP Profit-Lock (TTML Spike Protection) ──
+      const gainPct = state.entryPrice ? (Math.abs(currentPrice - state.entryPrice) / state.entryPrice) * 100 : 0;
+      const isParabolicTrigger = gainPct >= 2.5 || (pnlPoints >= (risk * 2.0));
+      if (state.config.enableParabolicVwapLock !== false && isParabolicTrigger && state.entryPrice && !isOption) {
+        if (!state.isParabolicActive) {
+          state.isParabolicActive = true;
+          this.log(state, `🚀 [PARABOLIC MOMENTUM ACTIVE] Stock surged +${gainPct.toFixed(2)}% (+${(pnlPoints / risk).toFixed(1)}R)! Dynamic floor transferred to Session VWAP (₹${(state.lastVwap || 0).toFixed(2)}) to lock peak gains.`);
+        }
+        if (state.lastVwap) {
+          const roundedVwap = this.roundTick(state.lastVwap, symTickSize);
+          const isBetterVwap = isLong ? (roundedVwap > (state.stopLossPrice || 0)) : (roundedVwap < (state.stopLossPrice || Infinity));
+          if (isBetterVwap) {
+            state.stopLossPrice = roundedVwap;
+            await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
+          }
+        }
+      }
+
       // ── 6. Stop Loss Hit Trigger ──────────────────────────────────────────
       const isHitSL = isLong ? (currentPrice <= (state.stopLossPrice || 0)) : (currentPrice >= (state.stopLossPrice || Infinity));
       if (isHitSL) {
@@ -1637,6 +1760,12 @@ export class Breakout15MinEngine {
     state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnlRs;
     const slippage = actualExitPrice - exitPrice;
     this.log(state, `🏁 Trade cycle complete (${reason}) @ ₹${actualExitPrice.toFixed(2)} | Realized P&L: ${tradePnlRs >= 0 ? '+' : ''}₹${tradePnlRs.toFixed(2)} (${tradePnlPoints >= 0 ? '+' : ''}${tradePnlPoints.toFixed(2)} pts)${slippage !== 0 ? ` [Slippage: ${slippage > 0 ? '+' : ''}₹${slippage.toFixed(2)}]` : ''}`);
+
+    if (state.config.enableTrendReEntry !== false && (state.reEntryCountToday || 0) < 1 && (reason === 'TARGET' || state.isTrailingEma)) {
+      state.reEntryEligible = true;
+      state.reEntrySwingPrice = state.highestPriceReached || state.entryPrice;
+      this.log(state, `🔁 [RE-ENTRY ARMED] ${symbol} exited trend trail. If price reclaims ${config.trailingEmaPeriod || 15}-EMA and breaks swing high (₹${(state.reEntrySwingPrice || 0).toFixed(2)}) with VWAP support, Leg 2 Re-Entry will execute!`);
+    }
 
     if (reason === 'SL') {
       state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
@@ -2679,6 +2808,11 @@ export class Breakout15MinEngine {
     state.isTrapTrade = false;
     state.dailyLossesCount = 0;
     state.isPartialBooked = false;
+    state.isParabolicActive = false;
+    state.emaWarningCandle = null;
+    state.reEntryEligible = false;
+    state.reEntrySwingPrice = null;
+    state.reEntryCountToday = 0;
     this.stopRealtimeMonitor(state);
   }
 }

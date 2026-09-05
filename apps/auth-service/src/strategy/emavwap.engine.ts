@@ -59,6 +59,16 @@ interface StrategyState {
   isCostLocked?: boolean;
   isHalfTargetLocked?: boolean;
   isTrailingEma?: boolean;
+  isParabolicActive?: boolean;
+  emaWarningCandle?: {
+    date: Date;
+    low: number;
+    high: number;
+    close: number;
+  } | null;
+  reEntryEligible?: boolean;
+  reEntrySwingPrice?: number | null;
+  reEntryCountToday?: number;
   isAutoMode?: boolean;
   activeSymbol?: string | null;
   dailyRealizedPnlRs?: number;
@@ -871,11 +881,37 @@ export class EmaVwapCrossoverEngine {
       return;
     }
 
-    // ── 09:15 to 09:20 AM: Opening Range (ORB) Formation Window ─────────────
+    // ── Trend Continuation Re-Entry (Catch Leg 2 on EMA Re-Claim) ────────────
     const currentHhmm = this.getIstHhmm(now);
+    if (config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && currentHhmm <= (13 * 60 + 30)) {
+      try {
+        const candleSymbol = state.activeSymbol || config.symbol;
+        const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
+        const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
+        const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
+        if (cCandles && cCandles.length >= 2) {
+          const lastCandle = cCandles[cCandles.length - 1];
+          const cEmas = this.calculateEMA(cCandles, config.emaPeriod || 15);
+          const cVwaps = this.calculateVWAP(cCandles, config.vwapSource || 'close');
+          const curEma = cEmas[cCandles.length - 1];
+          const curVwap = cVwaps[cCandles.length - 1];
+
+          if (curEma && curVwap && lastCandle.close > curEma && lastCandle.close > curVwap && lastCandle.close > state.reEntrySwingPrice) {
+            this.log(state, `🔥 [TREND RE-ENTRY TRIGGERED] ${candleSymbol} re-claimed ${config.emaPeriod || 15}-EMA & VWAP and broke swing high (₹${state.reEntrySwingPrice.toFixed(2)}) @ ₹${lastCandle.close.toFixed(2)}! Entering Trend Continuation Leg 2.`);
+            state.reEntryEligible = false;
+            state.reEntryCountToday = (state.reEntryCountToday || 0) + 1;
+            await this.placeTrade(state, client, account, 'BUY', lastCandle.close, now, now, Math.min(lastCandle.low, curEma), state.reEntrySwingPrice);
+            await this.persistLogs(state);
+            return;
+          }
+        }
+      } catch (err: any) {
+        this.logger.debug?.(`Re-entry evaluation notice: ${err.message}`);
+      }
+    }
+
+    // ── 09:15 to 09:20 AM: Opening Range (ORB) Formation Window ─────────────
     if (currentHhmm < 9 * 60 + 20) {
-      // In the first 5 minutes (09:15 - 09:20), allow the opening 5m candle to complete its institutional range.
-      // This eliminates the 09:15:02 retail fakeout traps and establishes the true High/Low/VWAP baseline!
       if (now.getSeconds() % 15 === 0) {
         this.log(state, `⏳ [09:15 - 09:20 AM OBSERVATION WINDOW] Opening 5m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Real breakout execution begins @ 09:20 AM.`);
         await this.persistLogs(state);
@@ -1469,14 +1505,39 @@ export class EmaVwapCrossoverEngine {
       }
 
       // ── 2. Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ───────────────
-      // Preserves original structural Stop Loss (no premature Cost SL to avoid wick-outs).
-      // Trails ONLY when the 15-EMA & VWAP trend support lines naturally advance into profit!
       const entryPrice = state.entryPrice || currentPrice;
       const moveFromEntryPct = entryPrice > 0 ? (isLong ? (currentPrice - entryPrice) / entryPrice : (entryPrice - currentPrice) / entryPrice) * 100 : 0;
       const isTrailingEnabled = state.config.enableProfitFloor !== false;
       const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
 
-      // Uncapped 15-EMA & VWAP Trend Riding (Holds through normal intraday pullbacks & wicks to capture multi-percent runs)
+      // ── 2.1 Parabolic Mode & VWAP Profit-Lock (TTML Spike Protection) ──────────
+      const isParabolicTrigger = moveFromEntryPct >= 2.5;
+      if (state.config.enableParabolicVwapLock !== false && isParabolicTrigger && !isOptionTrade) {
+        if (!state.isParabolicActive) {
+          state.isParabolicActive = true;
+          this.log(state, `🚀 [PARABOLIC MOMENTUM ACTIVE] Stock surged +${moveFromEntryPct.toFixed(2)}%! Dynamic floor transferred to Session VWAP (₹${(state.lastVwap || 0).toFixed(2)}) to lock peak gains.`);
+        }
+        if (state.lastVwap) {
+          const roundedVwap = this.roundTick(state.lastVwap, symbol);
+          if (isLong ? (roundedVwap > (state.stopLossPrice || 0)) : (roundedVwap < (state.stopLossPrice || Infinity))) {
+            state.stopLossPrice = roundedVwap;
+            await this.updateBrokerSlSafe(client, kite, state, symbol);
+          }
+          // If price closes/drops below VWAP in Parabolic mode, exit immediately!
+          const isVwapCrossed = isLong ? (currentPrice < state.lastVwap) : (currentPrice > state.lastVwap);
+          if (isVwapCrossed) {
+            if (isExiting) return;
+            isExiting = true;
+            this.log(state, `🎯 [PARABOLIC VWAP LOCK EXIT] ${symbol} crossed Session VWAP @ ₹${currentPrice.toFixed(2)} (VWAP: ₹${state.lastVwap.toFixed(2)})! Exiting to protect morning surge gains (+${moveFromEntryPct.toFixed(2)}%).`);
+            this.stopRealtimeMonitor(state);
+            await this.exitPosition(state, client, currentPrice, 'TARGET');
+            await this.persistLogs(state);
+            return;
+          }
+        }
+      }
+
+      // ── 2.2 Uncapped 15-EMA & VWAP Trend Riding (Holds through wicks, ignores 50-paise noise) ──
       if (!isOptionTrade && state.lastEma && state.lastVwap) {
         const trendSupport = isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap);
 
@@ -1492,12 +1553,20 @@ export class EmaVwapCrossoverEngine {
           }
         }
 
-        // Exit ONLY when the stock actually breaks below the 15-EMA / VWAP trend line!
-        const isTrendBroken = isLong ? (currentPrice < trendSupport) : (currentPrice > trendSupport);
-        if (isTrendBroken && isSupportInProfit) {
+        // 0.30% Noise Buffer Filter around 15-EMA while above VWAP (CHENNPETRO Fakeout Protection)
+        const isAboveVwap = isLong ? (currentPrice > state.lastVwap) : (currentPrice < state.lastVwap);
+        const emaBuffer = (state.config.enableTwoCandleEmaConfirmation !== false && isAboveVwap) ? (state.lastEma * 0.0030) : 0;
+        const effectiveEmaTrail = isLong ? (state.lastEma - emaBuffer) : (state.lastEma + emaBuffer);
+
+        // Exit ONLY when true trend breakdown occurs (VWAP loss or confirmed EMA buffer breach)
+        const isVwapBroken = isLong ? (currentPrice < state.lastVwap) : (currentPrice > state.lastVwap);
+        const isEmaBufferBroken = isLong ? (currentPrice < effectiveEmaTrail) : (currentPrice > effectiveEmaTrail);
+        const isTrendBroken = (isVwapBroken && isSupportInProfit) || (isEmaBufferBroken && isSupportInProfit && !isAboveVwap);
+
+        if (isTrendBroken) {
           if (isExiting) return;
           isExiting = true;
-          this.log(state, `📈 [TREND EXHAUSTION EXIT] ${symbol} crossed 15-EMA / VWAP trend line @ ₹${currentPrice.toFixed(2)} (Trail Level: ₹${trendSupport.toFixed(2)}) | Captured Move: ${moveFromEntryPct.toFixed(2)}% | Realized P&L: ₹${pnlRs.toFixed(2)}`);
+          this.log(state, `📈 [TREND EXHAUSTION EXIT] ${symbol} confirmed trend breakdown @ ₹${currentPrice.toFixed(2)} (EMA: ₹${state.lastEma.toFixed(2)}, VWAP: ₹${state.lastVwap.toFixed(2)}) | Captured Move: ${moveFromEntryPct.toFixed(2)}% | Realized P&L: ₹${pnlRs.toFixed(2)}`);
           this.stopRealtimeMonitor(state);
           await this.exitPosition(state, client, currentPrice, 'TARGET');
           await this.persistLogs(state);
@@ -1965,6 +2034,12 @@ export class EmaVwapCrossoverEngine {
           state.dailyTargetLocked = true;
           this.log(state, `🛑 Daily Max Loss Limit Reached (₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day to preserve capital.`);
         }
+      }
+
+      if (config.enableTrendReEntry !== false && (state.reEntryCountToday || 0) < 1 && (reason === 'TARGET' || state.isTrailingEma)) {
+        state.reEntryEligible = true;
+        state.reEntrySwingPrice = state.currentLtp || actualExitPrice;
+        this.log(state, `🔁 [RE-ENTRY ARMED] ${symbol} exited trend trail. If price reclaims 15-EMA and breaks swing high (₹${(state.reEntrySwingPrice || 0).toFixed(2)}) with VWAP support, Leg 2 Re-Entry will execute!`);
       }
 
       state.entryTriggered = null;
