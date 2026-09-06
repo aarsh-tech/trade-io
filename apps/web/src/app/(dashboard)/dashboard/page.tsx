@@ -1,6 +1,7 @@
 "use client";
 
 import { OrderWindow } from "@/components/dashboard/OrderWindow";
+import { LiveAlgoPositionsCard } from "@/components/dashboard/LiveAlgoPositionsCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -221,33 +222,33 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6 animate-[fade-up_0.3s_ease_both] pb-12 font-sans">
+    <div className="space-y-3 sm:space-y-3.5 animate-[fade-up_0.3s_ease_both] pb-8 font-sans">
       {/* ── 1. Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-0.5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             Hi, {firstName}
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Monitor trading capital, equity valuation, and live market movers
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Real-time algorithmic trading capital, execution telemetry, and market movers
           </p>
         </div>
 
-        <div className="flex items-center flex-wrap gap-2.5">
+        <div className="flex items-center flex-wrap gap-2">
           {activeBroker && (
             <Button
               variant="outline"
               size="sm"
-              className="gap-1.5 border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 text-xs h-9 font-medium shadow-2xs"
+              className="gap-1 border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 text-xs h-8 font-medium shadow-2xs rounded-lg"
               onClick={() => setShowRenewModal(true)}
             >
-              <Zap className="h-3.5 w-3.5 text-amber-600" /> Daily Login
+              <Zap className="h-3 w-3 text-amber-600" /> Daily Login
             </Button>
           )}
 
           <Button
             size="sm"
-            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs h-9 shadow-sm"
+            className="gap-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs h-8 shadow-xs rounded-lg"
             onClick={() =>
               setOrderState({
                 isOpen: true,
@@ -257,19 +258,19 @@ export default function DashboardPage() {
               })
             }
           >
-            <ShoppingCart className="h-3.5 w-3.5" /> Place Order
+            <ShoppingCart className="h-3 w-3" /> Place Order
           </Button>
 
           <Button
             variant="outline"
             size="icon"
-            className="h-9 w-9 border-slate-200 bg-white hover:bg-slate-50 shadow-2xs"
+            className="h-8 w-8 border-slate-200 bg-white hover:bg-slate-50 shadow-2xs rounded-lg"
             onClick={handleManualRefresh}
             disabled={isRefreshing}
           >
             <RefreshCcw
               className={cn(
-                "h-4 w-4 text-slate-500",
+                "h-3.5 w-3.5 text-slate-500",
                 isRefreshing && "animate-spin text-blue-600"
               )}
             />
@@ -277,248 +278,198 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── 2. Top Row: Equity & Commodity Cards (2-Grid) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-        {/* Equity Card */}
+      {/* ── 2. Live Algo Execution & Positions Card ── */}
+      <LiveAlgoPositionsCard activeBroker={activeBroker} />
+
+      {/* ── 3. Unified Financial Capital & Holdings Row (3-Grid) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-3.5">
+        {/* Equity Margin */}
         <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-          <CardHeader className="py-3.5 px-4 sm:px-6 border-b border-slate-100 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2.5 sm:gap-3">
-              <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                <LayoutGrid className="h-4 w-4" />
+          <CardHeader className="py-2.5 px-4 border-b border-slate-100 flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-6 w-6 rounded-md bg-blue-50 text-blue-600 flex items-center justify-center">
+                <LayoutGrid className="h-3.5 w-3.5" />
               </div>
-              <CardTitle className="text-sm font-bold text-slate-900 tracking-tight">
+              <CardTitle className="text-xs font-bold text-slate-900 tracking-tight">
                 Equity Margin
               </CardTitle>
             </div>
             <Link
               href="/portfolio"
-              className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1 group"
+              className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5 group"
             >
               <span>Statement</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+              <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
             </Link>
           </CardHeader>
 
-          <CardContent className="p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <CardContent className="p-3.5">
+            <div className="flex items-baseline justify-between gap-2">
               <div>
-                <div className="text-2xl sm:text-3xl font-bold font-mono text-slate-900 tracking-tight">
+                <span className="text-[10px] font-medium text-slate-400 block uppercase tracking-wider">
+                  Margin Available
+                </span>
+                <div className="text-xl font-bold font-mono text-slate-900 tracking-tight mt-0.5">
                   ₹{stats.marginAvailable.toLocaleString("en-IN", {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
                   })}
                 </div>
-                <p className="text-xs text-slate-400 font-medium mt-1">
-                  Margin available
-                </p>
               </div>
+            </div>
 
-              <div className="rounded-lg bg-slate-50/80 border border-slate-100 p-3 space-y-1.5 sm:min-w-[180px]">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-500">Margins used</span>
-                  <span className="font-mono font-semibold text-slate-800">
-                    ₹{stats.marginsUsed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-500">Opening balance</span>
-                  <span className="font-mono font-semibold text-slate-800">
-                    ₹{stats.openingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-400 block">Margins Used</span>
+                <span className="font-mono font-semibold text-slate-800 text-xs">
+                  ₹{stats.marginsUsed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block">Opening Balance</span>
+                <span className="font-mono font-semibold text-slate-800 text-xs">
+                  ₹{stats.openingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Commodity Card */}
+        {/* Commodity Margin */}
         <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-          <CardHeader className="py-4 px-6 border-b border-slate-100 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-                <History className="h-4 w-4" />
+          <CardHeader className="py-2.5 px-4 border-b border-slate-100 flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-6 w-6 rounded-md bg-amber-50 text-amber-600 flex items-center justify-center">
+                <History className="h-3.5 w-3.5" />
               </div>
-              <CardTitle className="text-sm font-bold text-slate-900 tracking-tight">
+              <CardTitle className="text-xs font-bold text-slate-900 tracking-tight">
                 Commodity Margin
               </CardTitle>
             </div>
             <Link
               href="/portfolio"
-              className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1 group"
+              className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5 group"
             >
-              <span>View statement</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+              <span>Statement</span>
+              <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
             </Link>
           </CardHeader>
 
-          <CardContent className="p-6">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <CardContent className="p-3.5">
+            <div className="flex items-baseline justify-between gap-2">
               <div>
-                <div className="text-3xl font-bold font-mono text-slate-900 tracking-tight">
-                  0.00
+                <span className="text-[10px] font-medium text-slate-400 block uppercase tracking-wider">
+                  Margin Available
+                </span>
+                <div className="text-xl font-bold font-mono text-slate-900 tracking-tight mt-0.5">
+                  ₹0.00
                 </div>
-                <p className="text-xs text-slate-400 font-medium mt-1">
-                  Margin available
-                </p>
               </div>
+            </div>
 
-              <div className="rounded-lg bg-slate-50/80 border border-slate-100 p-3 space-y-1.5 sm:min-w-[180px]">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-500">Margins used</span>
-                  <span className="font-mono font-semibold text-slate-800">0.00</span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-400 block">Margins Used</span>
+                <span className="font-mono font-semibold text-slate-800 text-xs">₹0.00</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block">Opening Balance</span>
+                <span className="font-mono font-semibold text-slate-800 text-xs">₹0.00</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Portfolio Holdings & Net P&L */}
+        <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
+          <CardHeader className="py-2.5 px-4 border-b border-slate-100 flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-6 w-6 rounded-md bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <PieChartIcon className="h-3.5 w-3.5" />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <CardTitle className="text-xs font-bold text-slate-900 tracking-tight">
+                  Holdings
+                </CardTitle>
+                <Badge variant="secondary" className="text-[9.5px] font-mono py-0 px-1 bg-slate-100 text-slate-700">
+                  {stats.holdingsCount} Assets
+                </Badge>
+              </div>
+            </div>
+
+            <Link
+              href="/portfolio"
+              className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5 group"
+            >
+              <span>Portfolio</span>
+              <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
+            </Link>
+          </CardHeader>
+
+          <CardContent className="p-3.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <div>
+                <span className="text-[10px] font-medium text-slate-400 block uppercase tracking-wider">
+                  Unrealized P&L
+                </span>
+                <div
+                  className={cn(
+                    "text-xl font-bold font-mono tracking-tight mt-0.5 flex items-center gap-1",
+                    stats.pnl > 0
+                      ? "text-emerald-600"
+                      : stats.pnl < 0
+                        ? "text-rose-600"
+                        : "text-slate-900"
+                  )}
+                >
+                  {stats.pnl > 0 ? "+" : ""}
+                  ₹{stats.pnl.toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                  <span className="text-[11px] font-bold">
+                    ({stats.pnl >= 0 ? "+" : ""}{stats.pnlPercent.toFixed(2)}%)
+                  </span>
                 </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-500">Opening balance</span>
-                  <span className="font-mono font-semibold text-slate-800">0.00</span>
-                </div>
+              </div>
+            </div>
+
+            <div className="mt-2.5 pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-400 block">Current Value</span>
+                <span className="font-mono font-semibold text-slate-800 text-xs">
+                  ₹{stats.currentValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block">Invested Value</span>
+                <span className="font-mono font-semibold text-slate-700 text-xs">
+                  ₹{stats.totalInvestment.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* ── 3. Holdings Summary Card (Full Width) ── */}
-      <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-        <CardHeader className="py-4 px-6 border-b border-slate-100 flex flex-row items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <PieChartIcon className="h-4 w-4" />
-            </div>
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-sm font-bold text-slate-900 tracking-tight">
-                Holdings
-              </CardTitle>
-              <Badge variant="secondary" className="text-[10.5px] font-mono py-0 px-1.5 bg-slate-100 text-slate-700">
-                {stats.holdingsCount} Assets
-              </Badge>
-            </div>
-          </div>
-
-          <Link
-            href="/portfolio"
-            className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1 group"
-          >
-            <span>Analytics & Details</span>
-            <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
-          </Link>
-        </CardHeader>
-
-        <CardContent className="p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
-            {/* P&L Display */}
-            <div>
-              <div
-                className={cn(
-                  "text-3xl font-bold font-mono tracking-tight flex items-center gap-1.5",
-                  stats.pnl > 0
-                    ? "text-emerald-600"
-                    : stats.pnl < 0
-                      ? "text-rose-600"
-                      : "text-slate-900"
-                )}
-              >
-                {stats.pnl > 0 ? "+" : ""}
-                ₹{stats.pnl.toLocaleString("en-IN", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
-                {stats.pnl > 0 ? (
-                  <ArrowUpRight className="h-5 w-5 text-emerald-600" />
-                ) : stats.pnl < 0 ? (
-                  <ArrowDownRight className="h-5 w-5 text-rose-600" />
-                ) : null}
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <Badge
-                  variant={stats.pnl >= 0 ? "success" : "destructive"}
-                  className="text-[10.5px] font-mono py-0 px-1.5 font-bold"
-                >
-                  {stats.pnl >= 0 ? "+" : ""}
-                  {stats.pnlPercent.toFixed(2)}%
-                </Badge>
-                <span className="text-xs text-slate-400 font-medium">
-                  Total Unrealized P&L
-                </span>
-              </div>
-            </div>
-
-            {/* Current Value & Investment */}
-            <div className="rounded-lg bg-slate-50/80 border border-slate-100 p-3.5 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500 font-medium">Current Value:</span>
-                <span className="font-mono font-bold text-slate-900">
-                  ₹{stats.currentValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500 font-medium">Total Investment:</span>
-                <span className="font-mono font-semibold text-slate-700">
-                  ₹{stats.totalInvestment.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-            </div>
-
-            {/* Asset Allocation */}
-            <div className="space-y-2">
-              <span className="text-xs font-semibold text-slate-600 block">
-                Portfolio Distribution
-              </span>
-              {allocationBars.length > 0 ? (
-                <>
-                  <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden flex">
-                    {allocationBars.map((bar) => (
-                      <div
-                        key={bar.symbol}
-                        style={{
-                          width: `${bar.pct}%`,
-                          backgroundColor: bar.color,
-                        }}
-                        className="h-full transition-all"
-                        title={`${bar.symbol}: ${bar.pct.toFixed(1)}%`}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex items-center flex-wrap gap-x-3.5 gap-y-1 text-[11px] text-slate-500 pt-0.5">
-                    {allocationBars.map((bar) => (
-                      <div key={bar.symbol} className="flex items-center gap-1">
-                        <div
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: bar.color }}
-                        />
-                        <span className="font-semibold text-slate-700">{bar.symbol}</span>
-                        <span className="text-slate-400 font-mono">{bar.pct.toFixed(0)}%</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div className="text-xs text-slate-400 italic py-1">
-                  No open delivery holdings recorded
-                </div>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* ── 4. Market Movers: Top Gainers & Top Losers (2-Grid) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-3.5">
         {/* Top Gainers */}
         <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-          <CardHeader className="py-3.5 px-5 border-b border-slate-100 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="h-7 w-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <TrendingUp className="h-4 w-4" />
+          <CardHeader className="py-2.5 px-4 border-b border-slate-100 flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-6 w-6 rounded-md bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <TrendingUp className="h-3.5 w-3.5" />
               </div>
-              <CardTitle className="text-sm font-bold text-slate-900 tracking-tight">
+              <CardTitle className="text-xs font-bold text-slate-900 tracking-tight">
                 Top Gainers
               </CardTitle>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+            <div className="flex items-center gap-1">
+              <Badge variant="outline" className="text-[9.5px] font-semibold text-slate-500 bg-slate-50 py-0 px-1.5">
                 1D
               </Badge>
-              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+              <Badge variant="outline" className="text-[9.5px] font-semibold text-slate-500 bg-slate-50 py-0 px-1.5">
                 NIFTY 500
               </Badge>
             </div>
@@ -542,7 +493,7 @@ export default function DashboardPage() {
                         ltp: livePrice || 0,
                       })
                     }
-                    className="py-3 px-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                    className="py-2 px-4 flex items-center justify-between hover:bg-slate-50/80 transition-colors cursor-pointer group"
                   >
                     <div>
                       <div className="font-bold text-slate-900 text-xs uppercase group-hover:text-blue-600 transition-colors flex items-center gap-1.5">
@@ -572,7 +523,7 @@ export default function DashboardPage() {
                 );
               })}
               {(movers?.topGainers || []).length === 0 && (
-                <div className="py-12 text-center text-xs text-slate-400">
+                <div className="py-8 text-center text-xs text-slate-400">
                   Scanning live gainers...
                 </div>
               )}
@@ -582,20 +533,20 @@ export default function DashboardPage() {
 
         {/* Top Losers */}
         <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-          <CardHeader className="py-3.5 px-5 border-b border-slate-100 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="h-7 w-7 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
-                <TrendingDown className="h-4 w-4" />
+          <CardHeader className="py-2.5 px-4 border-b border-slate-100 flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-6 w-6 rounded-md bg-rose-50 text-rose-600 flex items-center justify-center">
+                <TrendingDown className="h-3.5 w-3.5" />
               </div>
-              <CardTitle className="text-sm font-bold text-slate-900 tracking-tight">
+              <CardTitle className="text-xs font-bold text-slate-900 tracking-tight">
                 Top Losers
               </CardTitle>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+            <div className="flex items-center gap-1">
+              <Badge variant="outline" className="text-[9.5px] font-semibold text-slate-500 bg-slate-50 py-0 px-1.5">
                 1D
               </Badge>
-              <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 bg-slate-50">
+              <Badge variant="outline" className="text-[9.5px] font-semibold text-slate-500 bg-slate-50 py-0 px-1.5">
                 NIFTY 500
               </Badge>
             </div>
@@ -619,7 +570,7 @@ export default function DashboardPage() {
                         ltp: livePrice || 0,
                       })
                     }
-                    className="py-3 px-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                    className="py-2 px-4 flex items-center justify-between hover:bg-slate-50/80 transition-colors cursor-pointer group"
                   >
                     <div>
                       <div className="font-bold text-slate-900 text-xs uppercase group-hover:text-blue-600 transition-colors flex items-center gap-1.5">
@@ -649,7 +600,7 @@ export default function DashboardPage() {
                 );
               })}
               {(movers?.topLosers || []).length === 0 && (
-                <div className="py-12 text-center text-xs text-slate-400">
+                <div className="py-8 text-center text-xs text-slate-400">
                   Scanning live losers...
                 </div>
               )}
@@ -657,6 +608,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
 
       {/* ── 5. Renew Session Modal (Pure White Background) ── */}
       <Dialog open={showRenewModal} onOpenChange={setShowRenewModal}>

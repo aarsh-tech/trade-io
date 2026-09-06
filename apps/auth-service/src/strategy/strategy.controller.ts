@@ -87,6 +87,18 @@ export class StrategyController {
     return { success: true };
   }
 
+  @Post(':id/square-off')
+  @ApiOperation({ summary: 'Instantly square off all open positions for this strategy' })
+  async squareOff(@Request() req, @Param('id') id: string) {
+    const strategy = await this.strategyService.get(req.user.id, id);
+    const engine = this.getEngine(strategy.type);
+    if ((engine as any).squareOff) {
+      const result = await (engine as any).squareOff(id);
+      return { success: true, data: result };
+    }
+    return { success: false, message: 'Square-off not supported for this strategy type' };
+  }
+
   @Patch(':id/auto-start')
   @ApiOperation({ summary: 'Toggle auto-start at market open (09:15 IST)' })
   async setAutoStart(

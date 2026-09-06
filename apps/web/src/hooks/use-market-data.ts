@@ -10,6 +10,7 @@ export interface MarketTick {
 
 export function useMarketData(symbols: string[]) {
   const [prices, setPrices] = useState<Record<string, number>>({});
+  const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
 
   // Normalize symbols for stable comparison
@@ -30,6 +31,7 @@ export function useMarketData(symbols: string[]) {
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      setIsConnected(true);
       // Send both raw and prefixed symbol variants to ensure complete matching
       const allSubscriptions: string[] = [];
       symbols.forEach((sym) => {
@@ -59,6 +61,7 @@ export function useMarketData(symbols: string[]) {
     });
 
     socket.on('disconnect', () => {
+      setIsConnected(false);
       // Reconnection handled automatically by socket.io
     });
 
@@ -67,6 +70,7 @@ export function useMarketData(symbols: string[]) {
         socket.emit('unsubscribe', { symbols });
         socket.disconnect();
       }
+      setIsConnected(false);
     };
   }, [symbolsKey]);
 
@@ -76,5 +80,5 @@ export function useMarketData(symbols: string[]) {
     return prices[symbol] ?? prices[rawSym] ?? prices[`NSE:${rawSym}`] ?? prices[`NFO:${rawSym}`] ?? prices[`BSE:${rawSym}`] ?? null;
   }, [prices]);
 
-  return { prices, getPrice };
+  return { prices, getPrice, isConnected };
 }
