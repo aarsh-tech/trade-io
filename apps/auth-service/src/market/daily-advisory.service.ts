@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
-import { WhatsAppService } from './whatsapp.service';
 
 export interface AdvisoryTradeSetup {
   category: 'STOCK_CASH' | 'NIFTY' | 'SENSEX';
@@ -53,111 +52,7 @@ export class DailyAdvisoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly factory: BrokerClientFactory,
-    private readonly whatsAppService: WhatsAppService,
   ) { }
-
-  /**
-   * Scan current live market and broadcast the 3 Setups:
-   * 1. 1 Stock Intraday (Pure Cash Equity)
-   * 2. 1 NIFTY 50 Option
-   * 3. 1 BSE SENSEX Option
-   */
-  async scanAndBroadcastDailyAdvisory(userId?: string): Promise<{
-    success: boolean;
-    report?: DailyAdvisoryReport;
-    sentCount: number;
-    errors: string[];
-  }> {
-    this.logger.log(`Initiating Daily 3-Trade Advisory Scan (1 Stock Cash + 1 NIFTY Option + 1 SENSEX Option)...`);
-
-    const client = await this.getBrokerClient(userId);
-    const report = await this.generateDailyAdvisoryReport(client);
-
-    let totalRecipientsReached = 0;
-    const errors: string[] = [];
-
-    // Find users: if explicit userId, target that user (manual trigger), otherwise all enabled users
-    const users = userId
-      ? await this.prisma.user.findMany({ where: { id: userId } })
-      : await this.prisma.user.findMany({ where: { whatsappAlertsEnabled: true } });
-
-    if (users.length === 0) {
-      return {
-        success: false,
-        report,
-        sentCount: 0,
-        errors: ['No active WhatsApp users found. Please enable WhatsApp Alerts in settings.'],
-      };
-    }
-
-    const isManualTrigger = !!userId;
-
-    for (const u of users) {
-      try {
-        // Send the 3 proper Pre-Entry Watch setups (Stock Cash, Nifty Option, Sensex Option)
-        const messages = [
-          this.formatPreEntryWatchAlert(report.stockSetup),
-          this.formatPreEntryWatchAlert(report.niftySetup),
-          this.formatPreEntryWatchAlert(report.sensexSetup),
-        ];
-
-        let userSent = 0;
-        for (const msg of messages) {
-          const res = await this.whatsAppService.broadcastTradeAlert(u.id, msg, isManualTrigger);
-          if (res.sentCount > 0) userSent += res.sentCount;
-          if (res.errors.length > 0) {
-            errors.push(`${u.email || u.id}: ${Array.from(new Set(res.errors)).join('; ')}`);
-          }
-          // Brief pause between setup cards so messages arrive cleanly in order
-          await new Promise((resolve) => setTimeout(resolve, 1200));
-        }
-
-        if (userSent > 0) {
-          totalRecipientsReached += Math.ceil(userSent / messages.length);
-        }
-      } catch (err: any) {
-        errors.push(`${u.email || u.id}: ${err?.message}`);
-      }
-    }
-
-    return {
-      success: totalRecipientsReached > 0,
-      report,
-      sentCount: totalRecipientsReached,
-      errors: Array.from(new Set(errors)),
-    };
-  }
-
-  /**
-   * Send Test Sample Advisory Alerts (1 Pre-Entry Watch + 1 Official Trigger Alert)
-   */
-  async sendTestAdvisoryBroadcast(userId: string): Promise<{ sentCount: number; errors: string[] }> {
-    const client = await this.getBrokerClient(userId);
-    const report = await this.generateDailyAdvisoryReport(client);
-
-    const messages = [
-      // 1. Stage 1: Pre-Entry Setup Watch
-      this.formatPreEntryWatchAlert(report.niftySetup),
-      // 2. Stage 2: Official Execution Trigger
-      this.formatTriggerAlert(report.niftySetup),
-    ];
-
-    let sentCount = 0;
-    const errors: string[] = [];
-
-    for (const msg of messages) {
-      try {
-        const res = await this.whatsAppService.broadcastTradeAlert(userId, msg, true);
-        sentCount += res.sentCount;
-        if (res.errors.length) errors.push(...res.errors);
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-      } catch (err: any) {
-        errors.push(err?.message || String(err));
-      }
-    }
-
-    return { sentCount: Math.ceil(sentCount / messages.length) || (sentCount > 0 ? 1 : 0), errors: Array.from(new Set(errors)) };
-  }
 
   /**
    * Get latest live advisory report for UI display
@@ -418,7 +313,7 @@ export class DailyAdvisoryService {
     };
   }
 
-  // ── 1. WhatsApp Consolidated Daily Master Card (1 Simple Message) ─────────
+  // ── 1. Consolidated Daily Master Plan Formatter ───────────────────────────
 
   formatConsolidatedAdvisoryReport(report: DailyAdvisoryReport): string {
     const s = report.stockSetup;
@@ -463,7 +358,7 @@ export class DailyAdvisoryService {
     return msg;
   }
 
-  // ── 2. WhatsApp Message Formatter: Stage 1 (Pre-Entry Watch Setup) ─────────
+  // ── 2. Message Formatter: Stage 1 (Pre-Entry Watch Setup) ──────────────────
 
   formatPreEntryWatchAlert(setup: AdvisoryTradeSetup): string {
     const dirEmoji = setup.direction === 'BULLISH' ? '🟢' : '🔴';
@@ -500,7 +395,7 @@ export class DailyAdvisoryService {
     return msg;
   }
 
-  // ── 3. WhatsApp Message Formatter: Stage 2 (Official Execution Trigger) ──────
+  // ── 3. Message Formatter: Stage 2 (Official Execution Trigger) ──────────────
 
   formatTriggerAlert(setup: AdvisoryTradeSetup): string {
     const dirEmoji = setup.direction === 'BULLISH' ? '🟢' : '🔴';
@@ -548,7 +443,7 @@ export class DailyAdvisoryService {
     return msg;
   }
 
-  // ── 4. WhatsApp Message Formatter: Stage 3 (Target Trailing Update) ──────────
+  // ── 4. Message Formatter: Stage 3 (Target Trailing Update) ──────────────────
 
   formatTargetHitAlert(setup: AdvisoryTradeSetup, targetNum: 1 | 2 = 1): string {
     const isStockCash = setup.category === 'STOCK_CASH';

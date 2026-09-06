@@ -1,33 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { whatsappApi } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { marketApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { WhatsAppAlertsModal } from "@/components/dashboard/WhatsAppAlertsModal";
 import {
   Flame,
-  Send,
   Zap,
   RefreshCw,
   Copy,
   Check,
-  Smartphone,
-  CheckCircle2,
   Clock,
   ShieldCheck,
   TrendingUp,
-  TrendingDown,
   Sparkles,
-  Layers,
   ArrowUpRight,
   ArrowDownRight,
-  AlertTriangle,
-  Loader2,
-  MessageSquare,
-  Settings2,
+  BookOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -65,92 +56,21 @@ interface AdvisoryReport {
 export default function DailyAdvisoryPage() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [previewTab, setPreviewTab] = useState<"stock" | "nifty" | "sensex" | "trailing">("stock");
-  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
-  const [sendingKey, setSendingKey] = useState<string | null>(null);
 
-  // 1. Fetch Status
-  const { data: statusData } = useQuery({
-    queryKey: ["whatsapp-status"],
-    queryFn: async () => {
-      const res = await whatsappApi.getStatus();
-      return res.data?.data;
-    },
-    refetchInterval: 15000,
-  });
-
-  // 2. Fetch Live Advisory Setups
+  // Fetch Live Advisory Setups
   const { data: reportData, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["advisory-report"],
     queryFn: async () => {
-      const res = await whatsappApi.getAdvisoryReport();
+      const res = await marketApi.getAdvisoryReport();
       return res.data?.data as AdvisoryReport;
     },
     refetchInterval: 30000,
   });
 
-  const isConnected = statusData?.isConnected ?? false;
-
-  // 3. Trigger Morning 3-Watchlist Broadcast
-  const broadcastMutation = useMutation({
-    mutationFn: async () => {
-      const res = await whatsappApi.triggerAdvisoryNow();
-      return res.data;
-    },
-    onSuccess: (data) => {
-      if (data?.success) {
-        toast.success(data.message || "3-Trade Morning Watchlist setups dispatched to WhatsApp!");
-      } else {
-        toast.error(data?.message || "Broadcast Notice: Check WhatsApp connection & recipients");
-      }
-    },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.message || "Failed to broadcast advisory");
-    },
-  });
-
-  // 4. Send Sample Test Advisory
-  const testMutation = useMutation({
-    mutationFn: async () => {
-      const res = await whatsappApi.testAdvisory();
-      return res.data;
-    },
-    onSuccess: (data) => {
-      if (data?.success) {
-        toast.success(data.message || "Sample Pre-Entry Watch & Trigger Advisory alerts sent to your WhatsApp!");
-      } else {
-        toast.error(data?.message || "Failed to send test alerts");
-      }
-    },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.message || "Failed to send test advisory");
-    },
-  });
-
-  // 5. Send Specific Single Setup Alert (Watch or Trigger)
-  const sendSingleMutation = useMutation({
-    mutationFn: async ({ message, key }: { message: string; key: string }) => {
-      setSendingKey(key);
-      const res = await whatsappApi.sendMessage({ message });
-      return res.data;
-    },
-    onSuccess: (data) => {
-      if (data?.success) {
-        toast.success(data.message || "Trade alert dispatched to WhatsApp!");
-      } else {
-        toast.error(data?.message || "Failed to send alert");
-      }
-      setSendingKey(null);
-    },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.message || "Failed to send alert");
-      setSendingKey(null);
-    },
-  });
-
   function handleCopyAlertText(key: string, text: string) {
     navigator.clipboard.writeText(text);
     setCopiedKey(key);
-    toast.success("Formatted alert message copied to clipboard!");
+    toast.success("Trade setup copied to clipboard!");
     setTimeout(() => setCopiedKey(null), 2500);
   }
 
@@ -176,10 +96,10 @@ export default function DailyAdvisoryPage() {
       : Math.abs(((setup.cmp - setup.stopLoss) / setup.cmp) * 100).toFixed(0);
 
     if (stage === "watch") {
-      return `━━━━━━━━━━━━━━━━━━━━\n👀 *TRADEIO PRE-ENTRY SETUP WATCH*\n🎯 *${setup.assetName}*\n━━━━━━━━━━━━━━━━━━━━\n\n${dirEmoji} *${setup.symbol} ${dirVerb} ${setup.triggerPrice}*\n▸ Current Price: *₹${setup.spotLtp.toFixed(2)}*\n▸ Setup: *${setup.setupRationale}*\n\n💎 *ADD TO WATCHLIST NOW:*\n▸ ${isStockCash ? "Script" : "Contract"}: *${setup.contractSymbol}*\n${!isStockCash ? `▸ Approx CMP: *₹${setup.cmp.toFixed(2)}*\n` : ""}▸ ⚡ *TRIGGER:* ${setup.triggerCondition}\n\n🎯 *INTRADAY TRADE PLAN:*\n▸ Planned Entry: *${setup.entryZone}*\n▸ Stop-Loss (SL): *₹${setup.stopLoss.toFixed(2)}* (Strict -${slPct}% SL)\n▸ Targets: *₹${setup.target1.toFixed(2)} / ₹${setup.target2.toFixed(2)}${setup.target3 ? ` / ₹${setup.target3.toFixed(2)}` : "" }*\n${setup.lotSize && setup.maxRiskPerLot ? `▸ Lot Size: *${setup.lotSize} Qty* | Max Risk: *₹${setup.maxRiskPerLot.toFixed(2)}*\n` : ""}\n⚠️ _Keep on watchlist. Execute strictly upon confirmed trigger level crossing!_\n━━━━━━━━━━━━━━━━━━━━\n⚡ _TradeIO Institutional Pre-Market Intelligence_`;
+      return `━━━━━━━━━━━━━━━━━━━━\n👀 TRADEIO PRE-ENTRY SETUP WATCH\n🎯 ${setup.assetName}\n━━━━━━━━━━━━━━━━━━━━\n\n${dirEmoji} ${setup.symbol} ${dirVerb} ${setup.triggerPrice}\n▸ Current Price: ₹${setup.spotLtp.toFixed(2)}\n▸ Setup: ${setup.setupRationale}\n\n💎 ADD TO WATCHLIST NOW:\n▸ ${isStockCash ? "Script" : "Contract"}: ${setup.contractSymbol}\n${!isStockCash ? `▸ Approx CMP: ₹${setup.cmp.toFixed(2)}\n` : ""}▸ ⚡ TRIGGER: ${setup.triggerCondition}\n\n🎯 INTRADAY TRADE PLAN:\n▸ Planned Entry: ${setup.entryZone}\n▸ Stop-Loss (SL): ₹${setup.stopLoss.toFixed(2)} (Strict -${slPct}% SL)\n▸ Targets: ₹${setup.target1.toFixed(2)} / ₹${setup.target2.toFixed(2)}${setup.target3 ? ` / ₹${setup.target3.toFixed(2)}` : ""}\n${setup.lotSize && setup.maxRiskPerLot ? `▸ Lot Size: ${setup.lotSize} Qty | Max Risk: ₹${setup.maxRiskPerLot.toFixed(2)}\n` : ""}\n⚠️ Keep on watchlist. Execute strictly upon confirmed trigger level crossing!\n━━━━━━━━━━━━━━━━━━━━\n⚡ TradeIO Institutional Pre-Market Intelligence`;
     }
 
-    return `━━━━━━━━━━━━━━━━━━━━\n🚀 *TRADEIO OFFICIAL TRADE TRIGGER*\n🎯 *${setup.assetName}*\n━━━━━━━━━━━━━━━━━━━━\n\n${dirEmoji} *${setup.symbol} ${dirVerb} ${setup.triggerPrice} CONFIRMED*\n▸ Trigger Level Hit @ *₹${setup.triggerPrice.toFixed(2)}* with strong volume confirmation!\n\n💎 *EXECUTE NOW:*\n▸ ${isStockCash ? "Action: BUY" : "Buy"}: *${setup.contractSymbol}*\n▸ Entry Zone: *${setup.entryZone}*\n▸ Stop-Loss (SL): *₹${setup.stopLoss.toFixed(2)}* (-${slPct}% Strict SL)\n\n🎯 *PROFIT TARGETS:*\n${isStockCash ? `▸ Target 1: *₹${setup.target1.toFixed(2)}* (+${t1GainPct}% • Book 50% & Trail SL to Cost)\n▸ Target 2: *₹${setup.target2.toFixed(2)}* (+${t2GainPct}%)\n${setup.target3 ? `▸ Target 3: *₹${setup.target3.toFixed(2)}* (+${t3GainPct}%)\n` : ""}` : `▸ Target 1: *₹${setup.target1.toFixed(2)}* (+${t1GainPct}% Gain • Trail SL to Cost)\n▸ Target 2: *₹${setup.target2.toFixed(2)}* (+${t2GainPct}% Runner)\n${setup.target3 ? `▸ Target 3: *₹${setup.target3.toFixed(2)}* (+${t3GainPct}% Super Runner)\n` : ""}${setup.lotSize ? `▸ Lot Size: *${setup.lotSize} Qty* | Risk: *₹${setup.maxRiskPerLot?.toFixed(2)}*\n` : ""}`}\n━━━━━━━━━━━━━━━━━━━━\n💡 _TradeIO Algorithmic Systems • Trade with disciplined Risk Management_`;
+    return `━━━━━━━━━━━━━━━━━━━━\n🚀 TRADEIO OFFICIAL TRADE TRIGGER\n🎯 ${setup.assetName}\n━━━━━━━━━━━━━━━━━━━━\n\n${dirEmoji} ${setup.symbol} ${dirVerb} ${setup.triggerPrice} CONFIRMED\n▸ Trigger Level Hit @ ₹${setup.triggerPrice.toFixed(2)} with strong volume confirmation!\n\n💎 EXECUTE NOW:\n▸ ${isStockCash ? "Action: BUY" : "Buy"}: ${setup.contractSymbol}\n▸ Entry Zone: ${setup.entryZone}\n▸ Stop-Loss (SL): ₹${setup.stopLoss.toFixed(2)} (-${slPct}% Strict SL)\n\n🎯 PROFIT TARGETS:\n${isStockCash ? `▸ Target 1: ₹${setup.target1.toFixed(2)} (+${t1GainPct}% • Book 50% & Trail SL to Cost)\n▸ Target 2: ₹${setup.target2.toFixed(2)} (+${t2GainPct}%)\n${setup.target3 ? `▸ Target 3: ₹${setup.target3.toFixed(2)} (+${t3GainPct}%)\n` : ""}` : `▸ Target 1: ₹${setup.target1.toFixed(2)} (+${t1GainPct}% Gain • Trail SL to Cost)\n▸ Target 2: ₹${setup.target2.toFixed(2)} (+${t2GainPct}% Runner)\n${setup.target3 ? `▸ Target 3: ₹${setup.target3.toFixed(2)} (+${t3GainPct}% Super Runner)\n` : ""}${setup.lotSize ? `▸ Lot Size: ${setup.lotSize} Qty | Risk: ₹${setup.maxRiskPerLot?.toFixed(2)}\n` : ""}`}\n━━━━━━━━━━━━━━━━━━━━\n💡 TradeIO Algorithmic Systems • Trade with disciplined Risk Management`;
   }
 
   const setups = [
@@ -190,7 +110,7 @@ export default function DailyAdvisoryPage() {
 
   return (
     <div className="space-y-6 pb-12 animate-[fade-up_0.3s_ease_both]">
-      {/* ── 1. Page Header & Live Status Banner ── */}
+      {/* ── 1. Page Header ── */}
       <div className="rounded-3xl bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 text-white p-6 sm:p-8 shadow-xl relative overflow-hidden border border-slate-800">
         <div className="absolute right-0 top-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute left-1/3 bottom-0 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -202,22 +122,8 @@ export default function DailyAdvisoryPage() {
                 <Flame className="h-3.5 w-3.5 fill-amber-400 text-amber-400" /> DAILY 3-TRADE ADVISORY
               </span>
 
-              <button
-                onClick={() => setShowWhatsAppModal(true)}
-                title="Click to manage WhatsApp Connection & Recipients"
-                className={cn(
-                  "inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1 uppercase rounded-full shadow-xs cursor-pointer hover:scale-105 transition-transform",
-                  isConnected
-                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30"
-                    : "bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 animate-pulse"
-                )}
-              >
-                <Smartphone className="h-3.5 w-3.5" />
-                {isConnected ? "WhatsApp Active (Manage)" : "WhatsApp Disconnected (Connect QR)"}
-              </button>
-
               <span className="inline-flex items-center gap-1.5 text-slate-300 border border-slate-700 bg-slate-800/50 px-3 py-1 text-[11px] font-semibold rounded-full shadow-xs">
-                <Clock className="h-3.5 w-3.5 text-slate-400" /> Auto-Schedule: 09:28 AM IST
+                <Clock className="h-3.5 w-3.5 text-slate-400" /> Auto-Generated: 09:28 AM IST
               </span>
             </div>
 
@@ -225,7 +131,7 @@ export default function DailyAdvisoryPage() {
               Daily 3-Trade Advisory (1 Stock + NIFTY + SENSEX)
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-              Automated high-probability intraday setups for <strong className="text-white">1 Stock Cash Intraday (NSE EQ)</strong>, <strong className="text-white">1 NIFTY 50 Option</strong>, and <strong className="text-white">1 BSE SENSEX Option</strong>. Features advance watchlist alert (3–5 mins before breakout) followed by confirmed execution trigger.
+              Automated high-probability intraday setups for <strong className="text-white">1 Stock Cash Intraday (NSE EQ)</strong>, <strong className="text-white">1 NIFTY 50 Option</strong>, and <strong className="text-white">1 BSE SENSEX Option</strong>. Features 2-stage execution plan: Pre-breakout watch preparation followed by verified trigger confirmation.
             </p>
           </div>
 
@@ -234,47 +140,12 @@ export default function DailyAdvisoryPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setShowWhatsAppModal(true)}
-              className="h-10 px-4 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border-emerald-700/60 text-xs font-bold rounded-xl gap-2 shadow-xs"
-            >
-              <Smartphone className="h-3.5 w-3.5 text-emerald-400" />
-              WhatsApp Setup & Recipients
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
               onClick={() => refetch()}
               disabled={isFetching}
-              className="h-10 px-3.5 bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700 text-xs font-semibold rounded-xl gap-2 shadow-xs"
+              className="h-10 px-4 bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700 text-xs font-semibold rounded-xl gap-2 shadow-xs cursor-pointer"
             >
               <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin text-emerald-400")} />
               Refresh Setups
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => testMutation.mutate()}
-              disabled={!isConnected || testMutation.isPending}
-              className="h-10 px-4 bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700 text-xs font-semibold rounded-xl gap-2 shadow-xs"
-            >
-              {testMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 text-blue-400" />}
-              Send Sample Alerts
-            </Button>
-
-            <Button
-              size="sm"
-              onClick={() => broadcastMutation.mutate()}
-              disabled={!isConnected || broadcastMutation.isPending}
-              className="h-10 px-5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-950/40 gap-2 border border-emerald-400/20"
-            >
-              {broadcastMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Zap className="h-4 w-4 fill-white" />
-              )}
-              Broadcast Live 3 Setups
             </Button>
           </div>
         </div>
@@ -403,61 +274,36 @@ export default function DailyAdvisoryPage() {
                     </div>
                   </div>
 
-                  {/* Card Action Buttons: Individual Direct WhatsApp Dispatch */}
+                  {/* Card Action Buttons: Copy Plan Helpers */}
                   <div className="p-4 sm:p-5 pt-0 space-y-2">
                     <div className="grid grid-cols-2 gap-2">
                       <Button
                         size="sm"
-                        disabled={!isConnected || sendingKey === `${item.key}-watch`}
-                        onClick={() =>
-                          sendSingleMutation.mutate({
-                            message: getFormattedAlertText(setup, "watch"),
-                            key: `${item.key}-watch`,
-                          })
-                        }
-                        className="h-8.5 text-[11px] font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-xl gap-1.5 shadow-xs"
+                        variant="outline"
+                        onClick={() => handleCopyAlertText(`${item.key}-watch`, getFormattedAlertText(setup, "watch"))}
+                        className="h-8.5 text-[11px] font-bold text-slate-700 rounded-xl gap-1.5 border-slate-200 hover:bg-slate-50"
                       >
-                        {sendingKey === `${item.key}-watch` ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {copiedKey === `${item.key}-watch` ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
                         ) : (
-                          <Smartphone className="h-3.5 w-3.5 text-emerald-400" />
+                          <Copy className="h-3.5 w-3.5 text-slate-400" />
                         )}
-                        Send Watch Setup
+                        Copy Watch
                       </Button>
 
                       <Button
                         size="sm"
-                        disabled={!isConnected || sendingKey === `${item.key}-trigger`}
-                        onClick={() =>
-                          sendSingleMutation.mutate({
-                            message: getFormattedAlertText(setup, "trigger"),
-                            key: `${item.key}-trigger`,
-                          })
-                        }
-                        className="h-8.5 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl gap-1.5 shadow-xs"
+                        onClick={() => handleCopyAlertText(`${item.key}-trigger`, getFormattedAlertText(setup, "trigger"))}
+                        className="h-8.5 text-[11px] font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-xl gap-1.5 shadow-xs"
                       >
-                        {sendingKey === `${item.key}-trigger` ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {copiedKey === `${item.key}-trigger` ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-400" />
                         ) : (
-                          <Zap className="h-3.5 w-3.5 fill-white" />
+                          <Zap className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
                         )}
-                        Broadcast Trigger
+                        Copy Trigger
                       </Button>
                     </div>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleCopyAlertText(item.key, getFormattedAlertText(setup, "trigger"))}
-                      className="w-full h-8 text-[11px] font-medium text-slate-600 rounded-xl gap-1.5 border-slate-200 hover:bg-slate-50"
-                    >
-                      {copiedKey === item.key ? (
-                        <Check className="h-3.5 w-3.5 text-emerald-600" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5 text-slate-400" />
-                      )}
-                      Copy Trigger Message
-                    </Button>
                   </div>
                 </Card>
               );
@@ -466,16 +312,16 @@ export default function DailyAdvisoryPage() {
         )}
       </div>
 
-      {/* ── 3. Interactive Mobile WhatsApp Preview Simulation ── */}
+      {/* ── 3. Trade Execution Protocols & Plan Preview ── */}
       <Card className="border-slate-200/90 bg-white shadow-xs rounded-2xl overflow-hidden">
         <CardHeader className="p-4 sm:p-5 pb-3 bg-slate-50/50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <CardTitle className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-emerald-600" />
-              Interactive WhatsApp Advisory Alert Simulation
+              <BookOpen className="h-4 w-4 text-indigo-600" />
+              Institutional Trade Execution Protocols
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
-              See how your subscribers and WhatsApp groups receive the 2-stage pre-entry and trigger alerts
+              Discipline guidelines and complete clipboard-formatted trade plans for today
             </CardDescription>
           </div>
 
@@ -483,314 +329,131 @@ export default function DailyAdvisoryPage() {
             <button
               onClick={() => setPreviewTab("stock")}
               className={cn(
-                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer",
                 previewTab === "stock"
                   ? "bg-purple-600 text-white shadow-xs"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               )}
             >
-              1️⃣ Stock Cash Preview
+              1️⃣ Stock Cash Plan
             </button>
             <button
               onClick={() => setPreviewTab("nifty")}
               className={cn(
-                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer",
                 previewTab === "nifty"
                   ? "bg-blue-600 text-white shadow-xs"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               )}
             >
-              2️⃣ NIFTY Option Preview
+              2️⃣ NIFTY Option Plan
             </button>
             <button
               onClick={() => setPreviewTab("sensex")}
               className={cn(
-                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer",
                 previewTab === "sensex"
                   ? "bg-amber-600 text-white shadow-xs"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               )}
             >
-              3️⃣ SENSEX Option Preview
+              3️⃣ SENSEX Option Plan
             </button>
             <button
               onClick={() => setPreviewTab("trailing")}
               className={cn(
-                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer",
                 previewTab === "trailing"
                   ? "bg-emerald-600 text-white shadow-xs"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               )}
             >
-              🎯 Target 1 Trailing (+29%)
+              🎯 Trailing Rules
             </button>
           </div>
         </CardHeader>
 
-        <CardContent className="p-4 sm:p-8 bg-[#0b141a] flex justify-center">
-          {/* Option A: Stock Cash Intraday */}
-          {previewTab === "stock" && (() => {
-            const stock = reportData?.stockSetup || {
-              symbol: "TATAMOTORS",
-              spotLtp: 985.4,
-              triggerPrice: 992.0,
-              stopLoss: 985.0,
-              target1: 1008.0,
-              target2: 1025.0,
-              target3: 1050.0,
-              contractSymbol: "TATAMOTORS (NSE Cash EQ)",
-              direction: "BULLISH",
-              setupRationale: "15-min Range Compression near Day High (+1.25%)",
-              entryZone: "₹990.00 – ₹992.00",
-            };
-            const isBull = stock.direction === "BULLISH";
-            const dirEmoji = isBull ? "🟢" : "🔴";
-            const dirVerb = isBull ? "Bullish above" : "Bearish below";
+        <CardContent className="p-4 sm:p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pb-2">
+            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/60 space-y-1.5">
+              <span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wide flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4 text-indigo-600" /> Rule 1: Watch Before Trigger
+              </span>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Add the specified strike or cash stock to your terminal watchlist 3–5 minutes before the trigger price is breached. Never place orders before the breakout candle closes.
+              </p>
+            </div>
 
-            return (
-              <div className="max-w-md w-full space-y-3 font-sans text-xs sm:text-[13px] leading-relaxed">
-                {/* Stage 1 Bubble */}
-                <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
-                  <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
-                    ━━━━━━━━━━━━━━━━━━━━{"\n"}
-                    👀 <strong className="text-white">TRADEIO PRE-ENTRY SETUP WATCH</strong>{"\n"}
-                    🎯 <strong>1️⃣ STOCK INTRADAY (NSE CASH)</strong>{"\n"}
-                    ━━━━━━━━━━━━━━━━━━━━
-                  </div>
-                  <div className="space-y-1">
-                    <p className="font-bold text-emerald-300">{dirEmoji} {stock.symbol} {dirVerb} {stock.triggerPrice.toFixed(2)}</p>
-                    <p className="text-slate-300">▸ Current Price: <strong>₹{stock.spotLtp.toFixed(2)}</strong></p>
-                    <p className="text-slate-300">▸ Setup: {stock.setupRationale}</p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 space-y-1">
-                    <p className="font-bold text-yellow-300">💎 ADD TO WATCHLIST NOW:</p>
-                    <p>▸ Script: <strong className="text-white">{stock.contractSymbol}</strong></p>
-                    <p className="text-emerald-200">▸ ⚡ <strong>TRIGGER:</strong> Buy when price crosses above ₹{stock.triggerPrice.toFixed(2)}</p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
-                    <p>▸ Planned Entry: <strong>{stock.entryZone}</strong></p>
-                    <p>▸ Stop-Loss (SL): <strong>₹{stock.stopLoss.toFixed(2)}</strong> (Strict Intraday SL)</p>
-                    <p>▸ Targets: <strong>₹{stock.target1.toFixed(2)} / ₹{stock.target2.toFixed(2)} / ₹{stock.target3?.toFixed(2)}</strong></p>
-                    <p className="text-yellow-200/90 pt-1">⚠️ <em>Keep on watchlist. Buy only on confirmed breakout above {stock.triggerPrice.toFixed(0)}!</em></p>
-                  </div>
-                  <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
-                    <span>09:22 AM</span>
-                    <span className="text-[#53bdeb]">✓✓</span>
-                  </div>
-                </div>
+            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/60 space-y-1.5">
+              <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide flex items-center gap-1.5">
+                <TrendingUp className="h-4 w-4 text-emerald-600" /> Rule 2: Trail SL to Cost
+              </span>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                When Target 1 (+28% on options, +0.85% on stock) is hit, book 50% quantities and trail your Stop-Loss immediately to your purchase price. The trade is now 100% risk-free.
+              </p>
+            </div>
 
-                {/* Stage 2 Bubble */}
-                <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
-                  <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
-                    ━━━━━━━━━━━━━━━━━━━━{"\n"}
-                    🚀 <strong className="text-white">TRADEIO OFFICIAL TRADE TRIGGER</strong>{"\n"}
-                    🎯 <strong>1️⃣ STOCK INTRADAY (NSE CASH)</strong>{"\n"}
-                    ━━━━━━━━━━━━━━━━━━━━
-                  </div>
-                  <div className="space-y-1">
-                    <p className="font-bold text-emerald-300">{dirEmoji} {stock.symbol} {dirVerb} {stock.triggerPrice.toFixed(2)} CONFIRMED</p>
-                    <p className="text-slate-300">▸ Level Hit @ <strong>₹{stock.triggerPrice.toFixed(2)}</strong> with strong volume confirmation!</p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 space-y-1">
-                    <p className="font-bold text-emerald-300">💎 EXECUTE NOW:</p>
-                    <p>▸ Action: BUY <strong className="text-white">{stock.contractSymbol}</strong></p>
-                    <p>▸ Entry Zone: <strong>{stock.entryZone}</strong></p>
-                    <p>▸ Stop-Loss (SL): <strong>₹{stock.stopLoss.toFixed(2)}</strong></p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
-                    <p>▸ Target 1: <strong className="text-emerald-400">₹{stock.target1.toFixed(2)}</strong> (Book 50% & Trail SL to Cost)</p>
-                    <p>▸ Target 2: <strong className="text-emerald-400">₹{stock.target2.toFixed(2)}</strong></p>
-                    <p>▸ Target 3: <strong className="text-emerald-400">₹{stock.target3?.toFixed(2)}</strong></p>
-                  </div>
-                  <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
-                    <span>09:31 AM</span>
-                    <span className="text-[#53bdeb]">✓✓</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/60 space-y-1.5">
+              <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wide flex items-center gap-1.5">
+                <Clock className="h-4 w-4 text-amber-600" /> Rule 3: 3:05 PM Mandatory Exit
+              </span>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Never hold intraday positions overnight. If targets or stop-loss are not reached by 3:05 PM IST, the terminal automatically squares off all positions at market price.
+              </p>
+            </div>
+          </div>
 
-          {/* Option B: NIFTY 50 Option */}
-          {previewTab === "nifty" && (() => {
-            const nifty = reportData?.niftySetup || {
-              contractSymbol: "NIFTY 24100 PE",
-              spotLtp: 24125.0,
-              triggerPrice: 24100.0,
-              cmp: 90.0,
-              stopLoss: 74.0,
-              target1: 116.0,
-              target2: 145.0,
-              target3: 180.0,
-              lotSize: 65,
-              maxRiskPerLot: 1040,
-              direction: "BEARISH",
-              setupRationale: "Breakdown below 15-min Opening Range & VWAP",
-              entryZone: "₹90.00 – ₹94.00",
-            };
-            const isBull = nifty.direction === "BULLISH";
-            const dirEmoji = isBull ? "🟢" : "🔴";
-            const dirVerb = isBull ? "Bullish above" : "Bearish below";
+          {/* Selected Plan Details Box */}
+          <div className="p-4 sm:p-5 rounded-xl bg-slate-900 text-slate-100 font-mono text-xs space-y-2 border border-slate-800">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="text-[11px] text-slate-400 uppercase tracking-wider font-sans font-bold">
+                Formatted Setup Preview ({previewTab.toUpperCase()})
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const targetSetup =
+                    previewTab === "stock"
+                      ? reportData?.stockSetup
+                      : previewTab === "nifty"
+                      ? reportData?.niftySetup
+                      : reportData?.sensexSetup;
+                  if (targetSetup) {
+                    handleCopyAlertText(`preview-${previewTab}`, getFormattedAlertText(targetSetup, "trigger"));
+                  } else {
+                    toast.info("Setup data loading, please wait...");
+                  }
+                }}
+                className="h-7 px-2.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg gap-1.5"
+              >
+                {copiedKey === `preview-${previewTab}` ? (
+                  <Check className="h-3 w-3 text-emerald-400" />
+                ) : (
+                  <Copy className="h-3 w-3 text-slate-400" />
+                )}
+                Copy Full Plan
+              </Button>
+            </div>
 
-            return (
-              <div className="max-w-md w-full space-y-3 font-sans text-xs sm:text-[13px] leading-relaxed">
-                {/* Stage 1 Bubble */}
-                <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
-                  <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
-                    ━━━━━━━━━━━━━━━━━━━━{"\n"}
-                    👀 <strong className="text-white">TRADEIO PRE-ENTRY SETUP WATCH</strong>{"\n"}
-                    🎯 <strong>2️⃣ NIFTY 50 INDEX OPTION</strong>{"\n"}
-                    ━━━━━━━━━━━━━━━━━━━━
-                  </div>
-                  <div className="space-y-1">
-                    <p className="font-bold text-rose-300">{dirEmoji} NIFTY {dirVerb} {nifty.triggerPrice.toFixed(0)}</p>
-                    <p className="text-slate-300">▸ Current Spot: <strong>₹{nifty.spotLtp.toFixed(2)}</strong></p>
-                    <p className="text-slate-300">▸ Setup: {nifty.setupRationale}</p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 space-y-1">
-                    <p className="font-bold text-yellow-300">💎 ADD TO WATCHLIST NOW:</p>
-                    <p>▸ Contract: <strong className="text-white">{nifty.contractSymbol}</strong></p>
-                    <p>▸ Approx CMP: <strong>₹{nifty.cmp.toFixed(2)}</strong></p>
-                    <p className="text-emerald-200">▸ ⚡ <strong>TRIGGER:</strong> Buy when Spot breaks below ₹{nifty.triggerPrice.toFixed(0)}</p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
-                    <p>▸ Stop-Loss (SL): <strong>₹{nifty.stopLoss.toFixed(2)}</strong> (Strict 18% SL)</p>
-                    <p>▸ Targets: <strong>₹{nifty.target1.toFixed(2)} (+29%) / ₹{nifty.target2.toFixed(2)} (+61%) / ₹{nifty.target3?.toFixed(2)} (2X)</strong></p>
-                    <p>▸ Lot Size: <strong>{nifty.lotSize} Qty</strong> | Max Risk: <strong>₹{nifty.maxRiskPerLot?.toFixed(0)}</strong></p>
-                    <p className="text-yellow-200/90 pt-1">⚠️ <em>Keep strike on watchlist. Wait for official trigger confirmation before entering!</em></p>
-                  </div>
-                  <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
-                    <span>09:28 AM</span>
-                    <span className="text-[#53bdeb]">✓✓</span>
-                  </div>
-                </div>
-
-                {/* Stage 2 Bubble */}
-                <div className="bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2">
-                  <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
-                    ━━━━━━━━━━━━━━━━━━━━{"\n"}
-                    🚀 <strong className="text-white">TRADEIO OFFICIAL TRADE TRIGGER</strong>{"\n"}
-                    🎯 <strong>2️⃣ NIFTY 50 INDEX OPTION</strong>{"\n"}
-                    ━━━━━━━━━━━━━━━━━━━━
-                  </div>
-                  <div className="space-y-1">
-                    <p className="font-bold text-rose-300">{dirEmoji} NIFTY {dirVerb} {nifty.triggerPrice.toFixed(0)} CONFIRMED</p>
-                    <p className="text-slate-300">▸ Spot Level Hit @ <strong>₹{nifty.triggerPrice.toFixed(2)}</strong> with strong volume confirmation!</p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 space-y-1">
-                    <p className="font-bold text-emerald-300">💎 EXECUTE NOW:</p>
-                    <p>▸ Buy: <strong className="text-white">{nifty.contractSymbol}</strong></p>
-                    <p>▸ Entry Zone: <strong>{nifty.entryZone}</strong></p>
-                    <p>▸ Stop-Loss (SL): <strong>₹{nifty.stopLoss.toFixed(2)}</strong> (Strict 18% SL)</p>
-                  </div>
-                  <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
-                    <p>▸ Target 1: <strong className="text-emerald-400">₹{nifty.target1.toFixed(2)}</strong> (+29% Gain • Trail SL to Cost)</p>
-                    <p>▸ Target 2: <strong className="text-emerald-400">₹{nifty.target2.toFixed(2)}</strong> (+61% Runner)</p>
-                    <p>▸ Target 3: <strong className="text-emerald-400">₹{nifty.target3?.toFixed(2)}</strong> (+100% Doubler)</p>
-                  </div>
-                  <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
-                    <span>09:33 AM</span>
-                    <span className="text-[#53bdeb]">✓✓</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Option C: BSE SENSEX Option */}
-          {previewTab === "sensex" && (() => {
-            const sensex = reportData?.sensexSetup || {
-              contractSymbol: "SENSEX 80500 CE",
-              spotLtp: 80450.0,
-              triggerPrice: 80500.0,
-              cmp: 140.0,
-              stopLoss: 115.0,
-              target1: 180.0,
-              target2: 220.0,
-              target3: 280.0,
-              lotSize: 20,
-              maxRiskPerLot: 500,
-              direction: "BULLISH",
-              setupRationale: "15-min Range Compression near Day High",
-              entryZone: "₹140.00 – ₹146.00",
-            };
-            const isBull = sensex.direction === "BULLISH";
-            const dirEmoji = isBull ? "🟢" : "🔴";
-            const dirVerb = isBull ? "Bullish breakout above" : "Bearish breakdown below";
-
-            return (
-              <div className="max-w-md w-full bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2 text-xs sm:text-[13px] leading-relaxed">
-                <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
-                  ━━━━━━━━━━━━━━━━━━━━{"\n"}
-                  🚀 <strong className="text-white">TRADEIO OFFICIAL TRADE TRIGGER</strong>{"\n"}
-                  🎯 <strong>3️⃣ BSE SENSEX INDEX OPTION</strong>{"\n"}
-                  ━━━━━━━━━━━━━━━━━━━━
-                </div>
-                <div className="space-y-1">
-                  <p className="font-bold text-emerald-300">{dirEmoji} SENSEX {dirVerb} {sensex.triggerPrice.toFixed(0)} CONFIRMED</p>
-                  <p className="text-slate-300">▸ Spot Level Hit @ <strong>₹{sensex.triggerPrice.toFixed(2)}</strong> with strong buying expansion!</p>
-                </div>
-                <div className="border-t border-[#025144] pt-2 space-y-1">
-                  <p className="font-bold text-yellow-300">💎 EXECUTE NOW:</p>
-                  <p>▸ Buy: <strong className="text-white">{sensex.contractSymbol}</strong> (BFO)</p>
-                  <p>▸ Entry Zone: <strong>{sensex.entryZone}</strong></p>
-                  <p>▸ Stop-Loss (SL): <strong>₹{sensex.stopLoss.toFixed(2)}</strong> (Lot Size: {sensex.lotSize})</p>
-                </div>
-                <div className="border-t border-[#025144] pt-2 text-[11px] text-slate-300 space-y-0.5">
-                  <p>▸ Target 1: <strong className="text-emerald-400">₹{sensex.target1.toFixed(2)}</strong> (+29% Gain • Trail SL to Cost)</p>
-                  <p>▸ Target 2: <strong className="text-emerald-400">₹{sensex.target2.toFixed(2)}</strong> (+57% Runner)</p>
-                  <p>▸ Target 3: <strong className="text-emerald-400">₹{sensex.target3?.toFixed(2)}</strong> (+100% Doubler)</p>
-                </div>
-                <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
-                  <span>09:45 AM</span>
-                  <span className="text-[#53bdeb]">✓✓</span>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Option D: Trailing Follow-up */}
-          {previewTab === "trailing" && (() => {
-            const nifty = reportData?.niftySetup || {
-              contractSymbol: "NIFTY 24100 PE",
-              entryZone: "₹90.00 – ₹94.00",
-              target1: 116.0,
-              target2: 145.0,
-              cmp: 90.0,
-            };
-
-            return (
-              <div className="max-w-md w-full bg-[#005c4b] text-[#e9edef] rounded-2xl rounded-tr-xs p-3.5 sm:p-4 shadow-xl border border-[#025144] space-y-2 text-xs sm:text-[13px] leading-relaxed">
-                <div className="border-b border-[#025144] pb-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap">
-                  ━━━━━━━━━━━━━━━━━━━━{"\n"}
-                  🎯 <strong className="text-white">TRADEIO TARGET 1 HIT! (+29% GAIN)</strong>{"\n"}
-                  🔥 <strong>{nifty.contractSymbol} reached ₹{nifty.target1.toFixed(2)}</strong>{"\n"}
-                  ━━━━━━━━━━━━━━━━━━━━
-                </div>
-                <div className="space-y-1">
-                  <p className="text-slate-300">▸ Initial Entry: <strong>{nifty.entryZone}</strong></p>
-                  <p className="text-emerald-300 font-bold">▸ 🛡️ ACTION REQUIRED: Trail Stop-Loss to COST (₹{nifty.cmp.toFixed(2)})</p>
-                  <p className="text-yellow-200 font-bold">▸ 🔒 TRADE IS NOW 100% RISK-FREE!</p>
-                  <p className="text-slate-300">▸ Next Target: <strong>₹{nifty.target2.toFixed(2)} (+61% Runner)</strong></p>
-                </div>
-                <div className="border-t border-[#025144] pt-2 text-[10px] text-emerald-200/80">
-                  🏁 TradeIO Algo Advisory Alerts
-                </div>
-                <div className="flex items-center justify-end gap-1 text-[10px] text-emerald-200/60 pt-1">
-                  <span>09:48 AM</span>
-                  <span className="text-[#53bdeb]">✓✓</span>
-                </div>
-              </div>
-            );
-          })()}
+            <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-300 overflow-x-auto pt-1">
+              {(() => {
+                if (previewTab === "trailing") {
+                  return `━━━━━━━━━━━━━━━━━━━━\n🎯 TRADEIO TARGET 1 HIT PROTOCOL\n🔥 Action Required: Trail Stop-Loss to Entry Cost\n━━━━━━━━━━━━━━━━━━━━\n▸ Target 1 Hit (+28% to +30% profit secured)\n▸ Action: Book 50% partial profit\n▸ Stop-Loss: Move to entry price (Break-even)\n▸ Risk Status: 100% Risk-Free Runner\n▸ Target 2: Hold remainder for 1:3+ Risk:Reward\n━━━━━━━━━━━━━━━━━━━━`;
+                }
+                const targetSetup =
+                  previewTab === "stock"
+                    ? reportData?.stockSetup
+                    : previewTab === "nifty"
+                    ? reportData?.niftySetup
+                    : reportData?.sensexSetup;
+                return getFormattedAlertText(targetSetup, "trigger") || "Loading setup metrics from live market...";
+              })()}
+            </pre>
+          </div>
         </CardContent>
       </Card>
-
-      {/* ── WhatsApp Modal for Quick Setup & Recipient Management ── */}
-      <WhatsAppAlertsModal
-        open={showWhatsAppModal}
-        onOpenChange={setShowWhatsAppModal}
-      />
     </div>
   );
 }
+

@@ -1,41 +1,33 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { marketApi } from "@/lib/api";
-import { useMarketData } from "@/hooks/use-market-data";
 import { QuickTradePanel, QuickTradeStock } from "@/components/dashboard/QuickTradePanel";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useMarketData } from "@/hooks/use-market-data";
+import { marketApi } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 import {
-  Search,
-  Zap,
-  TrendingUp,
-  TrendingDown,
-  ArrowUpRight,
   ArrowDownRight,
-  RefreshCw,
-  SlidersHorizontal,
-  Table as TableIcon,
-  LayoutGrid,
-  ShieldCheck,
-  Target,
-  Sparkles,
   ArrowUpDown,
-  Filter,
-  Layers,
-  Flame,
-  CheckCircle2,
-  Info,
+  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
-  MessageSquare,
+  Filter,
+  Info,
+  LayoutGrid,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Table as TableIcon,
+  TrendingDown,
+  TrendingUp,
+  Zap
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { WhatsAppAlertsModal } from "@/components/dashboard/WhatsAppAlertsModal";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface OhlStockItem {
   symbol: string;
@@ -91,9 +83,6 @@ export default function LiveOhlScreenerPage() {
 
   // Quick Trade Modal State
   const [quickTradeStock, setQuickTradeStock] = useState<QuickTradeStock | null>(null);
-
-  // WhatsApp Alerts Modal State
-  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
 
   // Fetch data
   const { data: response, isLoading, refetch, isFetching } = useQuery({
@@ -336,16 +325,7 @@ export default function LiveOhlScreenerPage() {
             </button>
           </div>
 
-          {/* WhatsApp Alerts Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsWhatsAppModalOpen(true)}
-            className="bg-emerald-600/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/30 hover:text-white rounded-xl text-xs gap-1.5 font-bold"
-          >
-            <MessageSquare className="h-3.5 w-3.5 text-emerald-400" />
-            WhatsApp Alerts
-          </Button>
+
 
           {/* Refresh Button */}
           <Button
@@ -360,11 +340,7 @@ export default function LiveOhlScreenerPage() {
           </Button>
         </div>
 
-        {/* WhatsApp Alerts Modal */}
-        <WhatsAppAlertsModal
-          open={isWhatsAppModalOpen}
-          onOpenChange={setIsWhatsAppModalOpen}
-        />
+
       </div>
 
       {/* KPI Cards */}

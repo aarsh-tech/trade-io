@@ -5,10 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/store";
-import { Lock, User, Shield, Key, MessageSquare } from "lucide-react";
+import { Lock, User, Shield, Key } from "lucide-react";
 import { toast } from "sonner";
 import { useUser, use2FA } from "@/hooks/useAuth";
-import { WhatsAppAlertsManager } from "@/components/dashboard/WhatsAppAlertsManager";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
@@ -16,7 +15,7 @@ export default function SettingsPage() {
   const { updateProfile, isUpdatingProfile, changePassword, isChangingPassword } = useUser();
   const { setup2FA, isSettingUp, verify2FA, isVerifying, disable2FA, isDisabling } = use2FA();
 
-  const [activeTab, setActiveTab] = useState<"profile" | "security" | "whatsapp">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "security">("profile");
   const [profileForm, setProfileForm] = useState({ name: user?.name || "", email: user?.email || "" });
   const [passwordForm, setPasswordForm] = useState({ current: "", newPassword: "", confirm: "" });
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -64,7 +63,7 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
         <p className="text-sm text-slate-500 mt-0.5">
-          Manage your account settings, trading preferences, and automated WhatsApp broadcasts
+          Manage your account settings, personal details, and two-factor authentication security
         </p>
       </div>
 
@@ -92,24 +91,9 @@ export default function SettingsPage() {
           >
             <Lock className="h-4 w-4 text-indigo-600" /> Security & 2FA
           </button>
-          <button
-            onClick={() => setActiveTab("whatsapp")}
-            className={cn(
-              "w-full text-left px-4 py-2.5 rounded-xl font-medium border flex items-center justify-between gap-3 transition-all",
-              activeTab === "whatsapp"
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200 shadow-2xs font-bold"
-                : "text-slate-600 border-transparent hover:bg-slate-50"
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <MessageSquare className="h-4 w-4 text-emerald-600" /> WhatsApp Alerts
-            </div>
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          </button>
         </div>
 
         <div className="md:col-span-2 space-y-6">
-          {activeTab === "whatsapp" && <WhatsAppAlertsManager />}
 
           {activeTab === "profile" && (
             <Card className="border-slate-200/90 bg-white shadow-xs rounded-2xl">

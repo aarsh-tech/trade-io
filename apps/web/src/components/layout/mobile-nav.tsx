@@ -21,7 +21,6 @@ import {
   ChevronRight,
   User,
   Flame,
-  Smartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store";
@@ -37,7 +36,6 @@ const primaryNav = [
 ];
 
 const secondaryNav = [
-  { href: "/whatsapp", label: "WhatsApp Alerts", icon: Smartphone, badge: "ALERTS" },
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/live-screener", label: "Live OHL Screener", icon: ScanSearch, badge: "LIVE" },
   { href: "/swing-scanner", label: "Swing Scanner", icon: Layers },

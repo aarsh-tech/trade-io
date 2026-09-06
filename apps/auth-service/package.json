@@ -21,7 +21,6 @@
     "@nestjs/throttler": "6.0.0",
     "@nestjs/websockets": "11.1.19",
     "@prisma/client": "6.2.1",
-    "@whiskeysockets/baileys": "7.0.0-rc14",
     "axios": "1.15.0",
     "bcryptjs": "2.4.3",
     "class-transformer": "0.5.1",

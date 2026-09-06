@@ -6,17 +6,13 @@ import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
 import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
-import { OhlScannerService } from '../market/ohl-scanner.service';
-import { WhatsAppService } from '../market/whatsapp.service';
-import { DailyAdvisoryService } from '../market/daily-advisory.service';
 
 /**
  * MarketSchedulerService
  * ─────────────────────
  * Runs every 1 s. At exactly 09:15 IST it auto-starts every strategy
  * that has `autoStart = true` and is not already running.
- * At 09:20 IST (or configured time) it scans Open=High/Low and broadcasts WhatsApp alerts.
- * At 09:28 IST it scans and broadcasts Daily 3-Trade Advisory (Stock + NIFTY + SENSEX).
+ * At 15:05–15:25 IST it enforces intraday RMS safety square-off.
  * At 15:30 IST it stops all running strategies so they don't poll after market close.
  */
 @Injectable()
@@ -42,11 +38,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   private lastEodMinute: number = -1;
 
   /**
-   * Tracks user IDs and date keys for OHL WhatsApp alerts sent today.
-   */
-  private readonly sentOhlAlertsToday = new Set<string>();
-
-  /**
    * Strategy IDs that the user explicitly stopped during the current
    * server session.  The scheduler will not restart these until the
    * next calendar day (i.e. the next auto-start cycle).
@@ -61,9 +52,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
     private readonly gammaBlastEngine: GammaBlastExpiryEngine,
-    private readonly ohlScannerService: OhlScannerService,
-    private readonly whatsAppService: WhatsAppService,
-    private readonly dailyAdvisoryService: DailyAdvisoryService,
   ) { }
 
   onModuleInit() {
@@ -123,12 +111,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // ── Morning OHL Scanner WhatsApp Broadcast (e.g. 09:16, 09:18, 09:20 IST) ──
-    if (hhmm >= 9 * 60 + 15 && hhmm <= 9 * 60 + 35) {
-      await this.checkAndSendOhlAlerts(ist);
-      await this.checkAndSendDailyAdvisory(ist);
-    }
-
     // ── 3:05 PM – 3:25 PM IST Mandatory Safety Square-Off Window (Runs once per minute) ───
     if (hhmm >= 15 * 60 + 5 && hhmm <= 15 * 60 + 25) {
       if (this.lastEodMinute !== hhmm) {
@@ -145,78 +127,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
         await this.autoStopStrategies();
       }
     }
-  }
-
-  // ── Morning OHL Scanner WhatsApp Alert Handler ──────────────────────────────
-
-  private async checkAndSendOhlAlerts(ist: Date) {
-    const todayKey = ist.toDateString();
-    const h = ist.getHours();
-    const m = ist.getMinutes();
-    const s = ist.getSeconds();
-    const currentTimeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
-    try {
-      const users = await this.prisma.user.findMany({
-        where: {
-          whatsappAlertsEnabled: true,
-        },
-      });
-
-      for (const user of users) {
-        const targetTime = user.whatsappAlertTime || '09:20';
-        const userAlertKey = `${user.id}_${todayKey}_${targetTime}`;
-
-        if (currentTimeStr === targetTime && s <= 5 && !this.sentOhlAlertsToday.has(userAlertKey)) {
-          this.sentOhlAlertsToday.add(userAlertKey);
-          this.logger.log(`Triggering automated ${targetTime} OHL WhatsApp alert for user: ${user.email} (${user.id})`);
-
-          this.dispatchOhlAlertForUser(user.id, targetTime).catch((err) => {
-            this.logger.error(`Error in automated WhatsApp OHL scan for ${user.id}: ${err?.message || err}`);
-          });
-        }
-      }
-    } catch (err: any) {
-      this.logger.error(`Error checking WhatsApp OHL alerts: ${err?.message || err}`);
-    }
-  }
-
-  // ── Daily 3-Trade Advisory WhatsApp Broadcast (Stock + NIFTY + SENSEX) ──────
-
-  private async checkAndSendDailyAdvisory(ist: Date) {
-    const todayKey = ist.toDateString();
-    const h = ist.getHours();
-    const m = ist.getMinutes();
-    const s = ist.getSeconds();
-    const currentTimeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
-    if (currentTimeStr === '09:28' && s <= 5) {
-      const advisoryKey = `daily_advisory_${todayKey}_09:28`;
-      if (!this.sentOhlAlertsToday.has(advisoryKey)) {
-        this.sentOhlAlertsToday.add(advisoryKey);
-        this.logger.log(`⏰ Triggering automated 09:28 AM Daily 3-Trade Advisory scan & broadcast...`);
-        this.dailyAdvisoryService.scanAndBroadcastDailyAdvisory().catch((err) => {
-          this.logger.error(`Error in automated Daily Advisory scan: ${err?.message || err}`);
-        });
-      }
-    }
-  }
-
-  async dispatchOhlAlertForUser(userId: string, alertTimeStr?: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
-    if (!user) return { sentCount: 0, errors: ['User not found'] };
-
-    const universe = user.whatsappUniverse || 'fno';
-    const tolerance = user.whatsappTolerance ?? 0.05;
-    const timeLabel = alertTimeStr || user.whatsappAlertTime || '09:20';
-
-    const scanResult = await this.ohlScannerService.scan(userId, universe, tolerance, 'all');
-    const openLowStocks = scanResult.stocks.filter((s) => s.signal === 'OPEN_LOW');
-    const openHighStocks = scanResult.stocks.filter((s) => s.signal === 'OPEN_HIGH');
-
-    return this.whatsAppService.broadcastOhlScan(userId, openLowStocks, openHighStocks, timeLabel);
   }
 
   // ── Auto-start all strategies marked autoStart=true ──────────────────────────
