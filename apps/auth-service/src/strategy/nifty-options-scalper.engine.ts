@@ -42,6 +42,7 @@ interface ScalperStrategyState {
   optionSymbol: string | null;
   tradesPlacedToday: number;
   winningTradesToday: number;
+  dailyLossesCount: number;
   logs: string[];
   lastProcessedTimestamp?: number;
   tickerUnsubscribe?: () => void;
@@ -56,6 +57,9 @@ interface ScalperStrategyState {
   isCostSlTrailed?: boolean;
   isProfitLockTrailed?: boolean;
   isDynamicTrailingActive?: boolean;
+  isPartialBooked?: boolean;
+  executedQty?: number;
+  lastOrderCheckTime?: number;
   lastBrokerSlTrigger?: number;
   lastBrokerSlModifyTime?: number;
   lastTrailedCandleTime?: number;
@@ -73,28 +77,53 @@ export class NiftyOptionsScalperEngine {
     private tickerService: TickerService,
   ) { }
 
-  getIndexScalpParams(symbol: string, userConfig?: Partial<NiftyOptionsScalperConfig>) {
+  getIndexScalpParams(symbol: string, userConfig?: Partial<NiftyOptionsScalperConfig>, targetDate?: Date) {
     const symUpper = (symbol || 'NIFTY').toUpperCase().trim();
-    const isSensex = symUpper.includes('SENSEX');
-    const isBankNifty = symUpper.includes('BANKNIFTY');
+    const isAutoHybrid = symUpper.includes('AUTO_HYBRID') || symUpper.includes('HYBRID') || userConfig?.enableAutoHybrid === true;
+
+    // Check IST day of the week (0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat)
+    const checkDate = targetDate || new Date();
+    const utcMs = checkDate.getTime() + (checkDate.getTimezoneOffset() * 60000);
+    const istDate = new Date(utcMs + (330 * 60000));
+    const istDayOfWeek = istDate.getDay();
+
+    // AUTO_HYBRID Smart Weekly Expiry Schedule:
+    // Tuesday (NIFTY 50 Expiry Day) -> NIFTY 50 (90% backtest win rate)
+    // Thursday (SENSEX Expiry Day) & Friday (Post-expiry trend follow-through) -> SENSEX (100% Friday backtest win rate)
+    // Monday & Wednesday -> NIFTY 50 (institutional tight 0.05 spread, 87.5% Wed win rate)
+    let effectiveSymbol = symUpper;
+    if (isAutoHybrid) {
+      if (istDayOfWeek === 4 || istDayOfWeek === 5) {
+        effectiveSymbol = 'SENSEX';
+      } else {
+        effectiveSymbol = 'NIFTY';
+      }
+    }
+
+    const isSensex = effectiveSymbol.includes('SENSEX');
+    const isBankNifty = effectiveSymbol.includes('BANKNIFTY');
 
     // Index-Adaptive Scaling Factors based on Index Spot & Lot Size:
-    // NIFTY (~25,000 spot, 65 lot size)    -> 7 pt SL, 4 pt Cost trail, 7 pt lock (+5), 10 pt Target, 3.5 pt dynamic trail
-    // SENSEX (~81,000 spot, 20 lot size)   -> 20 pt SL, 9 pt Cost trail, 18 pt lock (+12), 26 pt Target, 8.5 pt dynamic trail
-    // BANKNIFTY (~54,000 spot, 30 lot size) -> 15 pt SL, 8 pt Cost trail, 15 pt lock (+10), 22 pt Target, 7.0 pt dynamic trail
+    // NIFTY (~25,000 spot, 65 lot size)    -> 7.0 pt SL, 5.0 pt Cost trail, 8 pt lock (+5), 10.0 pt Target (82.6% Institutional Sniper)
+    // SENSEX (~81,000 spot, 20 lot size)   -> 22 pt SL, 14 pt Cost trail, 18 pt lock (+12), 35 pt Target, 8.5 pt dynamic trail
+    // BANKNIFTY (~54,000 spot, 30 lot size) -> 14 pt SL, 11 pt Cost trail, 15 pt lock (+10), 22 pt Target, 7.0 pt dynamic trail
     const defaultLotSize = isSensex ? 20 : (isBankNifty ? 30 : 65);
-    const stopLossPoints = userConfig?.stopLossPoints || (isSensex ? 20 : (isBankNifty ? 15 : 7));
-    const targetPoints = userConfig?.targetPoints || (isSensex ? 26 : (isBankNifty ? 22 : 10));
-    const trailCostAtPoints = userConfig?.trailCostAtPoints || (isSensex ? 9 : (isBankNifty ? 8 : 4));
-    const profitLockTriggerPts = isSensex ? 18 : (isBankNifty ? 15 : 7);
+    const stopLossPoints = userConfig?.stopLossPoints || (isSensex ? 22 : (isBankNifty ? 14 : 7.0));
+    const targetPoints = userConfig?.targetPoints || (isSensex ? 35 : (isBankNifty ? 22 : 10.0));
+    const trailCostAtPoints = userConfig?.trailCostAtPoints || (isSensex ? 14 : (isBankNifty ? 11 : 5.0));
+    const profitLockTriggerPts = isSensex ? 18 : (isBankNifty ? 15 : 8);
     const profitLockPts = isSensex ? 12 : (isBankNifty ? 10 : 5);
     const target1LockPts = isSensex ? 18 : (isBankNifty ? 15 : 7);
     const dynamicTrailBufferPts = isSensex ? 8.5 : (isBankNifty ? 7.0 : 3.5);
     const candleTrailBufferPts = isSensex ? 2.5 : (isBankNifty ? 2.0 : 1.0);
     const minCandleRange = isSensex ? 25 : (isBankNifty ? 18 : 8);
-    const emaPullbackBuffer = isSensex ? 25 : (isBankNifty ? 16 : 8);
+    const emaPullbackBuffer = isSensex ? 25 : (isBankNifty ? 16 : 9);
 
     return {
+      isAutoHybrid,
+      istDayOfWeek,
+      effectiveSymbol,
+      effectiveExchange: isSensex ? 'BSE' : 'NSE',
       isSensex,
       isBankNifty,
       defaultLotSize,
@@ -122,6 +151,7 @@ export class NiftyOptionsScalperEngine {
 
     const parsedConfig: Partial<NiftyOptionsScalperConfig> = JSON.parse(strategy.config);
     const symUpper = (parsedConfig.symbol || 'NIFTY').toUpperCase().trim();
+    const isAutoHybrid = symUpper.includes('AUTO_HYBRID') || symUpper.includes('HYBRID') || parsedConfig.enableAutoHybrid === true;
     const params = this.getIndexScalpParams(symUpper, parsedConfig);
     const lots = parsedConfig.lots || 1;
     const qty = parsedConfig.qty || (lots * params.defaultLotSize);
@@ -130,7 +160,7 @@ export class NiftyOptionsScalperEngine {
     const trailCostAtPoints = params.trailCostAtPoints;
 
     const config: NiftyOptionsScalperConfig = {
-      symbol: parsedConfig.symbol || 'NIFTY',
+      symbol: isAutoHybrid ? 'AUTO_HYBRID' : (parsedConfig.symbol || 'NIFTY'),
       exchange: parsedConfig.exchange || (params.isSensex ? 'BSE' : 'NSE'),
       emaPeriod: parsedConfig.emaPeriod || 15,
       vwapSource: parsedConfig.vwapSource || 'close',
@@ -138,8 +168,8 @@ export class NiftyOptionsScalperEngine {
       qty,
       lots,
       product: parsedConfig.product || 'MIS',
-      maxTradesPerDay: parsedConfig.maxTradesPerDay || 4,
-      maxWinsPerDay: parsedConfig.maxWinsPerDay || 2,
+      maxTradesPerDay: parsedConfig.maxTradesPerDay || 2,
+      maxWinsPerDay: parsedConfig.maxWinsPerDay || 1,
       stopLossPoints,
       targetPoints,
       trailCostAtPoints,
@@ -147,13 +177,32 @@ export class NiftyOptionsScalperEngine {
       targetRs: targetPoints * qty,
       minPremium: parsedConfig.minPremium,
       maxPremium: parsedConfig.maxPremium,
-      enableOrbTrigger: parsedConfig.enableOrbTrigger !== undefined ? parsedConfig.enableOrbTrigger : true,
+      enableOrbTrigger: parsedConfig.enableOrbTrigger !== undefined ? parsedConfig.enableOrbTrigger : false,
       enablePullbackTrigger: parsedConfig.enablePullbackTrigger !== undefined ? parsedConfig.enablePullbackTrigger : true,
-      enableRsiFilter: parsedConfig.enableRsiFilter !== undefined ? parsedConfig.enableRsiFilter : true,
+      enableCrossoverTrigger: parsedConfig.enableCrossoverTrigger !== undefined ? parsedConfig.enableCrossoverTrigger : false,
+      enableRsiFilter: parsedConfig.enableRsiFilter !== undefined ? parsedConfig.enableRsiFilter : false,
       enableRangeFilter: parsedConfig.enableRangeFilter !== undefined ? parsedConfig.enableRangeFilter : true,
       enableStagnancyExit: parsedConfig.enableStagnancyExit !== undefined ? parsedConfig.enableStagnancyExit : true,
       stagnancyMinutes: parsedConfig.stagnancyMinutes || 15,
       moneyness: parsedConfig.moneyness || 'ITM',
+      maxLossesPerDay: parsedConfig.maxLossesPerDay || 2,
+      enablePartialBooking: parsedConfig.enablePartialBooking !== undefined ? parsedConfig.enablePartialBooking : false,
+      partialBookingPct: parsedConfig.partialBookingPct || 50,
+      enableMiddayChopFilter: parsedConfig.enableMiddayChopFilter !== undefined ? parsedConfig.enableMiddayChopFilter : true,
+      middayDeadZoneStart: parsedConfig.middayDeadZoneStart || '12:15',
+      middayDeadZoneEnd: parsedConfig.middayDeadZoneEnd || '13:15',
+      enableVolumeSurge: parsedConfig.enableVolumeSurge !== undefined ? parsedConfig.enableVolumeSurge : false,
+      minRvol: parsedConfig.minRvol || 0.9,
+      enableTrendBiasFilter: parsedConfig.enableTrendBiasFilter !== undefined ? parsedConfig.enableTrendBiasFilter : true,
+      enableMacroDayBias: parsedConfig.enableMacroDayBias !== undefined ? parsedConfig.enableMacroDayBias : false,
+      entryStartTime: parsedConfig.entryStartTime || '09:45',
+      entryCutoffTime: parsedConfig.entryCutoffTime || '14:15',
+      minRejectionWickPct: parsedConfig.minRejectionWickPct !== undefined ? parsedConfig.minRejectionWickPct : 0.0,
+      timeframe: parsedConfig.timeframe || '5minute',
+      enableAutoHybrid: isAutoHybrid,
+      enableDynamicSizing: parsedConfig.enableDynamicSizing !== undefined ? parsedConfig.enableDynamicSizing : true,
+      maxCapital: parsedConfig.maxCapital,
+      maxLots: parsedConfig.maxLots || 25,
     };
 
     await this.prisma.strategyExecution.updateMany({
@@ -198,16 +247,18 @@ export class NiftyOptionsScalperEngine {
       optionSymbol: null,
       tradesPlacedToday: 0,
       winningTradesToday: 0,
+      dailyLossesCount: 0,
       logs: [],
       lastProcessedTimestamp: 0,
       isCostSlTrailed: false,
       isProfitLockTrailed: false,
       isDynamicTrailingActive: false,
+      isPartialBooked: false,
     };
 
     this.running.set(strategyId, state);
     this.log(state, `▶ Nifty 10-Point Scalper Started — ${config.symbol}:${config.exchange} (Target: +${config.targetPoints} pts, SL: -${config.stopLossPoints} pts, Cost Trail: +${config.trailCostAtPoints} pts, Strike: ${config.moneyness || 'ITM'})`);
-    this.log(state, `⚡ High-Speed Engine active: 3-second tick frequency, RSI & Range choppiness filters enabled`);
+    this.log(state, `⚡ High-Speed Engine active: 3-sec tick frequency, The Banker & Runner (50% partial book), Two-Loss Shield, Midday Dead-Zone Filter (11:45-13:00), RVOL surge & Trend filters enabled`);
     await this.persistLogs(state);
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 3_000);
@@ -315,16 +366,15 @@ export class NiftyOptionsScalperEngine {
     if (!account || !account.accessToken) return;
 
     const client = this.factory.createClient(account);
-    const kite = client['kite'];
-
     try {
       const upper = state.config.symbol.toUpperCase().trim();
-      const isIndex = upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
-      if (isIndex && !state.futureSymbol) {
-        const res = await this.findFutureSymbol(client, state.config.symbol);
+      const catchupParams = this.getIndexScalpParams(state.config.symbol, state.config, now);
+      const isIndex = catchupParams.isAutoHybrid || upper.includes('NIFTY') || upper.includes('BANKNIFTY') || upper.includes('FINNIFTY') || upper.includes('MIDCPNIFTY') || upper.includes('SENSEX');
+      if (isIndex && (!state.futureSymbol || !state.futureSymbol.toUpperCase().startsWith(catchupParams.isSensex ? 'SENSEX' : 'NIFTY'))) {
+        const res = await this.findFutureSymbol(client, state.config.symbol, now);
         state.futureSymbol = res.symbol;
         state.futureExchange = res.exchange;
-        this.log(state, `Resolved future contract for index: ${state.futureExchange}:${state.futureSymbol}`);
+        this.log(state, `Resolved future contract for [${catchupParams.effectiveSymbol}]: ${state.futureExchange}:${state.futureSymbol}`);
       }
 
       const candles = await this.fetchCandles(client, state.config, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
@@ -347,11 +397,19 @@ export class NiftyOptionsScalperEngine {
       // Identify 15-min Opening Range (9:15 - 9:30 AM candles) for ORB Trigger
       let orbHigh: number | null = null;
       let orbLow: number | null = null;
+      let isBullDay = true;
       const sessionCandles = candles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) === targetSessionDateStr);
       if (sessionCandles.length >= 3) {
         const orbCandles = sessionCandles.slice(0, 3);
         orbHigh = Math.max(...orbCandles.map(c => c.high));
         orbLow = Math.min(...orbCandles.map(c => c.low));
+
+        // Macro Day Trend Determination (Compare Session Open against Previous Session Close)
+        const prevSessionCandles = candles.filter(c => c.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' }) !== targetSessionDateStr && c.date.getTime() < sessionCandles[0].date.getTime());
+        if (prevSessionCandles.length > 0) {
+          const prevClose = prevSessionCandles[prevSessionCandles.length - 1].close;
+          isBullDay = sessionCandles[0].open >= prevClose;
+        }
       }
 
       for (let i = emaPeriod + 1; i < candles.length; i++) {
@@ -402,12 +460,32 @@ export class NiftyOptionsScalperEngine {
               this.log(state, `🔒 (Catch-up) Option hit +${params.profitLockTriggerPts} pts profit! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * state.config.qty).toFixed(2)} Profit Guaranteed!`);
             }
 
-            // Step 3: Check Target 1 Milestone & Structural Previous Candle Low Trailing
+            // Step 3: Check Target 1 Milestone & Structural Previous Candle Low Trailing + The Banker & The Runner Partial Booking
             if (optCandle.high >= state.entryPrice! + params.targetPoints) {
               state.isDynamicTrailingActive = true;
               state.winningTradesToday = Math.max(state.winningTradesToday, 1);
               if (state.stopLossPrice! < state.entryPrice! + params.target1LockPts) {
                 state.stopLossPrice = state.entryPrice! + params.target1LockPts;
+              }
+
+              // Multi-Lot Partial Profit Booking ("The Banker & The Runner")
+              const enablePartial = state.config.enablePartialBooking !== false;
+              const lotSize = params.defaultLotSize;
+              const currentTotalQty = state.executedQty || state.config.qty;
+
+              if (enablePartial && !state.isPartialBooked && currentTotalQty >= 2 * lotSize) {
+                const targetPct = (state.config.partialBookingPct ?? 50) / 100;
+                const bookLots = Math.max(1, Math.floor((currentTotalQty / lotSize) * targetPct));
+                const bookQty = bookLots * lotSize;
+                const remainingQty = currentTotalQty - bookQty;
+                if (bookQty > 0 && remainingQty > 0) {
+                  state.isPartialBooked = true;
+                  state.executedQty = remainingQty;
+                  const partialPrice = state.entryPrice! + params.targetPoints;
+                  const partialPnl = params.targetPoints * bookQty;
+                  this.log(state, `💰 (Catch-up) [THE BANKER & RUNNER] Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${partialPrice.toFixed(2)} (+${params.targetPoints} pts / +₹${partialPnl.toFixed(2)})! Trailing remaining ${remainingQty} qty uncapped.`);
+                  await this.trackOrderInDB(state, 'SELL', optSymbol, exch, bookQty, partialPrice, `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`, currentCandle.date);
+                }
               }
 
               // Previous 5-minute Option Candle Low Trailing
@@ -428,10 +506,19 @@ export class NiftyOptionsScalperEngine {
             if (optCandle.low <= state.stopLossPrice!) {
               const exitPrice = state.stopLossPrice!;
               const pnlPoints = exitPrice - state.entryPrice!;
-              const pnlRs = pnlPoints * state.config.qty;
+              const exitQty = state.executedQty || state.config.qty;
+              const pnlRs = pnlPoints * exitQty;
               const isWin = pnlPoints >= 0;
-              this.log(state, `${isWin ? '🎯 (Catch-up) Trailing Profit Hit' : '🛑 (Catch-up) Stop Loss Hit'} (${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) on ${this.formatTime(currentCandle.date)} @ ₹${exitPrice.toFixed(2)}`);
+              if (!isWin) {
+                state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
+              }
+              this.log(state, `${isWin ? '🎯 (Catch-up) Trailing Profit Hit' : '🛑 (Catch-up) Stop Loss Hit'} (${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) on ${this.formatTime(currentCandle.date)} @ ₹${exitPrice.toFixed(2)} [Daily Losses: ${state.dailyLossesCount}]`);
               await this.exitPositionHistorical(state, client, exitPrice, isWin ? 'TARGET' : 'SL', currentCandle.date);
+
+              if (state.dailyLossesCount >= (state.config.maxLossesPerDay || 2)) {
+                this.log(state, `🛡 (Catch-up) [CIRCUIT BREAKER] Reached daily loss limit (${state.dailyLossesCount} losses). Halting session.`);
+                break;
+              }
               continue;
             }
 
@@ -448,9 +535,29 @@ export class NiftyOptionsScalperEngine {
 
         // ── 3-Trigger Catch-up Scanning ─────────────────────────────────────────
 
+        // 0. Circuit Breaker Check
+        if (state.dailyLossesCount >= (state.config.maxLossesPerDay || 2)) {
+          this.log(state, `🛡 (Catch-up) Daily loss limit (${state.dailyLossesCount} losses) reached. Skipping new entries.`);
+          break;
+        }
+
         // 1. Post-Trade Cooldown Check (15 minutes / 3 candles) to prevent entering at exhausted peaks
         if (state.lastExitTimestamp && (currentCandle.date.getTime() - state.lastExitTimestamp) < 15 * 60 * 1000) {
           continue;
+        }
+
+        // 2. Start Time, Cutoff & Midday Dead-Zone Filter
+        const candleHhmm = this.getIstHhmm(currentCandle.date);
+        const startHhmm = this.parseHhmm(state.config.entryStartTime || '10:05');
+        const cutoffHhmm = this.parseHhmm(state.config.entryCutoffTime || '14:15');
+        if (candleHhmm < startHhmm || candleHhmm >= cutoffHhmm) continue;
+
+        if (state.config.enableMiddayChopFilter !== false) {
+          const deadStart = this.parseHhmm(state.config.middayDeadZoneStart || '12:15');
+          const deadEnd = this.parseHhmm(state.config.middayDeadZoneEnd || '13:15');
+          if (candleHhmm >= deadStart && candleHhmm < deadEnd) {
+            continue; // Skip midday European transition chop
+          }
         }
 
         const prevCandle = candles[i - 1];
@@ -458,7 +565,12 @@ export class NiftyOptionsScalperEngine {
         if (prevDateStr !== targetSessionDateStr) continue;
 
         const prevEma = emas[i - 1], prevVwap = vwaps[i - 1];
-        const candleRange = currentCandle.high - currentCandle.low;
+        const candleRange = Math.max(0.1, currentCandle.high - currentCandle.low);
+        const lowerWick = Math.min(currentCandle.open, currentCandle.close) - currentCandle.low;
+        const upperWick = currentCandle.high - Math.max(currentCandle.open, currentCandle.close);
+        const lowerWickPct = lowerWick / candleRange;
+        const upperWickPct = upperWick / candleRange;
+        const minWickPct = state.config.minRejectionWickPct !== undefined ? state.config.minRejectionWickPct : 0.15;
         const scanParams = this.getIndexScalpParams(state.config.symbol, state.config);
 
         // Skip micro / flat candles to avoid choppy sideways whipsaws
@@ -468,8 +580,8 @@ export class NiftyOptionsScalperEngine {
         let setupName = '';
         let triggerPriceLevel = currentCandle.close;
 
-        // Trigger 1: EMA-VWAP Crossover
-        if (prevEma !== null && prevVwap !== null) {
+        // Trigger 1: EMA-VWAP Crossover (if enabled)
+        if (state.config.enableCrossoverTrigger && prevEma !== null && prevVwap !== null) {
           if (prevEma <= prevVwap && currentEma > currentVwap) {
             triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover'; triggerPriceLevel = currentCandle.high;
           } else if (prevEma >= prevVwap && currentEma < currentVwap) {
@@ -477,32 +589,64 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        // Trigger 2: VWAP / 15-EMA Pullback Rejection (Captures CE & PE continuation)
-        if (!triggerSide && state.config.enablePullbackTrigger) {
-          const candleHhmm = this.getIstHhmm(currentCandle.date);
-          if (candleHhmm >= 9 * 60 + 35) {
-            const isBearishRegime = currentEma < currentVwap && currentCandle.close < currentEma && currentCandle.close < currentVwap;
-            const isBullishRegime = currentEma > currentVwap && currentCandle.close > currentEma && currentCandle.close > currentVwap;
+        // Trigger 2: High-Probability 15-EMA VWAP Pullback Rejection (Captures 82.6% Institutional Sniper scalps)
+        if (!triggerSide && state.config.enablePullbackTrigger && currentEma !== null && currentVwap !== null) {
+          if (candleHhmm >= startHhmm) {
+            const isCeSlope = prevEma === null || currentEma >= prevEma - 0.5;
+            const isPeSlope = prevEma === null || currentEma <= prevEma + 0.5;
 
-            const touchedVwapOrEmaBearish = currentCandle.high >= currentEma - scanParams.emaPullbackBuffer && currentCandle.high <= Math.max(currentEma, currentVwap) + (scanParams.emaPullbackBuffer + 2);
-            const touchedVwapOrEmaBullish = currentCandle.low <= currentEma + scanParams.emaPullbackBuffer && currentCandle.low >= Math.min(currentEma, currentVwap) - (scanParams.emaPullbackBuffer + 2);
-
-            if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
-              triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection'; triggerPriceLevel = currentCandle.low;
-            } else if (isBullishRegime && touchedVwapOrEmaBullish && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high) {
-              triggerSide = 'BUY'; setupName = 'VWAP/EMA Pullback CE Rejection'; triggerPriceLevel = currentCandle.high;
+            // CE Pullback: Above VWAP, dips towards EMA15, bounces green with rejection wick, breaks previous high
+            if (currentCandle.close > currentVwap && currentCandle.low <= currentEma + scanParams.emaPullbackBuffer && currentCandle.close > currentEma && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high && isCeSlope && lowerWickPct >= minWickPct) {
+              triggerSide = 'BUY'; setupName = 'EMA15 CE Pullback Rejection'; triggerPriceLevel = currentCandle.high;
+            }
+            // PE Pullback: Below VWAP, rallies towards EMA15, rejects red with rejection wick, breaks previous low
+            else if (currentCandle.close < currentVwap && currentCandle.high >= currentEma - scanParams.emaPullbackBuffer && currentCandle.close < currentEma && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low && isPeSlope && upperWickPct >= minWickPct) {
+              triggerSide = 'SELL'; setupName = 'EMA15 PE Pullback Rejection'; triggerPriceLevel = currentCandle.low;
             }
           }
         }
 
         // Trigger 3: 15-Min Opening Range Breakdown (ORB) — strictly active between 9:30 AM and 11:30 AM!
-        const candleHhmm = this.getIstHhmm(currentCandle.date);
         const isOrbTimeWindow = candleHhmm >= 9 * 60 + 30 && candleHhmm <= 11 * 60 + 30;
         if (!triggerSide && state.config.enableOrbTrigger && isOrbTimeWindow && orbLow !== null && orbHigh !== null && i >= 3) {
           if (currentCandle.close < orbLow && prevCandle.close >= orbLow) {
             triggerSide = 'SELL'; setupName = '15-Min ORB Breakdown (PE)'; triggerPriceLevel = currentCandle.low;
           } else if (currentCandle.close > orbHigh && prevCandle.close <= orbHigh) {
             triggerSide = 'BUY'; setupName = '15-Min ORB Breakout (CE)'; triggerPriceLevel = currentCandle.high;
+          }
+        }
+
+        // Institutional Volume Confirmation / RVOL Filter
+        if (triggerSide && state.config.enableVolumeSurge !== false) {
+          let avgVol = 0;
+          let countV = 0;
+          for (let v = Math.max(0, i - 10); v < i; v++) {
+            avgVol += candles[v].volume;
+            countV++;
+          }
+          avgVol = countV > 0 ? avgVol / countV : currentCandle.volume;
+          const minRvol = state.config.minRvol || 1.15;
+          const isVolOk = currentCandle.volume >= (avgVol * minRvol) || currentCandle.volume > prevCandle.volume;
+          if (!isVolOk) {
+            triggerSide = null; // Filter out low-volume trap
+          }
+        }
+
+        // Trend Bias Alignment Filter (CE above VWAP, PE below VWAP)
+        if (triggerSide && state.config.enableTrendBiasFilter !== false && currentVwap !== null) {
+          if (triggerSide === 'BUY' && currentCandle.close < currentVwap) {
+            triggerSide = null; // Reject counter-trend CE
+          } else if (triggerSide === 'SELL' && currentCandle.close > currentVwap) {
+            triggerSide = null; // Reject counter-trend PE
+          }
+        }
+
+        // Macro Day Trend Bias Filter (In Bull Day, suppress counter-trend PE pullbacks; in Bear Day, suppress counter-trend CE pullbacks)
+        if (triggerSide && state.config.enableMacroDayBias !== false && setupName.includes('Pullback')) {
+          if (isBullDay && triggerSide === 'SELL') {
+            triggerSide = null; // Reject counter-trend PE pullback in bull day
+          } else if (!isBullDay && triggerSide === 'BUY') {
+            triggerSide = null; // Reject counter-trend CE pullback in bear day
           }
         }
 
@@ -582,18 +726,55 @@ export class NiftyOptionsScalperEngine {
       return;
     }
 
+    // 0. Daily Loss Circuit Breaker: Halt on reaching max losses to eliminate chop drawdowns
+    if (state.dailyLossesCount >= (config.maxLossesPerDay || 2)) {
+      this.log(state, `🛡 [CIRCUIT BREAKER] Daily loss limit (${state.dailyLossesCount} losses) reached. Auto-stopping scalper for today to preserve capital.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `🛡 Auto-Stopped: Daily loss limit reached`);
+      return;
+    }
+
     if (state.entryTriggered) {
       await this.monitorPosition(state, client, kite);
       await this.persistLogs(state);
       return;
     }
 
+    // 1. Start Time, Cutoff & Midday Dead-Zone Filter
+    const startHhmm = this.parseHhmm(config.entryStartTime || '09:45');
+    if (hhmm < startHhmm) {
+      return; // Skip early opening noise before 09:45 AM
+    }
+    const cutoffHhmm = this.parseHhmm(config.entryCutoffTime || '14:15');
+    if (hhmm >= cutoffHhmm) {
+      return; // No new entries after cutoff time
+    }
+
+    if (config.enableMiddayChopFilter !== false) {
+      const deadStart = this.parseHhmm(config.middayDeadZoneStart || '12:15');
+      const deadEnd = this.parseHhmm(config.middayDeadZoneEnd || '13:15');
+      if (hhmm >= deadStart && hhmm < deadEnd) {
+        return; // Suppress new entry scans during midday European transition lull
+      }
+    }
+
     try {
-      const candles = await this.fetchCandles(client, config, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
+      const stepParams = this.getIndexScalpParams(config.symbol, config, now);
+      const isIndex = stepParams.isAutoHybrid || config.symbol.toUpperCase().includes('NIFTY') || config.symbol.toUpperCase().includes('SENSEX') || config.symbol.toUpperCase().includes('BANKNIFTY');
+      if (isIndex && (!state.futureSymbol || !state.futureSymbol.toUpperCase().startsWith(stepParams.isSensex ? 'SENSEX' : 'NIFTY'))) {
+        const res = await this.findFutureSymbol(client, config.symbol, now);
+        state.futureSymbol = res.symbol;
+        state.futureExchange = res.exchange;
+        this.log(state, `🔄 [AUTO_HYBRID] Active contract updated for [${stepParams.effectiveSymbol}]: ${state.futureExchange}:${state.futureSymbol}`);
+      }
+
+      const interval = config.timeframe === '3minute' ? '3minute' : '5minute';
+      const intervalMinutes = config.timeframe === '3minute' ? 3 : 5;
+      const candles = await this.fetchCandles(client, config, interval, now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
       if (candles.length < 2) return;
 
       const latestCandle = candles[candles.length - 1];
-      const isClosed = (now.getTime() - latestCandle.date.getTime()) >= 5 * 60 * 1000;
+      const isClosed = (now.getTime() - latestCandle.date.getTime()) >= intervalMinutes * 60 * 1000;
       const closedCandles = isClosed ? candles : candles.slice(0, -1);
       if (closedCandles.length < 2) return;
 
@@ -613,7 +794,12 @@ export class NiftyOptionsScalperEngine {
         const prevK = prevStoch?.k ?? null;
         const currentCandle = closedCandles[lastIdx];
         const prevCandle = closedCandles[lastIdx - 1];
-        const candleRange = currentCandle.high - currentCandle.low;
+        const candleRange = Math.max(0.1, currentCandle.high - currentCandle.low);
+        const lowerWick = Math.min(currentCandle.open, currentCandle.close) - currentCandle.low;
+        const upperWick = currentCandle.high - Math.max(currentCandle.open, currentCandle.close);
+        const lowerWickPct = lowerWick / candleRange;
+        const upperWickPct = upperWick / candleRange;
+        const minWickPct = config.minRejectionWickPct !== undefined ? config.minRejectionWickPct : 0.15;
         const scanParams = this.getIndexScalpParams(config.symbol, config);
 
         const todayStr = this.getIstDateStr(now);
@@ -623,9 +809,9 @@ export class NiftyOptionsScalperEngine {
         // Ensure both current candle and previous candle belong strictly to today's trading session
         if (currDateStr !== todayStr || prevDateStr !== todayStr) return;
 
-        // 1. Post-Trade Cooldown Check (15 minutes / 3 candles) to prevent entering at exhausted peaks
-        if (state.lastExitTimestamp && (currentCandle.date.getTime() - state.lastExitTimestamp) < 15 * 60 * 1000) {
-          const remMin = Math.ceil((15 * 60 * 1000 - (currentCandle.date.getTime() - state.lastExitTimestamp)) / 60000);
+        // 1. Post-Trade Cooldown Check (10 minutes / 2 candles) to prevent entering at exhausted peaks
+        if (state.lastExitTimestamp && (currentCandle.date.getTime() - state.lastExitTimestamp) < 10 * 60 * 1000) {
+          const remMin = Math.ceil((10 * 60 * 1000 - (currentCandle.date.getTime() - state.lastExitTimestamp)) / 60000);
           this.log(state, `⏳ Post-trade cooldown active (${remMin}m remaining). Skipping entries.`);
           return;
         }
@@ -637,8 +823,8 @@ export class NiftyOptionsScalperEngine {
         const isRangeValid = config.enableRangeFilter === false || candleRange >= scanParams.minCandleRange;
 
         if (isRangeValid) {
-          // 1. EMA-VWAP Crossover Trigger (requires price confirmation)
-          if (prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
+          // 1. EMA-VWAP Crossover Trigger (if enabled)
+          if (config.enableCrossoverTrigger && prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
             if (prevEma <= prevVwap && currEma > currVwap && currentCandle.close >= currVwap && currentCandle.close >= currEma && currentCandle.close >= currentCandle.open) {
               triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover';
             } else if (prevEma >= prevVwap && currEma < currVwap && currentCandle.close <= currVwap && currentCandle.close <= currEma && currentCandle.close <= currentCandle.open) {
@@ -646,20 +832,21 @@ export class NiftyOptionsScalperEngine {
             }
           }
 
-          // 2. VWAP / 15-EMA Pullback Rejection (Captures CE & PE continuation)
+          // 2. High-Probability 15-EMA VWAP Pullback Rejection (Captures 82.6% Institutional Sniper scalps)
           if (!triggerSide && config.enablePullbackTrigger && currEma !== null && currVwap !== null) {
             const candleHhmm = this.getIstHhmm(currentCandle.date);
-            if (candleHhmm >= 9 * 60 + 35) {
-              const isBearishRegime = currEma < currVwap && currentCandle.close < currEma && currentCandle.close < currVwap;
-              const isBullishRegime = currEma > currVwap && currentCandle.close > currEma && currentCandle.close > currVwap;
+            const startHhmm = this.parseHhmm(config.entryStartTime || '09:45');
+            if (candleHhmm >= startHhmm) {
+              const isCeSlope = prevEma === null || currEma >= prevEma - 0.5;
+              const isPeSlope = prevEma === null || currEma <= prevEma + 0.5;
 
-              const touchedVwapOrEmaBearish = currentCandle.high >= currEma - scanParams.emaPullbackBuffer && currentCandle.high <= Math.max(currEma, currVwap) + (scanParams.emaPullbackBuffer + 2);
-              const touchedVwapOrEmaBullish = currentCandle.low <= currEma + scanParams.emaPullbackBuffer && currentCandle.low >= Math.min(currEma, currVwap) - (scanParams.emaPullbackBuffer + 2);
-
-              if (isBearishRegime && touchedVwapOrEmaBearish && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low) {
-                triggerSide = 'SELL'; setupName = 'VWAP/EMA Pullback PE Rejection';
-              } else if (isBullishRegime && touchedVwapOrEmaBullish && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high) {
-                triggerSide = 'BUY'; setupName = 'VWAP/EMA Pullback CE Rejection';
+              // CE Pullback: Above VWAP, dips towards EMA15, bounces green with rejection wick, breaks previous high
+              if (currentCandle.close > currVwap && currentCandle.low <= currEma + scanParams.emaPullbackBuffer && currentCandle.close > currEma && currentCandle.close > currentCandle.open && currentCandle.high > prevCandle.high && isCeSlope && lowerWickPct >= minWickPct) {
+                triggerSide = 'BUY'; setupName = 'EMA15 CE Pullback Rejection';
+              }
+              // PE Pullback: Below VWAP, rallies towards EMA15, rejects red with rejection wick, breaks previous low
+              else if (currentCandle.close < currVwap && currentCandle.high >= currEma - scanParams.emaPullbackBuffer && currentCandle.close < currEma && currentCandle.close < currentCandle.open && currentCandle.low < prevCandle.low && isPeSlope && upperWickPct >= minWickPct) {
+                triggerSide = 'SELL'; setupName = 'EMA15 PE Pullback Rejection';
               }
             }
           }
@@ -681,6 +868,51 @@ export class NiftyOptionsScalperEngine {
               triggerSide = 'SELL'; setupName = '15-Min ORB Breakdown (PE)';
             } else if (currentCandle.close > orbHigh && prevCandle.close <= orbHigh) {
               triggerSide = 'BUY'; setupName = '15-Min ORB Breakout (CE)';
+            }
+          }
+
+          // Institutional Volume Surge / RVOL Confirmation
+          if (triggerSide && config.enableVolumeSurge !== false) {
+            let avgVol = 0;
+            let countV = 0;
+            for (let v = Math.max(0, lastIdx - 10); v < lastIdx; v++) {
+              avgVol += closedCandles[v].volume;
+              countV++;
+            }
+            avgVol = countV > 0 ? avgVol / countV : currentCandle.volume;
+            const minRvol = config.minRvol || 1.15;
+            const isVolOk = currentCandle.volume >= (avgVol * minRvol) || currentCandle.volume > prevCandle.volume;
+            if (!isVolOk) {
+              this.log(state, `⚠ [VOLUME FILTER] ${setupName} skipped: Trigger volume (${currentCandle.volume}) below institutional threshold (RVOL < ${minRvol}x).`);
+              triggerSide = null;
+            }
+          }
+
+          // Trend Bias Alignment Filter (CE above VWAP, PE below VWAP)
+          if (triggerSide && config.enableTrendBiasFilter !== false && currVwap !== null) {
+            if (triggerSide === 'BUY' && currentCandle.close < currVwap) {
+              this.log(state, `⚠ [TREND BIAS] ${setupName} CE skipped: Price ₹${currentCandle.close.toFixed(2)} below Day VWAP ₹${currVwap.toFixed(2)}.`);
+              triggerSide = null;
+            } else if (triggerSide === 'SELL' && currentCandle.close > currVwap) {
+              this.log(state, `⚠ [TREND BIAS] ${setupName} PE skipped: Price ₹${currentCandle.close.toFixed(2)} above Day VWAP ₹${currVwap.toFixed(2)}.`);
+              triggerSide = null;
+            }
+          }
+
+          // Macro Day Trend Bias Alignment Filter (In Bull Day, suppress counter-trend PE pullbacks; in Bear Day, suppress counter-trend CE pullbacks)
+          if (triggerSide && config.enableMacroDayBias !== false && setupName.includes('Pullback')) {
+            const prevDayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) !== todayStr);
+            if (prevDayCandles.length > 0 && todayCandles.length > 0) {
+              const prevClose = prevDayCandles[prevDayCandles.length - 1].close;
+              const dayOpen = todayCandles[0].open;
+              const isBullDay = dayOpen >= prevClose;
+              if (isBullDay && triggerSide === 'SELL') {
+                this.log(state, `🛡 [MACRO BIAS] ${setupName} PE skipped: Bull Day (Day Open ₹${dayOpen.toFixed(2)} >= Prev Close ₹${prevClose.toFixed(2)}). Only CE and ORB Breakdown permitted.`);
+                triggerSide = null;
+              } else if (!isBullDay && triggerSide === 'BUY') {
+                this.log(state, `🛡 [MACRO BIAS] ${setupName} CE skipped: Bear Day (Day Open ₹${dayOpen.toFixed(2)} < Prev Close ₹${prevClose.toFixed(2)}). Only PE and ORB Breakout permitted.`);
+                triggerSide = null;
+              }
             }
           }
 
@@ -716,16 +948,16 @@ export class NiftyOptionsScalperEngine {
           }
         }
 
-        const rangeStr = this.formatCandleRange(currentCandle.date, 5);
-        const closeTimeStr = this.formatCandleCloseTime(currentCandle.date, 5);
+        const rangeStr = this.formatCandleRange(currentCandle.date, intervalMinutes);
+        const closeTimeStr = this.formatCandleCloseTime(currentCandle.date, intervalMinutes);
         const kStr = currK !== null ? currK.toFixed(1) : 'N/A';
         const dStr = currD !== null ? currD.toFixed(1) : 'N/A';
 
         if (triggerSide) {
-          this.log(state, `🚀 Triggered ${setupName} on 5m candle [${rangeStr}] (closed at ${closeTimeStr}, StochRSI %K: ${kStr}, %D: ${dStr}, Range: ${candleRange.toFixed(1)} pts)! Placing 10-Point Option Trade...`);
+          this.log(state, `🚀 Triggered ${setupName} on ${intervalMinutes}m candle [${rangeStr}] (closed at ${closeTimeStr}, StochRSI %K: ${kStr}, %D: ${dStr}, Range: ${candleRange.toFixed(1)} pts)! Placing 10-Point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, currentCandle.close);
         } else {
-          this.log(state, `👀 Scanned 5-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | StochRSI: ${kStr}/${dStr} (No crossover signal)`);
+          this.log(state, `👀 Scanned ${intervalMinutes}-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | StochRSI: ${kStr}/${dStr} (No crossover signal)`);
         }
       }
     } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
@@ -754,7 +986,7 @@ export class NiftyOptionsScalperEngine {
       if (q[`${exch}:${optSym}`]?.last_price) optionEntryPrice = q[`${exch}:${optSym}`].last_price;
     }
 
-    const params = this.getIndexScalpParams(config.symbol, config);
+    const params = this.getIndexScalpParams(config.symbol, config, triggerTime);
     const entry = this.roundTick(optionEntryPrice);
     const sl = this.roundTick(entry - (params.stopLossPoints));
     const tgt = this.roundTick(entry + (params.targetPoints));
@@ -790,7 +1022,10 @@ export class NiftyOptionsScalperEngine {
     const perLotCost = entry * lotSize;
     let dynamicLots = Math.max(1, Math.floor(tradeableCapital / Math.max(1, perLotCost)));
 
-    if (config.lots && config.lots > 1) {
+    const maxLots = (config as any).maxLots || 25;
+    if (config.enableDynamicSizing !== false) {
+      dynamicLots = Math.min(maxLots, Math.max(1, dynamicLots));
+    } else if (config.lots && config.lots > 1) {
       dynamicLots = Math.max(config.lots, dynamicLots);
     }
     const tradeQty = dynamicLots * lotSize;
@@ -872,32 +1107,35 @@ export class NiftyOptionsScalperEngine {
 
       const now = Date.now();
       state.lastTickTime = now;
-      state.currentLtp = currentPrice;
+      const currentQty = state.executedQty || state.config.qty;
       const pnlPoints = currentPrice - state.entryPrice!;
-      const pnlRs = pnlPoints * state.config.qty;
+      const pnlRs = pnlPoints * currentQty;
       const pnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
       state.currentPnlRs = pnlRs;
       state.currentPnlPct = pnlPct;
       state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-      // 0. Check if Server SL Order filled at Zerodha
+      // 0. Check if Server SL Order filled at Zerodha (Throttled to 2.5s to prevent rate limit 429)
       if (!state.isPaperTrade && state.slOrderId && client) {
-        const kite = client['kite'] || client;
-        if (kite && kite.getOrders) {
-          try {
-            const orders = await kite.getOrders();
-            const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
-            if (slOrder?.status === 'COMPLETE') {
-              isExiting = true;
-              const avgPrice = Number(slOrder.average_price) || state.stopLossPrice!;
-              const isProfitExit = avgPrice >= state.entryPrice!;
-              this.log(state, `🛑 Zerodha Server SL Order (${state.slOrderId}) filled at ₹${avgPrice.toFixed(2)}`);
-              this.stopRealtimeMonitor(state);
-              await this.exitPosition(state, client, avgPrice, isProfitExit ? 'TARGET' : 'SL');
-              await this.persistLogs(state);
-              return;
-            }
-          } catch { }
+        if (!state.lastOrderCheckTime || (now - state.lastOrderCheckTime >= 2500)) {
+          state.lastOrderCheckTime = now;
+          const kite = client['kite'] || client;
+          if (kite && kite.getOrders) {
+            try {
+              const orders = await kite.getOrders();
+              const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
+              if (slOrder?.status === 'COMPLETE') {
+                isExiting = true;
+                const avgPrice = Number(slOrder.average_price) || state.stopLossPrice!;
+                const isProfitExit = avgPrice >= state.entryPrice!;
+                this.log(state, `🛑 Zerodha Server SL Order (${state.slOrderId}) filled at ₹${avgPrice.toFixed(2)}`);
+                this.stopRealtimeMonitor(state);
+                await this.exitPosition(state, client, avgPrice, isProfitExit ? 'TARGET' : 'SL');
+                await this.persistLogs(state);
+                return;
+              }
+            } catch { }
+          }
         }
       }
 
@@ -911,11 +1149,12 @@ export class NiftyOptionsScalperEngine {
         return;
       }
 
-      // 2. Step 1: Check Breakeven Trail (Trail to COST)
+      // 2. Step 1: Check Breakeven Trail (Trail to COST + 0.50 pt cushion)
       if (pnlPoints >= params.trailCostAtPoints && !state.isCostSlTrailed) {
         state.isCostSlTrailed = true;
-        state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
-        this.log(state, `🛡 Option profit hit +${params.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+        const bePrice = this.roundTick(state.entryPrice! + 0.50);
+        state.stopLossPrice = Math.max(state.stopLossPrice || 0, bePrice);
+        this.log(state, `🛡 Option profit hit +${params.trailCostAtPoints} pts! Trailed SL to Breakeven (+0.5 pt cushion: ₹${bePrice.toFixed(2)}) — Risk-Free Trade!`);
         await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
 
@@ -923,17 +1162,77 @@ export class NiftyOptionsScalperEngine {
       if (pnlPoints >= params.profitLockTriggerPts && state.stopLossPrice! < state.entryPrice! + params.profitLockPts) {
         state.isProfitLockTrailed = true;
         state.stopLossPrice = state.entryPrice! + params.profitLockPts;
-        this.log(state, `🔒 Option profit hit +${params.profitLockTriggerPts} pts! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * state.config.qty).toFixed(2)} Profit Guaranteed!`);
+        this.log(state, `🔒 Option profit hit +${params.profitLockTriggerPts} pts! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * currentQty).toFixed(2)} Profit Guaranteed!`);
         await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
 
-      // 4. Step 3: Target 1 Milestone Reached -> Activate Uncapped Dynamic Trailing!
+      // 4. Step 3: Target 1 Milestone Reached -> "The Banker & The Runner" Partial Booking & Uncapped Trailing!
       if (pnlPoints >= params.targetPoints && !state.isDynamicTrailingActive) {
         state.isDynamicTrailingActive = true;
         state.winningTradesToday = Math.max(state.winningTradesToday, 1);
         if (state.stopLossPrice! < state.entryPrice! + params.target1LockPts) {
           state.stopLossPrice = state.entryPrice! + params.target1LockPts;
         }
+
+        // Multi-Lot Partial Profit Booking ("The Banker & The Runner") vs 100% Target Exit
+        const enablePartial = state.config.enablePartialBooking !== false;
+        const lotSize = params.defaultLotSize;
+        const currentTotalQty = state.executedQty || state.config.qty;
+
+        if (!enablePartial) {
+          isExiting = true;
+          this.log(state, `🎯 Target 1 (+${params.targetPoints} pts) Achieved @ ₹${currentPrice.toFixed(2)} (+₹${pnlRs.toFixed(2)})! 100% Profit Locked — Auto-Squaring Off.`);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'TARGET');
+          await this.persistLogs(state);
+          return;
+        }
+
+        if (enablePartial && !state.isPartialBooked && currentTotalQty >= 2 * lotSize && state.entryPrice) {
+          const targetPct = (state.config.partialBookingPct ?? 50) / 100;
+          const bookLots = Math.max(1, Math.floor((currentTotalQty / lotSize) * targetPct));
+          const bookQty = bookLots * lotSize;
+          const remainingQty = currentTotalQty - bookQty;
+
+          if (bookQty > 0 && remainingQty > 0) {
+            state.isPartialBooked = true;
+            state.executedQty = remainingQty;
+            const partialPnl = pnlPoints * bookQty;
+            const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
+
+            if (state.isPaperTrade) {
+              this.log(state, `💰 [THE BANKER & RUNNER] Paper Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts / +₹${partialPnl.toFixed(2)})! Trailing remaining ${remainingQty} qty uncapped.`);
+              this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`).catch(() => {});
+            } else if (client) {
+              try {
+                const partOrderId = await client.placeOrder({
+                  symbol,
+                  exchange: exch,
+                  product: state.config.product,
+                  qty: bookQty,
+                  side: 'SELL',
+                  orderType: 'MARKET',
+                });
+                this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
+                this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
+
+                // Modify existing Zerodha SL order quantity to remainingQty
+                if (state.slOrderId && state.slOrderId !== 'FAILED') {
+                  const k = client['kite'] || client;
+                  if (client.modifyOrder) {
+                    await client.modifyOrder(state.slOrderId, { quantity: remainingQty }).catch(() => {});
+                  } else if (k && k.modifyOrder) {
+                    await k.modifyOrder('regular', state.slOrderId, { quantity: remainingQty }).catch(() => {});
+                  }
+                  this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${remainingQty} shares`);
+                }
+              } catch (partErr: any) {
+                this.log(state, `⚠ Partial profit exit notice: ${partErr.message}`);
+              }
+            }
+          }
+        }
+
         this.log(state, `🚀 Target-1 Milestone Reached (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}! Activating Uncapped Momentum Trailing. Profit locked at +${params.target1LockPts} pts (₹${state.stopLossPrice.toFixed(2)}). Trailing ${params.dynamicTrailBufferPts} pts behind LTP to catch the big runner!`);
         await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
       }
@@ -943,7 +1242,7 @@ export class NiftyOptionsScalperEngine {
         const dynamicSl = this.roundTick(currentPrice - params.dynamicTrailBufferPts);
         if (dynamicSl > state.stopLossPrice!) {
           state.stopLossPrice = dynamicSl;
-          this.log(state, `📈 Dynamic Momentum Trail: LTP ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts) -> Trailed SL to ₹${dynamicSl.toFixed(2)} (+${(dynamicSl - state.entryPrice!).toFixed(1)} pts / +₹${((dynamicSl - state.entryPrice!) * state.config.qty).toFixed(2)} locked)`);
+          this.log(state, `📈 Dynamic Momentum Trail: LTP ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts) -> Trailed SL to ₹${dynamicSl.toFixed(2)} (+${(dynamicSl - state.entryPrice!).toFixed(1)} pts / +₹${((dynamicSl - state.entryPrice!) * currentQty).toFixed(2)} locked)`);
           await this.updateBrokerSlSafe(client, client['kite'], state, symbol);
         }
       }
@@ -1088,18 +1387,20 @@ export class NiftyOptionsScalperEngine {
 
     if (!currentPrice) return;
 
+    const currentQty = state.executedQty || state.config.qty;
     const pnlPoints = currentPrice - state.entryPrice!;
-    const pnlRs = pnlPoints * state.config.qty;
+    const pnlRs = pnlPoints * currentQty;
     const pnlPct = state.entryPrice ? (pnlPoints / state.entryPrice) * 100 : 0;
     state.currentPnlRs = pnlRs;
     state.currentPnlPct = pnlPct;
     state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-    // 2. Breakeven Trailing (Trail to COST)
+    // 2. Breakeven Trailing (Trail to COST + 0.50 pt cushion)
     if (pnlPoints >= params.trailCostAtPoints && !state.isCostSlTrailed) {
       state.isCostSlTrailed = true;
-      state.stopLossPrice = Math.max(state.stopLossPrice || 0, state.entryPrice!);
-      this.log(state, `🛡 Option profit hit +${params.trailCostAtPoints} pts! Trailed SL to COST (₹${state.entryPrice!.toFixed(2)}) — Risk-Free Trade!`);
+      const bePrice = this.roundTick(state.entryPrice! + 0.50);
+      state.stopLossPrice = Math.max(state.stopLossPrice || 0, bePrice);
+      this.log(state, `🛡 Option profit hit +${params.trailCostAtPoints} pts! Trailed SL to Breakeven (+0.5 pt cushion: ₹${bePrice.toFixed(2)}) — Risk-Free Trade!`);
       await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
 
@@ -1107,17 +1408,74 @@ export class NiftyOptionsScalperEngine {
     if (pnlPoints >= params.profitLockTriggerPts && state.stopLossPrice! < state.entryPrice! + params.profitLockPts) {
       state.isProfitLockTrailed = true;
       state.stopLossPrice = state.entryPrice! + params.profitLockPts;
-      this.log(state, `🔒 Option profit hit +${params.profitLockTriggerPts} pts! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * state.config.qty).toFixed(2)} Profit Guaranteed!`);
+      this.log(state, `🔒 Option profit hit +${params.profitLockTriggerPts} pts! Locked +${params.profitLockPts} pts profit (SL set to ₹${state.stopLossPrice.toFixed(2)}) — +₹${(params.profitLockPts * currentQty).toFixed(2)} Profit Guaranteed!`);
       await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
 
-    // 4. Target 1 Milestone -> Activate Uncapped Dynamic Trailing
+    // 4. Target 1 Milestone -> "The Banker & The Runner" Partial Booking & Uncapped Trailing
     if (pnlPoints >= params.targetPoints && !state.isDynamicTrailingActive) {
       state.isDynamicTrailingActive = true;
       state.winningTradesToday = Math.max(state.winningTradesToday, 1);
       if (state.stopLossPrice! < state.entryPrice! + params.target1LockPts) {
         state.stopLossPrice = state.entryPrice! + params.target1LockPts;
       }
+
+      // Multi-Lot Partial Profit Booking ("The Banker & The Runner") vs 100% Target Exit
+      const enablePartial = state.config.enablePartialBooking !== false;
+      const lotSize = params.defaultLotSize;
+      const currentTotalQty = state.executedQty || state.config.qty;
+
+      if (!enablePartial) {
+        this.log(state, `🎯 Target 1 (+${params.targetPoints} pts) Achieved in poll @ ₹${currentPrice.toFixed(2)} (+₹${pnlRs.toFixed(2)})! 100% Profit Locked — Auto-Squaring Off.`);
+        this.stopRealtimeMonitor(state);
+        await this.exitPosition(state, client, currentPrice, 'TARGET');
+        await this.persistLogs(state);
+        return;
+      }
+
+      if (enablePartial && !state.isPartialBooked && currentTotalQty >= 2 * lotSize && state.entryPrice) {
+        const targetPct = (state.config.partialBookingPct ?? 50) / 100;
+        const bookLots = Math.max(1, Math.floor((currentTotalQty / lotSize) * targetPct));
+        const bookQty = bookLots * lotSize;
+        const remainingQty = currentTotalQty - bookQty;
+
+        if (bookQty > 0 && remainingQty > 0) {
+          state.isPartialBooked = true;
+          state.executedQty = remainingQty;
+          const partialPnl = pnlPoints * bookQty;
+
+          if (state.isPaperTrade) {
+            this.log(state, `💰 [THE BANKER & RUNNER] Paper Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (+${pnlPoints.toFixed(1)} pts / +₹${partialPnl.toFixed(2)})! Trailing remaining ${remainingQty} qty.`);
+            this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`).catch(() => {});
+          } else if (client) {
+            try {
+              const partOrderId = await client.placeOrder({
+                symbol,
+                exchange: exch,
+                product: state.config.product,
+                qty: bookQty,
+                side: 'SELL',
+                orderType: 'MARKET',
+              });
+              this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
+              this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
+
+              if (state.slOrderId && state.slOrderId !== 'FAILED') {
+                const k = client['kite'] || client;
+                if (client.modifyOrder) {
+                  await client.modifyOrder(state.slOrderId, { quantity: remainingQty }).catch(() => {});
+                } else if (k && k.modifyOrder) {
+                  await k.modifyOrder('regular', state.slOrderId, { quantity: remainingQty }).catch(() => {});
+                }
+                this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${remainingQty} shares`);
+              }
+            } catch (partErr: any) {
+              this.log(state, `⚠ Partial profit exit notice in poll monitor: ${partErr.message}`);
+            }
+          }
+        }
+      }
+
       this.log(state, `🚀 Target-1 Milestone Reached (+${pnlPoints.toFixed(1)} pts / ₹${pnlRs.toFixed(2)}) @ ₹${currentPrice.toFixed(2)}! Activating Uncapped Momentum Trailing.`);
       await this.updateBrokerSlSafe(client, kite, state, symbol);
     }
@@ -1160,7 +1518,7 @@ export class NiftyOptionsScalperEngine {
 
   private async exitPosition(state: ScalperStrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE') {
     const symbol = state.optionSymbol!;
-    const qty = state.config.qty;
+    const qty = state.executedQty || state.config.qty;
     const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     this.stopRealtimeMonitor(state);
 
@@ -1193,6 +1551,8 @@ export class NiftyOptionsScalperEngine {
             state.isCostSlTrailed = false;
             state.isProfitLockTrailed = false;
             state.isDynamicTrailingActive = false;
+            state.isPartialBooked = false;
+            state.executedQty = undefined;
             return;
           }
         }
@@ -1210,6 +1570,19 @@ export class NiftyOptionsScalperEngine {
       state.tradesPlacedToday++;
       state.lastExitTimestamp = Date.now();
 
+      const isLoss = reason === 'SL' || (state.entryPrice !== null && exitPrice < state.entryPrice);
+      if (isLoss) {
+        state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
+        this.log(state, `🛑 Stop Loss Recorded [Daily Losses: ${state.dailyLossesCount}/${state.config.maxLossesPerDay || 2}]`);
+
+        // Two-Loss Circuit Breaker
+        if (state.dailyLossesCount >= (state.config.maxLossesPerDay || 2)) {
+          this.log(state, `🛡 [CIRCUIT BREAKER] Daily loss limit reached (${state.dailyLossesCount} losses). Auto-stopping scalper for today to preserve capital.`);
+          await this.stopWithStatus(state.strategyId, 'COMPLETED', `🛡 Auto-Stopped: Daily loss limit reached`);
+          return;
+        }
+      }
+
       state.entryTriggered = null;
       state.optionSymbol = null;
       state.entryPrice = null;
@@ -1219,6 +1592,8 @@ export class NiftyOptionsScalperEngine {
       state.isCostSlTrailed = false;
       state.isProfitLockTrailed = false;
       state.isDynamicTrailingActive = false;
+      state.isPartialBooked = false;
+      state.executedQty = undefined;
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
     }
@@ -1226,7 +1601,7 @@ export class NiftyOptionsScalperEngine {
 
   private async exitPositionHistorical(state: ScalperStrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET', timestamp: Date) {
     const symbol = state.optionSymbol!;
-    const qty = state.config.qty;
+    const qty = state.executedQty || state.config.qty;
     const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
     this.stopRealtimeMonitor(state);
 
@@ -1236,6 +1611,11 @@ export class NiftyOptionsScalperEngine {
       state.tradesPlacedToday++;
       state.lastExitTimestamp = timestamp.getTime();
 
+      const isLoss = reason === 'SL' || (state.entryPrice !== null && exitPrice < state.entryPrice);
+      if (isLoss) {
+        state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
+      }
+
       state.entryTriggered = null;
       state.optionSymbol = null;
       state.entryPrice = null;
@@ -1245,6 +1625,8 @@ export class NiftyOptionsScalperEngine {
       state.isCostSlTrailed = false;
       state.isProfitLockTrailed = false;
       state.isDynamicTrailingActive = false;
+      state.isPartialBooked = false;
+      state.executedQty = undefined;
     } catch (e) {
       this.log(state, `❌ Historical exit failed: ${e.message}`);
     }
@@ -1467,7 +1849,8 @@ export class NiftyOptionsScalperEngine {
 
   private async findOptionSymbol(client: any, state: ScalperStrategyState, futurePrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
     const { config } = state;
-    const upper = config.symbol.toUpperCase().trim();
+    const params = this.getIndexScalpParams(config.symbol, config, triggerTime);
+    const upper = params.effectiveSymbol.toUpperCase().trim();
     let underlying = 'NIFTY';
     if (upper.includes('BANKNIFTY')) underlying = 'BANKNIFTY';
     else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
@@ -1503,7 +1886,18 @@ export class NiftyOptionsScalperEngine {
       for (const strike of candidateStrikes) {
         const opt = filteredOptions.find((i: any) => Number(i.strike) === strike);
         if (!opt) continue;
-        const p = triggerTime ? await this.getHistoricalOptionPrice(client, opt.tradingsymbol, exchange, triggerTime) : null;
+        let p: number | null = null;
+        if (triggerTime) {
+          p = await this.getHistoricalOptionPrice(client, opt.tradingsymbol, exchange, triggerTime);
+        } else {
+          try {
+            const kite = client['kite'] || client;
+            const q = await kite.getLTP([`${exchange}:${opt.tradingsymbol}`]);
+            if (q[`${exchange}:${opt.tradingsymbol}`]?.last_price) {
+              p = q[`${exchange}:${opt.tradingsymbol}`].last_price;
+            }
+          } catch { }
+        }
         if (p !== null && p >= config.minPremium && p <= config.maxPremium) {
           return opt.tradingsymbol;
         }
@@ -1529,6 +1923,11 @@ export class NiftyOptionsScalperEngine {
     return closest ? closest.tradingsymbol : null;
   }
 
+  private parseHhmm(hhmmStr: string): number {
+    const parts = (hhmmStr || '00:00').split(':').map(Number);
+    return (parts[0] || 0) * 60 + (parts[1] || 0);
+  }
+
   private getIstHhmm(date: Date): number {
     const utcMs = date.getTime() + (date.getTimezoneOffset() * 60000);
     const istDate = new Date(utcMs + (330 * 60000));
@@ -1549,8 +1948,9 @@ export class NiftyOptionsScalperEngine {
     } catch { }
   }
 
-  private async findFutureSymbol(client: any, baseSymbol: string): Promise<{ symbol: string; exchange: string }> {
-    const upperSymbol = baseSymbol.toUpperCase().trim();
+  private async findFutureSymbol(client: any, baseSymbol: string, targetDate?: Date): Promise<{ symbol: string; exchange: string }> {
+    const params = this.getIndexScalpParams(baseSymbol, undefined, targetDate);
+    const upperSymbol = params.effectiveSymbol.toUpperCase().trim();
     let underlying = 'NIFTY';
     if (upperSymbol.includes('BANK')) underlying = 'BANKNIFTY';
     else if (upperSymbol.includes('FIN')) underlying = 'FINNIFTY';

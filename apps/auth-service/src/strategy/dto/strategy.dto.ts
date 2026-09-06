@@ -149,21 +149,42 @@ export interface NiftyOptionsScalperConfig {
   lots: number;
   product: 'MIS' | 'NRML';
   maxTradesPerDay: number;
-  maxWinsPerDay?: number;
-  stopLossPoints: number;
-  targetPoints: number;
-  trailCostAtPoints?: number;
+  maxWinsPerDay?: number;          // "1 Win & Done" daily goal discipline: Stop after 1 winning 10-pt scalp (default: 1)
+  stopLossPoints: number;          // Default: 6.0 pts
+  targetPoints: number;            // Default: 10.0 pts (Daily high-probability 10-pt scalp)
+  trailCostAtPoints?: number;      // Trail SL to cost + 0.50 cushion at +5.0 pts (default: 5.0)
   stopLossRs: number;
   targetRs: number;
   minPremium?: number;
   maxPremium?: number;
   enableOrbTrigger?: boolean;
   enablePullbackTrigger?: boolean;
-  enableRsiFilter?: boolean;       // Require 5m Stochastic RSI (14, 14, 3, 3) confirmation (%K >= %D for CE, %K <= %D for PE) (default: true)
+  enableCrossoverTrigger?: boolean; // EMA-VWAP Crossover trigger (default: false to focus exclusively on high-winrate Pullbacks)
+  enableRsiFilter?: boolean;       // Require 5m Stochastic RSI confirmation (default: false)
   enableRangeFilter?: boolean;     // Skip candles with small range < 8 pts to avoid choppiness (default: true)
   enableStagnancyExit?: boolean;   // Auto-exit if trade stays flat for 15+ mins without momentum (default: true)
   stagnancyMinutes?: number;       // Max minutes to hold stagnant trade (default: 15)
-  moneyness?: 'ATM' | 'ITM';       // Option strike moneyness ('ITM' gives Delta >= 0.55 for fastest 10-pt target) (default: 'ITM')
+  moneyness?: 'ATM' | 'ITM';       // Option strike moneyness ('ITM' gives Delta >= 0.54 for fastest 10-pt target) (default: 'ITM')
+
+  // ── Profitability, Risk Shield & Execution Upgrades ──
+  maxLossesPerDay?: number;        // 'Two-Loss & Done' shield: Halt on 2 SL hits to cap daily risk (default: 2)
+  enablePartialBooking?: boolean;  // 'The Banker & The Runner': Book 50% lots at Target 1 (+10 pts), trail runner (default: false for 100% exit at +10 pts)
+  partialBookingPct?: number;      // % of position to book at Target 1 (default: 50%)
+  enableMiddayChopFilter?: boolean;// Skip new entries during 12:15-13:15 European transition chop (default: true)
+  middayDeadZoneStart?: string;    // Dead zone start time IST (default: '12:15')
+  middayDeadZoneEnd?: string;      // Dead zone end time IST (default: '13:15')
+  enableVolumeSurge?: boolean;     // Require trigger candle RVOL >= 0.9x or higher than prev volume (default: false)
+  minRvol?: number;                // Relative volume threshold multiplier (default: 0.9)
+  enableTrendBiasFilter?: boolean; // Align scalp direction with Day VWAP (CE above VWAP, PE below VWAP) (default: true)
+  enableMacroDayBias?: boolean;    // In Bull Day, suppress counter-trend PE pullbacks; in Bear Day, suppress counter-trend CE pullbacks (default: false)
+  entryStartTime?: string;        // Earliest entry time IST (default: '09:45' — captures high-momentum morning pullbacks)
+  entryCutoffTime?: string;        // No new entries after this time IST (default: '14:15')
+  minRejectionWickPct?: number;    // Minimum 15-EMA rejection wick ratio (default: 0.0)
+  timeframe?: '3minute' | '5minute'; // Scalping candle timeframe (default: '5minute')
+  enableAutoHybrid?: boolean;      // Auto-Hybrid Engine: Trades NIFTY 50 Mon-Thu, auto-switches to BSE SENSEX on Friday Expiry (default: false)
+  enableDynamicSizing?: boolean;   // Dynamic Compounding Lot Sizing: Deploys 85% tradeable margin from live Zerodha balance (default: true)
+  maxCapital?: number;             // Optional capital cap for position sizing (default: undefined -> uses live Kite margin)
+  maxLots?: number;                // Maximum safety lot cap to prevent oversized orders (default: 25)
 }
 
 // ─── Stock Options Buying Config ───────────────────────────────────────────────

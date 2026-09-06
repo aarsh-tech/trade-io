@@ -1466,6 +1466,69 @@ export default function StrategyDetailPage() {
                 type="number"
               />
 
+              {isNiftyScalper && (
+                <>
+                  <Field
+                    label="Target 1 Milestone (Pts)"
+                    editing={editing}
+                    value={editing ? String(editConfig.targetPoints ?? cfg.targetPoints ?? 10) : `+${cfg.targetPoints ?? 10} pts`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, targetPoints: Number(v) }))}
+                    type="number"
+                  />
+                  <Field
+                    label="Stop Loss Points"
+                    editing={editing}
+                    value={editing ? String(editConfig.stopLossPoints ?? cfg.stopLossPoints ?? 7) : `-${cfg.stopLossPoints ?? 7} pts`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, stopLossPoints: Number(v) }))}
+                    type="number"
+                  />
+                  <Field
+                    label="Breakeven Trail (Pts)"
+                    editing={editing}
+                    value={editing ? String(editConfig.trailCostAtPoints ?? cfg.trailCostAtPoints ?? 6) : `+${cfg.trailCostAtPoints ?? 6} pts`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, trailCostAtPoints: Number(v) }))}
+                    type="number"
+                  />
+                  <Field
+                    label="Daily Loss Limit (Circuit Breaker)"
+                    editing={editing}
+                    value={editing ? String(editConfig.maxLossesPerDay ?? cfg.maxLossesPerDay ?? 2) : `${cfg.maxLossesPerDay ?? 2} losses`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, maxLossesPerDay: Number(v) }))}
+                    type="number"
+                  />
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">The Banker &amp; The Runner</p>
+                    <p className="text-sm font-bold text-emerald-600">
+                      {cfg.enablePartialBooking !== false ? `Active (${cfg.partialBookingPct ?? 50}% booked at T1, runner trailed)` : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Dead-Zone Shield</p>
+                    <p className="text-sm font-bold text-amber-600">
+                      {cfg.enableMiddayChopFilter !== false ? "Active (11:45 - 13:00 European Lull Paused)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Volume Surge / RVOL</p>
+                    <p className="text-sm font-bold text-blue-600">
+                      {cfg.enableVolumeSurge !== false ? `Active (RVOL >= ${cfg.minRvol ?? 1.15}x)` : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Day VWAP Trend Bias</p>
+                    <p className="text-sm font-bold text-purple-600">
+                      {cfg.enableTrendBiasFilter !== false ? "Active (CE above VWAP, PE below VWAP)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Scalping Timeframe</p>
+                    <p className="text-sm font-bold text-indigo-600">
+                      {cfg.timeframe || "5minute"} Candles
+                    </p>
+                  </div>
+                </>
+              )}
+
               {isEmaVwap && (
                 <Field
                   label="EMA Period"

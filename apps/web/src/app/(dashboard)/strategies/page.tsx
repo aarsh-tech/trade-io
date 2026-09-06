@@ -767,7 +767,7 @@ function StrategyCard({
             <span className="text-[10px] font-medium text-emerald-600/80">Target</span>
             <span className="text-xs font-bold text-emerald-600 mt-0.5 truncate">
               {isNiftyScalper
-                ? "+10 Pts + Trail"
+                ? `+${cfg.targetPoints ?? 10} Pts (Banker/Runner)`
                 : is15Min
                   ? "1:2 RR + Uncapped Trail"
                   : isEmaVwap

@@ -28,13 +28,26 @@ export interface StrategyFormState {
   targetPct: string;
   slPct: string;
   startAfterMin: string;
-  // Daily Scalper
+  // Daily Scalper & Nifty Options Scalper
   dsCapital: string;
   dsDailyTargetRs: string;
   dsDailyMaxLossRs: string;
   dsTargetPoints: string;
   dsStopLossPoints: string;
   dsMaxTradesPerDay: string;
+  dsTrailCostAtPoints?: string;
+  dsMaxLossesPerDay?: string;
+  dsEnablePartialBooking?: boolean;
+  dsPartialBookingPct?: string;
+  dsEnableMiddayChopFilter?: boolean;
+  dsEnableVolumeSurge?: boolean;
+  dsEnableTrendBiasFilter?: boolean;
+  dsEnableMacroDayBias?: boolean;
+  dsEntryCutoffTime?: string;
+  dsTimeframe?: "3minute" | "5minute";
+  dsEnableDynamicSizing?: boolean;
+  dsMaxCapital?: string;
+  dsMaxLots?: string;
   // Stock Options Buying
   sTimeframe: string;
   sEmaPeriod: string;
@@ -107,6 +120,7 @@ export const LOT_SIZES: Record<string, number> = {
 
 export function getLotSize(symbol: string) {
   const s = symbol.toUpperCase();
+  if (s.includes("HYBRID")) return 65;
   if (s.includes("BANKNIFTY")) return 30;
   if (s.includes("NIFTY")) return 65;
   if (s.includes("SENSEX")) return 20;
