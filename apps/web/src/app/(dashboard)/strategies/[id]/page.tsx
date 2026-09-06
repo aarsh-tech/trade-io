@@ -46,7 +46,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { toast } from "sonner";
 
@@ -146,22 +146,44 @@ export default function StrategyDetailPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [activeTab, setActiveTab] = useState<"LIVE" | "CONFIG" | "ANALYTICS" | "HISTORY">("LIVE");
 
-  // Real-time market data subscription
-  const symbolsToSubscribe = Array.from(
-    new Set(
-      [
-        strategy?.config?.symbol,
-        liveState?.activeSymbol,
-        liveState?.optionSymbol,
-        liveState?.futureSymbol,
-      ].filter(Boolean) as string[]
-    )
-  );
+  // Real-time market data subscription (clean dummy symbols like AUTO, map index aliases)
+  const symbolsToSubscribe = useMemo(() => {
+    const rawList = [
+      strategy?.config?.symbol,
+      liveState?.activeSymbol,
+      liveState?.optionSymbol,
+      liveState?.futureSymbol,
+      liveState?.activeStockSymbol,
+    ].filter(Boolean) as string[];
 
-  const { getPrice } = useMarketData(symbolsToSubscribe);
+    const cleaned: string[] = [];
+    rawList.forEach((s) => {
+      const upper = s.trim().toUpperCase();
+      if (!upper || upper === "AUTO") return;
+      cleaned.push(s);
+      if (upper === "NIFTY" || upper === "NIFTY 50") {
+        cleaned.push("NIFTY 50");
+        cleaned.push("NSE:NIFTY 50");
+      } else if (upper === "BANKNIFTY" || upper === "NIFTY BANK") {
+        cleaned.push("NIFTY BANK");
+        cleaned.push("NSE:NIFTY BANK");
+      }
+    });
+
+    return Array.from(new Set(cleaned));
+  }, [
+    strategy?.config?.symbol,
+    liveState?.activeSymbol,
+    liveState?.optionSymbol,
+    liveState?.futureSymbol,
+    liveState?.activeStockSymbol,
+  ]);
+
+  const { getPrice, isConnected: isMarketDataConnected } = useMarketData(symbolsToSubscribe);
   const tradedSymbol =
     liveState?.optionSymbol ||
     liveState?.activeSymbol ||
+    liveState?.activeStockSymbol ||
     liveState?.futureSymbol ||
     strategy?.config?.symbol;
   const directLtp = tradedSymbol ? getPrice(tradedSymbol) : null;
@@ -271,21 +293,7 @@ export default function StrategyDetailPage() {
     load();
   }, [load]);
 
-  // Periodic status poll fallback (every 3s) while strategy is actively running
-  useEffect(() => {
-    if (!strategy?.isActive) return;
-    const interval = setInterval(async () => {
-      try {
-        const statusRes = await strategyApi.status(id);
-        if (statusRes.data?.data) {
-          if (statusRes.data.data.logs) setLiveLogs(statusRes.data.data.logs);
-          if (statusRes.data.data.state !== undefined) setLiveState(statusRes.data.data.state);
-          if (statusRes.data.data.orders) setActiveOrders(statusRes.data.data.orders);
-        }
-      } catch { }
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [id, strategy?.isActive]);
+  const [isWsConnected, setIsWsConnected] = useState(false);
 
   // Real-time WebSockets for zero-latency strategy updates
   useEffect(() => {
@@ -294,11 +302,16 @@ export default function StrategyDetailPage() {
     if (!token) return;
 
     const socket = io(`${getSocketBaseUrl()}/strategy`, {
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
+      withCredentials: true,
       auth: { token },
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
     });
 
     socket.on("connect", () => {
+      setIsWsConnected(true);
       socket.emit("subscribe", { strategyId: id });
     });
 
@@ -311,10 +324,35 @@ export default function StrategyDetailPage() {
       }
     );
 
+    socket.on("disconnect", () => {
+      setIsWsConnected(false);
+    });
+
+    socket.on("connect_error", () => {
+      setIsWsConnected(false);
+    });
+
     return () => {
       socket.disconnect();
+      setIsWsConnected(false);
     };
   }, [id]);
+
+  // Fallback status poll ONLY when WebSocket is NOT connected (every 10s) while strategy is actively running
+  useEffect(() => {
+    if (!strategy?.isActive || isWsConnected) return;
+    const interval = setInterval(async () => {
+      try {
+        const statusRes = await strategyApi.status(id);
+        if (statusRes.data?.data) {
+          if (statusRes.data.data.logs) setLiveLogs(statusRes.data.data.logs);
+          if (statusRes.data.data.state !== undefined) setLiveState(statusRes.data.data.state);
+          if (statusRes.data.data.orders) setActiveOrders(statusRes.data.data.orders);
+        }
+      } catch { }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [id, strategy?.isActive, isWsConnected]);
 
   useEffect(() => {
     if (logsRef.current && showLogs) {
@@ -549,6 +587,24 @@ export default function StrategyDetailPage() {
                   Paper Trade
                 </Badge>
               )}
+
+              {/* WebSocket Telemetry Status Pill */}
+              <div
+                className={cn(
+                  "inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-2xs",
+                  isWsConnected
+                    ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                    : "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                )}
+                title={
+                  isWsConnected
+                    ? "Zero-latency WebSocket connected"
+                    : "Connecting to real-time WebSocket..."
+                }
+              >
+                <Radio className={cn("h-3 w-3", isWsConnected ? "text-emerald-500 animate-pulse" : "text-amber-500")} />
+                <span>{isWsConnected ? "WS Live" : "Connecting..."}</span>
+              </div>
             </div>
 
             <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
