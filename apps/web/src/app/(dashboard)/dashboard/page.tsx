@@ -14,8 +14,6 @@ import { usePortfolio } from "@/hooks/usePortfolio";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
   ChevronDown,
   ChevronRight,
   ChevronUp,
