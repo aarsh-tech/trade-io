@@ -295,12 +295,13 @@ export default function StrategiesPage() {
       if (
         activeTab === "OPTIONS" &&
         !s.type.includes("OPTIONS") &&
-        s.type !== "NIFTY_OPTIONS_SCALPER"
+        s.type !== "NIFTY_OPTIONS_SCALPER" &&
+        s.type !== "GAMMA_BLAST_EXPIRY"
       )
         return false;
       if (
         activeTab === "INTRADAY" &&
-        (s.type.includes("OPTIONS") || s.type === "NIFTY_OPTIONS_SCALPER")
+        (s.type.includes("OPTIONS") || s.type === "NIFTY_OPTIONS_SCALPER" || s.type === "GAMMA_BLAST_EXPIRY")
       )
         return false;
 
@@ -772,6 +773,7 @@ function StrategyCard({
   const isEmaVwap = s.type === "EMA_VWAP_CROSSOVER";
   const isNiftyScalper = s.type === "NIFTY_OPTIONS_SCALPER";
   const isStockOptions = s.type === "STOCK_OPTIONS_BUYING";
+  const isGammaBlast = s.type === "GAMMA_BLAST_EXPIRY";
   const isDailyScalper = s.type === "DAILY_SCALPER";
 
   return (
@@ -798,6 +800,7 @@ function StrategyCard({
                 "inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full border",
                 isNiftyScalper && "bg-purple-500/10 text-purple-600 border-purple-500/20",
                 isStockOptions && "bg-amber-500/10 text-amber-600 border-amber-500/20",
+                isGammaBlast && "bg-orange-500/10 text-orange-600 border-orange-500/20",
                 is15Min && "bg-blue-500/10 text-blue-600 border-blue-500/20",
                 isEmaVwap && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
                 isDailyScalper && "bg-cyan-500/10 text-cyan-600 border-cyan-500/20"
@@ -805,6 +808,7 @@ function StrategyCard({
             >
               {isNiftyScalper && <Target className="h-3 w-3" />}
               {isStockOptions && <Flame className="h-3 w-3" />}
+              {isGammaBlast && <Zap className="h-3 w-3" />}
               {is15Min && <BarChart2 className="h-3 w-3" />}
               {isEmaVwap && <TrendingUp className="h-3 w-3" />}
               {isDailyScalper && <Zap className="h-3 w-3" />}
@@ -813,13 +817,15 @@ function StrategyCard({
                   ? "Nifty 10-Pt Scalper"
                   : isStockOptions
                     ? "Stock Options"
-                    : is15Min
-                      ? "15-Min Breakout (Dynamic)"
-                      : isEmaVwap
-                        ? "15-EMA & VWAP"
-                        : isDailyScalper
-                          ? "Daily Scalper"
-                          : s.type}
+                    : isGammaBlast
+                      ? "Gamma Blast (Expiry)"
+                      : is15Min
+                        ? "15-Min Breakout (Dynamic)"
+                        : isEmaVwap
+                          ? "15-EMA & VWAP"
+                          : isDailyScalper
+                            ? "Daily Scalper"
+                            : s.type}
               </span>
             </span>
 
@@ -874,44 +880,83 @@ function StrategyCard({
         <div className="grid grid-cols-3 gap-2">
           <div className="p-2 rounded-xl bg-secondary/40 border border-border/50 text-center flex flex-col justify-center">
             <span className="text-[10px] font-medium text-muted-foreground">Sizing</span>
-            <span className="text-xs font-bold text-foreground truncate mt-0.5">
-              {isNiftyScalper
-                ? "Auto Margin"
-                : is15Min
-                  ? "85% Margin (5x)"
-                  : isEmaVwap && cfg.symbol === "AUTO"
-                    ? "85% Margin (5x)"
-                    : cfg.symbol === "AUTO"
-                      ? "Auto (5x)"
-                      : cfg.qty
-                        ? `${cfg.qty} Qty`
-                        : "Dynamic"}
+            <span
+              className="text-xs font-bold text-foreground truncate mt-0.5"
+              title={
+                isStockOptions
+                  ? `Max Capital: ₹${Number(cfg.maxCapital || 25000).toLocaleString("en-IN")} • Auto Lots`
+                  : undefined
+              }
+            >
+              {isStockOptions
+                ? (cfg.maxCapital ? `₹${Number(cfg.maxCapital).toLocaleString("en-IN")}` : "Auto Lots")
+                : isGammaBlast
+                  ? `${cfg.lots || 1} Lot${(cfg.lots || 1) > 1 ? "s" : ""}`
+                  : isNiftyScalper
+                    ? "Auto Margin"
+                    : is15Min
+                      ? "85% Margin (5x)"
+                      : isEmaVwap && cfg.symbol === "AUTO"
+                        ? "85% Margin (5x)"
+                        : cfg.symbol === "AUTO"
+                          ? "Auto (5x)"
+                          : cfg.qty
+                            ? `${cfg.qty} Qty`
+                            : "Dynamic"}
             </span>
           </div>
 
           <div className="p-2 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center flex flex-col justify-center">
             <span className="text-[10px] font-medium text-rose-500/80">Stop Loss</span>
-            <span className="text-xs font-bold text-rose-600 mt-0.5 truncate">
-              {isNiftyScalper
-                ? "-7 Pts (Server SL)"
-                : is15Min
-                  ? "Candle SL (Trailed)"
-                  : isEmaVwap
-                    ? "Candle Low (Trailed)"
-                    : `₹${cfg.stopLossRs ?? "500"}`}
+            <span
+              className="text-xs font-bold text-rose-600 mt-0.5 truncate"
+              title={
+                isStockOptions
+                  ? "Mother candle low SL with breakeven trailing at Target 1"
+                  : undefined
+              }
+            >
+              {isStockOptions
+                ? "Breakeven @ T1"
+                : isGammaBlast
+                  ? `${cfg.initialSlPct || 50}% Prem SL`
+                  : isNiftyScalper
+                    ? "-7 Pts (Server SL)"
+                    : is15Min
+                      ? "Candle SL (Trailed)"
+                      : isEmaVwap
+                        ? "Candle Low (Trailed)"
+                        : cfg.stopLossRs
+                          ? `₹${cfg.stopLossRs}`
+                          : "Dynamic SL"}
             </span>
           </div>
 
           <div className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-center flex flex-col justify-center">
             <span className="text-[10px] font-medium text-emerald-600/80">Target</span>
-            <span className="text-xs font-bold text-emerald-600 mt-0.5 truncate">
-              {isNiftyScalper
-                ? `+${cfg.targetPoints ?? 10} Pts (Banker/Runner)`
-                : is15Min
-                  ? "1:2 RR + Uncapped Trail"
-                  : isEmaVwap
-                    ? "15-EMA / VWAP"
-                    : `₹${cfg.targetRs ?? "500"}`}
+            <span
+              className="text-xs font-bold text-emerald-600 mt-0.5 truncate"
+              title={
+                isStockOptions
+                  ? `Target 1: 1:${cfg.target1RR || 1.5} RR (50% Banker Lock) • Target 2: 1:${cfg.target2RR || 3.0} RR (Runner Trail)`
+                  : undefined
+              }
+            >
+              {isStockOptions
+                ? (cfg.target1RR && cfg.target2RR
+                    ? `1:${cfg.target1RR} & 1:${cfg.target2RR} RR`
+                    : "1:1.5 & 1:3 RR")
+                : isGammaBlast
+                  ? "2x–5x Ratchet"
+                  : isNiftyScalper
+                    ? `+${cfg.targetPoints ?? 10} Pts (Banker/Runner)`
+                    : is15Min
+                      ? "1:2 RR + Uncapped Trail"
+                      : isEmaVwap
+                        ? "15-EMA / VWAP"
+                        : cfg.targetRs
+                          ? `₹${cfg.targetRs}`
+                          : "Dynamic RR"}
             </span>
           </div>
         </div>
