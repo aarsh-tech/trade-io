@@ -161,7 +161,6 @@ export const marketApi = {
   getLotSize: (symbol: string, accountId?: string | null) => api.get("/market/lot-size", { params: { symbol, accountId } }),
   addToWatchlist: (symbol: string, exchange: string = 'NSE') => api.post("/market/watchlist", { symbol, exchange }),
   removeFromWatchlist: (symbol: string, exchange: string = 'NSE') => api.delete("/market/watchlist", { params: { symbol, exchange } }),
-  getAdvisoryReport: () => api.get("/market/advisory-report"),
 };
 
 // ─── Orders & P&L Ledger ────────────────────────────────────────────────────────

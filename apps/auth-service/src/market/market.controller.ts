@@ -4,7 +4,6 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { MarketService } from './market.service';
 import { OhlScannerService } from './ohl-scanner.service';
-import { DailyAdvisoryService } from './daily-advisory.service';
 
 @ApiTags('Market')
 @Controller('market')
@@ -14,7 +13,6 @@ export class MarketController {
   constructor(
     private readonly marketService: MarketService,
     private readonly ohlScannerService: OhlScannerService,
-    private readonly dailyAdvisoryService: DailyAdvisoryService,
   ) { }
 
   @Get('ohl-stocks')
@@ -29,16 +27,6 @@ export class MarketController {
     const tolNum = parseFloat(tolerance) || 0.05;
     const data = await this.ohlScannerService.scan(req.user?.id, universe, tolNum, filter);
     return { success: true, data };
-  }
-
-  @Get('advisory-report')
-  @ApiOperation({ summary: 'Get current Live 3-Trade Advisory Report for UI display' })
-  async getAdvisoryReport(@Request() req: any) {
-    const report = await this.dailyAdvisoryService.getLatestReport(req.user?.id);
-    return {
-      success: true,
-      data: report,
-    };
   }
 
   // ── Market Data ─────────────────────────────────────────────────────────────
