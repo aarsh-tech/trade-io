@@ -55,6 +55,23 @@ export interface StrategyFormState {
   sMaxCapital: string;
   sTriggerOffset: string;
   sProtectionBufferPct: string;
+  sDirectionBias: "BOTH" | "CALL_ONLY" | "PUT_ONLY";
+  sSetupType: "INSIDE_CANDLE" | "PULLBACK_REJECTION" | "BOTH";
+  sMoneyness: "ITM" | "ATM";
+  sIsAutoStockSelect: boolean;
+  sMinRvol: string;
+  sEnableMarketTrendFilter: boolean;
+  sEnableMiddayChopFilter: boolean;
+  sEnablePartialBooking: boolean;
+  sPartialBookingPct: string;
+  sMaxStagnantTimeMin: string;
+  sMaxWinsPerDay: string;
+  sMaxLossesPerDay: string;
+  sEnableHtfFilter: boolean;
+  sEnableTrailingSl: boolean;
+  sTarget1RR: string;
+  sTarget2RR: string;
+  sEnableDynamicSizing: boolean;
   // Breakout 15-Min Dynamic Upgrades
   b15EnableDynamicAtr: boolean;
   b15RiskRewardRatio: string;
@@ -102,6 +119,7 @@ export interface StrategyFormState {
   // Broker
   brokerAccountId: string;
   isPaperTrade: boolean;
+  lotSize?: number;
 }
 
 export interface BrokerAccount {
@@ -116,16 +134,18 @@ export const LOT_SIZES: Record<string, number> = {
   "NIFTY": 65,
   "BANKNIFTY": 30,
   "SENSEX": 20,
+  "FINNIFTY": 60,
+  "MIDCPNIFTY": 120,
 };
 
-export function getLotSize(symbol: string) {
-  const s = symbol.toUpperCase();
+export function getLotSize(symbol: string, dynamicLot?: number) {
+  if (dynamicLot && dynamicLot > 0) return dynamicLot;
+  const s = (symbol || "").toUpperCase().trim();
   if (s.includes("HYBRID")) return 65;
   if (s.includes("BANKNIFTY")) return 30;
   if (s.includes("NIFTY")) return 65;
   if (s.includes("SENSEX")) return 20;
-  for (const key in LOT_SIZES) {
-    if (s.includes(key)) return LOT_SIZES[key];
-  }
-  return 1;
+  if (s.includes("FINNIFTY")) return 60;
+  if (s.includes("MIDCPNIFTY")) return 120;
+  return LOT_SIZES[s] || 1;
 }

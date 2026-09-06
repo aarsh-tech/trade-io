@@ -216,6 +216,7 @@ export default function StrategyDetailPage() {
   const [testSearchResults, setTestSearchResults] = useState<any[]>([]);
   const [isTestSearching, setIsTestSearching] = useState(false);
   const [testSelectedPrice, setTestSelectedPrice] = useState<number | null>(null);
+  const [testLotSize, setTestLotSize] = useState<number>(1);
 
   // Live tick subscription for test instrument
   const symbolsToSubscribeTest =
@@ -230,8 +231,24 @@ export default function StrategyDetailPage() {
       setTestSymbol(strategy.config.symbol || "AUTO");
       setTestExchange(strategy.config.exchange || "NSE");
       setTestProduct(strategy.config.product || "MIS");
+      if (strategy.config.lotSize) {
+        setTestLotSize(strategy.config.lotSize);
+      }
     }
   }, [strategy]);
+
+  useEffect(() => {
+    if (!testSymbol || testSymbol === "AUTO") return;
+    let isMounted = true;
+    marketApi.getLotSize(testSymbol, strategy?.brokerAccountId)
+      .then((res: any) => {
+        if (isMounted && res.data?.lotSize) {
+          setTestLotSize(res.data.lotSize);
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, [testSymbol, strategy?.brokerAccountId]);
 
   const load = useCallback(async () => {
     try {
@@ -401,6 +418,9 @@ export default function StrategyDetailPage() {
   function selectTestInstrument(item: any) {
     setTestSymbol(item.symbol);
     setTestExchange(item.exchange);
+    if (item.lotSize && item.lotSize > 0) {
+      setTestLotSize(item.lotSize);
+    }
     const itemPrice = item.ltp || item.ltpNSE || item.price || null;
     setTestSelectedPrice(itemPrice);
     if (itemPrice) {
@@ -417,7 +437,7 @@ export default function StrategyDetailPage() {
     }
     setTestOrderBusy(true);
     try {
-      const lotSize = getLotSize(testSymbol);
+      const lotSize = testLotSize || getLotSize(testSymbol);
       const qty = testOrderLots * lotSize;
       const res = await brokerApi.placeOrder(strategy.brokerAccountId, {
         symbol: testSymbol,
@@ -752,8 +772,13 @@ export default function StrategyDetailPage() {
                     <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                       Lots / Multiplier
                     </label>
-                    <span className="text-[11px] font-semibold text-muted-foreground">
-                      Total: {testOrderLots * getLotSize(testSymbol)} shares
+                    <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
+                      {(testLotSize || getLotSize(testSymbol)) > 1 && (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                          1 Lot = {testLotSize || getLotSize(testSymbol)}
+                        </span>
+                      )}
+                      Total: {testOrderLots * (testLotSize || getLotSize(testSymbol))} shares
                     </span>
                   </div>
                   <Input
@@ -829,7 +854,9 @@ export default function StrategyDetailPage() {
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-foreground">
-                {cfg.symbol || "AUTO"}
+                {isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
+                  ? "AUTO (180+ F&O)"
+                  : cfg.symbol || "AUTO"}
               </span>
               <span className="text-[11px] text-muted-foreground">({cfg.exchange || "NSE"})</span>
             </div>
@@ -850,7 +877,9 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-foreground truncate">
                 {isNiftyScalper
                   ? "Auto Margin"
-                  : is15Min
+                  : isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
+                    ? "Auto NFO Lots"
+                    : is15Min
                     ? "85% Margin (5x)"
                     : isEmaVwap && cfg.symbol === "AUTO"
                       ? "85% Margin (5x)"
@@ -861,7 +890,7 @@ export default function StrategyDetailPage() {
                           : "Dynamic"}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Auto Lots" : is15Min ? "MIS 5x / Lots" : isEmaVwap ? "MIS 5x" : "Sizing"}
+                {isNiftyScalper ? "Auto Lots" : isStockOptions ? "Real Lot Size" : is15Min ? "MIS 5x / Lots" : isEmaVwap ? "MIS 5x" : "Sizing"}
               </span>
             </div>
           </CardContent>
@@ -881,14 +910,16 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-rose-600">
                 {isNiftyScalper
                   ? "-7 Points"
-                  : is15Min
+                  : isStockOptions
+                    ? "Mother Low / Trail"
+                    : is15Min
                     ? "Candle SL"
                     : isEmaVwap
                       ? "Candle Low"
                       : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Server SL + Trail" : is15Min ? "Server SL Armed" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
+                {isNiftyScalper ? "Server SL + Trail" : isStockOptions ? "Breakeven @ T1" : is15Min ? "Server SL Armed" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
               </span>
             </div>
           </CardContent>
@@ -908,14 +939,16 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-emerald-600">
                 {isNiftyScalper
                   ? "+10 Pts + Trail"
-                  : is15Min
+                  : isStockOptions
+                    ? "1:1.5 & 1:3 RR"
+                    : is15Min
                     ? "1:2 RR + Trail"
                     : isEmaVwap
                       ? "15-EMA / VWAP"
                       : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Uncapped Momentum" : is15Min ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
+                {isNiftyScalper ? "Uncapped Momentum" : isStockOptions ? "Banker & Runner" : is15Min ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
               </span>
             </div>
           </CardContent>
@@ -1537,6 +1570,72 @@ export default function StrategyDetailPage() {
                   onChange={(v) => setEditConfig((e) => ({ ...e, emaPeriod: Number(v) }))}
                   type="number"
                 />
+              )}
+
+              {isStockOptions && (
+                <>
+                  <Field
+                    label="Directional Bias"
+                    editing={editing}
+                    value={editing ? String(editConfig.directionBias ?? cfg.directionBias ?? "BOTH") : String(cfg.directionBias ?? "BOTH")}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, directionBias: v }))}
+                  />
+                  <Field
+                    label="Trigger Setup Mode"
+                    editing={editing}
+                    value={editing ? String(editConfig.setupType ?? cfg.setupType ?? "BOTH") : String(cfg.setupType ?? "BOTH")}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, setupType: v }))}
+                  />
+                  <Field
+                    label="Option Moneyness"
+                    editing={editing}
+                    value={editing ? String(editConfig.moneyness ?? cfg.moneyness ?? "ITM") : String(cfg.moneyness ?? "ITM")}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, moneyness: v }))}
+                  />
+                  <Field
+                    label="EMA Period"
+                    editing={editing}
+                    value={editing ? String(editConfig.emaPeriod ?? cfg.emaPeriod ?? 15) : String(cfg.emaPeriod ?? 15)}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, emaPeriod: Number(v) }))}
+                    type="number"
+                  />
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">The Banker &amp; The Runner</p>
+                    <p className="text-sm font-bold text-emerald-600">
+                      {cfg.enablePartialBooking !== false ? `Active (${cfg.partialBookingPct ?? 50}% booked @ T1 -> COST)` : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">NIFTY 50 Macro Trend Gate</p>
+                    <p className="text-sm font-bold text-indigo-600">
+                      {cfg.enableMarketTrendFilter !== false ? "Active (Aligned with NIFTY VWAP)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Dead-Zone Shield</p>
+                    <p className="text-sm font-bold text-amber-600">
+                      {cfg.enableMiddayChopFilter !== false ? `Active (${cfg.middayDeadZoneStart ?? "11:30"} - ${cfg.middayDeadZoneEnd ?? "13:00"} IST)` : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Volume Surge / RVOL</p>
+                    <p className="text-sm font-bold text-blue-600">
+                      Active (RVOL &ge; {cfg.minRvol ?? 1.25}x)
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Theta Stagnancy Cutoff</p>
+                    <p className="text-sm font-bold text-purple-600">
+                      {cfg.maxStagnantTimeMin ?? 25} Minutes
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">1-Loss &amp; Done Capital Shield</p>
+                    <p className="text-sm font-bold text-red-600">
+                      Max {cfg.maxLossesPerDay ?? 1} SL / Day
+                    </p>
+                  </div>
+                </>
               )}
 
               {is15Min && (

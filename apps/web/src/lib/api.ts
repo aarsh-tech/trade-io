@@ -158,6 +158,7 @@ export const marketApi = {
   quote: (symbol: string) => api.get(`/market/quote/${symbol}`),
   search: (q: string, accountId?: string | null) => api.get("/market/search", { params: { q, accountId } }),
   searchInstruments: (q: string, accountId?: string | null) => api.get("/market/search", { params: { q, accountId } }),
+  getLotSize: (symbol: string, accountId?: string | null) => api.get("/market/lot-size", { params: { symbol, accountId } }),
   addToWatchlist: (symbol: string, exchange: string = 'NSE') => api.post("/market/watchlist", { symbol, exchange }),
   removeFromWatchlist: (symbol: string, exchange: string = 'NSE') => api.delete("/market/watchlist", { params: { symbol, exchange } }),
 };

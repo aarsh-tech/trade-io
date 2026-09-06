@@ -312,7 +312,7 @@ class ZerodhaClient implements IBrokerClient {
     return data;
   }
 
-  async searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]> {
+  async searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string; lotSize?: number; segment?: string }[]> {
     try {
       const upperQuery = query.toUpperCase().trim();
       const [nse, nfo] = await Promise.all([
@@ -320,6 +320,14 @@ class ZerodhaClient implements IBrokerClient {
         this.getInstruments('NFO'),
       ]);
       const combined = [...nse, ...nfo];
+
+      // Dynamic F&O Lot Size Dictionary from Zerodha's live NFO master
+      const nfoLotMap = new Map<string, number>();
+      nfo.forEach((item: any) => {
+        if (item.name && item.lot_size && item.lot_size > 0) {
+          nfoLotMap.set(item.name.toUpperCase().trim(), item.lot_size);
+        }
+      });
 
       // Filter: prefer tradingsymbol matches
       const matches = combined.filter((item: any) =>
@@ -338,14 +346,71 @@ class ZerodhaClient implements IBrokerClient {
         return 0;
       });
 
-      return sorted.slice(0, 15).map((item: any) => ({
-        symbol: item.tradingsymbol,
-        name: item.name || item.tradingsymbol,
-        exchange: item.exchange,
-      }));
+      return sorted.slice(0, 15).map((item: any) => {
+        const cleanName = (item.name || item.tradingsymbol).toUpperCase().trim();
+        const cleanSym = (item.tradingsymbol || '').toUpperCase().trim();
+        const dynamicLot = item.lot_size && item.lot_size > 0
+          ? item.lot_size
+          : (nfoLotMap.get(cleanName) || nfoLotMap.get(cleanSym) || 1);
+
+        return {
+          symbol: item.tradingsymbol,
+          name: item.name || item.tradingsymbol,
+          exchange: item.exchange,
+          lotSize: dynamicLot,
+          segment: item.segment,
+        };
+      });
     } catch (err) {
       console.error('Zerodha searchInstruments Error:', err);
       return [];
+    }
+  }
+
+  async getLotSize(symbol: string): Promise<number> {
+    try {
+      let clean = (symbol || '').toUpperCase().trim();
+      clean = clean.replace(/^(NSE|BSE|NFO|BFO):/, '').replace(/-EQ$/, '').trim();
+      if (!clean) return 1;
+
+      // Check NFO contracts (NSE F&O stocks & indices)
+      const nfo = await this.getInstruments('NFO');
+      const match = nfo.find(
+        (i: any) =>
+          (i.name && i.name.toUpperCase().trim() === clean) ||
+          i.tradingsymbol?.toUpperCase().trim() === clean
+      );
+      if (match && match.lot_size > 0) {
+        return match.lot_size;
+      }
+
+      // Starts with clean (e.g. RELIANCE24... option or future contract)
+      const prefixMatch = nfo.find(
+        (i: any) => i.tradingsymbol?.toUpperCase().startsWith(clean) && i.lot_size > 0
+      );
+      if (prefixMatch && prefixMatch.lot_size > 0) {
+        return prefixMatch.lot_size;
+      }
+
+      // Check BFO contracts (BSE F&O e.g. SENSEX)
+      if (clean.includes('SENSEX')) {
+        return 20;
+      }
+      try {
+        const bfo = await this.getInstruments('BFO');
+        const bfoMatch = bfo.find(
+          (i: any) =>
+            (i.name && i.name.toUpperCase().trim() === clean) ||
+            i.tradingsymbol?.toUpperCase().trim() === clean
+        );
+        if (bfoMatch && bfoMatch.lot_size > 0) {
+          return bfoMatch.lot_size;
+        }
+      } catch {}
+
+      return 1;
+    } catch {
+      return 1;
     }
   }
 

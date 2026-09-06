@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Zap, Target, Flame, BarChart2, TrendingUp, Info, Loader2, Sparkles, Clock } from "lucide-react";
+import { Zap, Target, Flame, BarChart2, TrendingUp, Info, Loader2, Sparkles, Clock, ShieldCheck, ArrowUpRight, ArrowDownRight, Shuffle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StrategyFormState, getLotSize } from "../types";
 import { marketApi } from "@/lib/api";
@@ -39,9 +39,27 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
     set("symbol", item.symbol);
     set("exchange", item.exchange);
     set("instrumentType", item.segment === "NFO-OPT" || item.segment === "BFO-OPT" ? "OPTION" : (item.segment === "INDICES" ? "INDEX" : "STOCK"));
+    if (item.lotSize && item.lotSize > 0) {
+      set("lotSize", item.lotSize);
+    }
     setSearchResults([]);
     setSearchQuery("");
   };
+
+  React.useEffect(() => {
+    if (!form.symbol || form.symbol === "AUTO") return;
+    let isMounted = true;
+    marketApi.getLotSize(form.symbol, form.brokerAccountId)
+      .then((res: any) => {
+        if (isMounted && res.data?.lotSize) {
+          set("lotSize", res.data.lotSize);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [form.symbol, form.brokerAccountId]);
 
   return (
     <div className="space-y-5">
@@ -209,14 +227,152 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
         </div>
       )}
 
-      {/* ── STANDARD INSTRUMENT SELECTOR FOR OTHER STRATEGIES ── */}
-      {form.type !== "GAMMA_BLAST_EXPIRY" && (
+      {/* ── STOCK OPTIONS BUYING: DEDICATED AUTO VS MANUAL STOCK SELECTION ── */}
+      {form.type === "STOCK_OPTIONS_BUYING" && (
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-semibold mb-2 block">Stock Selection Mode</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  set("sIsAutoStockSelect", true);
+                  set("symbol", "AUTO");
+                  set("exchange", "NSE");
+                  set("instrumentType", "STOCK");
+                }}
+                className={cn(
+                  "p-3.5 rounded-xl border-2 text-left transition-all relative overflow-hidden",
+                  form.sIsAutoStockSelect !== false && form.symbol === "AUTO"
+                    ? "border-blue-500 bg-blue-50/70 dark:bg-blue-950/30 shadow-md"
+                    : "border-[hsl(var(--border))] hover:border-blue-400/50 bg-[hsl(var(--card))]"
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1">
+                    <Sparkles className="h-3 w-3" /> Recommended
+                  </span>
+                  <Badge className="text-[9px] bg-blue-500 text-white font-bold">180+ F&O Scanner</Badge>
+                </div>
+                <p className="font-bold text-sm text-[hsl(var(--foreground))] mt-1.5">
+                  🎯 Auto F&O Momentum Scanner
+                </p>
+                <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-1 leading-relaxed">
+                  Scans all 180+ liquid F&O stocks. Picks momentum leaders with 5%–10% intraday potential (RVOL ≥ 1.25, Open=Low/High institutional footprints).
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  set("sIsAutoStockSelect", false);
+                  if (form.symbol === "AUTO") {
+                    set("symbol", "APOLLOHOSP");
+                  }
+                }}
+                className={cn(
+                  "p-3.5 rounded-xl border-2 text-left transition-all relative overflow-hidden",
+                  form.sIsAutoStockSelect === false && form.symbol !== "AUTO"
+                    ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30 shadow-md"
+                    : "border-[hsl(var(--border))] hover:border-indigo-400/50 bg-[hsl(var(--card))]"
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Custom Stock
+                  </span>
+                  <Badge variant="outline" className="text-[9px] font-bold">Single Stock</Badge>
+                </div>
+                <p className="font-bold text-sm text-[hsl(var(--foreground))] mt-1.5">
+                  📌 Manual Stock Selection
+                </p>
+                <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-1 leading-relaxed">
+                  Trade options on a specific F&O stock you choose (e.g. APOLLOHOSP, RELIANCE, TRENT, BAJFINANCE).
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {form.sIsAutoStockSelect !== false && form.symbol === "AUTO" ? (
+            <div className="p-4 rounded-xl border border-blue-500/20 bg-gradient-to-br from-blue-500/5 via-indigo-500/5 to-cyan-500/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600">
+                    <Zap className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                      Live F&O Momentum Engine Active
+                    </p>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      Scanning all 180+ NSE F&O instruments continuously from 09:15 AM
+                    </p>
+                  </div>
+                </div>
+                <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-600 dark:text-blue-400 bg-blue-500/10 font-bold">
+                  Symbol: AUTO
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-blue-500/15">
+                <div className="p-2 rounded-lg bg-background/60">
+                  <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400">180+ Liquid Stocks</p>
+                  <p className="text-[9px] text-muted-foreground mt-0.5">Scanned dynamically</p>
+                </div>
+                <div className="p-2 rounded-lg bg-background/60">
+                  <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">5%–10% Velocity</p>
+                  <p className="text-[9px] text-muted-foreground mt-0.5">Day range expansion</p>
+                </div>
+                <div className="p-2 rounded-lg bg-background/60">
+                  <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">Auto Lot & Strike</p>
+                  <p className="text-[9px] text-muted-foreground mt-0.5">Live NFO master fetch</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="text-xs font-semibold block">Quick F&O Presets</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { sym: "APOLLOHOSP", name: "Apollo Hospitals", lot: 125 },
+                  { sym: "RELIANCE", name: "Reliance Industries", lot: 250 },
+                  { sym: "TRENT", name: "Trent Limited", lot: 100 },
+                  { sym: "BAJFINANCE", name: "Bajaj Finance", lot: 125 },
+                ].map((preset) => (
+                  <button
+                    key={preset.sym}
+                    type="button"
+                    onClick={() => {
+                      set("symbol", preset.sym);
+                      set("exchange", "NSE");
+                      set("instrumentType", "STOCK");
+                      set("lotSize", preset.lot);
+                    }}
+                    className={cn(
+                      "p-2.5 rounded-lg border text-left text-xs transition-all",
+                      form.symbol === preset.sym
+                        ? "border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold"
+                        : "border-border hover:border-blue-400/40 bg-[hsl(var(--card))]"
+                    )}
+                  >
+                    <p className="font-bold">{preset.sym}</p>
+                    <p className="text-[9px] text-muted-foreground mt-0.5">1 Lot = {preset.lot}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── STANDARD INSTRUMENT SELECTOR FOR OTHER STRATEGIES OR MANUAL MODE ── */}
+      {form.type !== "GAMMA_BLAST_EXPIRY" && !(form.type === "STOCK_OPTIONS_BUYING" && form.sIsAutoStockSelect !== false && form.symbol === "AUTO") && (
         <>
           <div className="relative space-y-2">
             <label className="text-sm font-medium block">Search Symbol (Stock, Option, Future)</label>
             <div className="relative">
               <Input
-                placeholder="Search e.g. RELIANCE, NIFTY 22000 CE..."
+                placeholder="Search e.g. RELIANCE, APOLLOHOSP, NIFTY 22000 CE..."
                 value={searchQuery}
                 onChange={(e) => handleSymbolSearch(e.target.value)}
                 className="pr-10"
@@ -248,6 +404,11 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
+                        {item.lotSize && item.lotSize > 1 ? (
+                          <Badge variant="outline" className="text-[9px] font-semibold border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5">
+                            Lot: {item.lotSize}
+                          </Badge>
+                        ) : null}
                         {itemPrice ? (
                           <div className="text-right">
                             <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
@@ -267,7 +428,14 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between p-3 rounded-lg bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))]">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Current Selection</p>
-                <p className="text-sm font-bold">{form.symbol} <span className="text-[10px] font-normal text-[hsl(var(--muted-foreground))]">({form.exchange})</span></p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <p className="text-sm font-bold">{form.symbol} <span className="text-[10px] font-normal text-[hsl(var(--muted-foreground))]">({form.exchange})</span></p>
+                  {(form.lotSize || getLotSize(form.symbol, form.lotSize)) > 1 && (
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                      1 Lot = {form.lotSize || getLotSize(form.symbol, form.lotSize)} Qty
+                    </span>
+                  )}
+                </div>
               </div>
               <Badge variant="secondary">{form.instrumentType}</Badge>
             </div>
@@ -279,7 +447,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               <div className="text-xs space-y-0.5">
                 <p className="font-bold">Dynamic Margin Lot Sizing Active</p>
                 <p className="text-[11px] opacity-80 leading-relaxed">
-                  Instead of a fixed 1-lot limit, the engine detects your live Zerodha margin, preserves a 15% cash buffer, and deploys 85% tradeable margin into lots (1 Lot = {getLotSize(form.symbol || 'NIFTY')} Qty).
+                  Instead of a fixed 1-lot limit, the engine detects your live Zerodha margin, preserves a 15% cash buffer, and deploys 85% tradeable margin into lots (1 Lot = {form.lotSize || getLotSize(form.symbol || 'NIFTY', form.lotSize)} Qty).
                 </p>
               </div>
             </div>
@@ -303,8 +471,8 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 <label className="text-sm font-medium block">
                   {form.type === "NIFTY_OPTIONS_SCALPER" || form.type === "BREAKOUT_15MIN" ? "Minimum / Base Lots" : "Number of Lots"}
                 </label>
-                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-                  1 Lot = {getLotSize(form.symbol)} Qty
+                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400 px-2 py-0.5 rounded-full">
+                  1 Lot = {form.lotSize || getLotSize(form.symbol, form.lotSize)} Qty
                 </span>
               </div>
               <Input
@@ -316,9 +484,11 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
                 {form.type === 'NIFTY_OPTIONS_SCALPER' || form.type === 'BREAKOUT_15MIN'
                   ? 'Dynamic Margin Allocation: Auto-scales lots from Zerodha cash (85% deployed, 15% buffer)'
+                  : form.type === 'STOCK_OPTIONS_BUYING' && form.symbol === 'AUTO'
+                  ? 'Auto F&O Mode: Real lot size resolved dynamically from Zerodha NFO master for the triggered stock'
                   : form.symbol === 'AUTO'
                   ? 'Quantity will be dynamically calculated to achieve target'
-                  : `Total Quantity: ${Number(form.lots) * getLotSize(form.symbol)} shares`}
+                  : `Total Quantity: ${Number(form.lots) * (form.lotSize || getLotSize(form.symbol, form.lotSize))} shares`}
               </p>
             </div>
             <div>
@@ -667,27 +837,148 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
       )}
 
       {form.type === "STOCK_OPTIONS_BUYING" && (
-        <div className="space-y-4">
-          <div className="p-3 rounded-xl bg-blue-50 border border-blue-100">
-            <p className="text-xs font-semibold text-blue-700">🔥 Stock Options Buying (EMA + VWAP Crossover + Inside Candle)</p>
-            <p className="text-[11px] text-blue-600 mt-1">Triggers when 15-EMA crosses VWAP on the stock, followed by an Inside Candle (Mother & Baby) setup.</p>
+        <div className="space-y-5">
+          <div className="p-4 rounded-xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-blue-500/10 border border-blue-500/20">
+            <div className="flex items-center gap-2 mb-1">
+              <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                Institutional 80% Profitability Engine (EMA-VWAP + Inside Candle + Pullbacks)
+              </p>
+            </div>
+            <p className="text-[11px] text-blue-600 dark:text-blue-400 leading-relaxed">
+              Engineered for asymmetric risk-to-reward. Combines 15-EMA/VWAP momentum alignment with Inside Candle range compression and pullback rejections, backed by strict High-Delta ITM strike liquidity filters.
+            </p>
           </div>
+
+          {/* Trade Directional Bias */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-semibold">Trade Directional Bias</label>
+              <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
+                Set PE-Only for Breakdown Setups (e.g. APOLLOHOSP M-Pattern)
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Both (Auto)", val: "BOTH", desc: "Long on Call, Short on Put", icon: Shuffle },
+                { label: "Bullish (CE Only)", val: "CALL_ONLY", desc: "Only buy Calls on Breakouts", icon: ArrowUpRight },
+                { label: "Bearish (PE Only)", val: "PUT_ONLY", desc: "Only buy Puts on Breakdowns", icon: ArrowDownRight },
+              ].map((item) => {
+                const Icon = item.icon;
+                const isSelected = (form.sDirectionBias || "BOTH") === item.val;
+                return (
+                  <button
+                    key={item.val}
+                    type="button"
+                    onClick={() => set("sDirectionBias", item.val)}
+                    className={cn(
+                      "text-left p-3 rounded-xl border-2 transition-all flex flex-col justify-between",
+                      isSelected
+                        ? "border-blue-500 bg-blue-50/60 dark:bg-blue-950/20 shadow-sm"
+                        : "border-[hsl(var(--border))] hover:border-blue-400/50"
+                    )}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-bold text-xs text-[hsl(var(--foreground))]">{item.label}</p>
+                      <Icon className={cn("h-4 w-4", isSelected ? "text-blue-600 dark:text-blue-400" : "text-slate-400")} />
+                    </div>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">{item.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Setup Trigger Architecture */}
+          <div>
+            <label className="text-sm font-semibold mb-2 block">Trigger Setup Mode</label>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Dual Setup (Recommended)", val: "BOTH", desc: "Inside Candle + 15-EMA Pullback" },
+                { label: "Inside Candle Only", val: "INSIDE_CANDLE", desc: "Pure Range Compression Breakout" },
+                { label: "Pullback Rejection", val: "PULLBACK_REJECTION", desc: "EMA/VWAP Re-test with Wick" },
+              ].map((item) => {
+                const isSelected = (form.sSetupType || "BOTH") === item.val;
+                return (
+                  <button
+                    key={item.val}
+                    type="button"
+                    onClick={() => set("sSetupType", item.val)}
+                    className={cn(
+                      "text-left p-3 rounded-xl border-2 transition-all",
+                      isSelected
+                        ? "border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/20 shadow-sm"
+                        : "border-[hsl(var(--border))] hover:border-indigo-400/50"
+                    )}
+                  >
+                    <p className="font-bold text-xs text-[hsl(var(--foreground))]">{item.label}</p>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">{item.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Timeframe & EMA Period */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-sm font-medium mb-1 block">Timeframe</label>
+              <label className="text-sm font-medium mb-1 block">Candle Timeframe</label>
               <select
                 value={form.sTimeframe}
                 onChange={(e) => set("sTimeframe", e.target.value)}
-                className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)] font-semibold"
               >
-                <option value="5min">5 Minute Candles</option>
-                <option value="15min">15 Minute Candles</option>
+                <option value="5min">5-Minute Candles (Aggressive / Fast Breakouts)</option>
+                <option value="15min">15-Minute Candles (Recommended — High Win Rate)</option>
               </select>
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">EMA Period</label>
-              <Input type="number" value={form.sEmaPeriod} onChange={e => set("sEmaPeriod", e.target.value)} />
+              <Input type="number" value={form.sEmaPeriod} onChange={e => set("sEmaPeriod", e.target.value)} className="font-semibold" />
             </div>
+          </div>
+
+          {/* Moneyness & RVOL Filter */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Option Strike Moneyness</label>
+              <select
+                value={form.sMoneyness || "ITM"}
+                onChange={(e) => set("sMoneyness", e.target.value)}
+                className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)] font-semibold"
+              >
+                <option value="ITM">In-The-Money (ITM) — Delta ≥ 0.55 (Recommended — Reduced Theta)</option>
+                <option value="ATM">At-The-Money (ATM) — Balanced Delta ~0.50</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Min Volume Surge (RVOL)</label>
+              <select
+                value={form.sMinRvol || "1.25"}
+                onChange={(e) => set("sMinRvol", e.target.value)}
+                className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)] font-semibold"
+              >
+                <option value="1.0">1.0x Volume SMA (Standard Volume)</option>
+                <option value="1.25">1.25x Volume SMA (Recommended — Institutional Filter)</option>
+                <option value="1.5">1.5x Volume SMA (High Conviction Surge)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* HTF Trend Filter Toggle */}
+          <div className="flex items-center justify-between p-3.5 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--secondary)/0.15)]">
+            <div>
+              <p className="text-xs font-bold text-[hsl(var(--foreground))]">Higher Timeframe (15-Min) Trend Filter</p>
+              <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                Ensures trade aligns with the 50-EMA on the 15-min chart before triggering option entry.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={form.sEnableHtfFilter !== false}
+              onChange={(e) => set("sEnableHtfFilter", e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
           </div>
         </div>
       )}

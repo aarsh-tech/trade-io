@@ -71,6 +71,23 @@ export default function NewStrategyPage() {
     sMaxCapital: "25000",
     sTriggerOffset: "0.50",
     sProtectionBufferPct: "10",
+    sDirectionBias: "BOTH",
+    sSetupType: "BOTH",
+    sMoneyness: "ITM",
+    sIsAutoStockSelect: true,
+    sMinRvol: "1.25",
+    sEnableMarketTrendFilter: true,
+    sEnableMiddayChopFilter: true,
+    sEnablePartialBooking: true,
+    sPartialBookingPct: "50",
+    sMaxStagnantTimeMin: "25",
+    sMaxWinsPerDay: "1",
+    sMaxLossesPerDay: "1",
+    sEnableHtfFilter: true,
+    sEnableTrailingSl: true,
+    sTarget1RR: "1.5",
+    sTarget2RR: "3.0",
+    sEnableDynamicSizing: true,
     b15EnableDynamicAtr: true,
     b15RiskRewardRatio: "2.0",
     b15EnableFakeoutReversal: true,
@@ -148,7 +165,7 @@ export default function NewStrategyPage() {
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      const lotSize = getLotSize(form.symbol);
+      const lotSize = form.lotSize || getLotSize(form.symbol, form.lotSize);
       const qty = Number(form.lots || 1) * lotSize;
 
       let config: any;
@@ -212,19 +229,41 @@ export default function NewStrategyPage() {
           maxLots: form.dsMaxLots ? Number(form.dsMaxLots) : 25,
         };
       } else if (form.type === "STOCK_OPTIONS_BUYING") {
+        const isAuto = form.sIsAutoStockSelect || form.symbol === "AUTO";
         config = {
-          symbol: form.symbol.trim(),
+          symbol: isAuto ? "AUTO" : form.symbol.trim(),
           exchange: "NSE",
           timeframe: form.sTimeframe,
+          isAutoStockSelect: isAuto,
           emaPeriod: Number(form.sEmaPeriod),
           riskRewardRatio: Number(form.sRiskRewardRatio),
           maxCapital: Number(form.sMaxCapital),
           lots: Number(form.lots),
+          lotSize,
+          qty,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           product: form.product,
           startAfterMin: Number(form.startAfterMin),
           triggerOffset: Number(form.sTriggerOffset),
           protectionBufferPct: Number(form.sProtectionBufferPct),
+          directionBias: form.sDirectionBias,
+          setupType: form.sSetupType,
+          moneyness: form.sMoneyness,
+          minRvol: Number(form.sMinRvol || 1.25),
+          enableMarketTrendFilter: form.sEnableMarketTrendFilter !== false,
+          enableMiddayChopFilter: form.sEnableMiddayChopFilter !== false,
+          middayDeadZoneStart: "11:30",
+          middayDeadZoneEnd: "13:00",
+          enablePartialBooking: form.sEnablePartialBooking !== false,
+          partialBookingPct: Number(form.sPartialBookingPct || 50),
+          maxStagnantTimeMin: Number(form.sMaxStagnantTimeMin || 25),
+          maxWinsPerDay: Number(form.sMaxWinsPerDay || 1),
+          maxLossesPerDay: Number(form.sMaxLossesPerDay || 1),
+          enableHtfFilter: form.sEnableHtfFilter !== false,
+          enableTrailingSl: form.sEnableTrailingSl !== false,
+          target1RR: Number(form.sTarget1RR || 1.5),
+          target2RR: Number(form.sTarget2RR || 3.0),
+          enableDynamicSizing: form.sEnableDynamicSizing !== false,
         };
       } else if (form.type === "BREAKOUT_15MIN") {
         config = {

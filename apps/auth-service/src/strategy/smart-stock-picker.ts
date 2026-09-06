@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { NIFTY_500_UNIVERSE } from '../market/market.constants';
+import { NIFTY_500_UNIVERSE, FO_STOCKS_LIST } from '../market/market.constants';
 
 // ─── Minimal Filter for Pure Penny / Illiquid / Extreme High-Price Symbols ───────────────────
 const BLACKLISTED_SLOW_STOCKS = new Set([
@@ -302,6 +302,165 @@ export async function getTopCandidateStocks(
         open: todayOpen,
         high: todayHigh,
         low: todayLow,
+        isOpenLow,
+        isOpenHigh,
+      });
+    }
+  }
+
+  // Sort descending by highest momentum score
+  result.sort((a, b) => b.score - a.score);
+  return result.slice(0, limit);
+}
+
+export interface FnoCandidateStock {
+  symbol: string;
+  exchange: string;
+  ltp: number;
+  score: number;
+  trend: 'LONG' | 'SHORT';
+  changeFromOpenPct: number;
+  dayChangePct: number;
+  dayRangePct: number;
+  turnoverCr: number;
+  isOpenLow?: boolean;
+  isOpenHigh?: boolean;
+}
+
+/**
+ * Returns top N ranked momentum candidate stocks strictly from the F&O universe (180+ liquid stocks with active options).
+ * Evaluates 5%–10% day move potential, institutional Open=High / Open=Low, volume surge, and respects direction bias.
+ */
+export async function getTopFnoCandidates(
+  kite: any,
+  directionBias: 'BOTH' | 'CALL_ONLY' | 'PUT_ONLY' = 'BOTH',
+  limit: number = 10,
+  logger?: Logger,
+  excludedSymbols?: Set<string>,
+): Promise<FnoCandidateStock[]> {
+  const result: FnoCandidateStock[] = [];
+
+  // 1. Resolve pure F&O universe from NFO instruments or FO_STOCKS_LIST
+  let fnoSymbols: string[] = [];
+  try {
+    const nfoInstruments = await kite.getInstruments('NFO');
+    const fnoSet = new Set<string>();
+    nfoInstruments.forEach((i: any) => {
+      if (i.name && i.segment === 'NFO-OPT') {
+        const sym = i.name.toUpperCase().trim();
+        if (sym && !sym.startsWith('NIFTY') && !sym.startsWith('BANKNIFTY') && !sym.startsWith('FINNIFTY') && !sym.startsWith('MIDCPNIFTY')) {
+          fnoSet.add(sym);
+        }
+      }
+    });
+    fnoSymbols = Array.from(fnoSet);
+  } catch (err: any) {
+    logger?.warn(`Could not fetch live NFO instruments: ${err.message}`);
+  }
+
+  if (fnoSymbols.length === 0) {
+    fnoSymbols = (FO_STOCKS_LIST || [])
+      .filter((s: any) => s.category !== 'Indices')
+      .map((s: any) => s.symbol);
+  }
+
+  // Remove blacklisted slow-moving stocks
+  const candidateSymbols = fnoSymbols.filter(s => !BLACKLISTED_SLOW_STOCKS.has(s) && (!excludedSymbols || !excludedSymbols.has(s)));
+
+  // 2. Batch fetch live quotes
+  const ltpSymbols = candidateSymbols.map(s => `NSE:${s}`);
+  let liveQuotes: Record<string, any> = {};
+  for (let i = 0; i < ltpSymbols.length; i += 150) {
+    const batch = ltpSymbols.slice(i, i + 150);
+    try {
+      const quotes = await kite.getQuote(batch);
+      Object.assign(liveQuotes, quotes);
+    } catch (err: any) {
+      logger?.warn(`Batch quote fetch failed for F&O universe: ${err.message}`);
+    }
+  }
+
+  const istDate = new Date(new Date().getTime() + 330 * 60000 + new Date().getTimezoneOffset() * 60000);
+  const istHhmm = istDate.getHours() * 60 + istDate.getMinutes();
+  const isMarketOpening = istHhmm <= (9 * 60 + 20);
+
+  for (const sym of candidateSymbols) {
+    const key = `NSE:${sym}`;
+    const quote = liveQuotes[key];
+    if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
+      const ltp = quote.last_price;
+      const prevClose = quote.ohlc.close;
+      const todayOpen = quote.ohlc.open || ltp;
+      const todayHigh = quote.ohlc.high || ltp;
+      const todayLow = quote.ohlc.low || ltp;
+      const liveVolume = quote.volume || 0;
+
+      // Filter extreme overnight gap (>8%) to avoid binary event/earnings gap traps
+      const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
+      if (gapPct > 8.0) continue;
+
+      const changeFromOpenPct = ((ltp - todayOpen) / todayOpen) * 100;
+      const dayChangePct = ((ltp - prevClose) / prevClose) * 100;
+      const dayRangePct = todayOpen > 0 ? ((todayHigh - todayLow) / todayOpen) * 100 : 0;
+      const turnoverCr = (liveVolume * ltp) / 10000000;
+
+      // Minimum liquidity threshold
+      const minTurnoverCr = isMarketOpening ? 0.05 : 0.25;
+      if (turnoverCr < minTurnoverCr && liveVolume < 1000) continue;
+
+      // Institutional Open=Low & Open=High footprints (within 0.25% buffer)
+      const diffOpenLowPct = todayOpen > 0 ? Math.abs(todayOpen - todayLow) / todayOpen : 1;
+      const diffOpenHighPct = todayOpen > 0 ? Math.abs(todayHigh - todayOpen) / todayOpen : 1;
+      const isOpenLow = (diffOpenLowPct <= 0.0025) && (ltp > todayOpen) && (changeFromOpenPct >= 0.20);
+      const isOpenHigh = (diffOpenHighPct <= 0.0025) && (ltp < todayOpen) && (changeFromOpenPct <= -0.20);
+
+      // Multi-factor momentum scoring (targeted for 5%–10% intraday velocity)
+      const shortDropFromOpen = Math.max(0, -changeFromOpenPct);
+      const shortDropFromPrev = Math.max(0, -dayChangePct);
+      const shortScore = Math.round(
+        (shortDropFromOpen * 200) +
+        (shortDropFromPrev * 150) +
+        (dayRangePct * 100) +
+        (Math.min(turnoverCr / 2, 50) * 20) +
+        (isOpenHigh ? 250 : 0)
+      );
+
+      const longGainFromOpen = Math.max(0, changeFromOpenPct);
+      const longGainFromPrev = Math.max(0, dayChangePct);
+      const longScore = Math.round(
+        (longGainFromOpen * 200) +
+        (longGainFromPrev * 150) +
+        (dayRangePct * 100) +
+        (Math.min(turnoverCr / 2, 50) * 20) +
+        (isOpenLow ? 250 : 0)
+      );
+
+      let trend: 'LONG' | 'SHORT' = longScore >= shortScore ? 'LONG' : 'SHORT';
+      let score = Math.max(longScore, shortScore);
+
+      // Direction Bias Filtering
+      if (directionBias === 'CALL_ONLY') {
+        if (changeFromOpenPct < 0 && !isOpenLow) continue;
+        trend = 'LONG';
+        score = longScore;
+      } else if (directionBias === 'PUT_ONLY') {
+        if (changeFromOpenPct > 0 && !isOpenHigh) continue;
+        trend = 'SHORT';
+        score = shortScore;
+      }
+
+      if (score < 40) continue;
+
+      result.push({
+        symbol: sym,
+        exchange: 'NSE',
+        ltp,
+        score,
+        trend,
+        changeFromOpenPct,
+        dayChangePct,
+        dayRangePct,
+        turnoverCr,
         isOpenLow,
         isOpenHigh,
       });

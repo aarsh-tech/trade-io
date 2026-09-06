@@ -63,7 +63,8 @@ export interface IBrokerClient {
   getOrder(orderId: string): Promise<Order>;
   cancelOrder(orderId: string): Promise<void>;
   modifyOrder?(orderId: string, params: { price?: number; triggerPrice?: number; quantity?: number; variety?: string }): Promise<void>;
-  searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string }[]>;
+  searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string; lotSize?: number; segment?: string }[]>;
+  getLotSize?(symbol: string): Promise<number>;
   getHistoricalData(symbol: string, exchange: string, interval: string, from: Date, to: Date): Promise<any[]>;
   getInstruments(exchange: string): Promise<any[]>;
   getTickSize(symbol: string, exchange: string): Promise<number>;

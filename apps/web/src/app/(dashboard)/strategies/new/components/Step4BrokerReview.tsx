@@ -13,7 +13,7 @@ interface Step4Props {
 }
 
 export function Step4BrokerReview({ form, set, brokers }: Step4Props) {
-  const lotSize = getLotSize(form.symbol);
+  const lotSize = form.lotSize || getLotSize(form.symbol, form.lotSize);
   const totalQty = Number(form.lots || 1) * lotSize;
 
   return (

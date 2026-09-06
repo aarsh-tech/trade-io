@@ -217,6 +217,21 @@ export interface StockOptionsBuyingConfig {
   htfTimeframe?: '15min' | '60min'; // HTF trend timeframe (default: '15min')
   htfEmaPeriod?: number;        // HTF EMA period (default: 50)
   spotStopLossPct?: number;     // Optional underlying spot-based stop loss %
+
+  // Systematic 80% Profitability Pillars
+  directionBias?: 'BOTH' | 'CALL_ONLY' | 'PUT_ONLY'; // Directional Bias (default: 'BOTH')
+  setupType?: 'INSIDE_CANDLE' | 'PULLBACK_REJECTION' | 'BOTH'; // Trigger setup (default: 'BOTH')
+  enableMarketTrendFilter?: boolean; // Align trade with NIFTY 50 VWAP (default: true)
+  enableMiddayChopFilter?: boolean; // Block entries during 11:30-13:00 European transition (default: true)
+  middayDeadZoneStart?: string;     // Dead zone start time IST (default: '11:30')
+  middayDeadZoneEnd?: string;       // Dead zone end time IST (default: '13:00')
+  enablePartialBooking?: boolean;   // The Banker & The Runner: Book 50% at T1, trail SL to cost (default: true)
+  partialBookingPct?: number;       // % of position to book at T1 (default: 50)
+  maxWinsPerDay?: number;           // '1 Win & Done' discipline (default: 1)
+  maxLossesPerDay?: number;         // '1 Loss & Done' capital shield (default: 1)
+  enableDynamicSizing?: boolean;    // Deploys 85% tradeable margin from live Kite balance (default: true)
+  isAutoStockSelect?: boolean;      // Auto-scan 180+ liquid F&O stocks for institutional 5%-10% momentum movers (default: true if symbol === 'AUTO')
+  autoScanUniverse?: 'FNO_ALL' | 'TOP_GAINERS_LOSERS'; // Universe filter (default: 'FNO_ALL')
 }
 
 

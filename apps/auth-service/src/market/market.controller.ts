@@ -312,6 +312,18 @@ export class MarketController {
     return { success: true, data: results };
   }
 
+  @Get('lot-size')
+  @Public()
+  @ApiOperation({ summary: 'Get dynamic lot size for an instrument or stock symbol' })
+  async getLotSize(
+    @Query('symbol') symbol: string,
+    @Query('accountId') accountId: string,
+    @Request() req: any,
+  ) {
+    const lotSize = await this.marketService.getLotSize(symbol, req.user?.id, accountId);
+    return { success: true, symbol, lotSize };
+  }
+
   @Get('overview')
   @ApiOperation({ summary: 'Get dashboard overview (indices and watchlist)' })
   async overview(@Request() req: any) {

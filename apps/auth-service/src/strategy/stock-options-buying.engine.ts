@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { StockOptionsBuyingConfig } from './dto/strategy.dto';
-import { autoSelectStock } from './smart-stock-picker';
+import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
 
 interface Candle {
@@ -21,7 +21,7 @@ interface StrategyState {
   config: StockOptionsBuyingConfig;
   brokerAccountId: string;
   isPaperTrade: boolean;
-  
+
   // Strategy Execution State
   stateType: 'SCANNING' | 'WAITING_FOR_TRIGGER' | 'ACTIVE_POSITION';
   signalSide: 'CALL' | 'PUT' | null;
@@ -36,7 +36,7 @@ interface StrategyState {
   positionQty: number;
   entryOrderId: string | null;
   lotSize: number;
-  
+
   // High-Accuracy Upgrades State
   entryTime?: number;
   spotEntryPrice?: number;
@@ -44,10 +44,19 @@ interface StrategyState {
   isSlTrailedToCost?: boolean;
   orderPlacedTimestamp?: number;
   executionLatencyMs?: number;
-  
+
+  // Auto F&O Scanner State
+  isAutoMode?: boolean;
+  activeStockSymbol?: string | null;
+  lastAutoScanLogTime?: number;
+
   // Duplicate prevention & logs
   lastProcessedTimestamp: number;
   tradesPlacedToday: number;
+  winsToday?: number;
+  lossesToday?: number;
+  partialBooked?: boolean;
+  initialQty?: number;
   logs: string[];
   currentLtp?: number;
   currentPnlRs?: number;
@@ -64,7 +73,7 @@ export class StockOptionsBuyingEngine {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
-  ) {}
+  ) { }
 
   async start(strategyId: string): Promise<{ executionId: string }> {
     if (this.running.has(strategyId)) {
@@ -102,6 +111,7 @@ export class StockOptionsBuyingEngine {
       data: { isActive: true },
     });
 
+    const isAuto = config.symbol === 'AUTO' || config.symbol === 'auto' || !config.symbol || !!config.isAutoStockSelect;
     const state: StrategyState = {
       strategyId,
       executionId: execution.id,
@@ -120,12 +130,14 @@ export class StockOptionsBuyingEngine {
       lastProcessedTimestamp: 0,
       tradesPlacedToday: 0,
       logs: [],
+      isAutoMode: isAuto,
+      activeStockSymbol: isAuto ? null : config.symbol,
     };
 
     this.running.set(strategyId, state);
     this.log(
       state,
-      `▶ High-Accuracy Stock Options Buying engine started — Stock: ${config.symbol} | Capital: ₹${config.maxCapital} | Mode: ${strategy.isPaperTrade ? 'PAPER' : 'LIVE'}`,
+      `▶ High-Accuracy Stock Options Buying engine started — Mode: ${isAuto ? 'AUTO (180+ F&O Momentum Scanner)' : `Manual (${config.symbol})`} | Bias: ${config.directionBias || 'BOTH'} | Capital: ₹${config.maxCapital} | Execution: ${strategy.isPaperTrade ? 'PAPER' : 'LIVE'}`,
     );
     await this.persistLogs(state);
 
@@ -188,12 +200,17 @@ export class StockOptionsBuyingEngine {
       currentLtp: s.currentLtp || s.entryTriggerPrice,
       stopLossPrice: s.stopLossPrice,
       targetPrice: s.targetPrice,
+      target1Price: s.target1Price,
+      target2Price: s.target2Price,
       lotSize: s.lotSize,
       qty: s.positionQty,
       pnlRs: s.currentPnlRs ?? 0,
       pnlPct: s.currentPnlPct ?? 0,
       peakPnlRs: s.peakPnlRs ?? 0,
       tradesToday: s.tradesPlacedToday,
+      winsToday: s.winsToday ?? 0,
+      lossesToday: s.lossesToday ?? 0,
+      partialBooked: s.partialBooked ?? false,
       executionLatencyMs: s.executionLatencyMs,
       isSlTrailedToCost: s.isSlTrailedToCost,
       isPaperTrade: s.isPaperTrade,
@@ -218,39 +235,20 @@ export class StockOptionsBuyingEngine {
     return istDate.getHours() * 60 + istDate.getMinutes();
   }
 
+  private parseHhmm(timeStr: string): number {
+    const [h, m] = (timeStr || '00:00').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  }
+
   // ─── Main tick loop ──────────────────────────────────────────────────────────
 
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
 
-    // Resolve AUTO symbol if configured
-    if (state.config.symbol === 'AUTO') {
-      if ((state as any).isResolvingAuto) return;
-      (state as any).isResolvingAuto = true;
-      const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-      if (account?.accessToken) {
-        try {
-          const client = this.factory.createClient(account);
-          const kite = client['kite'];
-          this.log(state, `🔍 Symbol is AUTO. Selecting best liquid momentum stock...`);
-          const pick = await autoSelectStock(kite, 1000, 500, this.logger, state.config.maxCapital);
-          state.config.symbol = pick.symbol;
-          state.config.exchange = pick.exchange;
-          this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol}`);
-        } catch (err) {
-          this.log(state, `❌ Failed to auto-select stock: ${err.message}`);
-          await this.persistLogs(state);
-          return;
-        } finally {
-          (state as any).isResolvingAuto = false;
-        }
-      } else {
-        (state as any).isResolvingAuto = false;
-        this.log(state, '⚠ No active broker session to resolve AUTO symbol');
-        await this.persistLogs(state);
-        return;
-      }
+    // Resolve AUTO symbol mode
+    if (state.config.symbol === 'AUTO' || state.config.symbol === 'auto') {
+      state.isAutoMode = true;
     }
 
     const now = new Date();
@@ -279,12 +277,39 @@ export class StockOptionsBuyingEngine {
       return;
     }
 
+    // 1 Win & Done / 1 Loss & Done Systematic Profitability Rules
+    if (state.config.maxWinsPerDay && (state.winsToday ?? 0) >= state.config.maxWinsPerDay) {
+      this.log(state, `🏆 Daily Goal Achieved: ${state.winsToday} win(s) booked. '1 Win & Done' disciplined stop.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `🏆 Completed: Daily win target achieved.`);
+      return;
+    }
+    if (state.config.maxLossesPerDay && (state.lossesToday ?? 0) >= state.config.maxLossesPerDay) {
+      this.log(state, `🛡 Capital Shield Triggered: ${state.lossesToday} loss limit reached. Auto-halting to protect capital.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'STOPPED', `🛡 Stopped: Max daily loss limit reached.`);
+      return;
+    }
+
     // Check Max Trades limit
     if (state.tradesPlacedToday >= state.config.maxTradesPerDay) {
       this.log(state, `⛔ Max ${state.config.maxTradesPerDay} daily trades reached. Auto-stopping.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Stopped: Daily trade limit reached.`);
       return;
+    }
+
+    // Midday Chop Dead-Zone Filter (Default 11:30 - 13:00 IST)
+    if ((state.config.enableMiddayChopFilter ?? true) && state.stateType === 'SCANNING') {
+      const deadStart = this.parseHhmm(state.config.middayDeadZoneStart || '11:30');
+      const deadEnd = this.parseHhmm(state.config.middayDeadZoneEnd || '13:00');
+      if (hhmm >= deadStart && hhmm < deadEnd) {
+        if (!state.logs[state.logs.length - 1]?.includes('MIDDAY CHOP DEAD-ZONE')) {
+          this.log(state, `⏳ [MIDDAY CHOP DEAD-ZONE] 11:30 AM – 01:00 PM European transition dead-zone active. Skipping new breakout entries to eliminate false chop.`);
+          await this.persistLogs(state);
+        }
+        return;
+      }
     }
 
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
@@ -318,13 +343,51 @@ export class StockOptionsBuyingEngine {
 
   private async scanForSetup(state: StrategyState, client: any, kite: any) {
     try {
+      if (state.isAutoMode || state.config.symbol === 'AUTO' || state.config.symbol === 'auto') {
+        state.isAutoMode = true;
+        const candidates = await getTopFnoCandidates(kite, state.config.directionBias || 'BOTH', 6, this.logger);
+        if (!candidates || candidates.length === 0) {
+          this.log(state, `⏳ [AUTO F&O SCANNER] No matching momentum candidates found in F&O universe. Retrying...`);
+          return;
+        }
+
+        const nowMs = Date.now();
+        if (!state.lastAutoScanLogTime || (nowMs - state.lastAutoScanLogTime) > 60_000) {
+          state.lastAutoScanLogTime = nowMs;
+          const summaryStr = candidates.slice(0, 4).map(c => `${c.symbol} (${c.changeFromOpenPct > 0 ? '+' : ''}${c.changeFromOpenPct.toFixed(2)}%)`).join(', ');
+          this.log(state, `🔍 [AUTO F&O SCANNER] Top 5%-10% momentum candidates: ${summaryStr}. Evaluating 15-EMA/Inside Candle setup...`);
+        }
+
+        for (const candidate of candidates) {
+          const triggered = await this.evaluateSymbolForSetup(state, client, kite, candidate.symbol, 'NSE', candidate);
+          if (triggered) {
+            state.activeStockSymbol = candidate.symbol;
+            state.config.symbol = candidate.symbol;
+            return;
+          }
+        }
+      } else {
+        await this.evaluateSymbolForSetup(state, client, kite, state.config.symbol, state.config.exchange || 'NSE');
+      }
+    } catch (e: any) {
+      this.log(state, `❌ Scanning error: ${e.message}`);
+    }
+  }
+
+  private async evaluateSymbolForSetup(
+    state: StrategyState, client: any, kite: any,
+    symbol: string, exchange: string, candidate?: FnoCandidateStock,
+  ): Promise<boolean> {
+    try {
       const interval = state.config.timeframe === '5min' ? '5minute' : '15minute';
-      const candles = await this.fetchCandles(client, state.config.symbol, state.config.exchange, interval);
+      const candles = await this.fetchCandles(client, symbol, exchange, interval);
       const emaPeriod = state.config.emaPeriod ?? 15;
 
       if (candles.length < emaPeriod + 20) {
-        this.log(state, `⏳ Insufficient candles for volume SMA & EMA (need ${emaPeriod + 20}, got ${candles.length})`);
-        return;
+        if (!state.isAutoMode) {
+          this.log(state, `⏳ Insufficient candles for volume SMA & EMA on ${symbol} (need ${emaPeriod + 20}, got ${candles.length})`);
+        }
+        return false;
       }
 
       // Check if last candle is closed
@@ -334,14 +397,16 @@ export class StockOptionsBuyingEngine {
       const isClosed = (now.getTime() - latestCandle.date.getTime()) >= timeframeMs;
       const closedCandles = isClosed ? candles : candles.slice(0, -1);
 
-      if (closedCandles.length < emaPeriod + 20) return;
+      if (closedCandles.length < emaPeriod + 20) return false;
 
       const n = closedCandles.length - 1;
       const lastClosedCandleTime = closedCandles[n].date.getTime();
 
-      // Prevent recalculating the same closed candles
-      if (lastClosedCandleTime <= state.lastProcessedTimestamp) return;
-      state.lastProcessedTimestamp = lastClosedCandleTime;
+      // For manual mode, skip duplicate closed candles. For auto mode, evaluate each candidate.
+      if (!state.isAutoMode) {
+        if (lastClosedCandleTime <= state.lastProcessedTimestamp) return false;
+        state.lastProcessedTimestamp = lastClosedCandleTime;
+      }
 
       const emas = this.calculateEMA(closedCandles, emaPeriod);
       const vwaps = this.calculateVWAP(closedCandles);
@@ -350,41 +415,102 @@ export class StockOptionsBuyingEngine {
       const closeTimeStr = this.formatCandleCloseTime(closedCandles[n].date, state.config.timeframe === '5min' ? 5 : 15);
       const currEma = emas[n];
       const currVwap = vwaps[n];
-      const targetSym = (state as any).activeSymbol || state.config.symbol;
       const closedCandle = closedCandles[n];
-      this.log(state, `[${targetSym}] 🔍 ${state.config.timeframe || '5m'} Candle [${rangeStr}] closed at ${closeTimeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
 
+      if (!state.isAutoMode) {
+        this.log(state, `[${symbol}] 🔍 ${state.config.timeframe || '15m'} Candle [${rangeStr}] closed at ${closeTimeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
+      }
+
+      const setupType = state.config.setupType || 'BOTH';
       const mother = closedCandles[n - 1];
       const baby = closedCandles[n];
       const todayStr = this.getIstDateStr(now);
       const motherDateStr = this.getIstDateStr(mother.date);
       const babyDateStr = this.getIstDateStr(baby.date);
-      const isInsideCandle = motherDateStr === todayStr && babyDateStr === todayStr && baby.high <= mother.high && baby.low >= mother.low;
 
-      if (isInsideCandle) {
-        // Upgrade 1: Calculate Relative Volume (RVOL) against 20-candle Volume SMA
+      const isInsideCandle = (setupType === 'INSIDE_CANDLE' || setupType === 'BOTH') &&
+        motherDateStr === todayStr && babyDateStr === todayStr && baby.high <= mother.high && baby.low >= mother.low;
+
+      const trend = this.getTrendDirection(n, closedCandles, emas, vwaps);
+      let isPullbackRejection = false;
+      let setupTriggerDate = baby.date;
+      let setupSpotSl = baby.low;
+
+      if ((setupType === 'PULLBACK_REJECTION' || setupType === 'BOTH') && !isInsideCandle && trend !== null) {
+        const candleRange = baby.high - baby.low;
+        if (candleRange > 0 && currEma && currVwap) {
+          if (trend === 'LONG') {
+            const lowerWick = Math.min(baby.open, baby.close) - baby.low;
+            const wickRatio = lowerWick / candleRange;
+            const testedBand = baby.low <= Math.max(currEma, currVwap) * 1.002;
+            const closedBullish = baby.close >= Math.min(currEma, currVwap);
+            if (testedBand && closedBullish && wickRatio >= 0.25) {
+              isPullbackRejection = true;
+              setupTriggerDate = baby.date;
+              setupSpotSl = baby.low;
+            }
+          } else if (trend === 'SHORT') {
+            const upperWick = baby.high - Math.max(baby.open, baby.close);
+            const wickRatio = upperWick / candleRange;
+            const testedBand = baby.high >= Math.min(currEma, currVwap) * 0.998;
+            const closedBearish = baby.close <= Math.max(currEma, currVwap);
+            if (testedBand && closedBearish && wickRatio >= 0.25) {
+              isPullbackRejection = true;
+              setupTriggerDate = baby.date;
+              setupSpotSl = baby.high;
+            }
+          }
+        }
+      }
+
+      if (isInsideCandle || isPullbackRejection) {
+        const setupName = isInsideCandle ? 'Inside Candle Breakout' : '15-EMA/VWAP Pullback Rejection';
+        // RVOL Check
         const volSma = this.calculateVolumeSMA(closedCandles, 20, n);
         const rvol = volSma > 0 ? (baby.volume / volSma) : 1.0;
-        const minRvol = state.config.minRvol ?? 1.5;
-
-        this.log(
-          state,
-          `✨ Inside Candle Detected! Mother High: ₹${mother.high.toFixed(2)}, Low: ₹${mother.low.toFixed(2)} | RVOL: ${rvol.toFixed(2)}x (Min Required: ${minRvol.toFixed(2)}x)`,
-        );
+        const minRvol = state.config.minRvol ?? 1.25;
 
         if (rvol < minRvol) {
-          this.log(state, `⏳ Breakout setup rejected: RVOL ${rvol.toFixed(2)}x is below required ${minRvol.toFixed(2)}x volume threshold`);
-          return;
+          if (!state.isAutoMode) {
+            this.log(state, `⏳ [${symbol}] Setup rejected: RVOL ${rvol.toFixed(2)}x is below required ${minRvol.toFixed(2)}x`);
+          }
+          return false;
         }
 
-        const trend = this.getLatestCrossoverToday(n, closedCandles, emas, vwaps);
         if (trend !== null) {
           const side = trend === 'LONG' ? 'CALL' : 'PUT';
 
-          // Upgrade: Higher Timeframe (15-Min) Trend Filter
+          // Directional Bias Filter
+          if (state.config.directionBias === 'CALL_ONLY' && side === 'PUT') return false;
+          if (state.config.directionBias === 'PUT_ONLY' && side === 'CALL') return false;
+
+          // Macro Market (NIFTY 50) Trend Alignment Gate
+          if (state.config.enableMarketTrendFilter ?? true) {
+            try {
+              const niftyQuotes = await kite.getQuote(['NSE:NIFTY 50']).catch(() => ({}));
+              const nq = niftyQuotes['NSE:NIFTY 50'];
+              if (nq?.last_price && nq.ohlc?.open) {
+                const niftyLtp = nq.last_price;
+                const niftyOpen = nq.ohlc.open;
+                const niftyDiffPct = ((niftyLtp - niftyOpen) / niftyOpen) * 100;
+                if (side === 'CALL' && niftyDiffPct < -0.20) {
+                  this.log(state, `⏳ [${symbol}] Macro Market Gate: NIFTY 50 is down ${niftyDiffPct.toFixed(2)}%. Suppressing CALL entry.`);
+                  return false;
+                }
+                if (side === 'PUT' && niftyDiffPct > 0.20) {
+                  this.log(state, `⏳ [${symbol}] Macro Market Gate: NIFTY 50 is up +${niftyDiffPct.toFixed(2)}%. Suppressing PUT entry.`);
+                  return false;
+                }
+              }
+            } catch (niftyErr: any) {
+              this.logger.warn(`Macro market check notice: ${niftyErr?.message}`);
+            }
+          }
+
+          // Higher Timeframe (15-Min) Trend Filter
           if (state.config.enableHtfFilter ?? true) {
             const htfInterval = state.config.htfTimeframe === '60min' ? '60minute' : '15minute';
-            const htfCandles = await this.fetchCandles(client, state.config.symbol, state.config.exchange, htfInterval);
+            const htfCandles = await this.fetchCandles(client, symbol, exchange, htfInterval);
             const htfPeriod = state.config.htfEmaPeriod ?? 50;
 
             if (htfCandles.length >= htfPeriod) {
@@ -393,25 +519,24 @@ export class StockOptionsBuyingEngine {
               const lastHtfEma = htfEmas[htfEmas.length - 1];
 
               if (lastHtfEma !== null) {
-                if (side === 'CALL' && lastHtfClose < lastHtfEma) {
-                  this.log(state, `⏳ 15-Min HTF trend check failed: Price (₹${lastHtfClose.toFixed(2)}) < EMA${htfPeriod} (₹${lastHtfEma.toFixed(2)}). Skipping CALL entry.`);
-                  return;
-                }
-                if (side === 'PUT' && lastHtfClose > lastHtfEma) {
-                  this.log(state, `⏳ 15-Min HTF trend check failed: Price (₹${lastHtfClose.toFixed(2)}) > EMA${htfPeriod} (₹${lastHtfEma.toFixed(2)}). Skipping PUT entry.`);
-                  return;
-                }
-                this.log(state, `🌐 15-Min HTF Trend Confirmation Passed! Price: ₹${lastHtfClose.toFixed(2)} vs HTF EMA${htfPeriod}: ₹${lastHtfEma.toFixed(2)}`);
+                if (side === 'CALL' && lastHtfClose < lastHtfEma) return false;
+                if (side === 'PUT' && lastHtfClose > lastHtfEma) return false;
               }
             }
           }
 
-          this.log(state, `✅ High-RVOL & HTF Confirmation Passed! Signal Direction: ${side}`);
-          await this.setupBreakoutTrigger(state, client, kite, side, mother.date, side === 'CALL' ? mother.low : mother.high);
+          const momentumInfo = candidate ? ` | Day Move: ${candidate.changeFromOpenPct > 0 ? '+' : ''}${candidate.changeFromOpenPct.toFixed(2)}% | Score: ${candidate.score}` : '';
+          this.log(state, `🎯 [${symbol}] 80% Profitability Setup Triggered! (${setupName} | RVOL: ${rvol.toFixed(2)}x | Signal: ${side}${momentumInfo})`);
+          const triggerDate = isInsideCandle ? mother.date : setupTriggerDate;
+          const spotSl = isInsideCandle ? (side === 'CALL' ? mother.low : mother.high) : setupSpotSl;
+          await this.setupBreakoutTrigger(state, client, kite, side, triggerDate, spotSl, symbol);
+          return true;
         }
       }
-    } catch (e) {
-      this.log(state, `❌ Scanning error: ${e.message}`);
+      return false;
+    } catch (e: any) {
+      this.logger.error(`evaluateSymbolForSetup error on ${symbol}: ${e.message}`);
+      return false;
     }
   }
 
@@ -420,26 +545,32 @@ export class StockOptionsBuyingEngine {
   private async setupBreakoutTrigger(
     state: StrategyState, client: any, kite: any,
     side: 'CALL' | 'PUT', motherTimestamp: Date, motherSpotSl: number,
+    targetSymbol?: string,
     isHistorical?: boolean,
   ) {
     try {
-      const ltpData = await kite.getLTP([`${state.config.exchange}:${state.config.symbol}`]);
-      const spotPrice = ltpData[`${state.config.exchange}:${state.config.symbol}`]?.last_price;
+      const activeSym = targetSymbol || state.config.symbol;
+      const activeExchange = state.config.exchange || 'NSE';
+      const ltpData = await kite.getLTP([`${activeExchange}:${activeSym}`]);
+      const spotPrice = ltpData[`${activeExchange}:${activeSym}`]?.last_price;
       if (!spotPrice) {
-        this.log(state, `❌ Failed to fetch spot price for option strike selection`);
+        this.log(state, `❌ Failed to fetch spot price for option strike selection on ${activeSym}`);
         return;
       }
 
       // Upgrade 2: Smart Option Contract & Liquidity Filter
       const moneyness = state.config.moneyness ?? 'ATM';
       const optionSymbol = await this.findSmartOptionContract(
-        client, kite, state.config.symbol, spotPrice, side === 'CALL' ? 'CE' : 'PE', moneyness, state
+        client, kite, activeSym, spotPrice, side === 'CALL' ? 'CE' : 'PE', moneyness, state
       );
 
       if (!optionSymbol) {
-        this.log(state, `❌ Could not find active liquid option symbol for ${state.config.symbol}`);
+        this.log(state, `❌ Could not find active liquid option symbol for ${activeSym}`);
         return;
       }
+
+      state.activeStockSymbol = activeSym;
+      state.config.symbol = activeSym;
 
       // Fetch Option candles to find the Mother Candle's High/Low
       const interval = state.config.timeframe === '5min' ? '5minute' : '15minute';
@@ -466,20 +597,46 @@ export class StockOptionsBuyingEngine {
 
       const target1Price = this.roundTick(entryPrice + risk * (state.config.target1RR ?? 1.5));
       const target2Price = this.roundTick(entryPrice + risk * (state.config.target2RR ?? 3.0));
-      
+
       // Fetch Lot Size
       const instruments = await client.getInstruments('NFO');
       const optInst = instruments.find((i: any) => i.tradingsymbol === optionSymbol);
       const lotSize = optInst?.lot_size ?? 1;
 
-      // Dynamic Capital-Based Lot Check
+      // Dynamic Capital-Based Lot Check with Kite Margin Integration
       const costPerLot = entryPrice * lotSize;
-      const maxAffordableLots = Math.floor(state.config.maxCapital / costPerLot);
-      const lotsToTrade = Math.min(state.config.lots ?? 1, maxAffordableLots);
+      let deployableCapital = state.config.maxCapital || 15000;
+      let liveAvailableCash = deployableCapital;
+      if (state.config.enableDynamicSizing ?? true) {
+        try {
+          const margins = await kite.getMargins().catch(() => null);
+          const liveCash = margins?.equity?.available?.live_balance ?? margins?.equity?.available?.cash ?? margins?.available?.live_balance ?? margins?.available?.cash ?? 0;
+          if (liveCash > 0) {
+            liveAvailableCash = liveCash;
+            // Reserve 15% cash buffer, deploy 85% tradeable margin
+            const marginBudget = liveCash * 0.85;
+            deployableCapital = state.config.maxCapital ? Math.min(state.config.maxCapital, marginBudget) : marginBudget;
+          }
+        } catch { }
+      }
 
-      if (lotsToTrade < 1) {
-        this.log(state, `❌ Capital check failed: 1 lot of ${optionSymbol} costs ₹${costPerLot.toFixed(2)}, exceeding your capital limit ₹${state.config.maxCapital}`);
+      const affordableLots = Math.floor(deployableCapital / costPerLot);
+      if (affordableLots < 1) {
+        this.log(
+          state,
+          `❌ Margin Check: 1 lot of ${optionSymbol} requires ₹${costPerLot.toFixed(2)} (${lotSize} qty @ ₹${entryPrice.toFixed(2)}), but your tradeable Zerodha margin (85% deployed, 15% buffer) is ₹${deployableCapital.toFixed(2)} (Live Free Cash: ₹${liveAvailableCash.toFixed(2)}). Other running stock/equity positions in your Zerodha account are utilizing margin. Skipping trade to prevent broker margin rejection.`
+        );
         return;
+      }
+
+      const configuredLots = state.config.lots ?? 1;
+      const lotsToTrade = Math.min(configuredLots, affordableLots);
+
+      if (configuredLots > affordableLots) {
+        this.log(
+          state,
+          `⚠️ Margin Allocation: Configured ${configuredLots} lots, but live available margin allows ${affordableLots} lot(s). Auto-scaled down to ${lotsToTrade} lot(s) to trade safely.`
+        );
       }
 
       // Update State
@@ -559,7 +716,7 @@ export class StockOptionsBuyingEngine {
           state.executionLatencyMs = Math.round((Date.now() - (state.orderPlacedTimestamp ?? Date.now())));
           this.log(state, `🚀 Breakout Triggered! Option LTP ₹${currentPrice} broke above trigger ₹${state.entryTriggerPrice}`);
           this.log(state, `⚡ Execution Latency [PAPER]: ${state.executionLatencyMs}ms`);
-          
+
           state.stateType = 'ACTIVE_POSITION';
           state.entryTime = Date.now();
           this.log(state, `🛒 Position Opened [PAPER]: Bought ${state.positionQty} of ${state.optionSymbol} at Avg ₹${state.entryTriggerPrice.toFixed(2)}`);
@@ -590,7 +747,7 @@ export class StockOptionsBuyingEngine {
             this.log(state, `⏱ Order Execution Timeout (${elapsedSec.toFixed(1)}s > ${timeoutSec}s limit). Cancelling pending trigger ${state.entryOrderId}`);
             try {
               await client.cancelOrder(state.entryOrderId);
-            } catch {}
+            } catch { }
             this.resetStateToScanning(state);
           }
         }
@@ -609,7 +766,7 @@ export class StockOptionsBuyingEngine {
       const key = `NFO:${state.optionSymbol}`;
       const spotKey = `${state.config.exchange}:${state.config.symbol}`;
       const ltpData = await kite.getLTP([key, spotKey]);
-      
+
       const currentPrice = ltpData[key]?.last_price;
       const currentSpot = ltpData[spotKey]?.last_price;
 
@@ -646,8 +803,8 @@ export class StockOptionsBuyingEngine {
 
       // Upgrade 4A: Spot Price SL Breach Check
       if (currentSpot && state.spotStopLossPrice) {
-        const isSpotBreached = state.signalSide === 'CALL' 
-          ? currentSpot < state.spotStopLossPrice 
+        const isSpotBreached = state.signalSide === 'CALL'
+          ? currentSpot < state.spotStopLossPrice
           : currentSpot > state.spotStopLossPrice;
 
         if (isSpotBreached) {
@@ -657,15 +814,46 @@ export class StockOptionsBuyingEngine {
         }
       }
 
-      // Upgrade 4B: Target 1 (+50% Gain) -> Trail SL to Cost (Risk-Free) & Dynamic Trailing
+      // Upgrade 4B: Target 1 (+50% Gain / 1:1.5 RR) -> "The Banker" Partial Booking & Trailing SL to Cost + Cushion
       const t1Price = state.target1Price || (state.entryTriggerPrice + 1.5 * (state.entryTriggerPrice - state.stopLossPrice));
       const t2Price = state.target2Price || (state.entryTriggerPrice + 3.0 * (state.entryTriggerPrice - state.stopLossPrice));
 
       if (currentPrice >= t1Price && !state.isT1Reached && (state.config.enableTrailingSl ?? true)) {
         state.isT1Reached = true;
-        state.stopLossPrice = Math.max(state.stopLossPrice, state.entryTriggerPrice);
+        state.stopLossPrice = this.roundTick(state.entryTriggerPrice + 0.50);
         state.isSlTrailedToCost = true;
-        this.log(state, `🛡 Target 1 (+50% Gain / 1:1.5 RR) Reached at ₹${currentPrice.toFixed(2)}! Trailing SL moved to Cost (₹${state.entryTriggerPrice.toFixed(2)}) — Trade is now 100% RISK-FREE!`);
+
+        // "The Banker": Partial Profit Booking at Target 1
+        if ((state.config.enablePartialBooking ?? true) && !state.partialBooked && state.positionQty > state.lotSize) {
+          const bookingPct = (state.config.partialBookingPct ?? 50) / 100;
+          const lotsToBook = Math.max(1, Math.floor((state.positionQty * bookingPct) / state.lotSize));
+          const qtyToBook = lotsToBook * state.lotSize;
+
+          if (qtyToBook < state.positionQty) {
+            try {
+              if (state.isPaperTrade) {
+                this.log(state, `💰 [THE BANKER - PAPER] Booked ${lotsToBook} lot(s) (${qtyToBook} Qty) at Target 1 (+50% ROI / ₹${currentPrice.toFixed(2)})!`);
+              } else {
+                const params: OrderParams = {
+                  symbol: state.optionSymbol,
+                  exchange: 'NFO',
+                  side: 'SELL',
+                  orderType: 'MARKET',
+                  product: state.config.product ?? 'MIS',
+                  qty: qtyToBook,
+                };
+                const partialOrderId = await client.placeOrder(params);
+                this.log(state, `💰 [THE BANKER - LIVE] Booked ${lotsToBook} lot(s) (${qtyToBook} Qty) at Target 1 (Order: ${partialOrderId})!`);
+              }
+              state.positionQty -= qtyToBook;
+              state.partialBooked = true;
+            } catch (err: any) {
+              this.log(state, `⚠ The Banker partial booking notice: ${err.message}`);
+            }
+          }
+        }
+
+        this.log(state, `🛡 Target 1 (+50% Gain / 1:1.5 RR) Reached at ₹${currentPrice.toFixed(2)}! Trailing SL moved to Cost + ₹0.50 cushion (₹${state.stopLossPrice.toFixed(2)}) — Trade is now 100% RISK-FREE!`);
       }
 
       // Dynamic Trailing SL after T1: Trail specified % behind peak price reached
@@ -678,10 +866,10 @@ export class StockOptionsBuyingEngine {
         }
       }
 
-      // Upgrade 4C: Time-Based Stagnant Position Exit (Default 45 Minutes)
-      const maxStagnantTime = state.config.maxStagnantTimeMin ?? 45;
+      // Upgrade 4C: 25-Min Theta Decay Stagnancy Auto-Exit
+      const maxStagnantTime = state.config.maxStagnantTimeMin ?? 25;
       if (heldMinutes >= maxStagnantTime && !state.isT1Reached) {
-        this.log(state, `⏰ Stagnant position held for ${heldMinutes}m (> ${maxStagnantTime}m limit). Exiting to prevent Theta decay.`);
+        this.log(state, `⏰ Theta Decay Cutoff: Position held for ${heldMinutes}m without reaching Target 1 (> ${maxStagnantTime}m limit). Exiting to protect capital.`);
         await this.exitPosition(state, client, currentPrice, 'TIME_EXIT');
         return;
       }
@@ -718,7 +906,7 @@ export class StockOptionsBuyingEngine {
         if (state.entryOrderId) {
           try {
             await client.cancelOrder(state.entryOrderId);
-          } catch {}
+          } catch { }
         }
 
         const params: OrderParams = {
@@ -762,6 +950,11 @@ export class StockOptionsBuyingEngine {
         this.log(state, `⚠ DB order log skipped: ${dbErr.message}`);
       }
 
+      if (profit > 0) {
+        state.winsToday = (state.winsToday || 0) + 1;
+      } else if (profit < 0) {
+        state.lossesToday = (state.lossesToday || 0) + 1;
+      }
       state.tradesPlacedToday++;
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
@@ -772,9 +965,9 @@ export class StockOptionsBuyingEngine {
 
   private async forceExit(state: StrategyState, reason?: string) {
     if (state.stateType === 'SCANNING') return;
-    
+
     this.log(state, reason ? `🛑 ${reason}. Closing triggers and positions.` : `⏰ Market closing cutoff. Closing triggers and positions.`);
-    
+
     if (!state.optionSymbol) {
       this.resetStateToScanning(state);
       return;
@@ -784,13 +977,13 @@ export class StockOptionsBuyingEngine {
     if (account?.accessToken) {
       const client = this.factory.createClient(account);
       const kite = client['kite'];
-      
+
       if (state.stateType === 'WAITING_FOR_TRIGGER') {
         if (!state.isPaperTrade && state.entryOrderId) {
           try {
             await client.cancelOrder(state.entryOrderId);
             this.log(state, `✅ Cancelled trigger order ${state.entryOrderId}`);
-          } catch {}
+          } catch { }
         }
         this.resetStateToScanning(state);
       } else if (state.stateType === 'ACTIVE_POSITION') {
@@ -873,16 +1066,32 @@ export class StockOptionsBuyingEngine {
 
         if (buyDepth > 0 && sellDepth > 0 && ltp > 0) {
           const spreadPct = ((sellDepth - buyDepth) / ltp) * 100;
-          const maxSpreadAllowed = state.config.maxBidAskSpreadPct ?? 1.5;
+          const maxSpreadAllowed = state.config.maxBidAskSpreadPct ?? 1.2;
 
           if (spreadPct > maxSpreadAllowed) {
-            this.log(state, `⚠️ Liquidity Warning: ${candidate.tradingsymbol} Bid-Ask spread (${spreadPct.toFixed(2)}%) exceeds max allowed (${maxSpreadAllowed}%).`);
+            this.log(state, `⚠️ Liquidity Warning: ${candidate.tradingsymbol} Bid-Ask spread (${spreadPct.toFixed(2)}%) exceeds max allowed (${maxSpreadAllowed}%). Testing ATM alternative...`);
+            if (targetIndex !== atmIndex) {
+              const atmCand = filteredOptions[atmIndex];
+              const atmQuote = (await kite.getQuote([`NFO:${atmCand.tradingsymbol}`]))[`NFO:${atmCand.tradingsymbol}`];
+              const atmBuy = atmQuote?.depth?.buy?.[0]?.price || 0;
+              const atmSell = atmQuote?.depth?.sell?.[0]?.price || 0;
+              const atmLtp = atmQuote?.last_price || 1;
+              if (atmBuy > 0 && atmSell > 0) {
+                const atmSpread = ((atmSell - atmBuy) / atmLtp) * 100;
+                if (atmSpread <= maxSpreadAllowed) {
+                  this.log(state, `💧 Selected liquid ATM substitute: ${atmCand.tradingsymbol} (Spread: ${atmSpread.toFixed(2)}% <= ${maxSpreadAllowed}%)`);
+                  return atmCand.tradingsymbol;
+                }
+              }
+            }
+            this.log(state, `❌ Liquidity Guard: Rejected illiquid options for ${baseSymbol} (Spread > ${maxSpreadAllowed}%). Skipping to prevent slippage.`);
+            return null;
           } else {
             this.log(state, `💧 Liquidity Filter Passed: ${candidate.tradingsymbol} Spread: ${spreadPct.toFixed(2)}% | Volume: ${quote.volume || 0}`);
           }
         }
       }
-    } catch {}
+    } catch { }
 
     return candidate.tradingsymbol;
   }
@@ -982,6 +1191,12 @@ export class StockOptionsBuyingEngine {
     state.isSlTrailedToCost = undefined;
     state.orderPlacedTimestamp = undefined;
     state.executionLatencyMs = undefined;
+    state.partialBooked = false;
+    state.initialQty = undefined;
+    if (state.isAutoMode) {
+      state.config.symbol = 'AUTO';
+      state.activeStockSymbol = null;
+    }
   }
 
   private getLatestCrossoverTodayDetails(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): { trend: 'LONG' | 'SHORT'; crossoverIdx: number; ema: number; vwap: number; crossoverTime: Date } | null {
@@ -1040,6 +1255,22 @@ export class StockOptionsBuyingEngine {
     return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
+  private getTrendDirection(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
+    const crossover = this.getLatestCrossoverToday(idx, candles, emas, vwaps);
+    if (crossover) return crossover;
+
+    // Fallback to established trend alignment if EMA and VWAP are clearly directional today
+    const currEma = emas[idx], currVwap = vwaps[idx], candle = candles[idx];
+    if (currEma !== null && currVwap !== null && candle) {
+      if (currEma > currVwap && candle.close >= currVwap && candle.close >= currEma) {
+        return 'LONG';
+      } else if (currEma < currVwap && candle.close <= currVwap && candle.close <= currEma) {
+        return 'SHORT';
+      }
+    }
+    return null;
+  }
+
   private getLatestCrossoverToday(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): 'LONG' | 'SHORT' | null {
     const details = this.getLatestCrossoverTodayDetails(idx, candles, emas, vwaps);
     return details ? details.trend : null;
@@ -1062,12 +1293,10 @@ export class StockOptionsBuyingEngine {
     const kite = client['kite'];
 
     try {
-      if (state.config.symbol === 'AUTO') {
-        const pick = await autoSelectStock(kite, 1000, 500, this.logger, state.config.maxCapital);
-        state.config.symbol = pick.symbol;
-        state.config.exchange = pick.exchange;
-        this.log(state, `🎯 Auto-Selected Stock: ${state.config.symbol} (Catch-up)`);
+      if (state.isAutoMode || state.config.symbol === 'AUTO') {
+        this.log(state, `🎯 Auto F&O Scanner active. Ready for live tick to scan top 5%-10% momentum breakout candidates.`);
         await this.persistLogs(state);
+        return;
       }
 
       const interval = state.config.timeframe === '5min' ? '5minute' : '15minute';
@@ -1193,7 +1422,7 @@ export class StockOptionsBuyingEngine {
 
               if (isBreakout) {
                 this.log(state, `🚀 (Catch-up) Found past ${side} Breakout (${setupType}) at ${this.formatTime(new Date(checkCandle.date))}!`);
-                await this.setupBreakoutTrigger(state, client, kite, side, baby.date, side === 'CALL' ? triggerLow : triggerHigh, true);
+                await this.setupBreakoutTrigger(state, client, kite, side, baby.date, side === 'CALL' ? triggerLow : triggerHigh, state.config.symbol, true);
                 await new Promise(r => setTimeout(r, 250)); // Rate limit pause
                 state.stateType = 'ACTIVE_POSITION';
                 state.entryTime = checkCandle.date.getTime();
@@ -1231,6 +1460,8 @@ export class StockOptionsBuyingEngine {
   private resetDailyState(state: StrategyState) {
     this.resetStateToScanning(state);
     state.tradesPlacedToday = 0;
+    state.winsToday = 0;
+    state.lossesToday = 0;
     state.lastProcessedTimestamp = 0;
   }
 
@@ -1281,7 +1512,7 @@ export class StockOptionsBuyingEngine {
         logs: state.logs,
         state: this.getState(state.strategyId),
       });
-    } catch {}
+    } catch { }
   }
 
   private async updateOrderStatus(brokerOrderId: string, status: string, filledPrice: number | null) {

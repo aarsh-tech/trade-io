@@ -1262,45 +1262,97 @@ export class EmaVwapCrossoverEngine {
     const targetPerShare = Math.max(symTickSize, Math.abs(tgt - entry));
     const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
 
-    // Dynamically query exact live available capital from Zerodha Kite margin API
-    let capital = (config as any).maxCapital;
-    if (!capital || capital <= 0) {
-      if (client && !state.isPaperTrade && !isHistorical) {
-        try {
-          const kite = client['kite'] || client;
-          const liveMargins = await (kite.getMargins ? kite.getMargins() : client.getMargins?.()).catch(() => null);
-          const liveCash = liveMargins?.equity?.available?.live_balance
-            ?? liveMargins?.equity?.available?.cash
-            ?? liveMargins?.equity?.net
-            ?? liveMargins?.available?.live_balance
-            ?? liveMargins?.available?.cash
-            ?? liveMargins?.net;
-          if (liveCash && liveCash > 0) {
-            capital = Number(liveCash);
-            this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${capital.toLocaleString('en-IN')}`);
-          }
-        } catch { }
+    // Dynamically query exact live available free capital from Zerodha Kite margin API
+    let liveCash = (config as any).maxCapital || 15000;
+    if (client && !state.isPaperTrade && !isHistorical) {
+      try {
+        const liveMargins = await (kite.getMargins ? kite.getMargins() : client.getMargins?.()).catch(() => null);
+        const freeCash = liveMargins?.equity?.available?.live_balance
+          ?? liveMargins?.equity?.available?.cash
+          ?? liveMargins?.equity?.net
+          ?? liveMargins?.available?.live_balance
+          ?? liveMargins?.available?.cash
+          ?? liveMargins?.net;
+        if (freeCash && freeCash > 0) {
+          liveCash = Number(freeCash);
+          this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${liveCash.toLocaleString('en-IN')}`);
+        }
+      } catch (mErr: any) {
+        this.logger.debug?.(`Live margin fetch error: ${mErr?.message}`);
       }
     }
-    if (!capital || capital <= 0) capital = 15000;
 
-    // Pure percentage-based dynamic sizing: Reserves 15% cash buffer (min ₹1,000)
-    // Deploys 85% of tradeable margin with 5x MIS leverage
-    // Dynamically scales whether account has ₹10k, ₹14k, ₹18k, or ₹50k+ without fixed rupee clamps
-    const capitalBuffer = Math.max(1000, capital * 0.15);
-    const tradeableCapital = Math.max(2000, capital - capitalBuffer);
-    const maxBuyingPower = (capital * 0.90) * 5; // Zerodha 5x MIS leverage (90% safe cap)
+    // Apply User's Max Capital cap if set, and reserve 15% cash cushion
+    const userMaxCapital = (config as any).maxCapital;
+    const marginBudget = liveCash * 0.85; // 15% safety buffer for fees/slippage
+    const deployableCapital = userMaxCapital && userMaxCapital > 0 ? Math.min(userMaxCapital, marginBudget) : marginBudget;
 
-    const targetBuyingPower = tradeableCapital * 0.85 * 5;
-    const capitalQty = Math.max(1, Math.floor(targetBuyingPower / entry));
-    const maxCapitalQty = Math.floor(maxBuyingPower / entry);
+    let finalQty = 1;
 
-    const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 1000;
-    // Quantity sized dynamically by capital allocation, safely bounded by broker margin limit
-    const finalQty = Math.max(1, Math.min(capitalQty, maxCapitalQty));
-    state.config.qty = finalQty;
-    const potentialMaxLossRs = finalQty * riskPerShare;
-    this.log(state, `⚖ Dynamic Capital-Scaled Position Sizing: ${finalQty} shares (Risk/sh: ₹${riskPerShare.toFixed(2)}, Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [SL: ₹${maxRiskRs}], Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}, Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${capital.toLocaleString('en-IN')} [Buffer ₹${capitalBuffer.toFixed(0)}])`);
+    if (isOption) {
+      // ── Option Intraday Mode (Requires 100% upfront premium & whole lot size) ──
+      let lotSize = 1;
+      try {
+        const instruments = await client.getInstruments(exchange);
+        const optInst = instruments.find((i: any) => i.tradingsymbol === symbol);
+        lotSize = optInst?.lot_size ?? 1;
+      } catch { }
+
+      const costPerLot = entry * lotSize;
+      const affordableLots = Math.floor(deployableCapital / costPerLot);
+
+      if (affordableLots < 1) {
+        this.log(
+          state,
+          `❌ Margin Check: 1 lot of ${symbol} requires ₹${costPerLot.toFixed(2)} (${lotSize} qty @ ₹${entry.toFixed(2)}), but your tradeable Zerodha margin (85% deployed, 15% cash buffer) is ₹${deployableCapital.toFixed(2)} (Live Free Cash: ₹${liveCash.toFixed(2)}). Other active running trades in Zerodha have consumed margin. Skipping trade to prevent broker rejection.`
+        );
+        return;
+      }
+
+      const configuredLots = config.lots && config.lots > 0
+        ? config.lots
+        : Math.max(1, Math.round((config.qty || lotSize) / lotSize));
+      const lotsToTrade = Math.min(configuredLots, affordableLots);
+
+      if (configuredLots > affordableLots) {
+        this.log(
+          state,
+          `⚠️ Margin Allocation: Configured ${configuredLots} lots, but live available margin allows ${affordableLots} lot(s). Auto-scaled down to ${lotsToTrade} lot(s) to trade safely.`
+        );
+      }
+
+      finalQty = lotsToTrade * lotSize;
+      state.config.qty = finalQty;
+      config.qty = finalQty;
+      const potentialMaxLossRs = finalQty * riskPerShare;
+      this.log(
+        state,
+        `⚖ Dynamic Option Sizing: ${lotsToTrade} lot(s) = ${finalQty} shares (Cost: ₹${(costPerLot * lotsToTrade).toFixed(2)} | Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} | Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)} | Cash Reserve: ₹${(liveCash - costPerLot * lotsToTrade).toFixed(2)})`
+      );
+    } else {
+      // ── Equity Stock MIS Mode (20% margin / 5x leverage) ──
+      const marginPerShare = entry / 5;
+      const affordableQty = Math.floor(deployableCapital / marginPerShare);
+
+      if (affordableQty < 1) {
+        this.log(
+          state,
+          `❌ Margin Check: Buying 1 share of ${symbol} at ₹${entry.toFixed(2)} (MIS 5x margin ₹${marginPerShare.toFixed(2)}) exceeds your tradeable margin ₹${deployableCapital.toFixed(2)} (Live Free Cash: ₹${liveCash.toFixed(2)}). Other running stock/equity positions in Zerodha are utilizing margin. Skipping trade to prevent broker rejection.`
+        );
+        return;
+      }
+
+      const targetBuyingPower = deployableCapital * 0.85 * 5;
+      const targetQty = Math.max(1, Math.floor(targetBuyingPower / entry));
+      finalQty = Math.max(1, Math.min(targetQty, affordableQty));
+      state.config.qty = finalQty;
+      config.qty = finalQty;
+      const potentialMaxLossRs = finalQty * riskPerShare;
+      this.log(
+        state,
+        `⚖ Dynamic Capital-Scaled Position Sizing (5x MIS): ${finalQty} shares (Required Margin: ₹${((finalQty * entry) / 5).toFixed(2)} | Risk/sh: ₹${riskPerShare.toFixed(2)}, Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [SL: ₹${config.stopLossRs || 1000}], Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}, Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${liveCash.toLocaleString('en-IN')} [Buffer ₹${(liveCash * 0.15).toFixed(0)}])`
+      );
+    }
 
     this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
     try {
