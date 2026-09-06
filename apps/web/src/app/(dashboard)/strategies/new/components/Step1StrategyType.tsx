@@ -2,7 +2,18 @@
 
 import React from "react";
 import { Input } from "@/components/ui/input";
-import { Zap, BarChart2, TrendingUp, Target, Flame } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Zap,
+  BarChart2,
+  TrendingUp,
+  Target,
+  Flame,
+  Clock,
+  Check,
+  CheckCircle2,
+  Bot,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StrategyFormState } from "../types";
 
@@ -14,166 +25,328 @@ interface Step1Props {
 export function Step1StrategyType({ form, set }: Step1Props) {
   const strategies = [
     {
-      type: "GAMMA_BLAST_EXPIRY" as const,
-      label: "Gamma Blast (CAS & Expiry Special)",
-      desc: "Trades explosive 01:30 PM – 03:25 PM Gamma spikes on NIFTY (Tuesdays) & SENSEX (Thursdays). Buys cheap ₹8–₹15 / ₹12–₹25 options with Live OI Unwinding & Range Breakout confirmation, and rides spikes with zero-latency Ratchet Trailing.",
-      icon: Zap,
-      badge: "Expiry Special (1 Lot)",
-      badgeColor: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-700",
+      type: "STOCK_OPTIONS_BUYING" as const,
+      label: "Stock Option Auto-Hunter (Banker & Runner)",
+      badge: "🔥 80% WIN-RATE",
+      badgeClass: "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-600 text-white font-extrabold shadow-2xs",
+      timing: "09:15 AM",
+      tag: "180+ F&O Scanner",
+      tagColor: "text-indigo-600 dark:text-indigo-400 bg-indigo-500/10",
+      desc: "Scans 180+ F&O stocks for 5%–10% momentum. Buys ITM options, books 50% at T1 (+50% ROI), trails SL to cost, and rides T2 (+100% ROI).",
+      icon: Flame,
+      iconColor: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
+      features: [
+        "180+ F&O Auto Stock Picker",
+        "50% Cash Lock @ T1 (+50% ROI)",
+        "Risk-Free Breakeven Trail",
+        "NIFTY 50 Macro Trend Gate",
+      ],
       isAutoStockPreset: false,
     },
     {
       type: "EMA_VWAP_CROSSOVER" as const,
-      label: "Intraday Auto Stock Picker (EMA + VWAP Trend)",
-      desc: "Auto-scans top liquid NSE stocks at 9:15 AM, picks the strongest momentum stock using EMA + VWAP crossover with candle confirmation, deploys 85% tradeable margin at 5x MIS leverage, places structural SL below candle low, and trails live on Zerodha exchange with 15-EMA.",
+      label: "Intraday Auto Stock Picker (₹500 Target)",
+      badge: "⭐ RECOMMENDED PRESET",
+      badgeClass: "bg-emerald-600 hover:bg-emerald-600 text-white font-extrabold shadow-2xs",
+      timing: "09:15 AM",
+      tag: "5x MIS Leverage",
+      tagColor: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+      desc: "Scans 180+ F&O stocks for highest-momentum mover with 15-EMA + VWAP confirmation. Trades MIS with dynamic ₹500 target & ₹500 SL.",
       icon: TrendingUp,
-      badge: "85% Margin + 15-EMA Trail",
-      badgeColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold",
+      iconColor: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+      features: [
+        "Auto 09:15 AM Stock Picker",
+        "5x MIS Leverage (85% Deployed)",
+        "Structural SL below Candle Low",
+        "15-EMA Live Trailing on Zerodha",
+      ],
       isAutoStockPreset: true,
     },
     {
-      type: "NIFTY_OPTIONS_SCALPER" as const,
-      label: "Nifty Options Scalper (Dynamic Margin + Momentum Trail)",
-      desc: "Captures explosive Nifty CE/PE moves using 3 triggers (EMA-VWAP Crossover, VWAP Pullback Rejection, 15-Min ORB). Auto-sizes lots dynamically from live Zerodha margin, arms exchange SL orders, trails to Cost at +4 pts, locks +5 at +7 pts, and rides sharp momentum beyond +10 pts with a dynamic 3.5-pt ratchet.",
-      icon: Target,
-      badge: "Auto Margin + Uncapped Trail",
-      badgeColor: "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold",
+      type: "GAMMA_BLAST_EXPIRY" as const,
+      label: "Gamma Blast (CAS & Expiry Special)",
+      badge: "⚡ 01:30 PM EXPIRY HUNTER",
+      badgeClass: "bg-amber-600 hover:bg-amber-600 text-white font-extrabold shadow-2xs",
+      timing: "01:30 PM",
+      tag: "NIFTY & SENSEX",
+      tagColor: "text-amber-600 dark:text-amber-400 bg-amber-500/10",
+      desc: "Trades explosive 01:30 PM – 03:25 PM Gamma spikes on NIFTY (Tue) & SENSEX (Thu). Buys cheap ₹8–₹15 options with Live OI confirmation.",
+      icon: Zap,
+      iconColor: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
+      features: [
+        "NIFTY (Tue) & SENSEX (Thu)",
+        "Cheap ₹8–₹15 Strike Hunter",
+        "Zero-Latency Ratchet Trailing",
+        "15:05 Sharp Auto Square-Off",
+      ],
       isAutoStockPreset: false,
     },
     {
-      type: "STOCK_OPTIONS_BUYING" as const,
-      label: "Stock Options Buying",
-      desc: "Best for 20k-25k capital. Trades ATM stock options using 15-EMA & VWAP crossover on 5/15-min stock charts with dynamic SL & RR Target.",
-      icon: Flame,
-      badge: "F&O Stocks",
-      badgeColor: "bg-blue-100 text-blue-700",
+      type: "NIFTY_OPTIONS_SCALPER" as const,
+      label: "Nifty Options Scalper (Dynamic Margin)",
+      badge: "RAPID SCALPER",
+      badgeClass: "bg-purple-600 hover:bg-purple-600 text-white font-extrabold shadow-2xs",
+      timing: "09:20 AM",
+      tag: "Uncapped Trail",
+      tagColor: "text-purple-600 dark:text-purple-400 bg-purple-500/10",
+      desc: "Captures rapid Nifty impulses using 3 confluence triggers. Auto-sizes lots dynamically from live Zerodha margin and arms exchange SL.",
+      icon: Target,
+      iconColor: "text-purple-600 dark:text-purple-400 bg-purple-500/10 border-purple-500/20",
+      features: [
+        "Dynamic Margin Lots",
+        "Exchange Server SL Armed",
+        "Breakeven Trail at +5 pts",
+        "Two-Loss Circuit Breaker",
+      ],
       isAutoStockPreset: false,
     },
     {
       type: "BREAKOUT_15MIN" as const,
-      label: "15-Min Breakout (Dynamic Margin + Server SL + Uncapped Trail)",
-      desc: "Trades high-probability 15-Min Opening Range Breakouts & Breakdowns with false-breakout trap reversal. Deploys 85% tradeable margin at 5x MIS for stocks or dynamic lots for index options, arms server SL-L at Zerodha, trails to Cost (+1R), locks profit (+1.5R), and rides runners with uncapped dynamic momentum trailing.",
+      label: "15-Min Breakout (Dynamic Margin + Server SL)",
+      badge: "OPENING RANGE",
+      badgeClass: "bg-cyan-600 hover:bg-cyan-600 text-white font-extrabold shadow-2xs",
+      timing: "09:30 AM",
+      tag: "Trap Reversal",
+      tagColor: "text-cyan-600 dark:text-cyan-400 bg-cyan-500/10",
+      desc: "Trades 15-Min Opening Range Breakouts & Breakdowns with false-breakout trap reversal and server SL-L at Zerodha.",
       icon: BarChart2,
-      badge: "85% Margin + Server SL + Uncapped Trail",
-      badgeColor: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-bold border border-blue-300 dark:border-blue-700",
+      iconColor: "text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
+      features: [
+        "False Breakout Trap Reversal",
+        "Server SL-L Placed on Kite",
+        "Early Breakeven at +0.7R",
+        "1-Loss & Done Shield",
+      ],
       isAutoStockPreset: false,
     },
   ];
 
   return (
     <div className="space-y-5">
-      <div>
-        <label className="text-sm font-semibold mb-2 block">Strategy Name</label>
-        <Input
-          id="strategy-name"
-          placeholder="e.g. Gamma Blast Nifty Expiry"
-          value={form.name}
-          onChange={(e) => set("name", e.target.value)}
-        />
+      {/* ─── Strategy Identifier Name Card ─── */}
+      <div className="rounded-xl border border-border/70 bg-card p-3.5 shadow-2xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-blue-600/10 text-blue-600 border border-blue-600/20 shrink-0">
+              <Bot className="h-4 w-4" />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-foreground block">
+                Strategy Identifier Name
+              </label>
+              <p className="text-[11px] text-muted-foreground">
+                Customize your strategy name or use the auto-generated algorithm title
+              </p>
+            </div>
+          </div>
+          <div className="sm:w-80">
+            <Input
+              id="strategy-name"
+              value={form.name}
+              onChange={(e) => set("name", e.target.value)}
+              placeholder="e.g. Stock Options Hunter"
+              className="h-9 text-xs font-semibold bg-secondary/30 border-border/70 focus:border-blue-500 rounded-lg"
+            />
+          </div>
+        </div>
       </div>
 
-      <div>
-        <label className="text-sm font-semibold mb-2 block">Strategy Type</label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {strategies.map(({ type, label, desc, icon: Icon, badge, badgeColor, isAutoStockPreset }) => (
-            <button
-              key={label}
-              id={`type-${label}`}
-              type="button"
-              onClick={() => {
-                set("type", type);
-                if (type === "GAMMA_BLAST_EXPIRY") {
-                  set("name", "Gamma Blast (CAS Expiry Special)");
-                  set("symbol", "AUTO");
-                  set("exchange", "NFO");
-                  set("instrumentType", "OPTION");
-                  set("product", "NRML");
-                  set("lots", "1");
-                  set("gbIndex", "AUTO");
-                  set("gbStartTime", "13:00");
-                  set("gbEndTime", "15:25");
-                  set("gbEnableOiFilter", true);
-                  set("gbEnableVolumeSurge", true);
-                  set("gbEnableRatchetTrailing", true);
-                  set("gbInitialSlPct", "50");
-                  set("stopLossRs", "500");
-                  set("targetRs", "1500");
-                  set("maxTradesPerDay", "2");
-                } else if (isAutoStockPreset) {
-                  set("name", "Intraday Auto Stock Picker (₹500/day Target)");
-                  set("symbol", "AUTO");
-                  set("exchange", "NSE");
-                  set("instrumentType", "STOCK");
-                  set("product", "MIS");
-                  set("targetRs", "500");
-                  set("stopLossRs", "500");
-                  set("maxTradesPerDay", "2");
-                } else if (type === "NIFTY_OPTIONS_SCALPER") {
-                  set("name", "Nifty 10-Point Options Scalper");
-                  set("symbol", "NIFTY 50");
-                  set("exchange", "NSE");
-                  set("instrumentType", "INDEX");
-                  set("product", "MIS");
-                  set("lots", "1");
-                  set("dsTargetPoints", "10");
-                  set("dsStopLossPoints", "7");
-                  set("maxTradesPerDay", "3");
-                } else if (type === "STOCK_OPTIONS_BUYING") {
-                  set("name", "Stock Options Buying");
-                  set("symbol", "AUTO");
-                  set("exchange", "NSE");
-                  set("instrumentType", "STOCK");
-                } else if (type === "BREAKOUT_15MIN") {
-                  set("name", "15-Min Breakout (Dynamic Margin + Server SL)");
-                  set("symbol", "NIFTY 50");
-                  set("exchange", "NSE");
-                  set("instrumentType", "INDEX");
-                  set("product", "MIS");
-                  set("lots", "1");
-                  set("targetRs", "1500");
-                  set("stopLossRs", "1000");
-                  set("maxTradesPerDay", "2");
-                } else {
-                  set("symbol", "NIFTY 50");
-                  set("exchange", "NSE");
-                  set("instrumentType", "INDEX");
-                }
-              }}
-              className={cn(
-                "text-left p-4 rounded-xl border-2 transition-all flex flex-col justify-between",
-                form.type === type
-                  ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.06)] shadow-sm"
-                  : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.4)] hover:bg-[hsl(var(--secondary)/0.5)]"
-              )}
-            >
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <div
-                    className={cn(
-                      "h-10 w-10 rounded-lg flex items-center justify-center shrink-0",
-                      form.type === type ? "bg-[hsl(var(--primary)/0.15)]" : "bg-[hsl(var(--secondary))]"
-                    )}
-                  >
-                    <Icon
-                      className={cn(
-                        "h-5 w-5",
-                        form.type === type ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"
-                      )}
-                    />
-                  </div>
-                  <div>
-                    <p className="font-bold text-sm leading-tight">{label}</p>
-                    {badge && (
-                      <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-semibold mt-1 inline-block", badgeColor)}>
-                        {badge}
-                      </span>
-                    )}
+      {/* ─── Strategy Algorithm Cards Grid ─── */}
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+            Select Strategy Algorithm
+          </label>
+          <span className="text-[11px] text-muted-foreground">
+            Click a preset card to configure parameters
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          {strategies.map(
+            ({
+              type,
+              label,
+              desc,
+              icon: Icon,
+              iconColor,
+              badge,
+              badgeClass,
+              timing,
+              tag,
+              tagColor,
+              isAutoStockPreset,
+              features,
+            }) => {
+              const isSelected = form.type === type;
+              return (
+                <div
+                  key={label}
+                  id={`type-${label}`}
+                  onClick={() => {
+                    set("type", type);
+                    if (type === "STOCK_OPTIONS_BUYING") {
+                      set("name", "Auto F&O Stock Options Hunter (80% Profitability)");
+                      set("symbol", "AUTO");
+                      set("exchange", "NSE");
+                      set("instrumentType", "STOCK");
+                      set("sIsAutoStockSelect", true);
+                      set("sDirectionBias", "BOTH");
+                      set("sSetupType", "BOTH");
+                      set("sMoneyness", "ITM");
+                      set("sTimeframe", "15min");
+                      set("sEmaPeriod", "15");
+                      set("sTarget1RR", "1.5");
+                      set("sTarget2RR", "3.0");
+                      set("sEnableTrailingSl", true);
+                      set("sEnableMarketTrendFilter", true);
+                      set("sEnableMiddayChopFilter", true);
+                      set("sEnablePartialBooking", true);
+                      set("sPartialBookingPct", "50");
+                      set("sMaxCapital", "25000");
+                      set("lots", "1");
+                      set("maxTradesPerDay", "1");
+                    } else if (type === "GAMMA_BLAST_EXPIRY") {
+                      set("name", "Gamma Blast (CAS Expiry Special)");
+                      set("symbol", "AUTO");
+                      set("exchange", "NFO");
+                      set("instrumentType", "OPTION");
+                      set("product", "NRML");
+                      set("lots", "1");
+                      set("gbIndex", "AUTO");
+                      set("gbStartTime", "13:00");
+                      set("gbEndTime", "15:25");
+                      set("gbEnableOiFilter", true);
+                      set("gbEnableVolumeSurge", true);
+                      set("gbEnableRatchetTrailing", true);
+                      set("gbInitialSlPct", "50");
+                      set("stopLossRs", "500");
+                      set("targetRs", "1500");
+                      set("maxTradesPerDay", "2");
+                    } else if (isAutoStockPreset) {
+                      set("name", "Intraday Auto Stock Picker (₹500/day Target)");
+                      set("symbol", "AUTO");
+                      set("exchange", "NSE");
+                      set("instrumentType", "STOCK");
+                      set("product", "MIS");
+                      set("targetRs", "500");
+                      set("stopLossRs", "500");
+                      set("maxTradesPerDay", "2");
+                    } else if (type === "NIFTY_OPTIONS_SCALPER") {
+                      set("name", "Nifty 10-Point Options Scalper");
+                      set("symbol", "NIFTY 50");
+                      set("exchange", "NSE");
+                      set("instrumentType", "INDEX");
+                      set("product", "MIS");
+                      set("lots", "1");
+                      set("dsTargetPoints", "10");
+                      set("dsStopLossPoints", "7");
+                      set("maxTradesPerDay", "3");
+                    } else if (type === "BREAKOUT_15MIN") {
+                      set("name", "15-Min Breakout (Dynamic Margin + Server SL)");
+                      set("symbol", "NIFTY 50");
+                      set("exchange", "NSE");
+                      set("instrumentType", "INDEX");
+                      set("product", "MIS");
+                      set("lots", "1");
+                      set("targetRs", "1500");
+                      set("stopLossRs", "1000");
+                      set("maxTradesPerDay", "2");
+                    } else {
+                      set("symbol", "NIFTY 50");
+                      set("exchange", "NSE");
+                      set("instrumentType", "INDEX");
+                    }
+                  }}
+                  className={cn(
+                    "relative overflow-hidden rounded-2xl border p-4.5 flex flex-col justify-between gap-3.5 transition-all duration-300 text-left cursor-pointer group bg-card",
+                    isSelected
+                      ? "border-blue-500/50 shadow-[0_4px_20px_rgba(59,130,246,0.12)] ring-1 ring-blue-500/30"
+                      : "border-border/70 hover:border-border hover:shadow-xs"
+                  )}
+                >
+                  {/* Top Ambient Bar when selected - matching Algo UI */}
+                  {isSelected && (
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400" />
+                  )}
+
+                  <div className="space-y-2.5">
+                    {/* Top Badges Row */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge
+                          className={cn(
+                            "text-[9px] font-extrabold px-2 py-0 tracking-wider uppercase",
+                            badgeClass
+                          )}
+                        >
+                          {badge}
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] font-medium border-border/70 text-muted-foreground bg-secondary/30 gap-1 py-0"
+                        >
+                          <Clock className="h-2.5 w-2.5" />
+                          {timing}
+                        </Badge>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "text-[10px] font-bold px-2 py-0.5 rounded-md",
+                            tagColor
+                          )}
+                        >
+                          {tag}
+                        </span>
+                        {isSelected && (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20">
+                            <Check className="h-2.5 w-2.5 stroke-[3]" /> SELECTED
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Title & Description */}
+                    <div className="flex items-start gap-3 mt-1">
+                      <div
+                        className={cn(
+                          "p-2 rounded-xl shrink-0 transition-colors border",
+                          iconColor
+                        )}
+                      >
+                        <Icon className="h-4.5 w-4.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-extrabold text-sm text-foreground leading-snug group-hover:text-blue-600 transition-colors">
+                          {label}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed mt-1 line-clamp-3">
+                          {desc}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Features List */}
+                    <div className="pt-2.5 border-t border-border/40 grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
+                      {features.map((feat, idx) => (
+                        <span key={idx} className="flex items-center gap-1 truncate">
+                          <CheckCircle2
+                            className={cn(
+                              "h-3 w-3 shrink-0",
+                              isSelected ? "text-blue-500" : "text-emerald-500"
+                            )}
+                          />
+                          <span className="truncate">{feat}</span>
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed mt-2">{desc}</p>
-              </div>
-            </button>
-          ))}
+              );
+            }
+          )}
         </div>
       </div>
     </div>
