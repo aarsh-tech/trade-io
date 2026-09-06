@@ -141,12 +141,47 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
     refreshPositions,
   } = usePortfolio(activeBroker?.id);
 
-  // Load user strategies
+  const [paperPositions, setPaperPositions] = useState<Position[]>([]);
+
+  // Load user strategies & active engine positions
   const loadStrategies = useCallback(async () => {
     try {
       const res = await strategyApi.list();
       const list = res.data?.data ?? [];
       setStrategies(list);
+
+      // Check running strategies for active virtual/paper positions
+      const active = list.filter((s: Strategy) => s.isActive);
+      if (active.length > 0) {
+        const virtualPositions: Position[] = [];
+        await Promise.all(
+          active.map(async (s: Strategy) => {
+            try {
+              const statusRes = await strategyApi.status(s.id);
+              const state = statusRes.data?.data?.state;
+              if (
+                state &&
+                (state.stateType === "ACTIVE_POSITION" || (Number(state.entryPrice) > 0 && Number(state.qty || state.positionQty) > 0)) &&
+                (state.optionSymbol || state.activeStockSymbol || state.symbol)
+              ) {
+                const sym = state.optionSymbol || state.activeStockSymbol || state.symbol;
+                virtualPositions.push({
+                  symbol: sym,
+                  qty: Number(state.positionQty || state.qty || 1),
+                  avgPrice: Number(state.entryPrice || 0),
+                  ltp: Number(state.currentLtp || state.entryPrice || 0),
+                  pnl: Number(state.pnlRs || 0),
+                  side: state.signalSide === "PUT" ? "SELL" : "BUY",
+                  product: s.isPaperTrade ? "PAPER" : (s.config?.product || "MIS"),
+                });
+              }
+            } catch { }
+          })
+        );
+        setPaperPositions(virtualPositions);
+      } else {
+        setPaperPositions([]);
+      }
     } catch {
       // ignore
     } finally {
@@ -158,22 +193,30 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
     loadStrategies();
     const interval = setInterval(() => {
       loadStrategies();
-    }, 8000);
+    }, 6000);
     return () => clearInterval(interval);
   }, [loadStrategies]);
 
+  // Combined positions: broker positions + active virtual/paper positions not in broker
+  const allPositions = useMemo(() => {
+    const brokerPos = (positions as Position[]) || [];
+    const brokerSymbols = new Set(brokerPos.map((p) => p.symbol));
+    const uniquePaper = paperPositions.filter((p) => !brokerSymbols.has(p.symbol));
+    return [...brokerPos, ...uniquePaper];
+  }, [positions, paperPositions]);
+
   // Extract open position symbols for live WebSocket market data streaming
   const positionSymbols = useMemo(() => {
-    return (positions as Position[])
+    return allPositions
       .map((p) => p.symbol)
       .filter(Boolean);
-  }, [positions]);
+  }, [allPositions]);
 
   const { getPrice, isConnected } = useMarketData(positionSymbols);
 
   // Compute live real-time positions with WebSocket LTP overrides
   const livePositions = useMemo(() => {
-    return (positions as Position[]).map((pos) => {
+    return allPositions.map((pos) => {
       const liveLtp = getPrice(pos.symbol);
       const currentPrice = typeof liveLtp === "number" ? liveLtp : Number(pos.ltp || pos.avgPrice);
       const quantity = Number(pos.qty);
@@ -199,7 +242,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
         hasLiveTick: typeof liveLtp === "number",
       };
     });
-  }, [positions, getPrice]);
+  }, [allPositions, getPrice]);
 
   // Open active positions (non-zero qty)
   const openPositions = useMemo(() => {
@@ -239,29 +282,35 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
 
   // Square off an individual position
   const handleSquareOffSinglePosition = async (pos: Position) => {
-    if (!activeBroker?.id) return;
     setActionInProgress(`exit-${pos.symbol}`);
     try {
-      const exitSide = Number(pos.qty) > 0 ? "SELL" : "BUY";
-      const exitQty = Math.abs(Number(pos.qty));
+      if (pos.product === "PAPER") {
+        for (const s of activeStrategies) {
+          await strategyApi.squareOff(s.id).catch(() => {});
+        }
+        toast.success(`Square-off exit order executed for ${pos.qty} ${pos.symbol}`);
+      } else if (activeBroker?.id) {
+        const exitSide = Number(pos.qty) > 0 ? "SELL" : "BUY";
+        const exitQty = Math.abs(Number(pos.qty));
 
-      await brokerApi.placeOrder(activeBroker.id, {
-        symbol: pos.symbol,
-        exchange:
-          pos.symbol.includes("-") ||
+        await brokerApi.placeOrder(activeBroker.id, {
+          symbol: pos.symbol,
+          exchange:
+            pos.symbol.includes("-") ||
             pos.symbol.startsWith("NIFTY") ||
             pos.symbol.startsWith("BANKNIFTY")
-            ? "NFO"
-            : "NSE",
-        side: exitSide,
-        product: pos.product || "MIS",
-        orderType: "MARKET",
-        qty: exitQty,
-        price: 0,
-      });
+              ? "NFO"
+              : "NSE",
+          side: exitSide,
+          product: pos.product || "MIS",
+          orderType: "MARKET",
+          qty: exitQty,
+          price: 0,
+        });
 
-      toast.success(`Square-off exit order placed for ${exitQty} ${pos.symbol}`);
-      await refreshPositions();
+        toast.success(`Square-off exit order placed for ${exitQty} ${pos.symbol}`);
+      }
+      await Promise.all([refreshPositions(), loadStrategies()]);
     } catch (err: any) {
       toast.error(err?.response?.data?.message || "Failed to square off position");
     } finally {
@@ -449,7 +498,9 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                             "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider",
                             pos.product === "MIS"
                               ? "bg-blue-50 text-blue-600 border border-blue-200"
-                              : "bg-purple-50 text-purple-600 border border-purple-200"
+                              : pos.product === "PAPER"
+                                ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                : "bg-purple-50 text-purple-600 border border-purple-200"
                           )}
                         >
                           {pos.product || "NRML"}
