@@ -196,7 +196,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         const currentTokens = new Set<number>(tickerData.tokens || []);
         const requestedTokens = symbols
           .map(s => tickerData.resolveToken(s))
-          .filter(Boolean) as number[];
+          .filter((t): t is number => typeof t === 'number' && !isNaN(t));
         
         const tokensToSubscribe = requestedTokens.filter(t => !currentTokens.has(t));
         if (tokensToSubscribe.length > 0 && tickerData.instance) {
@@ -250,7 +250,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       allInst.forEach((i: any) => {
         const sym = i.tradingsymbol;
-        const tok = i.instrument_token;
+        const tok = Number(i.instrument_token);
+        if (!tok || isNaN(tok)) return;
         const exch = i.exchange || 'NSE';
         
         tokenToSymbol.set(tok, sym);
@@ -282,7 +283,9 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         return undefined;
       };
 
-      const tokensToSubscribe = symbols.map(s => resolveToken(s)).filter(Boolean) as number[];
+      const tokensToSubscribe = symbols
+        .map(s => resolveToken(s))
+        .filter((t): t is number => typeof t === 'number' && !isNaN(t));
 
       const ticker = new KiteTicker({
         api_key: apiKey,

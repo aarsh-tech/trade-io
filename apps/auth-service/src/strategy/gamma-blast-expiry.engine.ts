@@ -4,6 +4,7 @@ import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { GammaBlastExpiryConfig } from './dto/strategy.dto';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
+import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
   date: Date;
@@ -214,44 +215,57 @@ export class GammaBlastExpiryEngine {
     this.log(state, `⏰ Active Execution Window: ${config.startTime || '13:00'} – ${effectiveEndTime} IST (Hold & Trail through 15:25–15:30 candle | Hard Auto Square-off @ 15:29:30 IST)`);
     this.log(state, `💎 Strike Selection: AUTO-ADAPTIVE (Automatically pinpoints peak gamma leverage OTM strike with max liquidity)`);
 
-    // ── Live Crash / Power Recovery on Startup ──────────────────────────────
+    // ── Live Crash / Power Recovery on Startup (Safe Strategy-Owned Only) ──
     if (!strategy.isPaperTrade && strategy.brokerAccount?.accessToken) {
       try {
         const client = this.factory.createClient(strategy.brokerAccount);
         const kite = client['kite'] || client;
         if (kite && kite.getPositions) {
-          const positionsData = await kite.getPositions().catch(() => null);
-          const netPositions = positionsData?.net || [];
-          const openPos = netPositions.find((p: any) =>
-            Number(p.quantity) > 0 &&
-            (p.tradingsymbol.startsWith(underlying) || p.tradingsymbol.includes(underlying))
-          );
+          // Safety verification: Only recover positions that belong to an existing completed BUY order by THIS strategy
+          const recentStrategyOrder = await this.prisma.order.findFirst({
+            where: {
+              strategyId,
+              status: 'COMPLETE',
+              side: 'BUY',
+              createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
 
-          if (openPos) {
-            const absQty = Math.abs(Number(openPos.quantity));
-            const entryAvg = Number(openPos.average_price) || Number(openPos.buy_price) || 0;
-            const sym = openPos.tradingsymbol;
-            const isCall = sym.endsWith('CE');
+          if (recentStrategyOrder) {
+            const positionsData = await kite.getPositions().catch(() => null);
+            const netPositions = positionsData?.net || [];
+            const openPos = netPositions.find((p: any) =>
+              Number(p.quantity) > 0 &&
+              p.tradingsymbol === recentStrategyOrder.symbol
+            );
 
-            state.optionSymbol = sym;
-            state.entryTriggered = isCall ? 'CALL_BLAST' : 'PUT_BLAST';
-            state.executedQty = absQty;
-            state.entryPrice = entryAvg;
-            state.initialSlPrice = entryAvg * (1 - (config.initialSlPct || 50) / 100);
-            state.stopLossPrice = state.initialSlPrice;
-            state.peakPrice = entryAvg;
+            if (openPos) {
+              const absQty = Math.abs(Number(openPos.quantity));
+              const entryAvg = Number(openPos.average_price) || Number(openPos.buy_price) || 0;
+              const sym = openPos.tradingsymbol;
+              const isCall = sym.endsWith('CE');
 
-            const orders = await (kite.getOrders ? kite.getOrders() : []).catch(() => []);
-            const openOrders = (orders || []).filter((o: any) => o.tradingsymbol === sym && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'));
-            const slOrder = openOrders.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
+              state.optionSymbol = sym;
+              state.entryTriggered = isCall ? 'CALL_BLAST' : 'PUT_BLAST';
+              state.executedQty = absQty;
+              state.entryPrice = entryAvg;
+              state.initialSlPrice = entryAvg * (1 - (config.initialSlPct || 50) / 100);
+              state.stopLossPrice = state.initialSlPrice;
+              state.peakPrice = entryAvg;
 
-            if (slOrder) {
-              state.slOrderId = slOrder.order_id;
-              state.stopLossPrice = Number(slOrder.trigger_price) || state.initialSlPrice;
+              const orders = await (kite.getOrders ? kite.getOrders() : []).catch(() => []);
+              const openOrders = (orders || []).filter((o: any) => o.tradingsymbol === sym && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'));
+              const slOrder = openOrders.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
+
+              if (slOrder) {
+                state.slOrderId = slOrder.order_id;
+                state.stopLossPrice = Number(slOrder.trigger_price) || state.initialSlPrice;
+              }
+
+              this.log(state, `🔄 [POWER RECOVERY] Reconnected to active strategy-owned option position: ${sym} (${absQty} Qty @ Avg ₹${entryAvg.toFixed(2)}) | SL: ₹${state.stopLossPrice?.toFixed(2)}`);
+              await this.startRealtimeMonitor(state, client);
             }
-
-            this.log(state, `🔄 [POWER RECOVERY] Reconnected to active live option position: ${sym} (${absQty} Qty @ Avg ₹${entryAvg.toFixed(2)}) | SL: ₹${state.stopLossPrice?.toFixed(2)}`);
-            await this.startRealtimeMonitor(state, client);
           }
         }
       } catch (e: any) {
@@ -705,6 +719,42 @@ export class GammaBlastExpiryEngine {
 
     // If position is active, monitorPosition safety net handles it (holds and trails through 15:25–15:29)
     if (state.entryTriggered) {
+      // Auto-sync with broker: If option position was closed manually on Zerodha, reconcile state immediately
+      if (!state.isPaperTrade && kite && kite.getPositions && state.optionSymbol) {
+        try {
+          const brokerStatus = await getLiveBrokerPosition(kite, state.optionSymbol, this.logger);
+          if (!brokerStatus.isOpen) {
+            this.log(state, `ℹ [BROKER SYNC] Option position for ${state.optionSymbol} is CLOSED on Zerodha (Net Qty: 0). Auto-syncing state and cancelling broker SL.`);
+            await safeCancelPendingOrders(kite, client, [state.slOrderId], this.logger);
+            this.stopRealtimeMonitor(state);
+
+            state.entryTriggered = null;
+            state.optionSymbol = null;
+            state.entryPrice = null;
+            state.stopLossPrice = null;
+            state.slOrderId = null;
+            state.executedQty = undefined;
+            state.peakPrice = 0;
+            state.isCostLocked = false;
+            state.is2xLocked = false;
+            state.is3xLocked = false;
+            state.is5xLocked = false;
+            state.isPartialExited = false;
+            state.isHighConvictionTrade = false;
+
+            strategyEvents.emit('strategy.update', {
+              strategyId: state.strategyId,
+              logs: state.logs,
+              state: this.getState(state.strategyId),
+            });
+            await this.persistLogs(state);
+            return;
+          }
+        } catch (syncErr: any) {
+          this.logger.debug?.(`Gamma blast broker sync notice: ${syncErr.message}`);
+        }
+      }
+
       await this.monitorPosition(state, client, kite);
       await this.persistLogs(state);
       return;
@@ -1449,22 +1499,17 @@ export class GammaBlastExpiryEngine {
           await client.cancelOrder(state.slOrderId).catch(() => { });
         }
 
-        // Prevent duplicate exit order if user already manually exited on Zerodha Kite
+        // Capital Wipeout Guard: Verify broker net quantity before placing exit order
         const kite = client['kite'];
         let isManuallyClosed = false;
-        if (kite && kite.getPositions) {
-          try {
-            const pos = await kite.getPositions().catch(() => null);
-            const allPos = [...(pos?.net || []), ...(pos?.day || [])];
-            const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
-            const liveNetQty = currentPos ? currentPos.quantity : 0;
-            if (liveNetQty <= 0) {
-              isManuallyClosed = true;
-              this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Net Qty: 0). Skipping duplicate exit order to prevent order misplacement.`);
-            }
-          } catch (posErr: any) {
-            this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
+        try {
+          const exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+          if (!exitSafety.safe) {
+            isManuallyClosed = true;
+            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended short.`);
           }
+        } catch (posErr: any) {
+          this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
         }
 
         if (!isManuallyClosed) {
@@ -1491,6 +1536,7 @@ export class GammaBlastExpiryEngine {
 
       this.log(state, `🎉 Trade Closed (${reason}) @ ₹${exitPrice.toFixed(2)} | P&L: ${tradePnl >= 0 ? '+' : ''}₹${tradePnl.toFixed(2)} | Total Today: ₹${state.dailyRealizedPnlRs.toFixed(2)}`);
 
+      this.stopRealtimeMonitor(state);
       state.entryTriggered = null;
       state.optionSymbol = null;
       state.entryPrice = null;
@@ -1503,6 +1549,12 @@ export class GammaBlastExpiryEngine {
       state.is5xLocked = false;
       state.isPartialExited = false;
       state.isHighConvictionTrade = false;
+
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
     } catch (e: any) {
       this.log(state, `❌ Exit failed: ${e.message}`);
     }

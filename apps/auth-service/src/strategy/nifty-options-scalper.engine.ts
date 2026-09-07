@@ -5,6 +5,7 @@ import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
 import { autoSelectStock } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
+import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
   date: Date;
@@ -735,6 +736,40 @@ export class NiftyOptionsScalperEngine {
     }
 
     if (state.entryTriggered) {
+      // Auto-sync with broker: If option position was closed manually on Zerodha, reconcile state immediately
+      if (!state.isPaperTrade && kite && kite.getPositions && state.optionSymbol) {
+        try {
+          const brokerStatus = await getLiveBrokerPosition(kite, state.optionSymbol, this.logger);
+          if (!brokerStatus.isOpen) {
+            this.log(state, `ℹ [BROKER SYNC] Option position for ${state.optionSymbol} is CLOSED on Zerodha (Net Qty: 0). Auto-syncing scalper state and cancelling broker SL.`);
+            await safeCancelPendingOrders(kite, client, [state.slOrderId], this.logger);
+            this.stopRealtimeMonitor(state);
+
+            state.entryTriggered = null;
+            state.optionSymbol = null;
+            state.entryPrice = null;
+            state.stopLossPrice = null;
+            state.targetPrice = null;
+            state.slOrderId = null;
+            state.isCostSlTrailed = false;
+            state.isProfitLockTrailed = false;
+            state.isDynamicTrailingActive = false;
+            state.isPartialBooked = false;
+            state.executedQty = undefined;
+
+            strategyEvents.emit('strategy.update', {
+              strategyId: state.strategyId,
+              logs: state.logs,
+              state: this.getState(state.strategyId),
+            });
+            await this.persistLogs(state);
+            return;
+          }
+        } catch (syncErr: any) {
+          this.logger.debug?.(`Scalper broker sync notice: ${syncErr.message}`);
+        }
+      }
+
       await this.monitorPosition(state, client, kite);
       await this.persistLogs(state);
       return;
@@ -1530,31 +1565,32 @@ export class NiftyOptionsScalperEngine {
       } catch { }
     }
 
-    // ── 0. Prevent Duplicate Exit Order if User Already Exited on Zerodha ──────
+    // ── 0. Capital Wipeout Guard: Verify Broker Net Quantity Before Exit ──────
     if (!state.isPaperTrade && client) {
       try {
         const kite = client['kite'];
-        if (kite && kite.getPositions) {
-          const pos = await kite.getPositions().catch(() => null);
-          const allPos = [...(pos?.net || []), ...(pos?.day || [])];
-          const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
-          const liveNetQty = currentPos ? currentPos.quantity : 0;
+        const exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+        if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+          this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended short.`);
+          this.stopRealtimeMonitor(state);
+          state.entryTriggered = null;
+          state.optionSymbol = null;
+          state.entryPrice = null;
+          state.stopLossPrice = null;
+          state.targetPrice = null;
+          state.slOrderId = null;
+          state.isCostSlTrailed = false;
+          state.isProfitLockTrailed = false;
+          state.isDynamicTrailingActive = false;
+          state.isPartialBooked = false;
+          state.executedQty = undefined;
 
-          if (liveNetQty <= 0 && reason !== 'FORCE_CLOSE') {
-            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Net Qty: 0). Skipping duplicate exit order to prevent order misplacement.`);
-            state.entryTriggered = null;
-            state.optionSymbol = null;
-            state.entryPrice = null;
-            state.stopLossPrice = null;
-            state.targetPrice = null;
-            state.slOrderId = null;
-            state.isCostSlTrailed = false;
-            state.isProfitLockTrailed = false;
-            state.isDynamicTrailingActive = false;
-            state.isPartialBooked = false;
-            state.executedQty = undefined;
-            return;
-          }
+          strategyEvents.emit('strategy.update', {
+            strategyId: state.strategyId,
+            logs: state.logs,
+            state: this.getState(state.strategyId),
+          });
+          return;
         }
       } catch (err: any) {
         this.log(state, `⚠ Position sync check notice: ${err.message}`);
@@ -1583,6 +1619,7 @@ export class NiftyOptionsScalperEngine {
         }
       }
 
+      this.stopRealtimeMonitor(state);
       state.entryTriggered = null;
       state.optionSymbol = null;
       state.entryPrice = null;
@@ -1594,6 +1631,12 @@ export class NiftyOptionsScalperEngine {
       state.isDynamicTrailingActive = false;
       state.isPartialBooked = false;
       state.executedQty = undefined;
+
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
     }
@@ -1939,7 +1982,7 @@ export class NiftyOptionsScalperEngine {
   private log(state: ScalperStrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: ScalperStrategyState) {
     try {
-      await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } });
+      await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-500)) } });
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,
         logs: state.logs,
