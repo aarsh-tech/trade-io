@@ -56,7 +56,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       iconColor: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
       features: [
         "Auto 09:15 AM Stock Picker",
-        "5x MIS Leverage (85% Deployed)",
+        "Strict Risk Sizing (Max 25% Capital)",
         "Structural SL below Candle Low",
         "15-EMA Live Trailing on Zerodha",
       ],

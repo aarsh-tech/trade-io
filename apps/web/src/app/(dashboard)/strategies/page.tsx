@@ -895,9 +895,9 @@ function StrategyCard({
                   : isNiftyScalper
                     ? "Auto Margin"
                     : is15Min
-                      ? "85% Margin (5x)"
+                      ? "Risk-Based (5x)"
                       : isEmaVwap && cfg.symbol === "AUTO"
-                        ? "85% Margin (5x)"
+                        ? "Risk-Based (5x)"
                         : cfg.symbol === "AUTO"
                           ? "Auto (5x)"
                           : cfg.qty
@@ -924,11 +924,13 @@ function StrategyCard({
                     ? "-7 Pts (Server SL)"
                     : is15Min
                       ? "Candle SL (Trailed)"
-                      : isEmaVwap
-                        ? "Candle Low (Trailed)"
-                        : cfg.stopLossRs
-                          ? `₹${cfg.stopLossRs}`
-                          : "Dynamic SL"}
+                      : cfg.exitExactAtTarget
+                        ? `Fixed ₹${cfg.stopLossRs ?? 500}`
+                        : isEmaVwap
+                          ? "Candle Low (Trailed)"
+                          : cfg.stopLossRs
+                            ? `₹${cfg.stopLossRs}`
+                            : "Dynamic SL"}
             </span>
           </div>
 
@@ -950,13 +952,15 @@ function StrategyCard({
                   ? "2x–5x Ratchet"
                   : isNiftyScalper
                     ? `+${cfg.targetPoints ?? 10} Pts (Banker/Runner)`
-                    : is15Min
-                      ? "1:2 RR + Uncapped Trail"
-                      : isEmaVwap
-                        ? "15-EMA / VWAP"
-                        : cfg.targetRs
-                          ? `₹${cfg.targetRs}`
-                          : "Dynamic RR"}
+                    : cfg.exitExactAtTarget
+                      ? `Fixed ₹${cfg.targetRs ?? 500}`
+                      : is15Min
+                        ? "1:2 RR + Uncapped Trail"
+                        : isEmaVwap
+                          ? "15-EMA / VWAP"
+                          : cfg.targetRs
+                            ? `₹${cfg.targetRs}`
+                            : "Dynamic RR"}
             </span>
           </div>
         </div>

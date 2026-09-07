@@ -58,6 +58,7 @@ export default function EditStrategyPage() {
     product: "MIS" as "MIS" | "NRML",
     stopLossRs: "500",
     targetRs: "500",
+    exitExactAtTarget: false,
     maxTradesPerDay: "2",
     minPremium: "100",
     maxPremium: "300",
@@ -135,6 +136,7 @@ export default function EditStrategyPage() {
           product: config.product || "MIS",
           stopLossRs: String(config.stopLossRs || "500"),
           targetRs: String(config.targetRs || "500"),
+          exitExactAtTarget: !!config.exitExactAtTarget,
           maxTradesPerDay: String(config.maxTradesPerDay || "2"),
           minPremium: String(config.minPremium || "100"),
           maxPremium: String(config.maxPremium || "300"),
@@ -253,6 +255,7 @@ export default function EditStrategyPage() {
           instrumentType: form.instrumentType, qty,
           lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          exitExactAtTarget: !!form.exitExactAtTarget,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableDynamicAtr: form.b15EnableDynamicAtr,
           riskRewardRatio: Number(form.b15RiskRewardRatio),
@@ -283,6 +286,7 @@ export default function EditStrategyPage() {
           emaPeriod: Number(form.emaPeriod), vwapSource: form.vwapSource || "close", isOptionBuyingOnly: form.isOptionBuyingOnly,
           qty, lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          exitExactAtTarget: !!form.exitExactAtTarget,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableProfitFloor: form.enableProfitFloor,
           profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
@@ -897,6 +901,28 @@ export default function EditStrategyPage() {
                   value={form.maxTradesPerDay}
                   onChange={(e) => set("maxTradesPerDay", e.target.value)}
                 />
+              </div>
+
+              {/* Exit Exact at Target */}
+              <div className="p-4 rounded-xl bg-[hsl(var(--card))] border border-[hsl(var(--border))] space-y-2 mt-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Target className="h-4 w-4 text-emerald-500 shrink-0" />
+                    <span className="text-sm font-bold text-[hsl(var(--foreground))]">Exit Exact at Target (Fixed Profit Target)</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.exitExactAtTarget || false}
+                      onChange={(e) => set("exitExactAtTarget", e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                  </label>
+                </div>
+                <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
+                  When enabled, immediately squares off the position the moment your exact target profit (<strong>₹{form.targetRs || "500"}</strong>) or stop loss (<strong>₹{form.stopLossRs || "500"}</strong>) is hit, with zero trailing or giving back gains.
+                </p>
               </div>
 
               {isEmaVwap && (

@@ -9,6 +9,7 @@ export interface StrategyFormState {
   product: "MIS" | "NRML";
   stopLossRs: string;
   targetRs: string;
+  exitExactAtTarget?: boolean;
   maxTradesPerDay: string;
   minPremium: string;
   maxPremium: string;

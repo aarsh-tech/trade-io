@@ -457,9 +457,9 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-start gap-3 p-3.5 rounded-xl border border-blue-500/20 bg-blue-500/5 text-blue-700 dark:text-blue-300">
               <Sparkles className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
               <div className="text-xs space-y-0.5">
-                <p className="font-bold">Dynamic Margin & Exchange Server SL Active</p>
+                <p className="font-bold">Strict Risk Sizing & Exchange Server SL Active</p>
                 <p className="text-[11px] opacity-80 leading-relaxed">
-                  Automatically queries live Zerodha cash margin (reserving 15% buffer). Sizes 85% tradeable margin at 5x MIS leverage for stocks or affordable lots for index options. Arms a server-side SL-L order at Zerodha on entry fill and monitors Target 1 (+2R) for uncapped momentum trailing.
+                  Automatically queries live Zerodha cash margin. Sizes quantity strictly by your Stop Loss ₹ (never risking more than configured) and caps capital deployment at 25% (5x MIS leverage). Arms a server-side SL-L order at Zerodha on entry fill and monitors Target 1 (+2R) for uncapped momentum trailing.
                 </p>
               </div>
             </div>

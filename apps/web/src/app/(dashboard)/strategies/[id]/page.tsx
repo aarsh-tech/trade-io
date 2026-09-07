@@ -26,6 +26,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Filter,
   History,
   Info,
   Loader2,
@@ -143,8 +144,14 @@ export default function StrategyDetailPage() {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [showLogs, setShowLogs] = useState(true);
+  const [hidePnlLogs, setHidePnlLogs] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [activeTab, setActiveTab] = useState<"LIVE" | "CONFIG" | "ANALYTICS" | "HISTORY">("LIVE");
+
+  const displayedLogs = useMemo(() => {
+    if (!hidePnlLogs) return liveLogs;
+    return liveLogs.filter((l) => !l.includes("[LIVE P&L]"));
+  }, [liveLogs, hidePnlLogs]);
 
   // Real-time market data subscription (clean dummy symbols like AUTO, map index aliases)
   const symbolsToSubscribe = useMemo(() => {
@@ -358,7 +365,7 @@ export default function StrategyDetailPage() {
     if (logsRef.current && showLogs) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
-  }, [liveLogs, showLogs]);
+  }, [displayedLogs, showLogs]);
 
   async function toggleEngine() {
     if (!strategy) return;
@@ -497,8 +504,8 @@ export default function StrategyDetailPage() {
   }
 
   function copyLogsToClipboard() {
-    if (liveLogs.length === 0) return;
-    navigator.clipboard.writeText(liveLogs.join("\n"));
+    if (displayedLogs.length === 0) return;
+    navigator.clipboard.writeText(displayedLogs.join("\n"));
     toast.success("Console logs copied to clipboard");
   }
 
@@ -936,9 +943,9 @@ export default function StrategyDetailPage() {
                   : isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
                     ? "Auto NFO Lots"
                     : is15Min
-                    ? "85% Margin (5x)"
+                    ? "Risk-Based (5x)"
                     : isEmaVwap && cfg.symbol === "AUTO"
-                      ? "85% Margin (5x)"
+                      ? "Risk-Based (5x)"
                       : cfg.symbol === "AUTO"
                         ? "Auto (5x MIS)"
                         : cfg.qty
@@ -964,7 +971,9 @@ export default function StrategyDetailPage() {
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-rose-600">
-                {isNiftyScalper
+                {cfg.exitExactAtTarget
+                  ? `Fixed ₹${cfg.stopLossRs ?? "500"}`
+                  : isNiftyScalper
                   ? "-7 Points"
                   : isStockOptions
                     ? "Mother Low / Trail"
@@ -975,7 +984,7 @@ export default function StrategyDetailPage() {
                       : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Server SL + Trail" : isStockOptions ? "Breakeven @ T1" : is15Min ? "Server SL Armed" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
+                {cfg.exitExactAtTarget ? "Exact Loss Cut" : isNiftyScalper ? "Server SL + Trail" : isStockOptions ? "Breakeven @ T1" : is15Min ? "Server SL Armed" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
               </span>
             </div>
           </CardContent>
@@ -993,7 +1002,9 @@ export default function StrategyDetailPage() {
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-emerald-600">
-                {isNiftyScalper
+                {cfg.exitExactAtTarget
+                  ? `Fixed ₹${cfg.targetRs ?? "500"}`
+                  : isNiftyScalper
                   ? "+10 Pts + Trail"
                   : isStockOptions
                     ? "1:1.5 & 1:3 RR"
@@ -1004,7 +1015,7 @@ export default function StrategyDetailPage() {
                       : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Uncapped Momentum" : isStockOptions ? "Banker & Runner" : is15Min ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
+                {cfg.exitExactAtTarget ? "Exact Target Exit" : isNiftyScalper ? "Uncapped Momentum" : isStockOptions ? "Banker & Runner" : is15Min ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
               </span>
             </div>
           </CardContent>
@@ -1408,6 +1419,16 @@ export default function StrategyDetailPage() {
 
               <div className="flex items-center gap-2">
                 <Button
+                  variant={hidePnlLogs ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setHidePnlLogs((v) => !v)}
+                  className="h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                  title={hidePnlLogs ? "Switch to show all logs" : "Hide repetitive P&L ticks to view trade signals and executions only"}
+                >
+                  <Filter className="h-3 w-3" />
+                  <span className="hidden sm:inline">{hidePnlLogs ? "Events Only" : "All Logs"}</span>
+                </Button>
+                <Button
                   variant="ghost"
                   size="sm"
                   onClick={copyLogsToClipboard}
@@ -1433,14 +1454,14 @@ export default function StrategyDetailPage() {
                   ref={logsRef}
                   className="h-72 overflow-y-auto bg-slate-950 p-4 font-mono text-xs text-emerald-400 space-y-1 select-text scrollbar-thin"
                 >
-                  {liveLogs.length === 0 ? (
+                  {displayedLogs.length === 0 ? (
                     <p className="text-slate-500 italic py-4">
                       {strategy.isActive
                         ? "Engine running. Awaiting real-time market ticks and crossover signals..."
                         : "Start the engine to view live execution logs."}
                     </p>
                   ) : (
-                    liveLogs.map((line, i) => (
+                    displayedLogs.map((line, i) => (
                       <div
                         key={i}
                         className={cn(

@@ -910,7 +910,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 className="font-semibold"
               />
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                Deploys 85% tradeable margin while reserving 15% cash buffer.
+                Deploys up to 25% capital per trade with strict risk-based sizing (never risking more than your Stop Loss ₹).
               </p>
             </div>
             <div>
@@ -1046,9 +1046,9 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             <div className="flex gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300">
               <TrendingUp className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
               <div className="text-xs space-y-1">
-                <p className="font-bold">Dynamic Margin Sizing & 15-EMA Live Trailing Active</p>
+                <p className="font-bold">Strict Risk-Based Sizing & 15-EMA Live Trailing Active</p>
                 <p className="text-[11px] opacity-90 leading-relaxed">
-                  Deploys 85% tradeable margin at 5x MIS leverage (reserves 15% cash buffer). Stop Loss is placed structurally below the entry candle low with a safety buffer and trailed live with 15-EMA directly on Zerodha exchange servers.
+                  Strict Risk-Based Sizing (Loss capped at your Stop Loss ₹, e.g. ₹500) & max 25% capital deployed per trade at 5x MIS leverage. Stop Loss is placed structurally below entry with a safety buffer (capped at 1.2% max) and trailed live with 15-EMA directly on Zerodha exchange servers.
                 </p>
               </div>
             </div>
@@ -1089,6 +1089,28 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 className="border-red-200 focus:ring-red-300 font-semibold"
               />
             </div>
+          </div>
+
+          {/* Exit Exact at Target Toggle */}
+          <div className="p-3.5 rounded-xl bg-[hsl(var(--card))] border border-[hsl(var(--border))] space-y-2 mt-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Target className="h-4 w-4 text-emerald-500 shrink-0" />
+                <span className="text-sm font-semibold text-[hsl(var(--foreground))]">Exit Exact at Target (Fixed Profit Target)</span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.exitExactAtTarget || false}
+                  onChange={(e) => set("exitExactAtTarget", e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+              </label>
+            </div>
+            <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
+              When enabled, immediately squares off the position the moment your exact target profit (e.g. <strong>₹{form.targetRs || "500"}</strong>) or stop loss (e.g. <strong>₹{form.stopLossRs || "500"}</strong>) is hit, with zero trailing or giving back gains.
+            </p>
           </div>
         </div>
       )}
