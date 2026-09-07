@@ -191,9 +191,10 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
 
   useEffect(() => {
     loadStrategies();
+    // Poll strategies every 15s instead of 3s to prevent network spam & broker rate limits
     const interval = setInterval(() => {
       loadStrategies();
-    }, 6000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [loadStrategies]);
 
@@ -201,7 +202,14 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
   const allPositions = useMemo(() => {
     const brokerPos = (positions as Position[]) || [];
     const brokerSymbols = new Set(brokerPos.map((p) => p.symbol));
-    const uniquePaper = paperPositions.filter((p) => !brokerSymbols.has(p.symbol));
+    const closedBrokerSymbols = new Set(
+      brokerPos.filter((p) => Number(p.qty) === 0).map((p) => p.symbol)
+    );
+
+    // Only include paper positions if symbol is not already represented or closed at broker
+    const uniquePaper = paperPositions.filter(
+      (p) => !brokerSymbols.has(p.symbol) && !closedBrokerSymbols.has(p.symbol)
+    );
     return [...brokerPos, ...uniquePaper];
   }, [positions, paperPositions]);
 
@@ -438,16 +446,25 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
             )}
 
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              onClick={() => {
-                refreshPositions();
-                loadStrategies();
+              onClick={async () => {
+                setActionInProgress("sync-broker");
+                try {
+                  await Promise.all([refreshPositions(), loadStrategies()]);
+                  toast.success("Broker positions & algo telemetry synced successfully");
+                } catch {
+                  toast.error("Failed to sync broker positions");
+                } finally {
+                  setActionInProgress(null);
+                }
               }}
-              title="Refresh telemetry"
-              className="h-7 w-7 p-0 text-slate-500 hover:text-slate-900 rounded"
+              disabled={actionInProgress === "sync-broker"}
+              title="Sync live broker positions with algo state"
+              className="h-7 px-2 text-xs text-slate-600 hover:text-slate-900 border-slate-200 rounded gap-1"
             >
-              <RefreshCcw className="h-3.5 w-3.5" />
+              <RefreshCcw className={cn("h-3 w-3", actionInProgress === "sync-broker" && "animate-spin")} />
+              <span className="hidden sm:inline">Sync Broker</span>
             </Button>
           </div>
         </div>

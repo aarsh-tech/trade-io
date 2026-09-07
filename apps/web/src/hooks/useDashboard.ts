@@ -18,8 +18,9 @@ export function useDashboard() {
       const res = await marketApi.marketOverview();
       return res.data.data;
     },
-    // No more short refetchInterval since we use websockets
-    refetchInterval: 5 * 60 * 1000, 
+    // 30s automatic polling fallback (WebSocket streams real-time LTP ticks)
+    refetchInterval: 30000,
+    staleTime: 15000,
   });
 
   const statsQuery = useQuery({
@@ -45,7 +46,10 @@ export function useDashboard() {
     ];
 
     const socketInstance = io(`${getSocketBaseUrl()}/market`, {
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
     });
 
     socketInstance.on('connect', () => {
