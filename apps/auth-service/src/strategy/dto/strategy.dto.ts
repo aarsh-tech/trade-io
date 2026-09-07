@@ -54,6 +54,7 @@ export interface Breakout15MinConfig {
   product: 'MIS' | 'NRML';
   stopLossRs: number;
   targetRs: number;
+  exitExactAtTarget?: boolean;      // Exit immediately at exact target profit (e.g. ₹500) and stop loss (e.g. ₹500) without trailing
   maxTradesPerDay: number;
   minPremium?: number;
   maxPremium?: number;
@@ -126,6 +127,7 @@ export interface EmaVwapCrossoverConfig {
   maxTradesPerDay: number;
   stopLossRs: number;
   targetRs: number;
+  exitExactAtTarget?: boolean;      // Exit immediately at exact target profit (e.g. ₹500) and stop loss (e.g. ₹500) without trailing
   minPremium?: number;
   maxPremium?: number;
   enableProfitFloor?: boolean;
@@ -201,6 +203,7 @@ export interface StockOptionsBuyingConfig {
   startAfterMin: number;        // default 25
   triggerOffset: number;        // default 0.50 (points above option mother high)
   protectionBufferPct: number;  // default 10 (%)
+  stopLossRs?: number;          // Maximum allowed loss in rupees (default: 500)
   
   // High Accuracy & 100% ROI Upgrades
   minRvol?: number;             // Relative Volume multiplier (default: 1.5)

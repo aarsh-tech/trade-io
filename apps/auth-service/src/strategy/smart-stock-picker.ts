@@ -8,6 +8,12 @@ const BLACKLISTED_SLOW_STOCKS = new Set([
 
 export const globalTickSizeMap = new Map<string, number>();
 
+// In-memory caches to prevent Zerodha "Too many requests" (429) rate limiting
+let cachedDynamicStocks: { symbols: string[]; tokenMap: Map<string, number>; tickSizeMap: Map<string, number> } | null = null;
+let cachedDynamicStocksTime = 0;
+let cachedFnoSymbolsList: string[] = [];
+let cachedFnoSymbolsTime = 0;
+
 export function getInstrumentTickSize(symbol: string, ltp?: number): number {
   const cleanSym = (symbol || '').replace('NSE:', '').replace('NFO:', '').trim().toUpperCase();
   if (globalTickSizeMap.has(cleanSym)) {
@@ -36,6 +42,10 @@ export function roundToInstrumentTick(price: number, tickSize: number = 0.05): n
  * with all 180+ liquid F&O stocks and maps them to their NSE equity instrument tokens.
  */
 export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promise<{ symbols: string[]; tokenMap: Map<string, number>; tickSizeMap: Map<string, number> }> {
+  if (cachedDynamicStocks && (Date.now() - cachedDynamicStocksTime) < 4 * 60 * 60 * 1000) {
+    return cachedDynamicStocks;
+  }
+
   const tokenMap = new Map<string, number>();
   const tickSizeMap = new Map<string, number>();
 
@@ -91,7 +101,9 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
   // Filter blacklisted slow-moving stocks
   const liquidSymbols = rawUniverse.filter(sym => !BLACKLISTED_SLOW_STOCKS.has(sym));
   logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} high-momentum NSE stocks (NIFTY 500 + F&O)`);
-  return { symbols: liquidSymbols, tokenMap, tickSizeMap };
+  cachedDynamicStocks = { symbols: liquidSymbols, tokenMap, tickSizeMap };
+  cachedDynamicStocksTime = Date.now();
+  return cachedDynamicStocks;
 }
 
 /**
@@ -133,8 +145,12 @@ export async function autoSelectStock(
   const fallbackSym = 'TRENT';
   const relQuotes = await kite.getLTP([`NSE:${fallbackSym}`]).catch(() => ({}));
   const ltp = relQuotes[`NSE:${fallbackSym}`]?.last_price || 6500;
-  const qty = Math.max(1, Math.floor((availableCapital * 5) / ltp));
-  logger?.warn(`↩ Fallback to high-momentum leader ${fallbackSym} @ ₹${ltp.toFixed(2)}`);
+  const maxLossFallback = stopLossRs && stopLossRs > 0 ? stopLossRs : 500;
+  const riskPerShare = Math.max(0.50, ltp * 0.01);
+  const maxRiskQty = Math.max(1, Math.floor(maxLossFallback / riskPerShare));
+  const maxCapQty = Math.max(1, Math.floor((availableCapital * 0.25 * 5) / ltp));
+  const qty = Math.min(maxRiskQty, maxCapQty);
+  logger?.warn(`↩ Fallback to high-momentum leader ${fallbackSym} @ ₹${ltp.toFixed(2)} (Qty: ${qty})`);
   return { symbol: fallbackSym, exchange: 'NSE', ltp, qty };
 }
 
@@ -245,12 +261,17 @@ export async function getTopCandidateStocks(
       const isOpenHigh = (diffOpenHighPct <= 0.0025) && (ltp < todayOpen) && (changeFromOpenPct <= -0.20);
 
       // ── 2. Multi-Factor Directional Momentum Scoring ────────────────────────
-      // Measures real trending velocity (e.g. HEROMOTOCO dropping -6% or Top Gainer surging +5%)
+      // Measures real trending velocity (e.g. fresh 0.5% - 2.5% move from open)
       const absChangeFromOpen = Math.abs(changeFromOpenPct);
       const absDayChange = Math.abs(dayChangePct);
 
       // Minimum move filter to skip flat/dormant stocks
       if (absChangeFromOpen < 0.20 && dayRangePct < 0.5 && !isOpenLow && !isOpenHigh) continue;
+
+      // Exhaustion Guard (Anti-Chasing):
+      // Skip stocks that have already dumped or rallied > 3.0% from open or > 4.5% on the day (like PVRINOX dumping 7% at open).
+      // Stocks that have already made an extreme move have exhausted their daily ATR and are prone to violent mean-reversion spikes.
+      if (absChangeFromOpen > 3.0 || absDayChange > 4.5) continue;
 
       // Short momentum score (for selloffs/breakdowns like HEROMOTOCO / SHRIRAMFIN)
       const shortDropFromOpen = Math.max(0, -changeFromOpenPct);
@@ -277,16 +298,16 @@ export async function getTopCandidateStocks(
       const trend: 'LONG' | 'SHORT' = longScore >= shortScore ? 'LONG' : 'SHORT';
       const score = Math.max(longScore, shortScore);
 
-      // ── 3. Dynamic Capital-Constrained Position Sizing ───────────────────────
-      // Pure percentage-based dynamic sizing: Reserves 15% cash buffer (min ₹1,000)
-      // Deploys 85% of tradeable margin with 5x MIS leverage
-      // Scales dynamically with any capital size (₹10k, ₹14k, ₹18k, ₹50k+)
-      const capitalBuffer = Math.max(1000, (availableCapital || 15000) * 0.15);
-      const tradeableCapital = Math.max(2000, (availableCapital || 15000) - capitalBuffer);
-      const targetBuyingPower = tradeableCapital * 0.85 * 5;
+      // ── 3. Strict Risk-Based & Conservative Capital Sizing ───────────────────
+      // Sizing is strictly tied to the user's defined stop loss (e.g. ₹500), NOT full margin.
+      // Conservative capital allocation: deploys max 25% of account capital per trade (5x MIS leverage).
+      // Guarantees account preservation and avoids oversized drawdown on single stock spikes.
+      const maxAllowedLoss = (stopLossRs && stopLossRs > 0) ? stopLossRs : 500;
+      const estimatedRiskPerShare = Math.max(0.50, ltp * 0.01); // Baseline 1.0% structural stop distance
+      const riskAllowedQty = Math.max(1, Math.floor(maxAllowedLoss / estimatedRiskPerShare));
+      const capitalAllowedQty = Math.max(1, Math.floor(((availableCapital || 15000) * 0.25 * 5) / ltp));
       const maxAffordableQty = Math.max(1, Math.floor(maxBuyingPower / ltp));
-      const capitalQty = Math.max(1, Math.floor(targetBuyingPower / ltp));
-      const qty = Math.min(capitalQty, maxAffordableQty);
+      const qty = Math.max(1, Math.min(riskAllowedQty, capitalAllowedQty, maxAffordableQty));
 
       result.push({
         symbol: sym,
@@ -340,22 +361,30 @@ export async function getTopFnoCandidates(
 ): Promise<FnoCandidateStock[]> {
   const result: FnoCandidateStock[] = [];
 
-  // 1. Resolve pure F&O universe from NFO instruments or FO_STOCKS_LIST
+  // 1. Resolve pure F&O universe from cache, live NFO instruments, or FO_STOCKS_LIST
   let fnoSymbols: string[] = [];
-  try {
-    const nfoInstruments = await kite.getInstruments('NFO');
-    const fnoSet = new Set<string>();
-    nfoInstruments.forEach((i: any) => {
-      if (i.name && i.segment === 'NFO-OPT') {
-        const sym = i.name.toUpperCase().trim();
-        if (sym && !sym.startsWith('NIFTY') && !sym.startsWith('BANKNIFTY') && !sym.startsWith('FINNIFTY') && !sym.startsWith('MIDCPNIFTY')) {
-          fnoSet.add(sym);
+  if (cachedFnoSymbolsList.length > 0 && (Date.now() - cachedFnoSymbolsTime) < 4 * 60 * 60 * 1000) {
+    fnoSymbols = cachedFnoSymbolsList;
+  } else {
+    try {
+      const nfoInstruments = await kite.getInstruments('NFO');
+      const fnoSet = new Set<string>();
+      nfoInstruments.forEach((i: any) => {
+        if (i.name && i.segment === 'NFO-OPT') {
+          const sym = i.name.toUpperCase().trim();
+          if (sym && !sym.startsWith('NIFTY') && !sym.startsWith('BANKNIFTY') && !sym.startsWith('FINNIFTY') && !sym.startsWith('MIDCPNIFTY')) {
+            fnoSet.add(sym);
+          }
         }
+      });
+      fnoSymbols = Array.from(fnoSet);
+      if (fnoSymbols.length > 0) {
+        cachedFnoSymbolsList = fnoSymbols;
+        cachedFnoSymbolsTime = Date.now();
       }
-    });
-    fnoSymbols = Array.from(fnoSet);
-  } catch (err: any) {
-    logger?.warn(`Could not fetch live NFO instruments: ${err.message}`);
+    } catch (err: any) {
+      logger?.warn(`Could not fetch live NFO instruments: ${err.message}`);
+    }
   }
 
   if (fnoSymbols.length === 0) {
@@ -413,6 +442,13 @@ export async function getTopFnoCandidates(
       const diffOpenHighPct = todayOpen > 0 ? Math.abs(todayHigh - todayOpen) / todayOpen : 1;
       const isOpenLow = (diffOpenLowPct <= 0.0025) && (ltp > todayOpen) && (changeFromOpenPct >= 0.20);
       const isOpenHigh = (diffOpenHighPct <= 0.0025) && (ltp < todayOpen) && (changeFromOpenPct <= -0.20);
+
+      // Exhaustion Guard (Anti-Chasing):
+      // Skip stocks that have already moved > 3.0% from open or > 4.5% on the day.
+      // Buying options on an exhausted move leads to rapid theta burn & severe reversals.
+      const absChangeFromOpen = Math.abs(changeFromOpenPct);
+      const absDayChange = Math.abs(dayChangePct);
+      if (absChangeFromOpen > 3.0 || absDayChange > 4.5) continue;
 
       // Multi-factor momentum scoring (targeted for 5%–10% intraday velocity)
       const shortDropFromOpen = Math.max(0, -changeFromOpenPct);

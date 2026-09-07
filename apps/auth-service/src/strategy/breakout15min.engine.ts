@@ -5,6 +5,7 @@ import { Breakout15MinConfig } from './dto/strategy.dto';
 import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
+import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
   date: Date;
@@ -231,7 +232,7 @@ export class Breakout15MinEngine {
 
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-200)) },
+        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-500)) },
       });
     }
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
@@ -260,7 +261,7 @@ export class Breakout15MinEngine {
 
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-200)) },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-500)) },
       });
     }
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
@@ -970,6 +971,41 @@ export class Breakout15MinEngine {
 
     // ─── Paper/Real Trade Monitoring (safety polling loop) ────
     if (state.entryTriggered) {
+      // 0. Auto-sync with broker: If position was closed manually on Zerodha, reconcile state immediately
+      if (!state.isPaperTrade && kite && kite.getPositions) {
+        try {
+          const symToMonitor = state.optionSymbol || state.futureSymbol || config.symbol;
+          const brokerStatus = await getLiveBrokerPosition(kite, symToMonitor, this.logger);
+          if (!brokerStatus.isOpen) {
+            this.log(state, `ℹ [BROKER SYNC] Position for ${symToMonitor} is CLOSED on Zerodha (Net Qty: 0). Reconciling strategy state and cancelling pending broker orders.`);
+            await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId], this.logger);
+            this.stopRealtimeMonitor(state);
+
+            state.entryTriggered = null;
+            state.entryFilled = false;
+            state.entryPrice = null;
+            state.stopLossPrice = null;
+            state.targetPrice = null;
+            state.slOrderId = null;
+            state.targetOrderId = null;
+            state.executedQty = undefined;
+            state.currentPnlRs = 0;
+            state.currentPnlPct = 0;
+            state.isParabolicActive = false;
+
+            strategyEvents.emit('strategy.update', {
+              strategyId: state.strategyId,
+              logs: state.logs,
+              state: this.getState(state.strategyId),
+            });
+            await this.persistLogs(state);
+            return;
+          }
+        } catch (syncErr: any) {
+          this.logger.debug?.(`Breakout broker sync notice: ${syncErr.message}`);
+        }
+      }
+
       try {
         try {
           const entryTf = config.entryTimeframe || '3min';
@@ -1410,11 +1446,45 @@ export class Breakout15MinEngine {
         return;
       }
 
+      // ── 1.1 EXACT TARGET / STOP LOSS EXIT (Guaranteed Fixed Target Exit) ─────
+      const exactTargetRs = state.config.targetRs && state.config.targetRs > 0 ? state.config.targetRs : 500;
+      const exactStopLossRs = state.config.stopLossRs && state.config.stopLossRs > 0 ? state.config.stopLossRs : 500;
+
+      if (state.config.exitExactAtTarget) {
+        if (pnlRs >= exactTargetRs) {
+          if (isExiting) return;
+          isExiting = true;
+          this.log(
+            state,
+            `🎯 [EXACT TARGET EXIT] Position reached exact target profit (+₹${pnlRs.toFixed(2)} >= ₹${exactTargetRs})! Immediately squaring off position.`
+          );
+          if (state.slOrderId) await this.cancelBrokerOrderSafe(client, state.slOrderId);
+          if (state.targetOrderId) await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'TARGET');
+          return;
+        }
+
+        if (pnlRs <= -exactStopLossRs) {
+          if (isExiting) return;
+          isExiting = true;
+          this.log(
+            state,
+            `🛑 [EXACT STOP LOSS EXIT] Position reached exact stop loss limit (-₹${Math.abs(pnlRs).toFixed(2)} <= -₹${exactStopLossRs})! Immediately squaring off position.`
+          );
+          if (state.slOrderId) await this.cancelBrokerOrderSafe(client, state.slOrderId);
+          if (state.targetOrderId) await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'SL');
+          return;
+        }
+      }
+
       const risk = state.initialRiskPoints || Math.max(0.50, Math.abs((state.entryPrice || currentPrice) - (state.stopLossPrice || currentPrice)));
 
       // ── 2. Breakeven Lock (+0.7R profit -> SL to COST) ─────────────────────
       const breakevenPoints = risk * (state.config.breakevenTriggerR ?? 0.7);
-      if (state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && pnlPoints >= breakevenPoints && state.entryPrice) {
+      if (!state.config.exitExactAtTarget && state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && pnlPoints >= breakevenPoints && state.entryPrice) {
         state.stopLossPrice = state.entryPrice;
         state.isBreakevenTrailed = true;
         this.log(state, `🛡 (Dynamic Protection) Position hit +${(state.config.breakevenTriggerR ?? 0.7).toFixed(1)}R profit (+₹${pnlPoints.toFixed(2)} pts)! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free Trade!`);
@@ -1422,7 +1492,7 @@ export class Breakout15MinEngine {
       }
 
       // ── 3. Profit Lock Milestone (+1.5R profit -> Lock +0.75R) ────────────
-      if (pnlPoints >= (risk * 1.5) && !state.isProfitLockTrailed && state.entryPrice) {
+      if (!state.config.exitExactAtTarget && pnlPoints >= (risk * 1.5) && !state.isProfitLockTrailed && state.entryPrice) {
         state.isProfitLockTrailed = true;
         const lockPrice = this.roundTick(isLong ? state.entryPrice + (risk * 0.75) : state.entryPrice - (risk * 0.75), symTickSize);
         if ((isLong && lockPrice > (state.stopLossPrice || 0)) || (!isLong && lockPrice < (state.stopLossPrice || Infinity))) {
@@ -1490,7 +1560,7 @@ export class Breakout15MinEngine {
 
       // ── 4. Target 1 Milestone (+2R) -> Activate Uncapped Momentum Trailing ─
       const targetR = state.config.riskRewardRatio ?? 2.0;
-      if (pnlPoints >= (risk * targetR) && !state.isDynamicTrailingActive) {
+      if (!state.config.exitExactAtTarget && pnlPoints >= (risk * targetR) && !state.isDynamicTrailingActive) {
         state.isDynamicTrailingActive = true;
         const lockPrice = this.roundTick(isLong ? state.entryPrice + (risk * 1.25) : state.entryPrice - (risk * 1.25), symTickSize);
         if ((isLong && lockPrice > (state.stopLossPrice || 0)) || (!isLong && lockPrice < (state.stopLossPrice || Infinity))) {
@@ -1501,7 +1571,7 @@ export class Breakout15MinEngine {
       }
 
       // ── 5. Dynamic Ratchet Trailing (Beyond Target 1 or when trailing) ────
-      if (state.config.enableTrailingSl !== false && (state.isDynamicTrailingActive || state.isBreakevenTrailed)) {
+      if (!state.config.exitExactAtTarget && state.config.enableTrailingSl !== false && (state.isDynamicTrailingActive || state.isBreakevenTrailed)) {
         if (isLong) {
           state.highestPriceReached = Math.max(state.highestPriceReached || currentPrice, currentPrice);
           const trailDist = state.isDynamicTrailingActive ? (risk * 0.60) : (risk * 0.80);
@@ -1524,7 +1594,7 @@ export class Breakout15MinEngine {
       }
 
       // ── 5.1 Dynamic 9/15 EMA & VWAP Trailing ─────────────────────────────
-      if (state.config.enableEmaVwapTrailing !== false && (state.isDynamicTrailingActive || state.isBreakevenTrailed || pnlPoints > 0) && state.entryPrice) {
+      if (!state.config.exitExactAtTarget && state.config.enableEmaVwapTrailing !== false && (state.isDynamicTrailingActive || state.isBreakevenTrailed || pnlPoints > 0) && state.entryPrice) {
         const vwapSource = state.config.trailingVwapSource || 'both';
         let trendSupport: number | null = null;
         if (vwapSource === 'both') {
@@ -1555,7 +1625,7 @@ export class Breakout15MinEngine {
       // ── 5.2 Parabolic Momentum & VWAP Profit-Lock (TTML Spike Protection) ──
       const gainPct = state.entryPrice ? (Math.abs(currentPrice - state.entryPrice) / state.entryPrice) * 100 : 0;
       const isParabolicTrigger = gainPct >= 2.5 || (pnlPoints >= (risk * 2.0));
-      if (state.config.enableParabolicVwapLock !== false && isParabolicTrigger && state.entryPrice && !isOption) {
+      if (!state.config.exitExactAtTarget && state.config.enableParabolicVwapLock !== false && isParabolicTrigger && state.entryPrice && !isOption) {
         if (!state.isParabolicActive) {
           state.isParabolicActive = true;
           this.log(state, `🚀 [PARABOLIC MOMENTUM ACTIVE] Stock surged +${gainPct.toFixed(2)}% (+${(pnlPoints / risk).toFixed(1)}R)! Dynamic floor transferred to Session VWAP (₹${(state.lastVwap || 0).toFixed(2)}) to lock peak gains.`);
@@ -1705,20 +1775,17 @@ export class Breakout15MinEngine {
         await this.cancelBrokerOrderSafe(client, state.slOrderId);
         await this.cancelBrokerOrderSafe(client, state.targetOrderId);
 
-        // Check if user already manually squared off on Zerodha mobile app
+        // Capital Wipeout Guard: Check if position is already closed or if exit order would reverse position
         let isManuallyClosed = false;
         try {
-          if (kite && kite.getPositions) {
-            const pos = await kite.getPositions().catch(() => null);
-            const allPos = [...(pos?.net || []), ...(pos?.day || [])];
-            const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
-            const liveNetQty = currentPos ? Math.abs(currentPos.quantity) : 0;
-            if (liveNetQty === 0 && reason !== 'FORCE_CLOSE') {
-              isManuallyClosed = true;
-              this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha. Skipping duplicate exit order.`);
-            }
+          const exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger);
+          if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+            isManuallyClosed = true;
+            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
           }
-        } catch { }
+        } catch (posErr: any) {
+          this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
+        }
 
         if (!isManuallyClosed && client) {
           try {
@@ -1800,6 +1867,13 @@ export class Breakout15MinEngine {
     state.executedQty = undefined;
     state.currentPnlRs = 0;
     state.currentPnlPct = 0;
+
+    this.stopRealtimeMonitor(state);
+    strategyEvents.emit('strategy.update', {
+      strategyId: state.strategyId,
+      logs: state.logs,
+      state: this.getState(state.strategyId),
+    });
 
     // Check Daily P&L Target or Max Loss Lock (One-and-Done)
     const targetRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 1500;
@@ -2246,16 +2320,16 @@ export class Breakout15MinEngine {
       state.initialRiskPoints = risk;
     }
 
-    // Dynamic Margin Allocation for Equity (5x MIS Leverage with 15% Cash Buffer)
-    const capitalBuffer = Math.max(1000, capital * 0.15);
-    const tradeableCapital = Math.max(2000, capital - capitalBuffer);
-    const maxBuyingPower = (capital * 0.90) * 5; // Zerodha 5x MIS leverage
-    const targetBuyingPower = tradeableCapital * 0.85 * 5;
-    const capitalQty = Math.max(1, Math.floor(targetBuyingPower / entry));
-    const maxCapitalQty = Math.floor(maxBuyingPower / entry);
-    const finalQty = Math.max(1, Math.min(capitalQty, maxCapitalQty));
+    // Strict Risk-Based Position Sizing (Capped at user config.stopLossRs and max 25% capital allocation)
+    const effectiveRiskPerShare = state.initialRiskPoints && state.initialRiskPoints > 0 ? state.initialRiskPoints : Math.max(0.50, Math.abs(sl - entry));
+    const maxAllowedRisk = (config.stopLossRs && config.stopLossRs > 0) ? config.stopLossRs : 500;
+    const maxRiskQty = Math.max(1, Math.floor(maxAllowedRisk / effectiveRiskPerShare));
+    // Conservative capital allocation: max 25% of capital deployed per trade
+    const capitalAllowedQty = Math.max(1, Math.floor((capital * 0.25 * 5) / entry));
+    const maxAffordableQty = Math.max(1, Math.floor((capital * 0.90 * 5) / entry));
+    const finalQty = Math.max(1, Math.min(maxRiskQty, capitalAllowedQty, maxAffordableQty));
     state.config.qty = finalQty;
-    this.log(state, `⚖ Dynamic Margin-Scaled Position Sizing (5x MIS): ${finalQty} shares (Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${capital.toLocaleString('en-IN')} [15% Cash Buffer: ₹${capitalBuffer.toFixed(0)}])`);
+    this.log(state, `⚖ Strict Risk-Based Position Sizing: ${finalQty} shares (Risk/Share: ₹${effectiveRiskPerShare.toFixed(2)} -> Total Risk: ₹${(finalQty * effectiveRiskPerShare).toFixed(2)} <= Max: ₹${maxAllowedRisk} | Margin: ₹${((finalQty * entry) / 5).toFixed(0)} [<= 25% of ₹${capital.toLocaleString('en-IN')}])`);
 
     if (isIndex) {
       this.log(state, `⚠ Falling back to ${symbol} (Spot/Future) as no suitable option was found.`);
@@ -2357,12 +2431,20 @@ export class Breakout15MinEngine {
     const exitSide = isLong ? 'SELL' : 'BUY';
     const risk = Math.max(0.50, Math.abs(actualEntryPrice - sl));
     state.initialRiskPoints = risk;
-    const tgtPrice = isLong ? this.roundTick(actualEntryPrice + risk * (config.riskRewardRatio ?? 2.0), symTickSize) : this.roundTick(actualEntryPrice - risk * (config.riskRewardRatio ?? 2.0), symTickSize);
+    let tgtPrice = isLong ? this.roundTick(actualEntryPrice + risk * (config.riskRewardRatio ?? 2.0), symTickSize) : this.roundTick(actualEntryPrice - risk * (config.riskRewardRatio ?? 2.0), symTickSize);
+
+    if (config.exitExactAtTarget && executedQty > 0) {
+      const targetPts = (config.targetRs || 500) / executedQty;
+      const slPts = (config.stopLossRs || 500) / executedQty;
+      tgtPrice = this.roundTick(isLong ? actualEntryPrice + targetPts : actualEntryPrice - targetPts, symTickSize);
+      state.stopLossPrice = this.roundTick(isLong ? actualEntryPrice - slPts : actualEntryPrice + slPts, symTickSize);
+      this.log(state, `🎯 [EXACT TARGET MODE] Recalibrated Target: ₹${tgtPrice.toFixed(2)} (+₹${config.targetRs || 500}) | SL: ₹${state.stopLossPrice.toFixed(2)} (-₹${config.stopLossRs || 500})`);
+    }
     state.targetPrice = tgtPrice;
 
     // Arm Server-side SL-L order at Zerodha if shares filled
     if (state.entryFilled && executedQty > 0) {
-      const triggerPrice = this.roundTick(sl, symTickSize);
+      const triggerPrice = this.roundTick(state.stopLossPrice || sl, symTickSize);
       const slLimitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
 
       const slId = await client.placeOrder({
@@ -2393,6 +2475,25 @@ export class Breakout15MinEngine {
         price: slLimitPrice,
         triggerPrice
       }, slId, strategyId, triggerTime);
+
+      if (config.exitExactAtTarget) {
+        const targetId = await client.placeOrder({
+          symbol,
+          exchange,
+          side: exitSide,
+          orderType: 'LIMIT',
+          product: config.product ?? 'MIS',
+          qty: executedQty,
+          price: tgtPrice,
+        }).catch((e: any) => {
+          this.log(state, `❌ Server Target Order Failed: ${e.message}`);
+          return 'FAILED';
+        });
+        state.targetOrderId = targetId;
+        if (targetId && targetId !== 'FAILED') {
+          this.log(state, `🎯 Broker LIMIT Target Armed (${executedQty} qty @ ₹${tgtPrice.toFixed(2)}) | OrderId: ${targetId}`);
+        }
+      }
 
       this.log(state, `🛡 Server Stop Loss Armed at Zerodha (${executedQty} qty): Trigger ₹${triggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)} | OrderId: ${slId}. Target 1 (₹${tgtPrice.toFixed(2)}) will activate Uncapped Momentum Trailing.`);
     }
@@ -2666,7 +2767,7 @@ export class Breakout15MinEngine {
     try {
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { logs: JSON.stringify(state.logs.slice(-200)) },
+        data: { logs: JSON.stringify(state.logs.slice(-500)) },
       });
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,

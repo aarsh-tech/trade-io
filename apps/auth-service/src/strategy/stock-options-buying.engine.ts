@@ -5,6 +5,7 @@ import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { StockOptionsBuyingConfig } from './dto/strategy.dto';
 import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
+import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
   date: Date;
@@ -69,6 +70,7 @@ export class StockOptionsBuyingEngine {
   private readonly logger = new Logger(StockOptionsBuyingEngine.name);
   private readonly running = new Map<string, StrategyState>();
   private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly candleCache = new Map<string, { candles: Candle[]; expiresAt: number }>();
 
   constructor(
     private prisma: PrismaService,
@@ -324,6 +326,29 @@ export class StockOptionsBuyingEngine {
 
     // ── Phase 1: Monitor Active Position ─────────────────────────────────────
     if (state.stateType === 'ACTIVE_POSITION') {
+      // Auto-sync with broker: If option position was closed externally on Zerodha, reconcile state immediately
+      if (!state.isPaperTrade && kite && kite.getPositions && state.optionSymbol) {
+        try {
+          const brokerStatus = await getLiveBrokerPosition(kite, state.optionSymbol, this.logger);
+          if (!brokerStatus.isOpen) {
+            this.log(state, `ℹ [BROKER SYNC] Option position for ${state.optionSymbol} is CLOSED on Zerodha (Net Qty: 0). Resetting state to SCANNING.`);
+            if (state.entryOrderId) {
+              await client.cancelOrder(state.entryOrderId).catch(() => {});
+            }
+            this.resetStateToScanning(state);
+            strategyEvents.emit('strategy.update', {
+              strategyId: state.strategyId,
+              logs: state.logs,
+              state: this.getState(state.strategyId),
+            });
+            await this.persistLogs(state);
+            return;
+          }
+        } catch (syncErr: any) {
+          this.logger.debug?.(`Stock options broker sync notice: ${syncErr.message}`);
+        }
+      }
+
       await this.monitorPosition(state, client, kite);
       await this.persistLogs(state);
       return;
@@ -358,13 +383,16 @@ export class StockOptionsBuyingEngine {
           this.log(state, `🔍 [AUTO F&O SCANNER] Top 5%-10% momentum candidates: ${summaryStr}. Evaluating 15-EMA/Inside Candle setup...`);
         }
 
-        for (const candidate of candidates) {
+        // Evaluate top candidates with rate-limit throttling to prevent Zerodha 429 Too Many Requests
+        for (const candidate of candidates.slice(0, 4)) {
           const triggered = await this.evaluateSymbolForSetup(state, client, kite, candidate.symbol, 'NSE', candidate);
           if (triggered) {
             state.activeStockSymbol = candidate.symbol;
             state.config.symbol = candidate.symbol;
             return;
           }
+          // Throttle between symbol evaluations to respect Zerodha's 3 req/sec rate limit
+          await new Promise(r => setTimeout(r, 350));
         }
       } else {
         await this.evaluateSymbolForSetup(state, client, kite, state.config.symbol, state.config.exchange || 'NSE');
@@ -587,7 +615,7 @@ export class StockOptionsBuyingEngine {
 
       // Calculate trigger prices
       const entryPrice = this.roundTick(H_om + (state.config.triggerOffset ?? 0.50));
-      const slPrice = this.roundTick(L_om);
+      let slPrice = this.roundTick(L_om);
       const risk = entryPrice - slPrice;
 
       if (risk <= 0) {
@@ -603,7 +631,7 @@ export class StockOptionsBuyingEngine {
       const optInst = instruments.find((i: any) => i.tradingsymbol === optionSymbol);
       const lotSize = optInst?.lot_size ?? 1;
 
-      // Dynamic Capital-Based Lot Check with Kite Margin Integration
+      // Dynamic Capital-Based Lot Check with Kite Margin Integration (Conservative 30% Cap)
       const costPerLot = entryPrice * lotSize;
       let deployableCapital = state.config.maxCapital || 15000;
       let liveAvailableCash = deployableCapital;
@@ -613,8 +641,8 @@ export class StockOptionsBuyingEngine {
           const liveCash = margins?.equity?.available?.live_balance ?? margins?.equity?.available?.cash ?? margins?.available?.live_balance ?? margins?.available?.cash ?? 0;
           if (liveCash > 0) {
             liveAvailableCash = liveCash;
-            // Reserve 15% cash buffer, deploy 85% tradeable margin
-            const marginBudget = liveCash * 0.85;
+            // Conservative: Never deploy more than 30% of capital on a single option trade
+            const marginBudget = liveCash * 0.30;
             deployableCapital = state.config.maxCapital ? Math.min(state.config.maxCapital, marginBudget) : marginBudget;
           }
         } catch { }
@@ -624,19 +652,29 @@ export class StockOptionsBuyingEngine {
       if (affordableLots < 1) {
         this.log(
           state,
-          `❌ Margin Check: 1 lot of ${optionSymbol} requires ₹${costPerLot.toFixed(2)} (${lotSize} qty @ ₹${entryPrice.toFixed(2)}), but your tradeable Zerodha margin (85% deployed, 15% buffer) is ₹${deployableCapital.toFixed(2)} (Live Free Cash: ₹${liveAvailableCash.toFixed(2)}). Other running stock/equity positions in your Zerodha account are utilizing margin. Skipping trade to prevent broker margin rejection.`
+          `❌ Margin Check: 1 lot of ${optionSymbol} requires ₹${costPerLot.toFixed(2)} (${lotSize} qty @ ₹${entryPrice.toFixed(2)}), but conservative capital limit (max 30% of account) allows ₹${deployableCapital.toFixed(2)} (Live Free Cash: ₹${liveAvailableCash.toFixed(2)}). Skipping trade to preserve capital.`
         );
         return;
       }
 
       const configuredLots = state.config.lots ?? 1;
-      const lotsToTrade = Math.min(configuredLots, affordableLots);
+      const lotsToTrade = Math.max(1, Math.min(configuredLots, affordableLots));
 
       if (configuredLots > affordableLots) {
         this.log(
           state,
-          `⚠️ Margin Allocation: Configured ${configuredLots} lots, but live available margin allows ${affordableLots} lot(s). Auto-scaled down to ${lotsToTrade} lot(s) to trade safely.`
+          `⚠️ Margin Allocation: Configured ${configuredLots} lots, but conservative capital allows ${affordableLots} lot(s). Auto-scaled down to ${lotsToTrade} lot(s) to trade safely.`
         );
+      }
+
+      // Hard Risk Cap for Options: Total potential loss must never exceed user's Stop Loss ₹ (e.g. ₹500)
+      const maxAllowedRisk = state.config.stopLossRs && state.config.stopLossRs > 0 ? state.config.stopLossRs : 500;
+      const totalTradeQty = lotsToTrade * lotSize;
+      const rawPotentialLoss = risk * totalTradeQty;
+      if (rawPotentialLoss > maxAllowedRisk) {
+        const maxSlDistance = maxAllowedRisk / totalTradeQty;
+        slPrice = this.roundTick(entryPrice - maxSlDistance);
+        this.log(state, `🛡 Strict Risk Cap Applied: Clamped Option SL to ₹${slPrice.toFixed(2)} so potential loss cannot exceed ₹${maxAllowedRisk}.`);
       }
 
       // Update State
@@ -909,17 +947,35 @@ export class StockOptionsBuyingEngine {
           } catch { }
         }
 
-        const params: OrderParams = {
-          symbol: state.optionSymbol!,
-          exchange: 'NFO',
-          side: 'SELL',
-          orderType: 'MARKET',
-          product: state.config.product ?? 'MIS',
-          qty: state.positionQty,
-        };
+        const kite = client['kite'];
+        let isManuallyClosed = false;
+        try {
+          const exitSafety = await isSafeToExit(kite, state.optionSymbol!, 'SELL', this.logger);
+          if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+            isManuallyClosed = true;
+            this.log(state, `ℹ [AUTO-SYNC] ${state.optionSymbol} was already closed on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended short.`);
+          }
+        } catch (posErr: any) {
+          this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
+        }
 
-        const exitOrderId = await client.placeOrder(params);
-        this.log(state, `✅ Live Exit Order placed: ${exitOrderId}`);
+        if (!isManuallyClosed) {
+          try {
+            const params: OrderParams = {
+              symbol: state.optionSymbol!,
+              exchange: 'NFO',
+              side: 'SELL',
+              orderType: 'MARKET',
+              product: state.config.product ?? 'MIS',
+              qty: state.positionQty,
+            };
+
+            const exitOrderId = await client.placeOrder(params);
+            this.log(state, `✅ Live Exit Order placed: ${exitOrderId}`);
+          } catch (err: any) {
+            this.log(state, `❌ Live Exit Order failed: ${err.message}`);
+          }
+        }
       }
 
       // Record exit order in DB
@@ -1109,15 +1165,23 @@ export class StockOptionsBuyingEngine {
   }
 
   private async fetchCandles(client: any, symbol: string, exchange: string, interval: string): Promise<Candle[]> {
+    const cacheKey = `${exchange}:${symbol}:${interval}`;
+    const cached = this.candleCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.candles;
+    }
+
     const now = new Date();
     const istDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
     const from = new Date(`${istDateStr} 09:15:00 GMT+0530`);
     from.setDate(from.getDate() - 5); // last 5 days
     const data = await client.getHistoricalData(symbol, exchange, interval, from, now);
-    return (data || []).map((c: any) => ({
+    const candles = (data || []).map((c: any) => ({
       date: new Date(c.date), open: c.open, high: c.high,
       low: c.low, close: c.close, volume: c.volume,
     }));
+    this.candleCache.set(cacheKey, { candles, expiresAt: Date.now() + 30_000 });
+    return candles;
   }
 
   private calculateEMA(candles: Candle[], period: number) {
@@ -1505,7 +1569,7 @@ export class StockOptionsBuyingEngine {
     try {
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { logs: JSON.stringify(state.logs.slice(-200)) },
+        data: { logs: JSON.stringify(state.logs.slice(-500)) },
       });
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,

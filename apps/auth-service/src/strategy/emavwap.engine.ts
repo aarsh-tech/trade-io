@@ -5,6 +5,7 @@ import { TickerService } from '../market/ticker.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
 import { getInstrumentTickSize, getTopCandidateStocks, roundToInstrumentTick } from './smart-stock-picker';
+import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
   date: Date;
@@ -51,6 +52,10 @@ interface StrategyState {
   lastPnlLogTime?: number;
   lastEmitTime?: number;
   lastTickTime?: number;
+  lastDbPersistTime?: number;
+  lastPersistedLogCount?: number;
+  hasLoggedOpeningWindow?: boolean;
+  lastFallbackLogTime?: number;
   currentLtp?: number;
   currentPnlRs?: number;
   currentPnlPct?: number;
@@ -75,6 +80,9 @@ interface StrategyState {
   dailyTargetLocked?: boolean;
   lastBrokerSlTrigger?: number;
   lastBrokerSlModifyTime?: number;
+  isProcessingTick?: boolean;
+  isPlacingTrade?: boolean;
+  lastAutoScanTime?: number;
 }
 
 @Injectable()
@@ -82,6 +90,7 @@ export class EmaVwapCrossoverEngine {
   private readonly logger = new Logger(EmaVwapCrossoverEngine.name);
   private readonly running = new Map<string, StrategyState>();
   private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly candleCache = new Map<string, { candles: Candle[]; expiresAt: number }>();
 
   constructor(
     private prisma: PrismaService,
@@ -199,43 +208,57 @@ export class EmaVwapCrossoverEngine {
           );
 
           if (openPos) {
-            const rawQty = Number(openPos.quantity);
-            const side = rawQty > 0 ? 'LONG' : 'SHORT';
-            const absQty = Math.abs(rawQty);
-            const entryAvg = Number(openPos.average_price) || Number(openPos.buy_price) || Number(openPos.sell_price) || 0;
-            const sym = openPos.tradingsymbol;
+            // CRITICAL SHIELD: Never adopt manual or overnight positions!
+            // Only adopt if an order was placed by THIS strategy today.
+            const existingOrder = await this.prisma.order.findFirst({
+              where: {
+                strategyId,
+                symbol: openPos.tradingsymbol,
+                createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+              },
+            });
 
-            state.activeSymbol = sym;
-            state.entryTriggered = side;
-            state.executedQty = absQty;
-            state.config.qty = absQty;
-            state.entryPrice = entryAvg;
-
-            // Look for existing broker SL order
-            const orders = await (kite.getOrders ? kite.getOrders() : []).catch(() => []);
-            const openOrders = (orders || []).filter((o: any) => o.tradingsymbol === sym && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'));
-            const slOrder = openOrders.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
-            const targetOrder = openOrders.find((o: any) => o.order_type === 'LIMIT');
-
-            if (slOrder) {
-              state.slOrderId = slOrder.order_id;
-              state.stopLossPrice = Number(slOrder.trigger_price) || Number(slOrder.price);
+            if (!existingOrder) {
+              this.log(state, `🛡️ [SHIELD] Detected Zerodha position ${openPos.tradingsymbol}, but it was NOT placed by this strategy today (Manual/Overnight trade). Algo will NOT touch this position.`);
             } else {
-              const riskPerSh = entryAvg * 0.01;
-              state.stopLossPrice = side === 'LONG' ? (entryAvg - riskPerSh) : (entryAvg + riskPerSh);
-            }
+              const rawQty = Number(openPos.quantity);
+              const side = rawQty > 0 ? 'LONG' : 'SHORT';
+              const absQty = Math.abs(rawQty);
+              const entryAvg = Number(openPos.average_price) || Number(openPos.buy_price) || Number(openPos.sell_price) || 0;
+              const sym = openPos.tradingsymbol;
 
-            if (targetOrder) {
-              state.targetOrderId = targetOrder.order_id;
-              state.targetPrice = Number(targetOrder.price);
-            } else {
-              const riskPerSh = Math.abs(entryAvg - (state.stopLossPrice || entryAvg * 0.01));
-              state.targetPrice = side === 'LONG' ? (entryAvg + riskPerSh * 1.5) : (entryAvg - riskPerSh * 1.5);
-            }
+              state.activeSymbol = sym;
+              state.entryTriggered = side;
+              state.executedQty = absQty;
+              state.config.qty = absQty;
+              state.entryPrice = entryAvg;
 
-            this.log(state, `🔄 [POWER RECOVERY] Reconnected to active Zerodha position: ${sym} (${absQty} shares ${side} @ Avg ₹${entryAvg.toFixed(2)}) | SL: ₹${state.stopLossPrice?.toFixed(2)} [OrderId: ${state.slOrderId || 'Active'}] | Target: ₹${state.targetPrice?.toFixed(2)}`);
-            this.log(state, `📡 Resumed live real-time tracking & dynamic trailing seamlessly!`);
-            await this.startRealtimeMonitor(state, client);
+              // Look for existing broker SL order
+              const orders = await (kite.getOrders ? kite.getOrders() : []).catch(() => []);
+              const openOrders = (orders || []).filter((o: any) => o.tradingsymbol === sym && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'));
+              const slOrder = openOrders.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
+              const targetOrder = openOrders.find((o: any) => o.order_type === 'LIMIT');
+
+              if (slOrder) {
+                state.slOrderId = slOrder.order_id;
+                state.stopLossPrice = Number(slOrder.trigger_price) || Number(slOrder.price);
+              } else {
+                const riskPerSh = entryAvg * 0.01;
+                state.stopLossPrice = side === 'LONG' ? (entryAvg - riskPerSh) : (entryAvg + riskPerSh);
+              }
+
+              if (targetOrder) {
+                state.targetOrderId = targetOrder.order_id;
+                state.targetPrice = Number(targetOrder.price);
+              } else {
+                const riskPerSh = Math.abs(entryAvg - (state.stopLossPrice || entryAvg * 0.01));
+                state.targetPrice = side === 'LONG' ? (entryAvg + riskPerSh * 1.5) : (entryAvg - riskPerSh * 1.5);
+              }
+
+              this.log(state, `🔄 [POWER RECOVERY] Reconnected to active Zerodha position: ${sym} (${absQty} shares ${side} @ Avg ₹${entryAvg.toFixed(2)}) | SL: ₹${state.stopLossPrice?.toFixed(2)} [OrderId: ${state.slOrderId || 'Active'}] | Target: ₹${state.targetPrice?.toFixed(2)}`);
+              this.log(state, `📡 Resumed live real-time tracking & dynamic trailing seamlessly!`);
+              await this.startRealtimeMonitor(state, client);
+            }
           }
         }
       } catch (recErr: any) {
@@ -248,9 +271,13 @@ export class EmaVwapCrossoverEngine {
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 4_000);
     this.timers.set(strategyId, timer);
 
-    this.initialCatchup(strategyId).then(() => {
+    if (strategy.isPaperTrade) {
+      this.initialCatchup(strategyId).then(() => {
+        this.tick(strategyId).catch(e => this.logger.error(e));
+      }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
+    } else {
       this.tick(strategyId).catch(e => this.logger.error(e));
-    }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
+    }
 
     return { executionId: execution.id };
   }
@@ -387,6 +414,10 @@ export class EmaVwapCrossoverEngine {
       this.log(state, `ℹ Active live position already recovered from Zerodha. Skipping historical catchup.`);
       return;
     }
+    if (!state.isPaperTrade) {
+      this.log(state, `⚡ Live trading active — initializing directly for real-time market execution.`);
+      return;
+    }
     const now = new Date();
     if (this.getIstHhmm(now) < 9 * 60 + 20) return;
 
@@ -481,54 +512,7 @@ export class EmaVwapCrossoverEngine {
         outcome: 'BREAKOUT' | 'INVALIDATED' | 'EXPIRED' | 'PENDING';
       }> = [];
 
-      // ── Scan Open = Low / Open = High Opening Drive for today's opening candle ──
-      if (state.config.enableOpenLowHighTrigger !== false && !state.entryTriggered && state.tradesPlacedToday < state.config.maxTradesPerDay) {
-        const openDrive = this.checkOpenDriveSetup(candles, vwaps, now);
-        if (openDrive) {
-          const setupName = openDrive.setupType === 'OPEN_LOW_DRIVE' ? 'Open=Low Opening Drive' : 'Open=High Opening Drive';
-          const setupInfo = {
-            trend: openDrive.trend,
-            setupType: setupName,
-            time: openDrive.candleTime,
-            triggerHigh: openDrive.triggerHigh,
-            triggerLow: openDrive.triggerLow,
-            ema: emas[openDrive.candleIdx] || openDrive.triggerHigh,
-            vwap: vwaps[openDrive.candleIdx] || openDrive.triggerHigh,
-            outcome: 'PENDING' as 'BREAKOUT' | 'INVALIDATED' | 'EXPIRED' | 'PENDING',
-          };
-          detectedSetups.push(setupInfo);
-          this.log(state, `🚀 (Catch-up) Detected ${setupName} on ${this.formatTime(openDrive.candleTime)} — Trigger High: ₹${openDrive.triggerHigh.toFixed(2)}, SL (${openDrive.slNote}): ₹${openDrive.triggerLow.toFixed(2)}`);
 
-          for (let j = openDrive.candleIdx + 1; j < Math.min(openDrive.candleIdx + 13, candles.length); j++) {
-            const checkCandle = candles[j];
-            if (openDrive.trend === 'LONG') {
-              if (checkCandle.high > openDrive.triggerHigh) {
-                this.log(state, `🚀 (Catch-up) Found past LONG Breakout (${setupName}) at ${this.formatTime(new Date(checkCandle.date))}!`);
-                await this.placeTrade(state, client, account, 'BUY', openDrive.triggerHigh, new Date(checkCandle.date), openDrive.candleTime, openDrive.triggerLow, openDrive.triggerHigh);
-                setupInfo.outcome = 'BREAKOUT';
-                break;
-              }
-              if (checkCandle.low < openDrive.triggerLow) {
-                this.log(state, `❌ (Catch-up) Setup invalidated at ${this.formatTime(new Date(checkCandle.date))} (Price fell below SL ₹${openDrive.triggerLow.toFixed(2)})`);
-                setupInfo.outcome = 'INVALIDATED';
-                break;
-              }
-            } else {
-              if (checkCandle.low < openDrive.triggerLow) {
-                this.log(state, `🚀 (Catch-up) Found past SHORT Breakout (${setupName}) at ${this.formatTime(new Date(checkCandle.date))}!`);
-                await this.placeTrade(state, client, account, 'SELL', openDrive.triggerLow, new Date(checkCandle.date), openDrive.candleTime, openDrive.triggerLow, openDrive.triggerHigh);
-                setupInfo.outcome = 'BREAKOUT';
-                break;
-              }
-              if (checkCandle.high > openDrive.triggerHigh) {
-                this.log(state, `❌ (Catch-up) Setup invalidated at ${this.formatTime(new Date(checkCandle.date))} (Price rose above SL ₹${openDrive.triggerHigh.toFixed(2)})`);
-                setupInfo.outcome = 'INVALIDATED';
-                break;
-              }
-            }
-          }
-        }
-      }
 
       for (let i = emaPeriod + 1; i < candles.length; i++) {
         const currentCandle = candles[i];
@@ -831,145 +815,198 @@ export class EmaVwapCrossoverEngine {
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
-    const now = new Date();
-    const hhmm = this.getIstHhmm(now);
-    if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) return;
-
-    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-    if (!account || !account.accessToken) return;
-
-    const client = this.factory.createClient(account);
-    const { config } = state;
-    const kite = client['kite'];
-
-    // ── Check Max Daily Trade Cap ───────────────────────────────────────────
-    if (state.tradesPlacedToday >= config.maxTradesPerDay) {
-      this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached.`);
-      await this.persistLogs(state);
-      await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
-      return;
-    }
-
-    // ── Clean up expired cooldown symbols ──────────────────────────────────
-    if (state.cooldownSymbols && state.cooldownSymbols.size > 0) {
-      const nowMs = now.getTime();
-      for (const [sym, expiry] of state.cooldownSymbols.entries()) {
-        if (nowMs >= expiry) {
-          state.cooldownSymbols.delete(sym);
-          this.log(state, `🔄 Cooldown expired for [${sym}] — eligible for live scanning again.`);
-        }
-      }
-    }
-
-    // ── Phase 3: Monitor Active Position ─────────────────────────────────────
-    if (state.entryTriggered) {
-      try {
-        const candleSymbol = state.activeSymbol || config.symbol;
-        const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
-        const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
-        const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
-        if (cCandles && cCandles.length >= 2) {
-          const cEmas = this.calculateEMA(cCandles, config.emaPeriod || 15);
-          const cVwaps = this.calculateVWAP(cCandles, config.vwapSource || 'close');
-          state.lastEma = cEmas[cCandles.length - 1];
-          state.lastVwap = cVwaps[cCandles.length - 1];
-        }
-      } catch (e) { }
-
-      await this.monitorPosition(state, client, kite);
-      await this.persistLogs(state);
-      return;
-    }
-
-    // ── Trend Continuation Re-Entry (Catch Leg 2 on EMA Re-Claim) ────────────
-    const currentHhmm = this.getIstHhmm(now);
-    if (config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && currentHhmm <= (13 * 60 + 30)) {
-      try {
-        const candleSymbol = state.activeSymbol || config.symbol;
-        const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
-        const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
-        const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
-        if (cCandles && cCandles.length >= 2) {
-          const lastCandle = cCandles[cCandles.length - 1];
-          const cEmas = this.calculateEMA(cCandles, config.emaPeriod || 15);
-          const cVwaps = this.calculateVWAP(cCandles, config.vwapSource || 'close');
-          const curEma = cEmas[cCandles.length - 1];
-          const curVwap = cVwaps[cCandles.length - 1];
-
-          if (curEma && curVwap && lastCandle.close > curEma && lastCandle.close > curVwap && lastCandle.close > state.reEntrySwingPrice) {
-            this.log(state, `🔥 [TREND RE-ENTRY TRIGGERED] ${candleSymbol} re-claimed ${config.emaPeriod || 15}-EMA & VWAP and broke swing high (₹${state.reEntrySwingPrice.toFixed(2)}) @ ₹${lastCandle.close.toFixed(2)}! Entering Trend Continuation Leg 2.`);
-            state.reEntryEligible = false;
-            state.reEntryCountToday = (state.reEntryCountToday || 0) + 1;
-            await this.placeTrade(state, client, account, 'BUY', lastCandle.close, now, now, Math.min(lastCandle.low, curEma), state.reEntrySwingPrice);
-            await this.persistLogs(state);
-            return;
-          }
-        }
-      } catch (err: any) {
-        this.logger.debug?.(`Re-entry evaluation notice: ${err.message}`);
-      }
-    }
-
-    // ── 09:15 to 09:20 AM: Opening Range (ORB) Formation Window ─────────────
-    if (currentHhmm < 9 * 60 + 20) {
-      if (now.getSeconds() % 15 === 0) {
-        this.log(state, `⏳ [09:15 - 09:20 AM OBSERVATION WINDOW] Opening 5m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Real breakout execution begins @ 09:20 AM.`);
-        await this.persistLogs(state);
-      }
-      return;
-    }
+    if (state.isProcessingTick) return;
+    state.isProcessingTick = true;
 
     try {
-      // ── Auto-Mode Multi-Stock Scanning ──────────────────────────────────────
-      if (state.isAutoMode && !state.entryTriggered && !state.waitingForConfirmation) {
-        const excluded = new Set(state.cooldownSymbols?.keys() || []);
-        const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 20, excluded);
-        const activeSetups: Array<{ candidate: any; details: any }> = [];
+      const now = new Date();
+      const hhmm = this.getIstHhmm(now);
+      if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) return;
 
-        for (let i = 0; i < candidates.length; i += 5) {
-          const batch = candidates.slice(i, i + 5);
-          await Promise.allSettled(batch.map(async (candidate) => {
+      const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+      if (!account || !account.accessToken) return;
+
+      const client = this.factory.createClient(account);
+      const { config } = state;
+      const kite = client['kite'];
+
+      // ── Check Max Daily Trade Cap ───────────────────────────────────────────
+      if (state.tradesPlacedToday >= config.maxTradesPerDay) {
+        this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached.`);
+        await this.persistLogs(state);
+        await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
+        return;
+      }
+
+      // ── Clean up expired cooldown symbols ──────────────────────────────────
+      if (state.cooldownSymbols && state.cooldownSymbols.size > 0) {
+        const nowMs = now.getTime();
+        for (const [sym, expiry] of state.cooldownSymbols.entries()) {
+          if (nowMs >= expiry) {
+            state.cooldownSymbols.delete(sym);
+            this.log(state, `🔄 Cooldown expired for [${sym}] — eligible for live scanning again.`);
+          }
+        }
+      }
+
+      // ── Phase 3: Monitor Active Position (Strict Single-Stock Policy) ────────
+      if (state.entryTriggered) {
+        // Auto-sync with broker: If position for activeSymbol was closed at broker, sync state immediately
+        if (!state.isPaperTrade && kite && kite.getPositions && !state.isPlacingTrade) {
+          try {
+            const symbolToMonitor = state.optionSymbol || state.activeSymbol || config.symbol;
+            const brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger);
+            if (!brokerStatus.isOpen) {
+              this.log(state, `ℹ [BROKER SYNC] Position for ${symbolToMonitor} is CLOSED on Zerodha (Net Qty: 0). Reconciling strategy state and cancelling pending broker orders.`);
+              await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId], this.logger);
+              this.stopRealtimeMonitor(state);
+
+              state.entryTriggered = null;
+              state.optionSymbol = null;
+              state.entryPrice = null;
+              state.stopLossPrice = null;
+              state.spotStopLossPrice = null;
+              state.targetPrice = null;
+              state.slOrderId = null;
+              state.targetOrderId = null;
+              state.executedQty = 0;
+              state.waitingForConfirmation = null;
+              state.confirmationHigh = null;
+              state.confirmationLow = null;
+              state.invalidationPrice = null;
+              state.setupTimestamp = null;
+              state.setupType = undefined;
+              state.peakPnlRs = 0;
+              state.lockedProfitRs = 0;
+              state.isTrailingEma = false;
+
+              strategyEvents.emit('strategy.update', {
+                strategyId: state.strategyId,
+                logs: state.logs,
+                state: this.getState(state.strategyId),
+              });
+              await this.persistLogs(state);
+              return;
+            }
+          } catch (syncErr: any) {
+            this.logger.debug?.(`Broker sync notice: ${syncErr.message}`);
+          }
+        }
+
+        try {
+          const candleSymbol = state.activeSymbol || config.symbol;
+          const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
+          const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
+          const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
+          if (cCandles && cCandles.length >= 2) {
+            const cEmas = this.calculateEMA(cCandles, config.emaPeriod || 15);
+            const cVwaps = this.calculateVWAP(cCandles, config.vwapSource || 'close');
+            state.lastEma = cEmas[cCandles.length - 1];
+            state.lastVwap = cVwaps[cCandles.length - 1];
+          }
+        } catch (e) { }
+
+        await this.monitorPosition(state, client, kite);
+        await this.persistLogs(state);
+        return;
+      }
+
+      // ── Trend Continuation Re-Entry (Catch Leg 2 on EMA Re-Claim) ────────────
+      const currentHhmm = this.getIstHhmm(now);
+      if (config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && currentHhmm <= (13 * 60 + 30)) {
+        try {
+          const candleSymbol = state.activeSymbol || config.symbol;
+          const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
+          const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
+          const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
+          if (cCandles && cCandles.length >= 2) {
+            const lastCandle = cCandles[cCandles.length - 1];
+            const cEmas = this.calculateEMA(cCandles, config.emaPeriod || 15);
+            const cVwaps = this.calculateVWAP(cCandles, config.vwapSource || 'close');
+            const curEma = cEmas[cCandles.length - 1];
+            const curVwap = cVwaps[cCandles.length - 1];
+
+            if (curEma && curVwap && lastCandle.close > curEma && lastCandle.close > curVwap && lastCandle.close > state.reEntrySwingPrice) {
+              this.log(state, `🔥 [TREND RE-ENTRY TRIGGERED] ${candleSymbol} re-claimed ${config.emaPeriod || 15}-EMA & VWAP and broke swing high (₹${state.reEntrySwingPrice.toFixed(2)}) @ ₹${lastCandle.close.toFixed(2)}! Entering Trend Continuation Leg 2.`);
+              state.reEntryEligible = false;
+              state.reEntryCountToday = (state.reEntryCountToday || 0) + 1;
+              await this.placeTrade(state, client, account, 'BUY', lastCandle.close, now, now, Math.min(lastCandle.low, curEma), state.reEntrySwingPrice);
+              await this.persistLogs(state);
+              return;
+            }
+          }
+        } catch (err: any) {
+          this.logger.debug?.(`Re-entry evaluation notice: ${err.message}`);
+        }
+      }
+
+      // ── 09:15 to 09:20 AM: Opening Range (ORB) Formation & Noise Filter Window ─────────────
+      if (currentHhmm < 9 * 60 + 20) {
+        if (!state.hasLoggedOpeningWindow) {
+          state.hasLoggedOpeningWindow = true;
+          this.log(state, `⏳ [09:15 - 09:20 AM OBSERVATION WINDOW] Opening 5m candle forming. Filtering opening whipsaws and establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ 09:20 AM sharp.`);
+          await this.persistLogs(state);
+        }
+        return;
+      }
+
+      // ── Auto-Mode Multi-Stock Scanning ──────────────────────────────────────
+      // STRICT SINGLE-STOCK RULE: NEVER scan or change symbol if a position is open, confirmation pending, or order in-flight!
+      if (state.isAutoMode && !state.entryTriggered && !state.waitingForConfirmation && !state.isPlacingTrade) {
+        const nowMs = Date.now();
+        // Throttle auto-scanning to at most once every 30 seconds to respect Zerodha 3 req/sec rate limit
+        if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000) {
+          state.lastAutoScanTime = nowMs;
+          const excluded = new Set(state.cooldownSymbols?.keys() || []);
+          const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 8, excluded);
+          const activeSetups: Array<{ candidate: any; details: any }> = [];
+
+          // Evaluate top 4 momentum leaders sequentially with a 350ms throttle delay to prevent 429 rate limit
+          for (const candidate of candidates.slice(0, 4)) {
             try {
               const testConfig = { ...config, symbol: candidate.symbol, exchange: candidate.exchange };
               const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
               const emaPeriod = config.emaPeriod || 15;
-              if (!cCandles || cCandles.length < emaPeriod + 2) return;
-
-              const closedCCandles = this.filterClosedCandles(cCandles, now, 5);
-              if (closedCCandles.length < 2) return;
-
-              const cEmas = this.calculateEMA(closedCCandles, emaPeriod);
-              const cVwaps = this.calculateVWAP(closedCCandles, config.vwapSource || 'close');
-
-              const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config);
-              if (setup) {
-                activeSetups.push({
-                  candidate: { ...candidate, score: candidate.score + setup.scoreBoost },
-                  details: setup,
-                });
+              if (cCandles && cCandles.length >= emaPeriod + 2) {
+                const closedCCandles = this.filterClosedCandles(cCandles, now, 5);
+                if (closedCCandles.length >= 2) {
+                  const cEmas = this.calculateEMA(closedCCandles, emaPeriod);
+                  const cVwaps = this.calculateVWAP(closedCCandles, config.vwapSource || 'close');
+                  const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config);
+                  if (setup) {
+                    activeSetups.push({
+                      candidate: { ...candidate, score: candidate.score + setup.scoreBoost },
+                      details: setup,
+                    });
+                  }
+                }
               }
             } catch { }
-          }));
-          await new Promise(r => setTimeout(r, 80));
-        }
+            // Throttle between candidates to stay strictly below Zerodha's 3 req/sec limit
+            await new Promise(r => setTimeout(r, 350));
+          }
 
-        if (activeSetups.length > 0) {
-          activeSetups.sort((a, b) => b.candidate.score - a.candidate.score);
-          const best = activeSetups[0];
-          if (state.activeSymbol !== best.candidate.symbol) {
-            this.log(state, `🎯 Live Auto-Selected Stock with Active Setup: [${best.candidate.symbol}] (Score: ${best.candidate.score}, Qty: ${best.candidate.qty}) — ${best.details.description}`);
+          if (activeSetups.length > 0) {
+            activeSetups.sort((a, b) => b.candidate.score - a.candidate.score);
+            const best = activeSetups[0];
+            if (state.activeSymbol !== best.candidate.symbol) {
+              this.log(state, `🎯 Live Auto-Selected Stock with Active Setup: [${best.candidate.symbol}] (Score: ${best.candidate.score}, Qty: ${best.candidate.qty}) — ${best.details.description}`);
+            }
+            state.activeSymbol = best.candidate.symbol;
+            config.exchange = best.candidate.exchange;
+            config.qty = best.candidate.qty;
+          } else if (candidates.length > 0) {
+            const fallback = candidates[0];
+            if (state.activeSymbol !== fallback.symbol) {
+              if (nowMs - (state.lastFallbackLogTime || 0) >= 60000) {
+                state.lastFallbackLogTime = nowMs;
+                this.log(state, `🎯 Top Momentum Stock: [${fallback.symbol}] (Score: ${fallback.score}, Trend: ${fallback.trend}, Qty: ${fallback.qty})`);
+              }
+            }
+            state.activeSymbol = fallback.symbol;
+            config.exchange = fallback.exchange;
+            config.qty = fallback.qty;
           }
-          state.activeSymbol = best.candidate.symbol;
-          config.exchange = best.candidate.exchange;
-          config.qty = best.candidate.qty;
-        } else if (candidates.length > 0) {
-          const fallback = candidates[0];
-          if (state.activeSymbol !== fallback.symbol) {
-            this.log(state, `🎯 Top Momentum Stock: [${fallback.symbol}] (Score: ${fallback.score}, Trend: ${fallback.trend}, Qty: ${fallback.qty})`);
-          }
-          state.activeSymbol = fallback.symbol;
-          config.exchange = fallback.exchange;
-          config.qty = fallback.qty;
         }
       }
 
@@ -1038,12 +1075,14 @@ export class EmaVwapCrossoverEngine {
             const isTriggered = state.confirmationHigh && ltp >= state.confirmationHigh;
             if (isTriggered) {
               this.log(state, `[${activeSym}] 🎯 LONG Entry Triggered! Breakout above ₹${state.confirmationHigh!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
-              await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, state.invalidationPrice ?? undefined, state.confirmationHigh ?? undefined);
+              const invPrice = state.invalidationPrice ?? undefined;
+              const confHigh = state.confirmationHigh ?? undefined;
               state.waitingForConfirmation = null;
               state.confirmationHigh = null;
               state.invalidationPrice = null;
               state.setupTimestamp = null;
               state.setupType = undefined;
+              await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, invPrice, confHigh);
             } else if (state.invalidationPrice && ltp < state.invalidationPrice) {
               this.log(state, `[${activeSym}] ❌ Setup invalidated! LTP ₹${ltp.toFixed(2)} broke below SL level ₹${state.invalidationPrice.toFixed(2)}`);
               if (state.isAutoMode && activeSym) {
@@ -1062,12 +1101,14 @@ export class EmaVwapCrossoverEngine {
             const isTriggered = state.confirmationLow && ltp <= state.confirmationLow;
             if (isTriggered) {
               this.log(state, `[${activeSym}] 🎯 SHORT Entry Triggered! Breakdown below ₹${state.confirmationLow!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
-              await this.placeTrade(state, client, account, 'SELL', ltp, undefined, undefined, state.confirmationLow ?? undefined, state.invalidationPrice ?? undefined);
+              const confLow = state.confirmationLow ?? undefined;
+              const invPrice = state.invalidationPrice ?? undefined;
               state.waitingForConfirmation = null;
               state.confirmationLow = null;
               state.invalidationPrice = null;
               state.setupTimestamp = null;
               state.setupType = undefined;
+              await this.placeTrade(state, client, account, 'SELL', ltp, undefined, undefined, confLow, invPrice);
             } else if (state.invalidationPrice && ltp > state.invalidationPrice) {
               this.log(state, `[${activeSym}] ❌ Setup invalidated! LTP ₹${ltp.toFixed(2)} broke above SL level ₹${state.invalidationPrice.toFixed(2)}`);
               if (state.isAutoMode && activeSym) {
@@ -1122,12 +1163,12 @@ export class EmaVwapCrossoverEngine {
                 // Instant execution check if already at/above trigger high:
                 if (ltp && setup.triggerHigh && ltp >= setup.triggerHigh) {
                   this.log(state, `[${targetSym}] 🎯 Instant LONG Entry Triggered! ${setup.description} @ LTP ₹${ltp.toFixed(2)}`);
-                  await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, setup.slPrice, setup.triggerHigh);
                   state.waitingForConfirmation = null;
                   state.confirmationHigh = null;
                   state.invalidationPrice = null;
                   state.setupTimestamp = null;
                   state.setupType = undefined;
+                  await this.placeTrade(state, client, account, 'BUY', ltp, undefined, undefined, setup.slPrice, setup.triggerHigh);
                 }
               } else if (setup.trend === 'SHORT') {
                 state.waitingForConfirmation = 'SHORT';
@@ -1141,222 +1182,267 @@ export class EmaVwapCrossoverEngine {
                 // Instant execution check if already at/below trigger low:
                 if (ltp && setup.triggerLow && ltp <= setup.triggerLow) {
                   this.log(state, `[${targetSym}] 🎯 Instant SHORT Entry Triggered! ${setup.description} @ LTP ₹${ltp.toFixed(2)}`);
-                  await this.placeTrade(state, client, account, 'SELL', ltp, undefined, undefined, setup.triggerLow, setup.slPrice);
                   state.waitingForConfirmation = null;
                   state.confirmationLow = null;
                   state.invalidationPrice = null;
                   state.setupTimestamp = null;
                   state.setupType = undefined;
+                  await this.placeTrade(state, client, account, 'SELL', ltp, undefined, undefined, setup.triggerLow, setup.slPrice);
                 }
               }
             }
           }
         }
       }
-    } catch (err: any) { this.log(state, `❌ Tick error: ${err.message}`); }
+    } catch (err: any) {
+      this.log(state, `❌ Tick error: ${err.message}`);
+    } finally {
+      state.isProcessingTick = false;
+    }
     await this.persistLogs(state);
   }
 
   private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date, motherLow?: number, motherHigh?: number) {
     const { config } = state;
-    if (state.entryTriggered) {
-      this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}). Skipping 2nd trade.`);
+    if (state.entryTriggered || state.isPlacingTrade) {
+      this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping 2nd trade.`);
       return;
     }
-    if (state.dailyTargetLocked && config.enableDailyPnLLock !== false) {
-      this.log(state, `🔒 Daily Trading Lock active (Realized P&L: ₹${(state.dailyRealizedPnlRs || 0).toFixed(2)}). Skipping trade placement.`);
-      return;
-    }
-    if (state.tradesPlacedToday >= config.maxTradesPerDay) {
-      this.log(state, `⛔ Daily trade limit reached (${state.tradesPlacedToday}/${config.maxTradesPerDay}). Skipping 2nd trade.`);
-      return;
-    }
+    state.isPlacingTrade = true;
 
-    const isHistorical = !!triggerTime;
-    const kite = client['kite'];
-    let symbol = state.activeSymbol || config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
-    const product = (config as any).product ?? 'MIS';
-    let optionMotherLow: number | null = null;
-    let isOption = false;
+    try {
+      if (state.dailyTargetLocked && config.enableDailyPnLLock !== false) {
+        this.log(state, `🔒 Daily Trading Lock active (Realized P&L: ₹${(state.dailyRealizedPnlRs || 0).toFixed(2)}). Skipping trade placement.`);
+        return;
+      }
+      if (state.tradesPlacedToday >= config.maxTradesPerDay) {
+        this.log(state, `⛔ Daily trade limit reached (${state.tradesPlacedToday}/${config.maxTradesPerDay}). Skipping 2nd trade.`);
+        return;
+      }
 
-    if (config.isOptionBuyingOnly) {
-      const type = side === 'BUY' ? 'CE' : 'PE';
-      const optSym = await this.findOptionSymbol(client, state, triggerPrice, type, triggerTime);
-      if (optSym) {
-        isOption = true;
-        symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
-        if (triggerTime && motherTime) {
-          try {
-            const optCandles = await client.getHistoricalData(symbol, exchange, '5minute', new Date(motherTime.getTime() - 5 * 60 * 1000), new Date(motherTime.getTime() + 5 * 60 * 1000));
-            const motherOptCandle = optCandles.find((c: any) => new Date(c.date).getTime() === motherTime.getTime());
-            if (motherOptCandle) {
-              // Breakout entry is at the high of the mother option candle (option breakout level)
-              triggerPrice = motherOptCandle.high;
-              optionMotherLow = motherOptCandle.low;
-              this.log(state, `💡 Selected Option Breakout Entry Price: ₹${triggerPrice.toFixed(2)} (High of Mother Option Candle), SL: ₹${optionMotherLow.toFixed(2)} (Low of Mother Option Candle)`);
-            } else {
+      const isHistorical = !!triggerTime;
+      const kite = client['kite'];
+      let symbol = state.activeSymbol || config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
+      const product = (config as any).product ?? 'MIS';
+      let optionMotherLow: number | null = null;
+      let isOption = false;
+
+      if (config.isOptionBuyingOnly) {
+        const type = side === 'BUY' ? 'CE' : 'PE';
+        const optSym = await this.findOptionSymbol(client, state, triggerPrice, type, triggerTime);
+        if (optSym) {
+          isOption = true;
+          symbol = optSym; exchange = 'NFO'; finalSide = 'BUY';
+          if (triggerTime && motherTime) {
+            try {
+              const optCandles = await client.getHistoricalData(symbol, exchange, '5minute', new Date(motherTime.getTime() - 5 * 60 * 1000), new Date(motherTime.getTime() + 5 * 60 * 1000));
+              const motherOptCandle = optCandles.find((c: any) => new Date(c.date).getTime() === motherTime.getTime());
+              if (motherOptCandle) {
+                // Breakout entry is at the high of the mother option candle (option breakout level)
+                triggerPrice = motherOptCandle.high;
+                optionMotherLow = motherOptCandle.low;
+                this.log(state, `💡 Selected Option Breakout Entry Price: ₹${triggerPrice.toFixed(2)} (High of Mother Option Candle), SL: ₹${optionMotherLow.toFixed(2)} (Low of Mother Option Candle)`);
+              } else {
+                const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
+                if (histPrice !== null) triggerPrice = histPrice;
+              }
+            } catch {
               const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
               if (histPrice !== null) triggerPrice = histPrice;
             }
-          } catch {
-            const histPrice = await this.getHistoricalOptionPrice(client, symbol, exchange, triggerTime);
-            if (histPrice !== null) triggerPrice = histPrice;
+          } else {
+            const q = await kite.getLTP([`NFO:${symbol}`]);
+            if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
           }
         } else {
-          const q = await kite.getLTP([`NFO:${symbol}`]);
-          if (q[`NFO:${symbol}`]?.last_price) triggerPrice = q[`NFO:${symbol}`].last_price;
+          this.log(state, `⚠ No option found. Trading equity directly.`);
         }
       } else {
-        this.log(state, `⚠ No option found. Trading equity directly.`);
+        this.log(state, `📈 Equity mode — trading ${exchange}:${symbol} directly`);
       }
-    } else {
-      this.log(state, `📈 Equity mode — trading ${exchange}:${symbol} directly`);
-    }
 
-    const symTickSize = isOption ? 0.05 : getInstrumentTickSize(symbol, triggerPrice);
-    const entry = this.roundTick(triggerPrice, symbol);
-    let sl: number;
-    let tgt: number;
+      const symTickSize = isOption ? 0.05 : getInstrumentTickSize(symbol, triggerPrice);
+      const entry = this.roundTick(triggerPrice, symbol);
+      let sl: number;
+      let tgt: number;
 
-    const maxRiskThresholdRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 1000;
+      const maxRiskThresholdRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 500;
 
-    if (isOption) {
-      sl = optionMotherLow !== null ? this.roundTick(optionMotherLow, symbol) : this.roundTick(entry - (maxRiskThresholdRs / config.qty), symbol);
-      const optionRisk = Math.max(0.50, Math.abs(entry - sl));
-      tgt = this.roundTick(entry + optionRisk * 1.5, symbol);
-      state.spotStopLossPrice = side === 'BUY' ? motherLow : motherHigh;
-    } else {
-      if (finalSide === 'BUY') {
-        // True Structural Candle SL: Place comfortably below entry/mother candle low with tick buffer
-        let rawSl: number;
-        if (motherLow && motherLow < entry) {
-          const buffer = Math.max(symTickSize * 5, motherLow * 0.0035);
-          rawSl = motherLow <= (entry - buffer) ? motherLow : (entry - buffer);
-        } else {
-          rawSl = entry - Math.max(symTickSize * 10, entry * 0.015);
-        }
-        // Emergency cap only for extreme wild gap/wicks (>4.5%)
-        const maxEmergencyDist = Math.max(symTickSize * 10, entry * 0.045);
-        sl = this.roundTick(Math.max(rawSl, entry - maxEmergencyDist), symbol);
-        if (sl >= entry) sl = this.roundTick(entry - symTickSize * 5, symbol);
-        const risk = Math.max(symTickSize, Math.abs(entry - sl));
-        tgt = config.enableProfitFloor !== false ? this.roundTick(entry * 1.06, symbol) : this.roundTick(entry + risk * 1.5, symbol);
+      if (isOption) {
+        sl = optionMotherLow !== null ? this.roundTick(optionMotherLow, symbol) : this.roundTick(entry - (maxRiskThresholdRs / config.qty), symbol);
+        const optionRisk = Math.max(0.50, Math.abs(entry - sl));
+        tgt = this.roundTick(entry + optionRisk * 1.5, symbol);
+        state.spotStopLossPrice = side === 'BUY' ? motherLow : motherHigh;
       } else {
-        // True Structural Candle SL: Place comfortably above entry/mother candle high with tick buffer
-        let rawSl: number;
-        if (motherHigh && motherHigh > entry) {
-          const buffer = Math.max(symTickSize * 5, motherHigh * 0.0035);
-          rawSl = motherHigh >= (entry + buffer) ? motherHigh : (entry + buffer);
+        if (finalSide === 'BUY') {
+          // True Structural Candle SL: Place comfortably below entry/mother candle low with tick buffer
+          let rawSl: number;
+          if (motherLow && motherLow < entry) {
+            const buffer = Math.max(symTickSize * 5, motherLow * 0.0035);
+            rawSl = motherLow <= (entry - buffer) ? motherLow : (entry - buffer);
+          } else {
+            rawSl = entry - Math.max(symTickSize * 10, entry * 0.012);
+          }
+          // Strict Intraday Equity SL cap: Max 1.2% of entry price
+          const maxAllowedDist = Math.max(symTickSize * 10, entry * 0.012);
+          sl = this.roundTick(Math.max(rawSl, entry - maxAllowedDist), symbol);
+          if (sl >= entry) sl = this.roundTick(entry - symTickSize * 5, symbol);
+          const risk = Math.max(symTickSize, Math.abs(entry - sl));
+          tgt = config.enableProfitFloor !== false ? this.roundTick(entry + risk * 2.0, symbol) : this.roundTick(entry + risk * 1.5, symbol);
         } else {
-          rawSl = entry + Math.max(symTickSize * 10, entry * 0.015);
+          // True Structural Candle SL: Place comfortably above entry/mother candle high with tick buffer
+          let rawSl: number;
+          if (motherHigh && motherHigh > entry) {
+            const buffer = Math.max(symTickSize * 5, motherHigh * 0.0035);
+            rawSl = motherHigh >= (entry + buffer) ? motherHigh : (entry + buffer);
+          } else {
+            rawSl = entry + Math.max(symTickSize * 10, entry * 0.012);
+          }
+          // Strict Intraday Equity SL cap: Max 1.2% of entry price
+          const maxAllowedDist = Math.max(symTickSize * 10, entry * 0.012);
+          sl = this.roundTick(Math.min(rawSl, entry + maxAllowedDist), symbol);
+          if (sl <= entry) sl = this.roundTick(entry + symTickSize * 5, symbol);
+          const risk = Math.max(symTickSize, Math.abs(sl - entry));
+          tgt = config.enableProfitFloor !== false ? this.roundTick(entry - risk * 2.0, symbol) : this.roundTick(entry - risk * 1.5, symbol);
         }
-        const maxEmergencyDist = Math.max(symTickSize * 10, entry * 0.045);
-        sl = this.roundTick(Math.min(rawSl, entry + maxEmergencyDist), symbol);
-        if (sl <= entry) sl = this.roundTick(entry + symTickSize * 5, symbol);
-        const risk = Math.max(symTickSize, Math.abs(sl - entry));
-        tgt = config.enableProfitFloor !== false ? this.roundTick(entry * 0.94, symbol) : this.roundTick(entry - risk * 1.5, symbol);
       }
-    }
 
-    const riskPerShare = Math.max(symTickSize, Math.abs(entry - sl));
-    const targetPerShare = Math.max(symTickSize, Math.abs(tgt - entry));
-    const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
+      const riskPerShare = Math.max(symTickSize, Math.abs(entry - sl));
+      const targetPerShare = Math.max(symTickSize, Math.abs(tgt - entry));
+      const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
 
-    // Dynamically query exact live available free capital from Zerodha Kite margin API
-    let liveCash = (config as any).maxCapital || 15000;
-    if (client && !state.isPaperTrade && !isHistorical) {
-      try {
-        const liveMargins = await (kite.getMargins ? kite.getMargins() : client.getMargins?.()).catch(() => null);
-        const freeCash = liveMargins?.equity?.available?.live_balance
-          ?? liveMargins?.equity?.available?.cash
-          ?? liveMargins?.equity?.net
-          ?? liveMargins?.available?.live_balance
-          ?? liveMargins?.available?.cash
-          ?? liveMargins?.net;
-        if (freeCash && freeCash > 0) {
-          liveCash = Number(freeCash);
-          this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${liveCash.toLocaleString('en-IN')}`);
+      // Dynamically query exact live available free capital from Zerodha Kite margin API
+      let liveCash = (config as any).maxCapital || 15000;
+      if (client && !state.isPaperTrade && !isHistorical) {
+        try {
+          const liveMargins = await (kite.getMargins ? kite.getMargins() : client.getMargins?.()).catch(() => null);
+          const freeCash = liveMargins?.equity?.available?.live_balance
+            ?? liveMargins?.equity?.available?.cash
+            ?? liveMargins?.equity?.net
+            ?? liveMargins?.available?.live_balance
+            ?? liveMargins?.available?.cash
+            ?? liveMargins?.net;
+          if (freeCash && freeCash > 0) {
+            liveCash = Number(freeCash);
+            this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${liveCash.toLocaleString('en-IN')}`);
+          }
+        } catch (mErr: any) {
+          this.logger.debug?.(`Live margin fetch error: ${mErr?.message}`);
         }
-      } catch (mErr: any) {
-        this.logger.debug?.(`Live margin fetch error: ${mErr?.message}`);
       }
-    }
 
-    // Apply User's Max Capital cap if set, and reserve 15% cash cushion
-    const userMaxCapital = (config as any).maxCapital;
-    const marginBudget = liveCash * 0.85; // 15% safety buffer for fees/slippage
-    const deployableCapital = userMaxCapital && userMaxCapital > 0 ? Math.min(userMaxCapital, marginBudget) : marginBudget;
+      // Apply User's Max Capital cap if set, and reserve 15% cash cushion
+      const userMaxCapital = (config as any).maxCapital;
+      const marginBudget = liveCash * 0.85; // 15% safety buffer for fees/slippage
+      const deployableCapital = userMaxCapital && userMaxCapital > 0 ? Math.min(userMaxCapital, marginBudget) : marginBudget;
 
-    let finalQty = 1;
+      let finalQty = 1;
 
-    if (isOption) {
-      // ── Option Intraday Mode (Requires 100% upfront premium & whole lot size) ──
-      let lotSize = 1;
-      try {
-        const instruments = await client.getInstruments(exchange);
-        const optInst = instruments.find((i: any) => i.tradingsymbol === symbol);
-        lotSize = optInst?.lot_size ?? 1;
-      } catch { }
+      if (isOption) {
+        // ── Option Intraday Mode (Requires 100% upfront premium & whole lot size) ──
+        let lotSize = 1;
+        try {
+          const instruments = await client.getInstruments(exchange);
+          const optInst = instruments.find((i: any) => i.tradingsymbol === symbol);
+          lotSize = optInst?.lot_size ?? 1;
+        } catch { }
 
-      const costPerLot = entry * lotSize;
-      const affordableLots = Math.floor(deployableCapital / costPerLot);
+        const costPerLot = entry * lotSize;
+        const affordableLots = Math.floor(deployableCapital / costPerLot);
 
-      if (affordableLots < 1) {
+        if (affordableLots < 1) {
+          this.log(
+            state,
+            `❌ Margin Check: 1 lot of ${symbol} requires ₹${costPerLot.toFixed(2)} (${lotSize} qty @ ₹${entry.toFixed(2)}), but tradeable margin is ₹${deployableCapital.toFixed(2)}. Skipping trade.`
+          );
+          return;
+        }
+
+        const configuredLots = config.lots && config.lots > 0
+          ? config.lots
+          : Math.max(1, Math.round((config.qty || lotSize) / lotSize));
+        const lotsToTrade = Math.min(configuredLots, affordableLots);
+
+        if (configuredLots > affordableLots) {
+          this.log(
+            state,
+            `⚠️ Margin Allocation: Configured ${configuredLots} lots, but live available margin allows ${affordableLots} lot(s). Auto-scaled down to ${lotsToTrade} lot(s).`
+          );
+        }
+
+        finalQty = lotsToTrade * lotSize;
+        state.config.qty = finalQty;
+        config.qty = finalQty;
+        const potentialMaxLossRs = finalQty * riskPerShare;
         this.log(
           state,
-          `❌ Margin Check: 1 lot of ${symbol} requires ₹${costPerLot.toFixed(2)} (${lotSize} qty @ ₹${entry.toFixed(2)}), but your tradeable Zerodha margin (85% deployed, 15% cash buffer) is ₹${deployableCapital.toFixed(2)} (Live Free Cash: ₹${liveCash.toFixed(2)}). Other active running trades in Zerodha have consumed margin. Skipping trade to prevent broker rejection.`
+          `⚖ Dynamic Option Sizing: ${lotsToTrade} lot(s) = ${finalQty} shares (Cost: ₹${(costPerLot * lotsToTrade).toFixed(2)} | Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} | Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)} | Cash Reserve: ₹${(liveCash - costPerLot * lotsToTrade).toFixed(2)})`
         );
-        return;
-      }
+      } else {
+        // ── Equity Stock MIS Mode (Strict Risk-Based Sizing) ──
+        const marginPerShare = entry / 5;
+        const affordableQty = Math.floor(deployableCapital / marginPerShare);
 
-      const configuredLots = config.lots && config.lots > 0
-        ? config.lots
-        : Math.max(1, Math.round((config.qty || lotSize) / lotSize));
-      const lotsToTrade = Math.min(configuredLots, affordableLots);
+        if (affordableQty < 1) {
+          this.log(
+            state,
+            `❌ Margin Check: Buying 1 share of ${symbol} at ₹${entry.toFixed(2)} exceeds tradeable margin ₹${deployableCapital.toFixed(2)}. Skipping trade.`
+          );
+          return;
+        }
 
-      if (configuredLots > affordableLots) {
+        // 1. Strict Risk-Based Quantity: Sized directly from user's Stop Loss (e.g. ₹500)
+        const maxAllowedRisk = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 500;
+        const riskAllowedQty = Math.floor(maxAllowedRisk / riskPerShare);
+
+        if (riskAllowedQty < 1) {
+          this.log(
+            state,
+            `❌ Risk Limit Exceeded: ${symbol} @ ₹${entry.toFixed(2)} with SL ₹${sl.toFixed(2)} has risk/share of ₹${riskPerShare.toFixed(2)}. Even 1 share exceeds your configured ₹${maxAllowedRisk} Stop Loss limit. Trade rejected to preserve capital.`
+          );
+          return;
+        }
+
+        // 2. Conservative Capital Allocation Cap: Max 25% of capital deployed per trade
+        // Prevents 85% or 100% of capital being concentrated in a single trade
+        const capitalAllocationFraction = 0.25; // 25% max capital allocation per trade
+        const tradeCapitalBudget = liveCash * capitalAllocationFraction;
+        const capitalAllowedQty = Math.max(1, Math.floor((tradeCapitalBudget * 5) / entry));
+
+        // Final quantity is strictly the MINIMUM of Risk-Allowed Qty, Capital-Allowed Qty, and Affordable Qty
+        finalQty = Math.max(1, Math.min(riskAllowedQty, capitalAllowedQty, affordableQty));
+
+        // Final Safety Check: Potential loss must never exceed configured stop loss Rs
+        if (finalQty * riskPerShare > maxAllowedRisk && finalQty > 1) {
+          finalQty = Math.max(1, Math.floor(maxAllowedRisk / riskPerShare));
+        }
+
+        state.config.qty = finalQty;
+        config.qty = finalQty;
+        const potentialMaxLossRs = finalQty * riskPerShare;
+        const deployedMargin = (finalQty * entry) / 5;
+        const capitalPct = ((deployedMargin / liveCash) * 100).toFixed(1);
+
         this.log(
           state,
-          `⚠️ Margin Allocation: Configured ${configuredLots} lots, but live available margin allows ${affordableLots} lot(s). Auto-scaled down to ${lotsToTrade} lot(s) to trade safely.`
+          `⚖ Strict Risk-Based Position Sizing (5x MIS): ${finalQty} shares | Risk/sh: ₹${riskPerShare.toFixed(2)} | Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [Capped to User SL: ₹${maxAllowedRisk}] | Required Margin: ₹${deployedMargin.toFixed(0)} (${capitalPct}% of ₹${liveCash.toLocaleString('en-IN')}) | Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}`
         );
       }
 
-      finalQty = lotsToTrade * lotSize;
-      state.config.qty = finalQty;
-      config.qty = finalQty;
-      const potentialMaxLossRs = finalQty * riskPerShare;
-      this.log(
-        state,
-        `⚖ Dynamic Option Sizing: ${lotsToTrade} lot(s) = ${finalQty} shares (Cost: ₹${(costPerLot * lotsToTrade).toFixed(2)} | Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} | Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)} | Cash Reserve: ₹${(liveCash - costPerLot * lotsToTrade).toFixed(2)})`
-      );
-    } else {
-      // ── Equity Stock MIS Mode (20% margin / 5x leverage) ──
-      const marginPerShare = entry / 5;
-      const affordableQty = Math.floor(deployableCapital / marginPerShare);
-
-      if (affordableQty < 1) {
+      // If user enabled "Exit Exact at Target", calibrate exact target and SL distances to match rupee amounts
+      if (config.exitExactAtTarget && finalQty > 0) {
+        const exactTargetDistance = targetThresholdRs / finalQty;
+        const exactSlDistance = maxRiskThresholdRs / finalQty;
+        tgt = this.roundTick(finalSide === 'BUY' ? entry + exactTargetDistance : entry - exactTargetDistance, symbol);
+        sl = this.roundTick(finalSide === 'BUY' ? entry - exactSlDistance : entry + exactSlDistance, symbol);
         this.log(
           state,
-          `❌ Margin Check: Buying 1 share of ${symbol} at ₹${entry.toFixed(2)} (MIS 5x margin ₹${marginPerShare.toFixed(2)}) exceeds your tradeable margin ₹${deployableCapital.toFixed(2)} (Live Free Cash: ₹${liveCash.toFixed(2)}). Other running stock/equity positions in Zerodha are utilizing margin. Skipping trade to prevent broker rejection.`
+          `🎯 [EXACT TARGET MODE] Recalibrated to exact Target/SL: ${finalQty} shares @ Entry ₹${entry.toFixed(2)} | Target: ₹${tgt.toFixed(2)} (+₹${targetThresholdRs}) | SL: ₹${sl.toFixed(2)} (-₹${maxRiskThresholdRs})`
         );
-        return;
       }
 
-      const targetBuyingPower = deployableCapital * 0.85 * 5;
-      const targetQty = Math.max(1, Math.floor(targetBuyingPower / entry));
-      finalQty = Math.max(1, Math.min(targetQty, affordableQty));
-      state.config.qty = finalQty;
-      config.qty = finalQty;
-      const potentialMaxLossRs = finalQty * riskPerShare;
-      this.log(
-        state,
-        `⚖ Dynamic Capital-Scaled Position Sizing (5x MIS): ${finalQty} shares (Required Margin: ₹${((finalQty * entry) / 5).toFixed(2)} | Risk/sh: ₹${riskPerShare.toFixed(2)}, Max Potential Loss: ₹${potentialMaxLossRs.toFixed(2)} [SL: ₹${config.stopLossRs || 1000}], Target Move: ₹${targetPerShare.toFixed(2)} -> Target Profit: ₹${(finalQty * targetPerShare).toFixed(2)}, Margin: ₹${((finalQty * entry) / 5).toFixed(0)} / ₹${liveCash.toLocaleString('en-IN')} [Buffer ₹${(liveCash * 0.15).toFixed(0)}])`
-      );
-    }
-
-    this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target (1:1.5 RR): ₹${tgt.toFixed(2)}`);
-    try {
-      const limitPrice = finalSide === 'BUY'
+    this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}${config.exitExactAtTarget ? ' (Fixed Exact Target Mode)' : ''}`);
+    const limitPrice = finalSide === 'BUY'
         ? this.roundTick(entry + symTickSize * 2, symbol)
         : this.roundTick(entry - symTickSize * 2, symbol);
       const entryId = (state.isPaperTrade || isHistorical)
@@ -1427,9 +1513,12 @@ export class EmaVwapCrossoverEngine {
           if (slOrderId) {
             this.log(state, `🛡 Stop Loss Armed at broker (${state.executedQty} shares): Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)} | OrderId: ${slOrderId}`);
           }
-          if (config.enableProfitFloor === false) {
+          if (config.enableProfitFloor === false || config.exitExactAtTarget) {
             targetOrderId = await client.placeOrder({ symbol, exchange, product, qty: state.executedQty, side: exitSide, orderType: 'LIMIT', price: tgtPrice })
               .catch((e: any) => { this.log(state, `❌ Target Failed: ${e.message}`); return null; });
+            if (targetOrderId) {
+              this.log(state, `🎯 Broker LIMIT Target Armed (${state.executedQty} shares @ ₹${tgtPrice.toFixed(2)}) | OrderId: ${targetOrderId}`);
+            }
           } else {
             this.log(state, `💡 Trend Trailing Mode active — SL placed at broker for ${state.executedQty} shares (Trigger: ₹${slTriggerPrice.toFixed(2)}, Limit: ₹${slLimitPrice.toFixed(2)}), Target 1 (₹${tgtPrice.toFixed(2)}) will activate dynamic 15-EMA Trailing SL to ride full trend.`);
           }
@@ -1454,7 +1543,11 @@ export class EmaVwapCrossoverEngine {
       if (!isHistorical && state.entryTriggered) {
         await this.startRealtimeMonitor(state, client);
       }
-    } catch (err) { this.log(state, `❌ Placement failed: ${err.message}`); }
+    } catch (err: any) {
+      this.log(state, `❌ Placement failed: ${err.message}`);
+    } finally {
+      state.isPlacingTrade = false;
+    }
   }
 
   // ── Real-Time Position Monitoring ──────────────────────────────────────────
@@ -1556,15 +1649,51 @@ export class EmaVwapCrossoverEngine {
         return;
       }
 
+      // ── 1.1 EXACT TARGET / STOP LOSS EXIT (Guaranteed Fixed Target Exit) ─────
+      const exactTargetRs = state.config.targetRs && state.config.targetRs > 0 ? state.config.targetRs : 500;
+      const exactStopLossRs = state.config.stopLossRs && state.config.stopLossRs > 0 ? state.config.stopLossRs : 500;
+
+      if (state.config.exitExactAtTarget) {
+        if (pnlRs >= exactTargetRs) {
+          if (isExiting) return;
+          isExiting = true;
+          this.log(
+            state,
+            `🎯 [EXACT TARGET EXIT] Position reached exact target profit (+₹${pnlRs.toFixed(2)} >= ₹${exactTargetRs})! Immediately squaring off position.`
+          );
+          if (state.slOrderId) await this.cancelBrokerOrderSafe(client, state.slOrderId);
+          if (state.targetOrderId) await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'TARGET');
+          await this.persistLogs(state);
+          return;
+        }
+
+        if (pnlRs <= -exactStopLossRs) {
+          if (isExiting) return;
+          isExiting = true;
+          this.log(
+            state,
+            `🛑 [EXACT STOP LOSS EXIT] Position reached exact stop loss limit (-₹${Math.abs(pnlRs).toFixed(2)} <= -₹${exactStopLossRs})! Immediately squaring off position.`
+          );
+          if (state.slOrderId) await this.cancelBrokerOrderSafe(client, state.slOrderId);
+          if (state.targetOrderId) await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'SL');
+          await this.persistLogs(state);
+          return;
+        }
+      }
+
       // ── 2. Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ───────────────
       const entryPrice = state.entryPrice || currentPrice;
       const moveFromEntryPct = entryPrice > 0 ? (isLong ? (currentPrice - entryPrice) / entryPrice : (entryPrice - currentPrice) / entryPrice) * 100 : 0;
-      const isTrailingEnabled = state.config.enableProfitFloor !== false;
+      const isTrailingEnabled = state.config.enableProfitFloor !== false && !state.config.exitExactAtTarget;
       const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
 
       // ── 2.1 Parabolic Mode & VWAP Profit-Lock (TTML Spike Protection) ──────────
       const isParabolicTrigger = moveFromEntryPct >= 2.5;
-      if (state.config.enableParabolicVwapLock !== false && isParabolicTrigger && !isOptionTrade) {
+      if (!state.config.exitExactAtTarget && state.config.enableParabolicVwapLock !== false && isParabolicTrigger && !isOptionTrade) {
         if (!state.isParabolicActive) {
           state.isParabolicActive = true;
           this.log(state, `🚀 [PARABOLIC MOMENTUM ACTIVE] Stock surged +${moveFromEntryPct.toFixed(2)}%! Dynamic floor transferred to Session VWAP (₹${(state.lastVwap || 0).toFixed(2)}) to lock peak gains.`);
@@ -1590,7 +1719,7 @@ export class EmaVwapCrossoverEngine {
       }
 
       // ── 2.2 Uncapped 15-EMA & VWAP Trend Riding (Holds through wicks, ignores 50-paise noise) ──
-      if (!isOptionTrade && state.lastEma && state.lastVwap) {
+      if (!state.config.exitExactAtTarget && !isOptionTrade && state.lastEma && state.lastVwap) {
         const trendSupport = isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap);
 
         // If trend support rises into profit, trail SL along with the 15-EMA / VWAP
@@ -1627,7 +1756,7 @@ export class EmaVwapCrossoverEngine {
       }
 
       // 15-EMA & VWAP Dynamic Trailing check if configured
-      if (state.isTrailingEma && !isOptionTrade) {
+      if (!state.config.exitExactAtTarget && state.isTrailingEma && !isOptionTrade) {
         let dynamicTrailingSl: number | null = null;
         if (state.lastEma && state.lastVwap) {
           dynamicTrailingSl = isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap);
@@ -1721,8 +1850,8 @@ export class EmaVwapCrossoverEngine {
         });
       }
 
-      // ── Throttled Live P&L Logging (every 15 seconds) ───────────────────────
-      if (now - (state.lastPnlLogTime || 0) >= 15000) {
+      // ── Throttled Live P&L Logging (every 60 seconds) ───────────────────────
+      if (now - (state.lastPnlLogTime || 0) >= 60000) {
         state.lastPnlLogTime = now;
         const sign = pnlRs >= 0 ? '+' : '';
         const pctSign = pnlPct >= 0 ? '+' : '';
@@ -1877,10 +2006,14 @@ export class EmaVwapCrossoverEngine {
     const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
     const isTrailingEnabled = state.config.enableProfitFloor !== false;
 
-    // Log live P&L on every poll cycle
-    const sign = pnlRs >= 0 ? '+' : '';
-    const pctSign = pnlPct >= 0 ? '+' : '';
-    this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | Entry: ₹${state.entryPrice!.toFixed(2)} | SL: ₹${state.stopLossPrice!.toFixed(2)} | Tgt: ₹${state.targetPrice!.toFixed(2)} | P&L: ${sign}₹${pnlRs.toFixed(2)} (${pctSign}${pnlPct.toFixed(2)}%) | Executed Qty: ${activeQty} | Peak: +₹${state.peakPnlRs.toFixed(2)}${state.isTrailingEma ? ' (15-EMA Trailing Active)' : ''}`);
+    // Periodic fallback P&L logging (only if real-time websocket monitor isn't running)
+    const nowMs = Date.now();
+    if (!state.realtimeActive && (nowMs - (state.lastPnlLogTime || 0) >= 60000)) {
+      state.lastPnlLogTime = nowMs;
+      const sign = pnlRs >= 0 ? '+' : '';
+      const pctSign = pnlPct >= 0 ? '+' : '';
+      this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | Entry: ₹${state.entryPrice!.toFixed(2)} | SL: ₹${state.stopLossPrice!.toFixed(2)} | Tgt: ₹${state.targetPrice!.toFixed(2)} | P&L: ${sign}₹${pnlRs.toFixed(2)} (${pctSign}${pnlPct.toFixed(2)}%) | Executed Qty: ${activeQty} | Peak: +₹${state.peakPnlRs.toFixed(2)}${state.isTrailingEma ? ' (15-EMA Trailing Active)' : ''}`);
+    }
 
     // ── Intraday Multi-Stage Profit Ratchet & Breakeven Protection ───────────
     // ── Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ─────────────────
@@ -2032,18 +2165,13 @@ export class EmaVwapCrossoverEngine {
           await this.cancelBrokerOrderSafe(client, state.slOrderId);
           await this.cancelBrokerOrderSafe(client, state.targetOrderId);
 
-          // Check if user already manually squared off on Zerodha
+          // Capital Wipeout Guard: Check if position is already closed or if exit order would reverse position
           let isManuallyClosed = false;
           try {
-            if (kite && kite.getPositions) {
-              const pos = await kite.getPositions().catch(() => null);
-              const allPos = [...(pos?.net || []), ...(pos?.day || [])];
-              const currentPos = allPos.find((p: any) => p.tradingsymbol === symbol);
-              const liveNetQty = currentPos ? Math.abs(currentPos.quantity) : 0;
-              if (liveNetQty === 0 && reason !== 'FORCE_CLOSE') {
-                isManuallyClosed = true;
-                this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Net Qty: 0). Skipping duplicate exit order to prevent order misplacement.`);
-              }
+            const exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger);
+            if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+              isManuallyClosed = true;
+              this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
             }
           } catch (posErr: any) {
             this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
@@ -2111,6 +2239,13 @@ export class EmaVwapCrossoverEngine {
       state.peakPnlRs = 0;
       state.lockedProfitRs = 0;
       state.isTrailingEma = false;
+
+      this.stopRealtimeMonitor(state);
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
     }
@@ -2272,13 +2407,21 @@ export class EmaVwapCrossoverEngine {
   }
 
   private async fetchCandles(client: any, config: any, interval: string, now: Date, symbol?: string, exchange?: string): Promise<Candle[]> {
+    const sym = symbol || config.symbol;
+    const exch = exchange || config.exchange;
+    const cacheKey = `${exch}:${sym}:${interval}`;
+    const cached = this.candleCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.candles;
+    }
+
     const istDateStr = this.getIstDateStr(now);
     const from = new Date(`${istDateStr}T09:15:00.000+05:30`);
     from.setDate(from.getDate() - 5); // Go back 5 days to ensure enough historical candles
-    const sym = symbol || config.symbol;
-    const exch = exchange || config.exchange;
     const data = await client.getHistoricalData(sym, exch, interval, from, now);
-    return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
+    const candles = (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
+    this.candleCache.set(cacheKey, { candles, expiresAt: Date.now() + 30_000 });
+    return candles;
   }
 
   private async getHistoricalOptionPrice(client: any, symbol: string, exchange: string, timestamp: Date): Promise<number | null> {
@@ -2580,96 +2723,52 @@ export class EmaVwapCrossoverEngine {
     const dayRangePct = dayOpen > 0 ? ((dayHigh - dayLow) / dayOpen) * 100 : 0;
     const moveFromOpenPct = dayOpen > 0 ? ((currCandle.close - dayOpen) / dayOpen) * 100 : 0;
 
-    // ── 1. Pattern 1: Open=Low / Open=High Opening Drive (Valid for first 25 mins: 09:15 - 09:40) ──
-    if (config.enableOpenLowHighTrigger !== false && todayCandles.length <= 5) {
-      const openDrive = this.checkOpenDriveSetup(candles, vwaps, now);
-      if (openDrive) {
-        const isLong = openDrive.trend === 'LONG';
-        return {
-          trend: openDrive.trend,
-          setupType: openDrive.setupType,
-          triggerHigh: isLong ? openDrive.triggerHigh : null,
-          triggerLow: isLong ? null : openDrive.triggerLow,
-          slPrice: isLong ? openDrive.triggerLow : openDrive.triggerHigh,
-          invalidationPrice: openDrive.invalidationPrice,
-          slNote: openDrive.slNote,
-          candleTime: openDrive.candleTime,
-          candleIdx: openDrive.candleIdx,
-          scoreBoost: 250,
-          description: isLong
-            ? `Open=Low Opening Drive Breakout above ₹${openDrive.triggerHigh.toFixed(2)}`
-            : `Open=High Opening Drive Breakdown below ₹${openDrive.triggerLow.toFixed(2)}`
-        };
-      }
+    // ── 1. Pattern 1 (TOP PRIORITY): Fresh 5m EMA-VWAP Crossover (The IFCI Trade Setup) ──
+    // Enters when price/15-EMA cleanly crosses and confirms across VWAP with tight structural SL
+    const crossoverDetails = this.getLatestCrossoverTodayDetails(lastIdx, candles, emas, vwaps);
+    if (crossoverDetails && (lastIdx - crossoverDetails.crossoverIdx) <= 2) {
+      const cCandle = candles[crossoverDetails.crossoverIdx];
+      const isLong = crossoverDetails.trend === 'LONG';
+      const cClose = cCandle.close;
+      const rawRisk = Math.abs(cClose - (isLong ? cCandle.low : cCandle.high));
+      const slDist = Math.max(0.10, Math.min(rawRisk, cClose * 0.012));
+      const slPrice = isLong ? this.roundTick(cClose - slDist, config.symbol) : this.roundTick(cClose + slDist, config.symbol);
+      return {
+        trend: crossoverDetails.trend,
+        setupType: 'DIRECT',
+        triggerHigh: isLong ? cCandle.high : null,
+        triggerLow: isLong ? null : cCandle.low,
+        slPrice,
+        invalidationPrice: isLong ? cCandle.low : cCandle.high,
+        slNote: 'Fresh Crossover SL (Tight)',
+        candleTime: cCandle.date,
+        candleIdx: crossoverDetails.crossoverIdx,
+        scoreBoost: 500, // Top priority: highest precision setup
+        description: `Fresh 5m 15-EMA / VWAP ${crossoverDetails.trend} Crossover Confirmation`
+      };
     }
 
-    // ── 2. Pattern 2: Confirmed Trend Breakdown & Day Low Break (High-Conviction for strong fallers like HEROMOTOCO) ──
-    // Stock is trending below VWAP and 15-EMA, expanding downward
+    // ── 2. Pattern 2 (TOP PRIORITY): VWAP / 15-EMA Pullback Rejection (Best Systematic Entry with Tight SL) ──
     const isDowntrend = currEma < currVwap && currCandle.close <= currVwap && currCandle.close <= currEma;
-    if (isDowntrend && todayCandles.length >= 2) {
-      const priorLows = todayCandles.slice(0, -1).map(tc => tc.candle.low);
-      const priorLow = priorLows.length > 0 ? Math.min(...priorLows) : currCandle.low;
-
-      // Check if price is breaking down below prior low or sitting near the breakdown level
-      if (currCandle.low <= priorLow * 1.003 || moveFromOpenPct <= -1.2) {
-        const tightSl = Math.min(currCandle.high, currEma, currCandle.close * 1.012);
-        return {
-          trend: 'SHORT',
-          setupType: 'TREND_BREAKDOWN',
-          triggerHigh: null,
-          triggerLow: Math.min(priorLow, currCandle.low),
-          slPrice: tightSl,
-          invalidationPrice: Math.min(currCandle.high, currEma * 1.004),
-          slNote: 'Day Low Breakdown SL',
-          candleTime: currCandle.date,
-          candleIdx: lastIdx,
-          scoreBoost: 350 + Math.round(Math.abs(moveFromOpenPct) * 40),
-          description: `Intraday Trend Breakdown below Day Low ₹${priorLow.toFixed(2)} (Day Move: ${moveFromOpenPct.toFixed(2)}%)`
-        };
-      }
-    }
-
-    // ── 3. Pattern 3: Confirmed Trend Breakout & Day High Break (High-Conviction for strong gainers) ──
     const isUptrend = currEma > currVwap && currCandle.close >= currVwap && currCandle.close >= currEma;
-    if (isUptrend && todayCandles.length >= 2) {
-      const priorHighs = todayCandles.slice(0, -1).map(tc => tc.candle.high);
-      const priorHigh = priorHighs.length > 0 ? Math.max(...priorHighs) : currCandle.high;
 
-      if (currCandle.high >= priorHigh * 0.997 || moveFromOpenPct >= 1.2) {
-        const tightSl = Math.max(currCandle.low, currEma, currCandle.close * 0.988);
-        return {
-          trend: 'LONG',
-          setupType: 'TREND_BREAKOUT',
-          triggerHigh: Math.max(priorHigh, currCandle.high),
-          triggerLow: null,
-          slPrice: tightSl,
-          invalidationPrice: Math.max(currCandle.low, currEma * 0.996),
-          slNote: 'Day High Breakout SL',
-          candleTime: currCandle.date,
-          candleIdx: lastIdx,
-          scoreBoost: 350 + Math.round(moveFromOpenPct * 40),
-          description: `Intraday Trend Breakout above Day High ₹${priorHigh.toFixed(2)} (Day Move: +${moveFromOpenPct.toFixed(2)}%)`
-        };
-      }
-    }
-
-    // ── 4. Pattern 4: VWAP / 15-EMA Pullback Rejection (Trend Continuation) ──
     if (isDowntrend && todayCandles.length >= 3) {
       const touchedEma = prevCandle.high >= prevEma * 0.998 || currCandle.high >= currEma * 0.998;
       const isBearishRejection = currCandle.close < currCandle.open && currCandle.close < currEma;
       if (touchedEma && isBearishRejection) {
+        const tightSl = Math.min(currCandle.high, currCandle.close * 1.012);
         return {
           trend: 'SHORT',
           setupType: 'PULLBACK_REJECTION',
           triggerHigh: null,
           triggerLow: currCandle.low,
-          slPrice: currCandle.high,
+          slPrice: tightSl,
           invalidationPrice: currCandle.high * 1.002,
-          slNote: 'Pullback High SL',
+          slNote: 'Pullback High SL (Low Risk)',
           candleTime: currCandle.date,
           candleIdx: lastIdx,
-          scoreBoost: 300,
-          description: `Bearish 15-EMA Pullback Rejection below ₹${currCandle.low.toFixed(2)}`
+          scoreBoost: 450, // Top priority: highest win-rate entry
+          description: `High-Probability 15-EMA Pullback Rejection below ₹${currCandle.low.toFixed(2)} (SL: ₹${tightSl.toFixed(2)})`
         };
       }
     }
@@ -2678,41 +2777,79 @@ export class EmaVwapCrossoverEngine {
       const touchedEma = prevCandle.low <= prevEma * 1.002 || currCandle.low <= currEma * 1.002;
       const isBullishBounce = currCandle.close > currCandle.open && currCandle.close > currEma;
       if (touchedEma && isBullishBounce) {
+        const tightSl = Math.max(currCandle.low, currCandle.close * 0.988);
         return {
           trend: 'LONG',
           setupType: 'PULLBACK_REJECTION',
           triggerHigh: currCandle.high,
           triggerLow: null,
-          slPrice: currCandle.low,
+          slPrice: tightSl,
           invalidationPrice: currCandle.low * 0.998,
-          slNote: 'Pullback Low SL',
+          slNote: 'Pullback Low SL (Low Risk)',
           candleTime: currCandle.date,
           candleIdx: lastIdx,
-          scoreBoost: 300,
-          description: `Bullish 15-EMA Pullback Bounce above ₹${currCandle.high.toFixed(2)}`
+          scoreBoost: 450, // Top priority: highest win-rate entry
+          description: `High-Probability 15-EMA Pullback Bounce above ₹${currCandle.high.toFixed(2)} (SL: ₹${tightSl.toFixed(2)})`
         };
       }
     }
 
-    // ── 5. Pattern 5: Fresh 5m EMA-VWAP Crossover ──
-    const crossoverDetails = this.getLatestCrossoverTodayDetails(lastIdx, candles, emas, vwaps);
-    if (crossoverDetails && (lastIdx - crossoverDetails.crossoverIdx) <= 2) {
-      const cCandle = candles[crossoverDetails.crossoverIdx];
-      const isLong = crossoverDetails.trend === 'LONG';
-      return {
-        trend: crossoverDetails.trend,
-        setupType: 'DIRECT',
-        triggerHigh: isLong ? cCandle.high : null,
-        triggerLow: isLong ? null : cCandle.low,
-        slPrice: isLong ? Math.max(cCandle.low, cCandle.close * 0.988) : Math.min(cCandle.high, cCandle.close * 1.012),
-        invalidationPrice: isLong ? cCandle.low : cCandle.high,
-        slNote: 'Crossover Level SL',
-        candleTime: cCandle.date,
-        candleIdx: crossoverDetails.crossoverIdx,
-        scoreBoost: 200,
-        description: `Fresh 5m 15-EMA / VWAP ${crossoverDetails.trend} Crossover`
-      };
+    // ── 3. Pattern 3: Confirmed Trend Breakdown & Day Low Break (With Anti-Chasing Filter) ──
+    if (isDowntrend && todayCandles.length >= 2) {
+      const priorLows = todayCandles.slice(0, -1).map(tc => tc.candle.low);
+      const priorLow = priorLows.length > 0 ? Math.min(...priorLows) : currCandle.low;
+      const distFromEmaPct = ((currEma - currCandle.close) / currCandle.close) * 100;
+
+      // Anti-chasing safety filter:
+      // If price is stretched > 1.8% below 15-EMA or down > 3.0% from open, DO NOT short breakdown directly!
+      // Chasing an extended dump will cause getting caught in a pullback spike. Wait for pullback to EMA instead.
+      const isOverExtended = distFromEmaPct > 1.8 || Math.abs(moveFromOpenPct) > 3.0;
+
+      if (!isOverExtended && (currCandle.low <= priorLow * 1.003 || moveFromOpenPct <= -1.2)) {
+        const tightSl = Math.min(currCandle.high, currEma, currCandle.close * 1.012);
+        return {
+          trend: 'SHORT',
+          setupType: 'TREND_BREAKDOWN',
+          triggerHigh: null,
+          triggerLow: Math.min(priorLow, currCandle.low),
+          slPrice: tightSl,
+          invalidationPrice: Math.min(currCandle.high, currEma * 1.004),
+          slNote: 'Day Low Breakdown SL (Tight)',
+          candleTime: currCandle.date,
+          candleIdx: lastIdx,
+          scoreBoost: 350 + Math.round(Math.abs(moveFromOpenPct) * 40),
+          description: `Intraday Trend Breakdown below Day Low ₹${priorLow.toFixed(2)} (Day Move: ${moveFromOpenPct.toFixed(2)}%)`
+        };
+      }
     }
+
+    // ── 4. Pattern 4: Confirmed Trend Breakout & Day High Break (With Anti-Chasing Filter) ──
+    if (isUptrend && todayCandles.length >= 2) {
+      const priorHighs = todayCandles.slice(0, -1).map(tc => tc.candle.high);
+      const priorHigh = priorHighs.length > 0 ? Math.max(...priorHighs) : currCandle.high;
+      const distFromEmaPct = ((currCandle.close - currEma) / currCandle.close) * 100;
+
+      // Anti-chasing safety filter:
+      const isOverExtended = distFromEmaPct > 1.8 || moveFromOpenPct > 3.0;
+
+      if (!isOverExtended && (currCandle.high >= priorHigh * 0.997 || moveFromOpenPct >= 1.2)) {
+        const tightSl = Math.max(currCandle.low, currEma, currCandle.close * 0.988);
+        return {
+          trend: 'LONG',
+          setupType: 'TREND_BREAKOUT',
+          triggerHigh: Math.max(priorHigh, currCandle.high),
+          triggerLow: null,
+          slPrice: tightSl,
+          invalidationPrice: Math.max(currCandle.low, currEma * 0.996),
+          slNote: 'Day High Breakout SL (Tight)',
+          candleTime: currCandle.date,
+          candleIdx: lastIdx,
+          scoreBoost: 350 + Math.round(moveFromOpenPct * 40),
+          description: `Intraday Trend Breakout above Day High ₹${priorHigh.toFixed(2)} (Day Move: +${moveFromOpenPct.toFixed(2)}%)`
+        };
+      }
+    }
+
 
     // ── 6. Pattern 6: Inside Candle Pullback ──
     const mother = prevCandle;
@@ -2726,9 +2863,9 @@ export class EmaVwapCrossoverEngine {
         setupType: 'INSIDE_CANDLE',
         triggerHigh: isLong ? mother.high : null,
         triggerLow: isLong ? null : mother.low,
-        slPrice: isLong ? mother.low : mother.high,
+        slPrice: isLong ? Math.max(mother.low, baby.close * 0.988) : Math.min(mother.high, baby.close * 1.012),
         invalidationPrice: isLong ? mother.low : mother.high,
-        slNote: 'Mother Candle SL',
+        slNote: 'Mother Candle SL (Tight)',
         candleTime: baby.date,
         candleIdx: lastIdx,
         scoreBoost: 180,
@@ -2763,6 +2900,15 @@ export class EmaVwapCrossoverEngine {
     const low = firstCandle.low;
     const close = firstCandle.close;
 
+    const candleRangePct = open > 0 ? ((high - low) / open) * 100 : 0;
+    // Anti-chasing safety filter:
+    // If opening 5m candle has a massive range (> 2.0%), DO NOT enter raw opening drive breakdown!
+    // Chasing an extended waterfall candle (e.g. 7-8% dump like PVRINOX) leads to severe mean-reversion spikes.
+    // Instead, return null so the system waits for Pullback Rejection!
+    if (candleRangePct > 2.0) {
+      return null;
+    }
+
     // 1. Open = Low Drive (Bullish Buy setup)
     // Low within 0.25% of Open (or equal) + Green candle
     const lowOpenDiffPct = Math.abs(open - low) / open;
@@ -2770,9 +2916,10 @@ export class EmaVwapCrossoverEngine {
     const isOpenLow = lowOpenDiffPct <= 0.0025 && isGreen;
 
     if (isOpenLow) {
-      // True structural Stop Loss below Opening Candle Low with buffer to absorb noise wicks
+      // True structural Stop Loss below Opening Candle Low with buffer (capped to 1.2% max)
       const buffer = Math.max(0.10, low * 0.0035);
-      const slPrice = low - buffer;
+      const maxSlDist = open * 0.012;
+      const slPrice = Math.max(low - buffer, open - maxSlDist);
       const slNote = 'Day Low Buffer';
 
       return {
@@ -2794,9 +2941,10 @@ export class EmaVwapCrossoverEngine {
     const isOpenHigh = highOpenDiffPct <= 0.0025 && isRed;
 
     if (isOpenHigh) {
-      // True structural Stop Loss above Opening Candle High with buffer to absorb noise wicks
+      // True structural Stop Loss above Opening Candle High with buffer (capped to 1.2% max)
       const buffer = Math.max(0.10, high * 0.0035);
-      const slPrice = high + buffer;
+      const maxSlDist = open * 0.012;
+      const slPrice = Math.min(high + buffer, open + maxSlDist);
       const slNote = 'Day High Buffer';
 
       return {
@@ -2813,11 +2961,24 @@ export class EmaVwapCrossoverEngine {
 
     return null;
   }
+
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
   private async persistLogs(state: StrategyState) {
     try {
-      await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-200)) } });
+      const now = Date.now();
+      const logsChanged = state.logs.length !== (state.lastPersistedLogCount || 0);
+      const timeSinceDb = now - (state.lastDbPersistTime || 0);
+
+      if (logsChanged || timeSinceDb >= 15000) {
+        state.lastPersistedLogCount = state.logs.length;
+        state.lastDbPersistTime = now;
+        await this.prisma.strategyExecution.update({
+          where: { id: state.executionId },
+          data: { logs: JSON.stringify(state.logs.slice(-500)) },
+        });
+      }
+
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,
         logs: state.logs,
@@ -2875,7 +3036,7 @@ export class EmaVwapCrossoverEngine {
       const currentCandle = candles[idx];
       if (currentEma === null || currentVwap === null) return null;
 
-      // Exhaustion Guard: If stock has already moved >3.5% from open before crossover, skip late entry
+      // Exhaustion Guard: If stock has already moved >3.0% from open, skip entry (it is oversold/overbought)
       let firstDayCandle: Candle | null = null;
       for (let k = 0; k < candles.length; k++) {
         if (this.getIstDateStr(candles[k].date) === todayStr) {
@@ -2885,8 +3046,8 @@ export class EmaVwapCrossoverEngine {
       }
       if (firstDayCandle && firstDayCandle.open > 0) {
         const moveFromOpenPct = (Math.abs(currentCandle.close - firstDayCandle.open) / firstDayCandle.open) * 100;
-        if (moveFromOpenPct > 3.5 && (idx - crossoverIdx) > 0) {
-          return null; // Move is exhausted; avoid entering late at extremes
+        if (moveFromOpenPct > 3.0) {
+          return null; // Move is exhausted; avoid entering at extreme extended prices
         }
       }
 
