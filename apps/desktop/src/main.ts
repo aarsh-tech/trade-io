@@ -4,6 +4,12 @@ import * as fs from "fs";
 import { fork, ChildProcess } from "child_process";
 import * as http from "http";
 
+// High-performance Chromium flags for real-time algorithmic trading
+app.commandLine.appendSwitch("disable-background-timer-throttling");
+app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.commandLine.appendSwitch("enable-high-resolution-time");
+
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
 let webProcess: ChildProcess | null = null;
@@ -96,6 +102,7 @@ async function startBackend(): Promise<void> {
     JWT_SECRET: process.env.JWT_SECRET || "tradeio-standalone-desktop-jwt-secret-2026",
     JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || "tradeio-standalone-desktop-refresh-secret-2026",
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || "tradeio-32-byte-standalone-secret-key!",
+    ENCRYPTION_SECRET: process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY || "tradeio-32-byte-standalone-secret-key!",
     DEFAULT_USER_EMAIL: "aarsh@trade.io",
     DEFAULT_USER_PASSWORD: "aarsh1234",
     DEFAULT_USER_NAME: "Aarsh",
@@ -141,6 +148,8 @@ async function startFrontend(): Promise<void> {
     HOSTNAME: "127.0.0.1",
     NODE_ENV: "production",
     ELECTRON_RUN_AS_NODE: "1",
+    NEXT_PUBLIC_API_URL: `http://127.0.0.1:${BACKEND_PORT}/v1`,
+    NEXT_PUBLIC_WS_URL: `http://127.0.0.1:${BACKEND_PORT}`,
   };
 
   console.log(`Auto-starting frontend web server from: ${webEntry}`);
@@ -163,17 +172,27 @@ async function startFrontend(): Promise<void> {
   }
 }
 
+function killProcess(proc: ChildProcess | null): void {
+  if (!proc || !proc.pid) return;
+  try {
+    if (process.platform === "win32") {
+      const { exec } = require("child_process");
+      exec(`taskkill /pid ${proc.pid} /T /F`, () => {});
+    } else {
+      proc.kill("SIGKILL");
+    }
+  } catch {
+    try { proc.kill(); } catch {}
+  }
+}
+
 function killChildProcesses(): void {
-  if (backendProcess && typeof backendProcess.kill === "function") {
-    try {
-      backendProcess.kill();
-    } catch { }
+  if (backendProcess) {
+    killProcess(backendProcess);
     backendProcess = null;
   }
-  if (webProcess && typeof webProcess.kill === "function") {
-    try {
-      webProcess.kill();
-    } catch { }
+  if (webProcess) {
+    killProcess(webProcess);
     webProcess = null;
   }
 }
@@ -563,6 +582,7 @@ function createWindow(): void {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
 

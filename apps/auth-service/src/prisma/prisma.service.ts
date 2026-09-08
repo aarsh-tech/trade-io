@@ -16,6 +16,20 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     this.logger.log(`Connecting to Prisma database...`);
     await this.$connect();
     this.logger.log(`Prisma database connected successfully.`);
+
+    const dbUrl = process.env.DATABASE_URL || '';
+    if (dbUrl.startsWith('file:') || dbUrl.includes('.db')) {
+      try {
+        await this.$queryRawUnsafe(`PRAGMA journal_mode = WAL;`);
+        await this.$queryRawUnsafe(`PRAGMA synchronous = NORMAL;`);
+        await this.$queryRawUnsafe(`PRAGMA busy_timeout = 5000;`);
+        await this.$queryRawUnsafe(`PRAGMA cache_size = -64000;`);
+        this.logger.log(`⚡ SQLite WAL mode & high-throughput caching (64MB) active.`);
+      } catch (err: any) {
+        this.logger.warn(`Could not set SQLite pragmas: ${err?.message || err}`);
+      }
+    }
+
     await this.initSchema();
     await this.seedDefaultUser();
   }
