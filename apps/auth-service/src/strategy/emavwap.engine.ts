@@ -359,20 +359,29 @@ export class EmaVwapCrossoverEngine {
   getState(strategyId: string) {
     const s = this.running.get(strategyId);
     if (!s) return null;
+    const isOptionTrade = !!(s.config.isOptionBuyingOnly && s.optionSymbol);
+    const isLong = isOptionTrade || s.entryTriggered === 'LONG';
+    const ltp = s.currentLtp || s.entryPrice || 0;
+    const entry = s.entryPrice || 0;
+    const pnlPoints = entry > 0 && ltp > 0 ? (isLong ? (ltp - entry) : (entry - ltp)) : 0;
+    const currentQty = Math.abs(s.executedQty || s.config.qty);
+    const calculatedPnlRs = pnlPoints * currentQty;
+    const calculatedPnlPct = entry > 0 ? (pnlPoints / entry) * 100 : 0;
+
     return {
       entryTriggered: s.entryTriggered,
       tradesToday: s.tradesPlacedToday,
       activeSymbol: s.activeSymbol || s.config.symbol,
-      optionSymbol: s.optionSymbol || s.activeSymbol || s.config.symbol,
+      optionSymbol: s.optionSymbol || null,
       entryPrice: s.entryPrice,
       currentLtp: s.currentLtp || s.entryPrice,
       stopLossPrice: s.stopLossPrice,
       targetPrice: s.targetPrice,
-      pnlRs: s.currentPnlRs ?? 0,
-      pnlPct: s.currentPnlPct ?? 0,
+      pnlRs: s.currentPnlRs !== undefined && s.currentPnlRs !== 0 ? s.currentPnlRs : calculatedPnlRs,
+      pnlPct: s.currentPnlPct !== undefined && s.currentPnlPct !== 0 ? s.currentPnlPct : calculatedPnlPct,
       peakPnlRs: s.peakPnlRs ?? 0,
-      qty: s.executedQty || s.config.qty,
-      executedQty: s.executedQty || s.config.qty,
+      qty: currentQty,
+      executedQty: currentQty,
       targetQty: s.config.qty,
       entryOrderId: s.entryOrderId,
       isTrailingEma: s.isTrailingEma ?? false,

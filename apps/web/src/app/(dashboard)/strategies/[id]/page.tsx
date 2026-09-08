@@ -199,11 +199,30 @@ export default function StrategyDetailPage() {
   // Live P&L zero-latency calculations
   const currentLtp = directLtp || liveState?.currentLtp || liveState?.entryPrice || 0;
   const entryPrice = liveState?.entryPrice || 0;
-  const qty = liveState?.executedQty || liveState?.qty || strategy?.config?.qty || 1;
-  const isLong =
-    liveState?.entryTriggered === "LONG" ||
-    liveState?.signalSide === "CALL" ||
-    !!liveState?.optionSymbol;
+  const qty = Math.abs(Number(liveState?.executedQty || liveState?.qty || strategy?.config?.qty || 1));
+
+  // Determine trade direction:
+  // For options buying strategies, traders buy CE or PE contracts (always LONG the option contract).
+  // For stocks/futures (e.g. BEML, SBIN), short trades sell high first, profiting when currentLtp < entryPrice.
+  const isOptionBuyingStrategy =
+    strategy?.type === "NIFTY_OPTIONS_SCALPER" ||
+    strategy?.type === "STOCK_OPTIONS_BUYING" ||
+    strategy?.type === "GAMMA_BLAST_EXPIRY";
+
+  const isRealOptionSymbol =
+    Boolean(liveState?.optionSymbol && (liveState.optionSymbol.endsWith("CE") || liveState.optionSymbol.endsWith("PE")));
+
+  const isOptionTrade = isOptionBuyingStrategy || isRealOptionSymbol;
+
+  const isShort =
+    !isOptionTrade &&
+    (liveState?.entryTriggered === "SHORT" ||
+      liveState?.signalSide === "SELL" ||
+      liveState?.signalSide === "PUT" ||
+      Number(liveState?.qty ?? 0) < 0 ||
+      Number(liveState?.executedQty ?? 0) < 0);
+
+  const isLong = isOptionTrade || !isShort;
 
   let calculatedPnlRs = liveState?.pnlRs ?? 0;
   let calculatedPnlPct = liveState?.pnlPct ?? 0;

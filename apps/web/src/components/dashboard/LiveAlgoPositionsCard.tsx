@@ -159,19 +159,22 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
             try {
               const statusRes = await strategyApi.status(s.id);
               const state = statusRes.data?.data?.state;
+              const sym = state?.optionSymbol || state?.activeSymbol || state?.activeStockSymbol || state?.futureSymbol || state?.symbol || s.config?.symbol;
               if (
                 state &&
-                (state.stateType === "ACTIVE_POSITION" || (Number(state.entryPrice) > 0 && Number(state.qty || state.positionQty) > 0)) &&
-                (state.optionSymbol || state.activeStockSymbol || state.symbol)
+                (state.stateType === "ACTIVE_POSITION" || (Number(state.entryPrice) > 0 && Number(state.qty || state.positionQty) > 0) || state.entryTriggered) &&
+                sym
               ) {
-                const sym = state.optionSymbol || state.activeStockSymbol || state.symbol;
+                const isShortTrade = (state.entryTriggered === "SHORT" || state.signalSide === "SELL" || state.signalSide === "PUT") && !sym.endsWith("CE") && !sym.endsWith("PE");
+                const rawQty = Number(state.positionQty || state.qty || 1);
+                const signedQty = isShortTrade ? -Math.abs(rawQty) : Math.abs(rawQty);
                 virtualPositions.push({
                   symbol: sym,
-                  qty: Number(state.positionQty || state.qty || 1),
+                  qty: signedQty,
                   avgPrice: Number(state.entryPrice || 0),
                   ltp: Number(state.currentLtp || state.entryPrice || 0),
                   pnl: Number(state.pnlRs || 0),
-                  side: state.signalSide === "PUT" ? "SELL" : "BUY",
+                  side: isShortTrade ? "SELL" : "BUY",
                   product: s.isPaperTrade ? "PAPER" : (s.config?.product || "MIS"),
                 });
               }
@@ -230,16 +233,15 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
       const quantity = Number(pos.qty);
       const avgPrice = Number(pos.avgPrice);
 
-      let currentPnl = Number(pos.pnl);
+      const isLong = quantity > 0;
+      let currentPnl = Number(pos.pnl || 0);
       let pnlPercent = 0;
 
-      if (quantity !== 0 && avgPrice > 0) {
-        currentPnl = (currentPrice - avgPrice) * quantity;
-        pnlPercent = ((currentPrice - avgPrice) / avgPrice) * 100;
-        if (quantity < 0) {
-          currentPnl = -currentPnl;
-          pnlPercent = -pnlPercent;
-        }
+      if (quantity !== 0 && avgPrice > 0 && currentPrice > 0) {
+        currentPnl = isLong
+          ? (currentPrice - avgPrice) * quantity
+          : (avgPrice - currentPrice) * Math.abs(quantity);
+        pnlPercent = ((currentPrice - avgPrice) / avgPrice) * 100 * (isLong ? 1 : -1);
       }
 
       return {

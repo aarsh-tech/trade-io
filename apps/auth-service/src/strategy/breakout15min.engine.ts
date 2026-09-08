@@ -278,11 +278,12 @@ export class Breakout15MinEngine {
   getState(strategyId: string) {
     const s = this.running.get(strategyId);
     if (!s) return null;
-    const isLong = s.entryTriggered === 'LONG' || !!s.optionSymbol;
+    const isOption = Boolean(s.optionSymbol && (s.optionSymbol.endsWith('CE') || s.optionSymbol.endsWith('PE')));
+    const isLong = isOption || s.entryTriggered === 'LONG';
     const ltp = s.currentLtp || s.entryPrice || 0;
     const entry = s.entryPrice || 0;
     const pnlPoints = entry > 0 && ltp > 0 ? (isLong ? (ltp - entry) : (entry - ltp)) : 0;
-    const currentQty = s.executedQty || s.config.qty;
+    const currentQty = Math.abs(s.executedQty || s.config.qty);
     const calculatedPnlRs = pnlPoints * currentQty;
     const calculatedPnlPct = entry > 0 ? (pnlPoints / entry) * 100 : 0;
 
@@ -1687,7 +1688,8 @@ export class Breakout15MinEngine {
     if (state.isPaperTrade || !state.slOrderId || state.slOrderId === 'FAILED' || !state.stopLossPrice) return;
     try {
       const symTickSize = state.optionSymbol ? 0.05 : getInstrumentTickSize(symbol, state.stopLossPrice);
-      const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
+      const isOption = Boolean(state.optionSymbol && (state.optionSymbol.endsWith('CE') || state.optionSymbol.endsWith('PE')));
+      const isLong = state.entryTriggered === 'LONG' || isOption;
       const triggerPrice = this.roundTick(state.stopLossPrice, symTickSize);
       const limitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
 
@@ -1909,8 +1911,9 @@ export class Breakout15MinEngine {
       if (!ltp) return;
 
       state.currentLtp = ltp;
-      const isLong = state.entryTriggered === 'LONG' || !!state.optionSymbol;
-      const currentQty = state.executedQty || state.config.qty;
+      const isOption = Boolean(state.optionSymbol && (state.optionSymbol.endsWith('CE') || state.optionSymbol.endsWith('PE')));
+      const isLong = state.entryTriggered === 'LONG' || isOption;
+      const currentQty = Math.abs(state.executedQty || state.config.qty);
       const currentPnlPoints = isLong ? (ltp - state.entryPrice!) : (state.entryPrice! - ltp);
       const pnlRs = currentPnlPoints * currentQty;
       const pnlPct = state.entryPrice ? (currentPnlPoints / state.entryPrice) * 100 : 0;
