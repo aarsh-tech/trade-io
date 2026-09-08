@@ -203,7 +203,7 @@ export default function DashboardPage() {
     if (user?.name) {
       return user.name.split(" ")[0];
     }
-    return "Aarsh";
+    return user?.email ? user.email.split("@")[0] : "Trader";
   }, [user]);
 
   if (isDashboardLoading && isPortfolioLoading) {

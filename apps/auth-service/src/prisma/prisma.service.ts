@@ -221,9 +221,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   private async seedDefaultUser() {
     try {
-      const email = process.env.DEFAULT_USER_EMAIL || 'aarsh@trade.io';
-      const password = process.env.DEFAULT_USER_PASSWORD || 'aarsh1234';
-      const name = process.env.DEFAULT_USER_NAME || 'Aarsh';
+      const email = process.env.DEFAULT_USER_EMAIL || 'virali@tradeapex.com';
+      const password = process.env.DEFAULT_USER_PASSWORD || 'VS@123456';
+      const name = process.env.DEFAULT_USER_NAME || 'Virali';
 
       const existingUser = await this.user.findUnique({
         where: { email },

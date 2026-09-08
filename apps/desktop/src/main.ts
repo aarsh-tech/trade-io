@@ -103,9 +103,9 @@ async function startBackend(): Promise<void> {
     JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || "tradeio-standalone-desktop-refresh-secret-2026",
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || "tradeio-32-byte-standalone-secret-key!",
     ENCRYPTION_SECRET: process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY || "tradeio-32-byte-standalone-secret-key!",
-    DEFAULT_USER_EMAIL: "aarsh@trade.io",
-    DEFAULT_USER_PASSWORD: "aarsh1234",
-    DEFAULT_USER_NAME: "Aarsh",
+    DEFAULT_USER_EMAIL: "virali@tradeapex.com",
+    DEFAULT_USER_PASSWORD: "VS@123456",
+    DEFAULT_USER_NAME: "Virali",
     NODE_ENV: "production",
     ELECTRON_RUN_AS_NODE: "1",
   };
