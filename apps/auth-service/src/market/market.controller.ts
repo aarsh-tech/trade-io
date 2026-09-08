@@ -13,7 +13,7 @@ export class MarketController {
   constructor(
     private readonly marketService: MarketService,
     private readonly ohlScannerService: OhlScannerService,
-  ) {}
+  ) { }
 
   @Get('ohl-stocks')
   @Public()
@@ -29,6 +29,7 @@ export class MarketController {
     return { success: true, data };
   }
 
+  // ── Market Data ─────────────────────────────────────────────────────────────
 
   @Get('search')
   @ApiOperation({ summary: 'Search for stocks/instruments' })
@@ -39,6 +40,18 @@ export class MarketController {
   ) {
     const results = await this.marketService.search(q, req.user?.id, accountId);
     return { success: true, data: results };
+  }
+
+  @Get('lot-size')
+  @Public()
+  @ApiOperation({ summary: 'Get dynamic lot size for an instrument or stock symbol' })
+  async getLotSize(
+    @Query('symbol') symbol: string,
+    @Query('accountId') accountId: string,
+    @Request() req: any,
+  ) {
+    const lotSize = await this.marketService.getLotSize(symbol, req.user?.id, accountId);
+    return { success: true, symbol, lotSize };
   }
 
   @Get('overview')
@@ -72,14 +85,13 @@ export class MarketController {
     return { success: true, data };
   }
 
- 
   @Post('watchlist')
   @ApiOperation({ summary: 'Add symbol to watchlist' })
   async addToWatchlist(@Request() req: any, @Body() body: { symbol: string; exchange?: string }) {
     const data = await this.marketService.addToWatchlist(req.user.id, body.symbol, body.exchange);
     return { success: true, data };
   }
- 
+
   @Delete('watchlist')
   @ApiOperation({ summary: 'Remove symbol from watchlist' })
   async removeFromWatchlist(@Request() req: any, @Query('symbol') symbol: string, @Query('exchange') exchange?: string) {

@@ -1,58 +1,143 @@
 import axios from "axios";
+import { useAuthStore } from "@/store";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3002/v1";
+export function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== "undefined" && window.location.hostname) {
+    return `http://${window.location.hostname}:3002/v1`;
+  }
+  return "http://127.0.0.1:3002/v1";
+}
+
+export function getSocketBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL;
+  }
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/v1\/?$/, "");
+  }
+  if (typeof window !== "undefined" && window.location.hostname) {
+    return `http://${window.location.hostname}:3002`;
+  }
+  return "http://127.0.0.1:3002";
+}
 
 export const api = axios.create({
-  baseURL: API_BASE,
+  baseURL: getApiBaseUrl(),
   withCredentials: true,
   headers: { "Content-Type": "application/json" },
 });
 
+// Mutex to prevent multiple concurrent refresh calls
+let isRefreshing = false;
+let refreshPromise: Promise<string | null> | null = null;
+
+export function handleForceLogout() {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
+    try {
+      useAuthStore.getState().clearAuth();
+    } catch {}
+    if (!window.location.pathname.includes("/login")) {
+      window.location.href = "/login";
+    }
+  }
+}
+
+export async function requestTokenRefresh(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+
+  const refreshToken = localStorage.getItem("refreshToken");
+  if (!refreshToken) {
+    handleForceLogout();
+    return null;
+  }
+
+  // If another request is currently refreshing the token, await the exact same promise
+  if (isRefreshing && refreshPromise) {
+    return refreshPromise;
+  }
+
+  isRefreshing = true;
+  refreshPromise = (async () => {
+    try {
+      const { data } = await axios.post(
+        `${getApiBaseUrl()}/auth/refresh`,
+        { refreshToken },
+        { withCredentials: true }
+      );
+
+      const newAccess = data?.data?.accessToken;
+      const newRefresh = data?.data?.refreshToken;
+      const user = data?.data?.user;
+
+      if (!newAccess) {
+        throw new Error("No access token returned from refresh");
+      }
+
+      localStorage.setItem("accessToken", newAccess);
+      if (newRefresh) localStorage.setItem("refreshToken", newRefresh);
+
+      if (user) {
+        try {
+          useAuthStore.getState().setAuth(user, newAccess, newRefresh || refreshToken);
+        } catch {}
+      }
+
+      return newAccess;
+    } catch (err: any) {
+      const status = err?.response?.status;
+      // If 401 or 403 or invalid refresh token, force logout immediately
+      if (status === 401 || status === 403 || !err?.response) {
+        handleForceLogout();
+      }
+      throw err;
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
 // Request interceptor — attach JWT
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
+    if (!process.env.NEXT_PUBLIC_API_URL && config.baseURL?.includes("127.0.0.1")) {
+      config.baseURL = getApiBaseUrl();
+    }
     const token = localStorage.getItem("accessToken");
     if (token) config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// Response interceptor — handle 401 / proactive token refresh
+// Response interceptor — handle 401 with synchronized single-flight token refresh
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config;
-    // Only intercept 401s once, and skip the refresh endpoint itself
     if (
       error.response?.status === 401 &&
+      original &&
       !original._retry &&
-      !original.url?.includes("/auth/refresh")
+      !original.url?.includes("/auth/refresh") &&
+      !original.url?.includes("/auth/login") &&
+      !original.url?.includes("/auth/register")
     ) {
       original._retry = true;
       try {
-        const refreshToken = localStorage.getItem("refreshToken");
-        if (!refreshToken) throw new Error("No refresh token");
-
-        const { data } = await axios.post(`${API_BASE}/auth/refresh`, { refreshToken });
-        const newAccess = data.data.accessToken;
-        const newRefresh = data.data.refreshToken;
-
-        localStorage.setItem("accessToken", newAccess);
-        if (newRefresh) localStorage.setItem("refreshToken", newRefresh);
-
-        original.headers.Authorization = `Bearer ${newAccess}`;
-        return api(original);
-      } catch (refreshErr: any) {
-        // Only hard-logout if the refresh endpoint returned 401/403
-        // (refresh token genuinely expired). Network errors → stay logged in.
-        const refreshStatus = refreshErr?.response?.status;
-        if (refreshStatus === 401 || refreshStatus === 403) {
-          localStorage.removeItem("accessToken");
-          localStorage.removeItem("refreshToken");
-          window.location.href = "/login";
+        const newAccess = await requestTokenRefresh();
+        if (newAccess) {
+          original.headers.Authorization = `Bearer ${newAccess}`;
+          return api(original);
         }
-        // Otherwise, just reject — proactive refresh hook will retry next interval
-        return Promise.reject(error);
+      } catch (refreshErr) {
+        return Promise.reject(refreshErr);
       }
     }
     return Promise.reject(error);
@@ -133,15 +218,10 @@ export const marketApi = {
   }) => api.get("/market/candles", { params }),
   quote: (symbol: string) => api.get(`/market/quote/${symbol}`),
   search: (q: string, accountId?: string | null) => api.get("/market/search", { params: { q, accountId } }),
+  searchInstruments: (q: string, accountId?: string | null) => api.get("/market/search", { params: { q, accountId } }),
+  getLotSize: (symbol: string, accountId?: string | null) => api.get("/market/lot-size", { params: { symbol, accountId } }),
   addToWatchlist: (symbol: string, exchange: string = 'NSE') => api.post("/market/watchlist", { symbol, exchange }),
   removeFromWatchlist: (symbol: string, exchange: string = 'NSE') => api.delete("/market/watchlist", { params: { symbol, exchange } }),
-};
-
-
-// ─── Backtesting ──────────────────────────────────────────────────────────────
-export const backtestApi = {
-  run: (data: any) => api.post("/backtest/run", data),
-  history: () => api.get("/backtest/history"),
 };
 
 // ─── Orders & P&L Ledger ────────────────────────────────────────────────────────
@@ -158,4 +238,6 @@ export const swingApi = {
   last: (params?: { page?: number; pageSize?: number; pattern?: string; sortBy?: string }) => 
     api.get("/swing-scanner/last", { params }),
 };
+
+
 

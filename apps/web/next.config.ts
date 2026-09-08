@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  allowedDevOrigins: ["192.168.1.101", "localhost"],
   transpilePackages: ["@algo-trade/types"],
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts"],
@@ -9,4 +10,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-

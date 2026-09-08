@@ -6,17 +6,24 @@ import { useAuthStore } from "@/store";
 
 export default function HomePage() {
   const router = useRouter();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, clearAuth } = useAuthStore();
 
   useEffect(() => {
-    const token =
+    const access =
       typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-    if (isAuthenticated || token) {
+    const refresh =
+      typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
+    const hasTokens = !!(access || refresh);
+
+    if (isAuthenticated && hasTokens) {
       router.replace("/dashboard");
     } else {
+      if (isAuthenticated && !hasTokens) {
+        clearAuth();
+      }
       router.replace("/login");
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, clearAuth, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#fbfbfb]">

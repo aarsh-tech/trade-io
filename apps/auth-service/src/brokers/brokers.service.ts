@@ -8,39 +8,69 @@ import { BrokerType } from '@prisma/client';
 
 @Injectable()
 export class BrokersService {
+  private cache = new Map<string, { data: any; expiresAt: number }>();
+
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
   ) { }
 
+  private getFromCache<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (entry && Date.now() < entry.expiresAt) {
+      return entry.data as T;
+    }
+    return null;
+  }
+
+  private setInCache<T>(key: string, data: T, ttlMs: number): T {
+    this.cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+    return data;
+  }
+
   async getHoldings(userId: string, accountId: string) {
+    const cacheKey = `holdings:${accountId}`;
+    const cached = this.getFromCache(cacheKey);
+    if (cached) return cached;
+
     const acc = await this.prisma.brokerAccount.findUnique({
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
 
     const client = this.factory.createClient(acc);
-    return client.getHoldings();
+    const result = await client.getHoldings();
+    return this.setInCache(cacheKey, result, 30_000); // 30s cache
   }
 
   async getPositions(userId: string, accountId: string) {
+    const cacheKey = `positions:${accountId}`;
+    const cached = this.getFromCache(cacheKey);
+    if (cached) return cached;
+
     const acc = await this.prisma.brokerAccount.findUnique({
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
 
     const client = this.factory.createClient(acc);
-    return client.getPositions();
+    const result = await client.getPositions();
+    return this.setInCache(cacheKey, result, 3_000); // 3s cache
   }
 
   async getMargins(userId: string, accountId: string) {
+    const cacheKey = `margins:${accountId}`;
+    const cached = this.getFromCache(cacheKey);
+    if (cached) return cached;
+
     const acc = await this.prisma.brokerAccount.findUnique({
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
 
     const client = this.factory.createClient(acc);
-    return client.getMargins();
+    const result = await client.getMargins();
+    return this.setInCache(cacheKey, result, 10_000); // 10s cache
   }
 
   async getLoginUrl(userId: string, accountId: string) {
@@ -212,6 +242,10 @@ export class BrokersService {
   }
 
   async getMarketOverview(userId: string) {
+    const cacheKey = `overview:${userId}`;
+    const cached = this.getFromCache(cacheKey);
+    if (cached) return cached;
+
     const account = await this.prisma.brokerAccount.findFirst({
       where: { userId, broker: BrokerType.ZERODHA, isActive: true },
     });
@@ -237,7 +271,7 @@ export class BrokersService {
 
       // Mock changes for now as Kite LTP API only gives current price
       // In a real app, we would fetch quotes to get prev close
-      return {
+      const overviewData = {
         connected: true,
         indices: [
           { symbol: 'NIFTY 50', price: ltp['NSE:NIFTY 50'] || 0, change: 0.45, changeAbs: 102.5 },
@@ -251,6 +285,7 @@ export class BrokersService {
           { symbol: 'INFY', price: ltp['NSE:INFY'] || 0, change: 1.5 },
         ]
       };
+      return this.setInCache(cacheKey, overviewData, 10_000); // 10s cache
     } catch (err: any) {
       if (err?.error_type === 'TokenException') {
         console.warn('Zerodha session expired for user:', userId);

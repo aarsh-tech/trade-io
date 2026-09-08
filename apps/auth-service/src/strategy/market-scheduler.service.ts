@@ -5,14 +5,15 @@ import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
+import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 
 /**
  * MarketSchedulerService
  * ─────────────────────
- * Runs every 60 s. At exactly 09:15 IST it auto-starts every strategy
+ * Runs every 1 s. At exactly 09:15 IST it auto-starts every strategy
  * that has `autoStart = true` and is not already running.
- * At 15:30 IST it stops all running strategies so they don't poll
- * after market close.
+ * At 15:05–15:25 IST it enforces intraday RMS safety square-off.
+ * At 15:30 IST it stops all running strategies so they don't poll after market close.
  */
 @Injectable()
 export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -50,10 +51,11 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
+    private readonly gammaBlastEngine: GammaBlastExpiryEngine,
   ) { }
 
   onModuleInit() {
-    this.logger.log('Market Scheduler initialised — will auto-start strategies at 09:15:05 IST sharp');
+    this.logger.log('Market Scheduler initialised — will auto-start strategies at 09:15:01 IST sharp');
     // Check immediately on boot (handles the case where the server restarts mid-session)
     this.checkAndAct().catch((e) => this.logger.error(e));
     // High-precision 1-second check loop
@@ -95,8 +97,8 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     const MARKET_OPEN = 9 * 60 + 15; // 09:15
     const MARKET_CLOSE = 15 * 60 + 30; // 15:30
 
-    // ── Auto-start at exactly 09:15:05 IST (or boot mid-session during market hours) ──
-    const isExactAutoStartTime = (h === 9 && m === 15 && s >= 5) || (h === 9 && m === 16);
+    // ── Auto-start at exactly 09:15:01 IST (or boot mid-session during market hours) ──
+    const isExactAutoStartTime = (h === 9 && m === 15 && s >= 1) || (h === 9 && m === 16);
     const isMidSessionStart = hhmm > MARKET_OPEN && hhmm < MARKET_CLOSE && this.lastAutoStartDate === null;
 
     if (isExactAutoStartTime || isMidSessionStart) {
@@ -216,15 +218,30 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
           const kite = client['kite'];
           if (!kite) continue;
 
-          // Cancel open/trigger pending orders to avoid stray executions
+          // Get all algo orders placed today for this broker account
+          const algoOrdersToday = await this.prisma.order.findMany({
+            where: {
+              brokerAccountId: account.id,
+              createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+            },
+            select: { brokerOrderId: true, symbol: true },
+          });
+          const algoBrokerOrderIds = new Set(algoOrdersToday.map(o => o.brokerOrderId).filter(Boolean));
+          const algoSymbols = new Set(algoOrdersToday.map(o => o.symbol));
+
+          // Cancel open/trigger pending orders to avoid stray executions (Algo orders ONLY)
           try {
             const openOrders = await kite.getOrders();
             const pendingOrders = (openOrders || []).filter(
               (o: any) => o.status === 'OPEN' || o.status === 'TRIGGER PENDING'
             );
             for (const po of pendingOrders) {
-              await kite.cancelOrder('regular', po.order_id).catch(() => {});
-              this.logger.warn(`🛡 [RMS Safety Net] Cancelled pending broker order ${po.order_id} (${po.tradingsymbol})`);
+              if (algoBrokerOrderIds.has(po.order_id) || algoSymbols.has(po.tradingsymbol)) {
+                await kite.cancelOrder('regular', po.order_id).catch(() => {});
+                this.logger.warn(`🛡 [RMS Safety Net] Cancelled pending algo order ${po.order_id} (${po.tradingsymbol})`);
+              } else {
+                this.logger.log(`🛡 [RMS Safety Net] Preserving user manual order ${po.order_id} (${po.tradingsymbol})`);
+              }
             }
           } catch (ordErr: any) {
             this.logger.debug?.(`RMS Safety Net order check notice: ${ordErr?.message}`);
@@ -238,12 +255,20 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
             const qty = Number(pos.quantity);
             const product = String(pos.product).toUpperCase();
 
-            // If an intraday MIS position is open, square it off with a MARKET order
+            // CRITICAL: NEVER exit NRML, CNC, or manual user positions!
+            // Only consider MIS positions that were placed by our algo today.
             if (qty !== 0 && product === 'MIS') {
+              if (!algoSymbols.has(pos.tradingsymbol)) {
+                this.logger.log(
+                  `🛡 [RMS Safety Net] Skipping MIS position ${pos.tradingsymbol} - Not placed by any algo strategy today (Manual position preserved).`
+                );
+                continue;
+              }
+
               const exitSide = qty > 0 ? 'SELL' : 'BUY';
               const exitQty = Math.abs(qty);
               this.logger.warn(
-                `🚨 [RMS Safety Net] Found open MIS position on Zerodha: ${pos.exchange}:${pos.tradingsymbol} (Qty: ${qty}). Placing emergency MARKET exit to avoid ₹50+GST penalty!`
+                `🚨 [RMS Safety Net] Found open algo MIS position on Zerodha: ${pos.exchange}:${pos.tradingsymbol} (Qty: ${qty}). Placing emergency MARKET exit to avoid ₹50+GST penalty!`
               );
 
               try {
@@ -300,6 +325,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
     if (type === 'STOCK_OPTIONS_BUYING') return this.stockOptionsBuyingEngine;
     if (type === 'NIFTY_OPTIONS_SCALPER') return this.niftyOptionsScalperEngine;
+    if (type === 'GAMMA_BLAST_EXPIRY') return this.gammaBlastEngine;
     return null;
   }
 }

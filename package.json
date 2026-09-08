@@ -13,6 +13,8 @@
     "start": "turbo run start",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "clean": "node scripts/clean-cache.js",
+    "clean:cache": "node scripts/clean-cache.js",
     "db:generate": "prisma generate --schema=./prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema=./prisma/schema.prisma",
     "db:push": "prisma db push --schema=./prisma/schema.prisma",

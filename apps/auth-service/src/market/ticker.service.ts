@@ -33,11 +33,15 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
         if (account?.accessToken) {
           const client = this.brokerFactory.createClient(account);
+          const isBfo = symbol.startsWith('SENSEX') || symbol.includes('BFO') || symbol.startsWith('BSE:SENSEX');
           const isOptionOrFuture = /CE$|PE$|FUT$/.test(symbol) || symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY');
-          const primaryExchange = isOptionOrFuture ? 'NFO' : 'NSE';
+          const primaryExchange = isBfo ? 'BFO' : (isOptionOrFuture ? 'NFO' : 'NSE');
           let instruments = await client.getInstruments(primaryExchange).catch(() => []);
           let match = instruments.find((i: any) => i.tradingsymbol === symbol);
-          if (!match && !isOptionOrFuture) {
+          if (!match && isBfo) {
+            const bseInstruments = await client.getInstruments('BSE').catch(() => []);
+            match = bseInstruments.find((i: any) => i.tradingsymbol === symbol);
+          } else if (!match && !isOptionOrFuture) {
             const nfoInstruments = await client.getInstruments('NFO').catch(() => []);
             match = nfoInstruments.find((i: any) => i.tradingsymbol === symbol);
           }
@@ -45,6 +49,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
             token = match.instrument_token;
             tickerData.symbolToToken.set(symbol, token);
             tickerData.symbolToToken.set(`${match.segment || primaryExchange}:${symbol}`, token);
+            tickerData.symbolToToken.set(`BFO:${symbol}`, token);
+            tickerData.symbolToToken.set(`BSE:${symbol}`, token);
             tickerData.symbolToToken.set(`NSE:${symbol}`, token);
             tickerData.symbolToToken.set(`NFO:${symbol}`, token);
             tickerData.tokenToSymbol.set(token, symbol);
@@ -190,7 +196,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         const currentTokens = new Set<number>(tickerData.tokens || []);
         const requestedTokens = symbols
           .map(s => tickerData.resolveToken(s))
-          .filter(Boolean) as number[];
+          .filter((t): t is number => typeof t === 'number' && !isNaN(t));
         
         const tokensToSubscribe = requestedTokens.filter(t => !currentTokens.has(t));
         if (tokensToSubscribe.length > 0 && tickerData.instance) {
@@ -217,13 +223,14 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       const client = this.brokerFactory.createClient(account);
 
       // Fetch instruments in parallel to map symbol <-> token faster
-      const [instruments, bseInstruments, nfoInstruments] = await Promise.all([
+      const [instruments, bseInstruments, nfoInstruments, bfoInstruments] = await Promise.all([
         client.getInstruments('NSE').catch(() => []),
         client.getInstruments('BSE').catch(() => []),
         client.getInstruments('NFO').catch(() => []),
+        client.getInstruments('BFO').catch(() => []),
       ]);
       
-      const allInst = [...instruments, ...bseInstruments, ...nfoInstruments];
+      const allInst = [...instruments, ...bseInstruments, ...nfoInstruments, ...bfoInstruments];
       const tokenToSymbol = new Map<number, string>();
       const symbolToToken = new Map<string, number>();
       
@@ -243,7 +250,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       allInst.forEach((i: any) => {
         const sym = i.tradingsymbol;
-        const tok = i.instrument_token;
+        const tok = Number(i.instrument_token);
+        if (!tok || isNaN(tok)) return;
         const exch = i.exchange || 'NSE';
         
         tokenToSymbol.set(tok, sym);
@@ -255,6 +263,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           symbolToToken.set(`BSE:${sym}`, tok);
         } else if (exch === 'NFO') {
           symbolToToken.set(`NFO:${sym}`, tok);
+        } else if (exch === 'BFO') {
+          symbolToToken.set(`BFO:${sym}`, tok);
         }
       });
 
@@ -268,10 +278,14 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         if (symbolToToken.has(withNfo)) return symbolToToken.get(withNfo);
         const withBse = `BSE:${withoutPrefix}`;
         if (symbolToToken.has(withBse)) return symbolToToken.get(withBse);
+        const withBfo = `BFO:${withoutPrefix}`;
+        if (symbolToToken.has(withBfo)) return symbolToToken.get(withBfo);
         return undefined;
       };
 
-      const tokensToSubscribe = symbols.map(s => resolveToken(s)).filter(Boolean) as number[];
+      const tokensToSubscribe = symbols
+        .map(s => resolveToken(s))
+        .filter((t): t is number => typeof t === 'number' && !isNaN(t));
 
       const ticker = new KiteTicker({
         api_key: apiKey,
@@ -287,6 +301,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
             mappedTicks[`NSE:${sym}`] = tick.last_price;
             mappedTicks[`NFO:${sym}`] = tick.last_price;
             mappedTicks[`BFO:${sym}`] = tick.last_price;
+            mappedTicks[`BSE:${sym}`] = tick.last_price;
           }
         });
         if (Object.keys(mappedTicks).length > 0) {

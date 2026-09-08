@@ -2,6 +2,8 @@ node_modules
 .next
 dist
 release
+**/release
+**/dist
 .turbo
 *.log
 *.db
@@ -11,4 +13,8 @@ release
 .env.local
 .env.production
 .DS_Store
-
+apps/auth-service/data/
+**/whatsapp_sessions/
+scripts/cache_nifty500/
+scripts/*
+!scripts/clean-cache.js

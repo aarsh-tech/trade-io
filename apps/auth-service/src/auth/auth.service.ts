@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -15,6 +16,8 @@ import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private users: UsersService,
     private jwt: JwtService,
@@ -62,25 +65,43 @@ export class AuthService {
   }
 
   async refresh(token: string) {
-    const stored = await this.prisma.refreshToken.findUnique({
-      where: { token },
-    });
-
-    if (!stored || stored.expiresAt < new Date()) {
-      if (stored) await this.prisma.refreshToken.delete({ where: { token } });
-      throw new UnauthorizedException('Refresh token expired or invalid');
+    if (!token) {
+      throw new UnauthorizedException('Refresh token is required');
     }
 
-    await this.prisma.refreshToken.delete({ where: { token } });
+    try {
+      const stored = await this.prisma.refreshToken.findUnique({
+        where: { token },
+      });
 
-    const user = await this.users.findById(stored.userId);
-    const tokens = await this.generateTokens(user.id, user.email);
-    return { user, ...tokens };
+      if (!stored || stored.expiresAt < new Date()) {
+        if (stored) {
+          await this.prisma.refreshToken.deleteMany({ where: { token } }).catch(() => {});
+        }
+        throw new UnauthorizedException('Refresh token expired or invalid');
+      }
+
+      // Use deleteMany with catch to safely handle race condition where another concurrent refresh already deleted it
+      await this.prisma.refreshToken.deleteMany({ where: { token } }).catch(() => {});
+
+      const user = await this.users.findById(stored.userId);
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+      const tokens = await this.generateTokens(user.id, user.email);
+      return { user, ...tokens };
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        throw err;
+      }
+      this.logger.warn(`Token refresh failed: ${err?.message || err}`);
+      throw new UnauthorizedException('Refresh token expired or invalid');
+    }
   }
 
   async logout(refreshToken: string) {
     await this.prisma.refreshToken
-      .delete({ where: { token: refreshToken } })
+      .deleteMany({ where: { token: refreshToken } })
       .catch(() => { }); // ignore if not found
     return { message: 'Logged out' };
   }

@@ -2,13 +2,24 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 
 @Injectable()
-export class StrategyService {
+export class StrategyService implements OnModuleInit {
   constructor(private prisma: PrismaService) { }
+
+  async onModuleInit() {
+    try {
+      // Clean up orphaned RUNNING executions across all strategies on startup
+      await this.prisma.strategyExecution.updateMany({
+        where: { status: 'RUNNING' },
+        data: { status: 'STOPPED', stoppedAt: new Date() },
+      });
+    } catch { }
+  }
 
   async list(userId: string) {
     const strategies = await this.prisma.strategy.findMany({
@@ -61,6 +72,25 @@ export class StrategyService {
     if (!strategy) throw new NotFoundException('Strategy not found');
     if (strategy.userId !== userId) throw new ForbiddenException();
 
+    // Self-heal stale RUNNING executions in the database:
+    // Only the single latest execution can be RUNNING (and only if strategy.isActive is true).
+    const staleExecIds = (strategy.executions || [])
+      .filter((ex, index) => ex.status === 'RUNNING' && (index > 0 || !strategy.isActive))
+      .map((ex) => ex.id);
+
+    if (staleExecIds.length > 0) {
+      await this.prisma.strategyExecution.updateMany({
+        where: { id: { in: staleExecIds } },
+        data: { status: 'STOPPED', stoppedAt: new Date() },
+      }).catch(() => {});
+      strategy.executions.forEach((ex, index) => {
+        if (staleExecIds.includes(ex.id)) {
+          ex.status = 'STOPPED';
+          ex.stoppedAt = ex.stoppedAt || new Date();
+        }
+      });
+    }
+
     const performance = this.calculatePerformance(strategy.executions, strategy.type);
 
     return {
@@ -71,13 +101,23 @@ export class StrategyService {
   }
 
   async create(userId: string, dto: CreateStrategyDto) {
+    let validBrokerAccountId: string | null = null;
+    if (dto.brokerAccountId) {
+      const brokerAccount = await this.prisma.brokerAccount.findFirst({
+        where: { id: dto.brokerAccountId, userId },
+      });
+      if (brokerAccount) {
+        validBrokerAccountId = brokerAccount.id;
+      }
+    }
+
     return this.prisma.strategy.create({
       data: {
         userId,
         name: dto.name,
         type: dto.type as any,
         config: dto.config,
-        brokerAccountId: dto.brokerAccountId || null,
+        brokerAccountId: validBrokerAccountId,
         isActive: false,
         isPaperTrade: dto.isPaperTrade !== undefined ? dto.isPaperTrade : true,
       },
@@ -86,13 +126,25 @@ export class StrategyService {
 
   async update(userId: string, id: string, dto: UpdateStrategyDto) {
     await this.assertOwner(userId, id);
+    let validBrokerAccountId: string | null | undefined = undefined;
+    if (dto.brokerAccountId !== undefined) {
+      if (dto.brokerAccountId) {
+        const brokerAccount = await this.prisma.brokerAccount.findFirst({
+          where: { id: dto.brokerAccountId, userId },
+        });
+        validBrokerAccountId = brokerAccount ? brokerAccount.id : null;
+      } else {
+        validBrokerAccountId = null;
+      }
+    }
+
     return this.prisma.strategy.update({
       where: { id },
       data: {
         ...(dto.name && { name: dto.name }),
         ...(dto.config && { config: dto.config }),
-        ...(dto.brokerAccountId !== undefined && {
-          brokerAccountId: dto.brokerAccountId,
+        ...(validBrokerAccountId !== undefined && {
+          brokerAccountId: validBrokerAccountId,
         }),
         ...(dto.isPaperTrade !== undefined && {
           isPaperTrade: dto.isPaperTrade,

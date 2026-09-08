@@ -62,6 +62,46 @@ export class MarketService {
     }
   }
 
+  async getLotSize(symbol: string, userId?: string, accountId?: string): Promise<number> {
+    if (!symbol) return 1;
+    let account = null;
+    if (accountId && accountId !== 'null' && accountId !== 'undefined') {
+      account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
+    }
+    if (!account || !account.accessToken) {
+      if (userId) {
+        account = await this.prisma.brokerAccount.findFirst({
+          where: { userId, accessToken: { not: null } },
+        });
+      }
+    }
+    if (!account || !account.accessToken) {
+      account = await this.prisma.brokerAccount.findFirst({
+        where: { accessToken: { not: null }, isActive: true },
+      });
+    }
+
+    if (!account || !account.accessToken) {
+      const s = symbol.toUpperCase().trim();
+      if (s.includes('BANKNIFTY')) return 30;
+      if (s.includes('SENSEX')) return 20;
+      if (s.includes('FINNIFTY')) return 60;
+      if (s.includes('MIDCPNIFTY')) return 120;
+      if (s.includes('NIFTY')) return 65;
+      return 1;
+    }
+
+    try {
+      const client = this.factory.createClient(account);
+      if (typeof client.getLotSize === 'function') {
+        return await client.getLotSize(symbol);
+      }
+      return 1;
+    } catch {
+      return 1;
+    }
+  }
+
   // ── Live prices for the ticker banner ─────────────────────────────────────
 
   async getLivePrices(userId: string): Promise<{

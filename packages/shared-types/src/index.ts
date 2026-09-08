@@ -49,13 +49,6 @@ export enum OrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
-export enum BacktestStatus {
-  PENDING = 'PENDING',
-  RUNNING = 'RUNNING',
-  DONE = 'DONE',
-  FAILED = 'FAILED',
-}
-
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export interface LoginDto {
@@ -136,6 +129,21 @@ export interface Breakout15MinConfig {
   stopLossRs: number;
   targetRs: number;
   startTime: string; // "09:15"
+  entryTimeframe?: '1min' | '3min' | '5min';
+  enableEmaVwapTrailing?: boolean;
+  trailingEmaPeriod?: number;
+  trailingVwapSource?: 'both' | 'ema' | 'vwap';
+  maxLossesPerDay?: number;
+  enableMiddayChopFilter?: boolean;
+  middayDeadZoneStart?: string;
+  middayDeadZoneEnd?: string;
+  enablePartialBooking?: boolean;
+  partialBookingPct?: number;
+  partialBookingR?: number;
+  enableCprSupportResistance?: boolean;
+  enableParabolicVwapLock?: boolean;
+  enableTwoCandleEmaConfirmation?: boolean;
+  enableTrendReEntry?: boolean;
 }
 
 export interface EmaVwapCrossoverConfig {
@@ -148,6 +156,9 @@ export interface EmaVwapCrossoverConfig {
   stopLossRs: number;
   targetRs: number;
   isOptionBuyingOnly?: boolean;
+  enableParabolicVwapLock?: boolean;
+  enableTwoCandleEmaConfirmation?: boolean;
+  enableTrendReEntry?: boolean;
 }
 
 export interface CreateStrategyDto {
@@ -233,54 +244,6 @@ export interface CandleMessage {
   exchange: string;
   interval: string;
   candle: Candle;
-}
-
-// ─── Backtesting ──────────────────────────────────────────────────────────────
-
-export interface SubmitBacktestDto {
-  strategyId: string;
-  symbol: string;
-  exchange: string;
-  fromDate: string;
-  toDate: string;
-  capital: number;
-}
-
-export interface BacktestTradeResult {
-  entryTime: string;
-  exitTime: string;
-  side: OrderSide;
-  entry: number;
-  exit: number;
-  qty: number;
-  pnl: number;
-  pnlPercent: number;
-}
-
-export interface BacktestResult {
-  netPnl: number;
-  netPnlPercent: number;
-  winRate: number;
-  totalTrades: number;
-  winningTrades: number;
-  losingTrades: number;
-  maxDrawdown: number;
-  sharpeRatio: number;
-  trades: BacktestTradeResult[];
-  equityCurve: { time: string; value: number }[];
-}
-
-export interface BacktestDto {
-  id: string;
-  strategyId: string;
-  symbol: string;
-  exchange: string;
-  fromDate: string;
-  toDate: string;
-  status: BacktestStatus;
-  result?: BacktestResult;
-  createdAt: string;
-  completedAt?: string;
 }
 
 // ─── API Response envelope ────────────────────────────────────────────────────

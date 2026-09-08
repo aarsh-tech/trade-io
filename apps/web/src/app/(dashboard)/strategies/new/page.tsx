@@ -2,53 +2,145 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
-  BarChart2, TrendingUp, ChevronRight, ChevronLeft,
-  Check, Loader2, Shield, Target, Zap, Info, Flame, Lock,
+  ChevronRight,
+  ChevronLeft,
+  Check,
+  Loader2,
+  ArrowLeft,
+  Layers,
+  Sliders,
+  Shield,
+  Zap,
+  Flame,
+  TrendingUp,
+  Target,
+  BarChart2,
+  CheckCircle2,
+  Sparkles,
+  Activity,
+  Clock,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { strategyApi, brokerApi, marketApi } from "@/lib/api";
+import { strategyApi, brokerApi } from "@/lib/api";
+import { StrategyFormState, BrokerAccount, getLotSize } from "./types";
+import { Step1StrategyType } from "./components/Step1StrategyType";
+import { Step2InstrumentConfig } from "./components/Step2InstrumentConfig";
+import { Step3RiskManagement } from "./components/Step3RiskManagement";
+import { Step4BrokerReview } from "./components/Step4BrokerReview";
 import { Badge } from "@/components/ui/badge";
 
+const STEPS = [
+  { id: "type", title: "Strategy Type", subtitle: "Select algorithm", icon: Layers },
+  { id: "instrument", title: "Instrument & Config", subtitle: "Symbols, strike & lots", icon: Sliders },
+  { id: "risk", title: "Risk Management", subtitle: "SL, target & profit shields", icon: Shield },
+  { id: "review", title: "Broker & Review", subtitle: "Live Zerodha & deploy", icon: Zap },
+];
 
-const STEPS = ["Strategy Type", "Instrument & Config", "Risk Management", "Broker & Review"];
-
-const PRESET_INSTRUMENTS = [
-  { label: "NIFTY 50", symbol: "NIFTY 50", exchange: "NSE", type: "INDEX" },
-  { label: "BANK NIFTY", symbol: "BANKNIFTY", exchange: "NSE", type: "INDEX" },
-  { label: "SENSEX", symbol: "SENSEX", exchange: "BSE", type: "INDEX" },
-  { label: "Auto (Smart Pick)", symbol: "AUTO", exchange: "NSE", type: "STOCK" },
-] as const;
-
-const LOT_SIZES: Record<string, number> = {
-  "NIFTY": 65,
-  "BANKNIFTY": 30,
-  "SENSEX": 20,
-};
-
-function getLotSize(symbol: string) {
-  const s = symbol.toUpperCase();
-  if (s.includes("BANKNIFTY")) return 30;
-  if (s.includes("NIFTY")) return 65;
-  if (s.includes("SENSEX")) return 20;
-  for (const key in LOT_SIZES) {
-    if (s.includes(key)) return LOT_SIZES[key];
+const getStrategyMeta = (type: string) => {
+  switch (type) {
+    case "STOCK_OPTIONS_BUYING":
+      return {
+        label: "Stock Option Auto-Hunter",
+        badge: "🔥 80% WIN-RATE",
+        badgeClass: "bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-extrabold shadow-2xs",
+        icon: Flame,
+        iconColor: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
+        desc: "Scans 180+ F&O stocks for 5%–10% momentum. Buys ITM options, books 50% at T1 (+50% ROI), trails SL to cost, and rides T2 (+100% ROI).",
+        features: [
+          "180+ F&O Momentum Scanner",
+          "50% Cash Lock @ T1 (+50% ROI)",
+          "Zero-Risk Breakeven Trail",
+          "NIFTY 50 Macro Trend Gate",
+        ],
+        tip: "Takes quick profits on The Banker and lets The Runner capture massive moves risk-free.",
+      };
+    case "EMA_VWAP_CROSSOVER":
+      return {
+        label: "Intraday Auto Stock Picker",
+        badge: "⭐ 5x MIS SCALPER",
+        badgeClass: "bg-emerald-600 text-white font-extrabold shadow-2xs",
+        icon: TrendingUp,
+        iconColor: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+        desc: "Scans 180+ F&O stocks for highest-momentum mover with 15-EMA + VWAP confirmation. Trades MIS with dynamic ₹500 target & ₹500 SL.",
+        features: [
+          "Auto 09:15 AM Stock Picker",
+          "Strict Risk Sizing (Max 25% Capital)",
+          "Structural SL below Candle Low",
+          "15-EMA Live Trailing on Zerodha",
+        ],
+        tip: "Ideal for steady daily compounding on high-probability momentum stocks without overnight risk.",
+      };
+    case "GAMMA_BLAST_EXPIRY":
+      return {
+        label: "Gamma Blast (CAS Expiry)",
+        badge: "⚡ 01:30 PM EXPIRY",
+        badgeClass: "bg-amber-600 text-white font-extrabold shadow-2xs",
+        icon: Zap,
+        iconColor: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
+        desc: "Trades explosive 01:30 PM – 03:25 PM Gamma spikes on NIFTY (Tue) & SENSEX (Thu). Buys cheap ₹8–₹15 options with Live OI confirmation.",
+        features: [
+          "NIFTY (Tue) & SENSEX (Thu)",
+          "Cheap ₹8–₹15 Strike Hunter",
+          "Zero-Latency Ratchet Trailing",
+          "15:05 Sharp Auto Square-Off",
+        ],
+        tip: "Designed to capture 2x–5x explosive expiry afternoon gamma spikes with capped risk.",
+      };
+    case "NIFTY_OPTIONS_SCALPER":
+      return {
+        label: "Nifty Options Scalper",
+        badge: "RAPID SCALPER",
+        badgeClass: "bg-purple-600 text-white font-extrabold shadow-2xs",
+        icon: Target,
+        iconColor: "text-purple-600 dark:text-purple-400 bg-purple-500/10 border-purple-500/20",
+        desc: "Captures rapid Nifty impulses using 3 confluence triggers. Auto-sizes lots dynamically from live Zerodha margin and arms exchange SL.",
+        features: [
+          "Dynamic Margin Lots",
+          "Exchange Server SL Armed",
+          "Breakeven Trail at +5 pts",
+          "Two-Loss Circuit Breaker",
+        ],
+        tip: "Strict 1-Win or 2-Losses rule prevents overtrading and locks in disciplined scalping profits.",
+      };
+    case "BREAKOUT_15MIN":
+      return {
+        label: "15-Min Breakout",
+        badge: "OPENING RANGE",
+        badgeClass: "bg-cyan-600 text-white font-extrabold shadow-2xs",
+        icon: BarChart2,
+        iconColor: "text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
+        desc: "Trades 15-Min Opening Range Breakouts & Breakdowns with false-breakout trap reversal and server SL-L at Zerodha.",
+        features: [
+          "False Breakout Trap Reversal",
+          "Server SL-L Placed on Kite",
+          "Early Breakeven at +0.7R",
+          "1-Loss & Done Shield",
+        ],
+        tip: "Captures strong morning trends while protecting capital against sudden mean-reversion chop.",
+      };
+    default:
+      return {
+        label: "Custom Algo Strategy",
+        badge: "CONFIGURING",
+        badgeClass: "bg-secondary text-foreground font-bold",
+        icon: Sparkles,
+        iconColor: "text-primary bg-primary/10 border border-primary/20",
+        desc: "Select a strategy algorithm below to automatically load institutional risk and execution parameters.",
+        features: [
+          "Choose strategy type on Step 1",
+          "Configures automated entry & exit",
+          "Applies server-side risk protection",
+        ],
+        tip: "Select a strategy algorithm on Step 1 to load pre-configured institutional parameters.",
+      };
   }
-  return 1; // Default for stocks
-}
-
-interface BrokerAccount {
-  id: string;
-  broker: string;
-  clientId: string | null;
-  isActive: boolean;
-  tokenExpiry: string | null;
-}
-
+};
 
 export default function NewStrategyPage() {
   const router = useRouter();
@@ -56,27 +148,25 @@ export default function NewStrategyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<StrategyFormState>({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "NIFTY_OPTIONS_SCALPER" | "",
-    // Common
+    type: "",
     symbol: "NIFTY 50",
     exchange: "NSE",
-    instrumentType: "INDEX" as "INDEX" | "STOCK" | "OPTION" | "FUTURE",
+    instrumentType: "INDEX",
     lots: "1",
-    product: "MIS" as "MIS" | "NRML",
+    product: "MIS",
     stopLossRs: "500",
     targetRs: "500",
+    exitExactAtTarget: false,
     maxTradesPerDay: "2",
     minPremium: "100",
     maxPremium: "300",
     enableProfitFloor: true,
     profitFloorBufferRs: "100",
-    // EMA-VWAP crossover
     emaPeriod: "15",
-    vwapSource: "close" as "close" | "hlc3",
+    vwapSource: "close",
     isOptionBuyingOnly: true,
-    // EMA-RSI Options
     emaFast: "9",
     emaSlow: "21",
     rsiPeriod: "14",
@@ -86,83 +176,95 @@ export default function NewStrategyPage() {
     targetPct: "45",
     slPct: "25",
     startAfterMin: "25",
-    // Daily Scalper
     dsCapital: "20000",
     dsDailyTargetRs: "500",
     dsDailyMaxLossRs: "800",
-    dsTargetPoints: "",
-    dsStopLossPoints: "",
+    dsTargetPoints: "10",
+    dsStopLossPoints: "6",
     dsMaxTradesPerDay: "2",
-    // Stock Options Buying
+    dsTrailCostAtPoints: "5",
+    dsMaxLossesPerDay: "2",
+    dsEnablePartialBooking: false,
+    dsPartialBookingPct: "50",
+    dsEnableMiddayChopFilter: true,
+    dsEnableVolumeSurge: false,
+    dsEnableTrendBiasFilter: true,
+    dsEnableMacroDayBias: false,
+    dsEntryCutoffTime: "14:45",
+    dsTimeframe: "5minute",
     sTimeframe: "15min",
     sEmaPeriod: "15",
     sRiskRewardRatio: "2",
     sMaxCapital: "25000",
     sTriggerOffset: "0.50",
     sProtectionBufferPct: "10",
-    // Breakout 15-Min Dynamic Upgrades
+    sDirectionBias: "BOTH",
+    sSetupType: "BOTH",
+    sMoneyness: "ITM",
+    sIsAutoStockSelect: true,
+    sMinRvol: "1.25",
+    sEnableMarketTrendFilter: true,
+    sEnableMiddayChopFilter: true,
+    sEnablePartialBooking: true,
+    sPartialBookingPct: "50",
+    sMaxStagnantTimeMin: "25",
+    sMaxWinsPerDay: "1",
+    sMaxLossesPerDay: "1",
+    sEnableHtfFilter: true,
+    sEnableTrailingSl: true,
+    sTarget1RR: "1.5",
+    sTarget2RR: "3.0",
+    sEnableDynamicSizing: true,
     b15EnableDynamicAtr: true,
     b15RiskRewardRatio: "2.0",
     b15EnableFakeoutReversal: true,
     b15EnableVwapFilter: true,
     b15EnableBreakevenTrail: true,
-    b15Moneyness: "ITM" as "ITM" | "ATM",
-    // Broker
+    b15Moneyness: "ITM",
+    b15UseStructuralCandleSl: true,
+    b15MaxOpeningRangePts: "300",
+    b15PrimeWindowEndTime: "15:00",
+    b15EnableRsiFilter: true,
+    b15BreakevenTriggerR: "0.7",
+    b15EnableTrapReversal: true,
+    b15EnableRetestConfirmation: true,
+    b15EnableCprFilter: true,
+    b15CprNarrowThresholdPct: "0.18",
+    b15TrapSlBufferPts: "10",
+    b15EntryTimeframe: "3min",
+    b15EnableEmaVwapTrailing: true,
+    b15TrailingEmaPeriod: "9",
+    b15TrailingVwapSource: "both",
+    b15MaxLossesPerDay: "1",
+    b15EnableMiddayChopFilter: true,
+    b15MiddayDeadZoneStart: "11:45",
+    b15MiddayDeadZoneEnd: "13:00",
+    b15EnablePartialBooking: true,
+    b15PartialBookingPct: "50",
+    b15PartialBookingR: "1.8",
+    b15EnableCprSupportResistance: true,
+    gbIndex: "AUTO",
+    gbMinPremiumNifty: "8",
+    gbMaxPremiumNifty: "15",
+    gbMinPremiumSensex: "12",
+    gbMaxPremiumSensex: "25",
+    gbStartTime: "13:00",
+    gbEndTime: "15:25",
+    gbEnableOiFilter: true,
+    gbEnableVolumeSurge: true,
+    gbEnableRatchetTrailing: true,
+    gbEnableHighConvictionBoost: true,
+    gbMaxConvictionLots: "3",
+    gbEnablePartialProfitBooking: true,
+    gbInitialSlPct: "50",
     brokerAccountId: "",
     isPaperTrade: true,
   });
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-
-  async function handleSymbolSearch(q: string) {
-    setSearchQuery(q);
-  }
-
-  // Debounced search logic
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-      if (searchQuery.length < 2) {
-        setSearchResults([]);
-        return;
-      }
-      setIsSearching(true);
-      try {
-        const res = await marketApi.search(searchQuery, form.brokerAccountId);
-        setSearchResults(res.data?.data ?? []);
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [searchQuery, form.brokerAccountId]);
-
-  function selectInstrument(item: any) {
-    const sym = (item.symbol || '').toUpperCase();
-    const isIndex = sym.includes('NIFTY') || sym.includes('SENSEX');
-    const instrType: "INDEX" | "STOCK" | "OPTION" | "FUTURE" =
-      item.exchange === 'NFO' || item.exchange === 'BFO' ? 'OPTION'
-        : isIndex ? 'INDEX'
-          : 'STOCK';
-    setForm(f => ({
-      ...f,
-      symbol: item.symbol,
-      exchange: item.exchange,
-      instrumentType: instrType,
-    }));
-    setSearchQuery("");
-    setSearchResults([]);
-  }
-
-  function set(k: string, v: any) {
+  const set = (k: keyof StrategyFormState, v: any) => {
     setForm((f) => ({ ...f, [k]: v }));
-  }
+  };
 
-  // Load broker accounts
   useEffect(() => {
     brokerApi.list().then((r) => {
       const list = r.data?.data ?? [];
@@ -175,76 +277,132 @@ export default function NewStrategyPage() {
     if (step === 0) return !!form.name && !!form.type;
     if (step === 1) return !!form.symbol && Number(form.lots) > 0;
     if (step === 2) {
-      if (form.type === "NIFTY_OPTIONS_SCALPER")
-        return true;
-      if (form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS")
+      if (form.type === "GAMMA_BLAST_EXPIRY" || form.type === "NIFTY_OPTIONS_SCALPER") return true;
+      if (form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") {
         return Number(form.stopLossRs) > 0 && Number(form.targetRs) > 0;
-      if (form.type === "STOCK_OPTIONS_BUYING")
+      }
+      if (form.type === "STOCK_OPTIONS_BUYING") {
         return Number(form.sMaxCapital) > 0 && Number(form.sRiskRewardRatio) > 0;
-      if (form.type === "DAILY_SCALPER")
-        return Number(form.dsCapital) > 0 && Number(form.dsDailyTargetRs) > 0 && Number(form.dsDailyMaxLossRs) > 0;
+      }
       return true;
     }
-    return !!form.brokerAccountId;
+    return form.isPaperTrade || !!form.brokerAccountId;
   };
 
-  async function handleSubmit() {
+  const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      const lotSize = getLotSize(form.symbol);
-      const qty = Number(form.lots) * lotSize;
+      const lotSize = form.lotSize || getLotSize(form.symbol, form.lotSize);
+      const qty = Number(form.lots || 1) * lotSize;
 
       let config: any;
-      if (form.type === "NIFTY_OPTIONS_SCALPER") {
+      if (form.type === "GAMMA_BLAST_EXPIRY") {
         config = {
-          symbol: form.symbol.trim(), exchange: form.exchange,
-          lots: Number(form.lots), qty,
+          symbol: form.symbol.trim() === "SENSEX" ? "SENSEX" : (form.symbol.trim() === "AUTO" ? "AUTO" : "NIFTY"),
+          exchange: form.symbol.trim() === "SENSEX" ? "BFO" : "NFO",
+          lots: Number(form.lots || 1),
+          product: form.product || "NRML",
+          maxTradesPerDay: Number(form.maxTradesPerDay || 2),
+          maxWinsPerDay: 1,
+          autoSelectStrike: true,
+          startTime: form.gbStartTime || "13:00",
+          endTime: form.gbEndTime || "15:25",
+          enableOiFilter: form.gbEnableOiFilter,
+          enableVolumeSurge: form.gbEnableVolumeSurge,
+          enableRatchetTrailing: form.gbEnableRatchetTrailing,
+          enableHighConvictionBoost: form.gbEnableHighConvictionBoost,
+          maxConvictionLots: Number(form.gbMaxConvictionLots || 3),
+          enablePartialProfitBooking: form.gbEnablePartialProfitBooking,
+          initialSlPct: Number(form.gbInitialSlPct || 50),
+          targetRs: Number(form.targetRs || 1500),
+          stopLossRs: Number(form.stopLossRs || 500),
+        };
+      } else if (form.type === "NIFTY_OPTIONS_SCALPER") {
+        config = {
+          symbol: form.symbol.trim(),
+          exchange: form.exchange,
+          lots: Number(form.lots),
+          qty,
           product: form.product,
           emaPeriod: 15,
           isOptionBuyingOnly: true,
           targetPoints: Number(form.dsTargetPoints || 10),
           stopLossPoints: Number(form.dsStopLossPoints || 7),
-          trailCostAtPoints: 5,
+          trailCostAtPoints: Number(form.dsTrailCostAtPoints || 6),
           stopLossRs: Number(form.dsStopLossPoints || 7) * qty,
           targetRs: Number(form.dsTargetPoints || 10) * qty,
-          maxTradesPerDay: Number(form.maxTradesPerDay || 3),
+          maxTradesPerDay: Number(form.maxTradesPerDay || 2),
           maxWinsPerDay: 1,
-          enableOrbTrigger: true,
+          maxLossesPerDay: Number(form.dsMaxLossesPerDay || 2),
+          enablePartialBooking: form.dsEnablePartialBooking !== false,
+          partialBookingPct: Number(form.dsPartialBookingPct || 50),
+          enableMiddayChopFilter: form.dsEnableMiddayChopFilter !== false,
+          middayDeadZoneStart: "12:15",
+          middayDeadZoneEnd: "13:15",
+          enableVolumeSurge: form.dsEnableVolumeSurge !== false,
+          enableTrendBiasFilter: form.dsEnableTrendBiasFilter !== false,
+          enableMacroDayBias: form.dsEnableMacroDayBias !== false,
+          entryCutoffTime: form.dsEntryCutoffTime || "14:15",
+          timeframe: form.dsTimeframe || "5minute",
+          enableOrbTrigger: false,
           enablePullbackTrigger: true,
-        };
-      } else if (form.type === "DAILY_SCALPER") {
-        config = {
-          symbol: form.symbol.trim(), exchange: form.exchange,
-          lots: Number(form.lots),
-          product: form.product,
-          capital: Number(form.dsCapital),
-          dailyTargetRs: Number(form.dsDailyTargetRs),
-          dailyMaxLossRs: Number(form.dsDailyMaxLossRs),
-          ...(form.dsTargetPoints && { targetPoints: Number(form.dsTargetPoints) }),
-          ...(form.dsStopLossPoints && { stopLossPoints: Number(form.dsStopLossPoints) }),
-          maxTradesPerDay: Number(form.dsMaxTradesPerDay),
+          enableRsiFilter: false,
+          enableRangeFilter: true,
+          enableStagnancyExit: true,
+          moneyness: "ITM",
+          enableAutoHybrid: form.symbol.toUpperCase().includes("HYBRID"),
+          enableDynamicSizing: form.dsEnableDynamicSizing !== false,
+          maxCapital: form.dsMaxCapital ? Number(form.dsMaxCapital) : undefined,
+          maxLots: form.dsMaxLots ? Number(form.dsMaxLots) : 25,
         };
       } else if (form.type === "STOCK_OPTIONS_BUYING") {
+        const isAuto = form.sIsAutoStockSelect || form.symbol === "AUTO";
         config = {
-          symbol: form.symbol.trim(),
+          symbol: isAuto ? "AUTO" : form.symbol.trim(),
           exchange: "NSE",
           timeframe: form.sTimeframe,
+          isAutoStockSelect: isAuto,
           emaPeriod: Number(form.sEmaPeriod),
           riskRewardRatio: Number(form.sRiskRewardRatio),
           maxCapital: Number(form.sMaxCapital),
           lots: Number(form.lots),
+          lotSize,
+          qty,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           product: form.product,
           startAfterMin: Number(form.startAfterMin),
           triggerOffset: Number(form.sTriggerOffset),
           protectionBufferPct: Number(form.sProtectionBufferPct),
+          directionBias: form.sDirectionBias,
+          setupType: form.sSetupType,
+          moneyness: form.sMoneyness,
+          minRvol: Number(form.sMinRvol || 1.25),
+          enableMarketTrendFilter: form.sEnableMarketTrendFilter !== false,
+          enableMiddayChopFilter: form.sEnableMiddayChopFilter !== false,
+          middayDeadZoneStart: "11:30",
+          middayDeadZoneEnd: "13:00",
+          enablePartialBooking: form.sEnablePartialBooking !== false,
+          partialBookingPct: Number(form.sPartialBookingPct || 50),
+          maxStagnantTimeMin: Number(form.sMaxStagnantTimeMin || 25),
+          maxWinsPerDay: Number(form.sMaxWinsPerDay || 1),
+          maxLossesPerDay: Number(form.sMaxLossesPerDay || 1),
+          enableHtfFilter: form.sEnableHtfFilter !== false,
+          enableTrailingSl: form.sEnableTrailingSl !== false,
+          target1RR: Number(form.sTarget1RR || 1.5),
+          target2RR: Number(form.sTarget2RR || 3.0),
+          enableDynamicSizing: form.sEnableDynamicSizing !== false,
         };
       } else if (form.type === "BREAKOUT_15MIN") {
         config = {
-          symbol: form.symbol.trim(), exchange: form.exchange,
-          instrumentType: form.instrumentType, qty,
-          lots: Number(form.lots), product: form.product,
-          stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          symbol: form.symbol.trim(),
+          exchange: form.exchange,
+          instrumentType: form.instrumentType,
+          qty,
+          lots: Number(form.lots),
+          product: form.product,
+          stopLossRs: Number(form.stopLossRs),
+          targetRs: Number(form.targetRs),
+          exitExactAtTarget: !!form.exitExactAtTarget,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableDynamicAtr: form.b15EnableDynamicAtr,
           riskRewardRatio: Number(form.b15RiskRewardRatio),
@@ -252,34 +410,53 @@ export default function NewStrategyPage() {
           enableVwapFilter: form.b15EnableVwapFilter,
           enableBreakevenTrail: form.b15EnableBreakevenTrail,
           moneyness: form.b15Moneyness,
+          useStructuralCandleSl: form.b15UseStructuralCandleSl,
+          maxOpeningRangePts: Number(form.b15MaxOpeningRangePts || 300),
+          primeWindowEndTime: form.b15PrimeWindowEndTime || "15:00",
+          enableRsiFilter: form.b15EnableRsiFilter,
+          breakevenTriggerR: Number(form.b15BreakevenTriggerR || 0.7),
+          enableTrapReversal: form.b15EnableTrapReversal,
+          enableRetestConfirmation: form.b15EnableRetestConfirmation,
+          enableCprFilter: form.b15EnableCprFilter,
+          cprNarrowThresholdPct: Number(form.b15CprNarrowThresholdPct || 0.18),
+          trapSlBufferPts: Number(form.b15TrapSlBufferPts || 10),
+          entryTimeframe: form.b15EntryTimeframe || "3min",
+          enableEmaVwapTrailing: form.b15EnableEmaVwapTrailing,
+          trailingEmaPeriod: Number(form.b15TrailingEmaPeriod || 9),
+          trailingVwapSource: form.b15TrailingVwapSource || "both",
+          maxLossesPerDay: Number(form.b15MaxLossesPerDay || 1),
+          enableMiddayChopFilter: form.b15EnableMiddayChopFilter,
+          middayDeadZoneStart: form.b15MiddayDeadZoneStart || "11:45",
+          middayDeadZoneEnd: form.b15MiddayDeadZoneEnd || "13:00",
+          enablePartialBooking: form.b15EnablePartialBooking,
+          partialBookingPct: Number(form.b15PartialBookingPct || 50),
+          partialBookingR: Number(form.b15PartialBookingR || 1.8),
+          enableCprSupportResistance: form.b15EnableCprSupportResistance,
           ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
-            minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
+            minPremium: Number(form.minPremium),
+            maxPremium: Number(form.maxPremium),
           }),
-        };
-      } else if (form.type === "EMA_RSI_OPTIONS") {
-        config = {
-          symbol: form.symbol.trim(), exchange: form.exchange,
-          instrumentType: form.instrumentType,
-          emaFast: Number(form.emaFast), emaSlow: Number(form.emaSlow),
-          rsiPeriod: Number(form.rsiPeriod),
-          rsiEntryMin: Number(form.rsiEntryMin), rsiEntryMax: Number(form.rsiEntryMax),
-          lots: Number(form.lots), qty,
-          stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
-          maxTradesPerDay: Number(form.maxTradesPerDay),
-          product: form.product, startAfterMin: Number(form.startAfterMin),
         };
       } else {
         config = {
-          symbol: form.symbol.trim(), exchange: form.exchange,
+          symbol: form.symbol.trim(),
+          exchange: form.exchange,
           instrumentType: form.instrumentType,
-          emaPeriod: Number(form.emaPeriod), vwapSource: form.vwapSource || 'close', isOptionBuyingOnly: form.isOptionBuyingOnly,
-          qty, lots: Number(form.lots), product: form.product,
-          stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          emaPeriod: Number(form.emaPeriod),
+          vwapSource: form.vwapSource || 'close',
+          isOptionBuyingOnly: form.isOptionBuyingOnly,
+          qty,
+          lots: Number(form.lots),
+          product: form.product,
+          stopLossRs: Number(form.stopLossRs),
+          targetRs: Number(form.targetRs),
+          exitExactAtTarget: !!form.exitExactAtTarget,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableProfitFloor: form.enableProfitFloor,
           profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
           ...(form.isOptionBuyingOnly && {
-            minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
+            minPremium: Number(form.minPremium),
+            maxPremium: Number(form.maxPremium),
           }),
         };
       }
@@ -293,1217 +470,343 @@ export default function NewStrategyPage() {
       };
 
       await strategyApi.create(payload);
-
       toast.success("Strategy created!", {
         description: `${form.name} is ready. Start it from the Strategies page.`,
       });
       router.push("/strategies");
     } catch (err: any) {
       console.error("❌ Create strategy error:", err);
-      if (err.response) {
-        console.error("❌ Response data:", err.response.data);
-      }
       toast.error(err?.response?.data?.message ?? "Failed to create strategy");
     } finally {
       setSubmitting(false);
     }
-  }
+  };
+
+  const meta = getStrategyMeta(form.type);
+  const MetaIcon = meta.icon;
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6 animate-[fade-up_0.4s_ease_both]">
-      {/* Title */}
-      <div>
-        <h1 className="text-2xl font-bold">Create Strategy</h1>
-        <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">
-          Build and deploy your algo trading strategy in 4 steps
-        </p>
+    <div className="w-full space-y-6 pb-16 animate-[fade-up_0.4s_ease_both]">
+      {/* ─── Top Command Header ─── */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/50 pb-5">
+        <div className="flex items-center gap-3">
+          <Link href="/strategies">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 rounded-xl border-border/80 bg-card hover:bg-accent/60 shadow-2xs shrink-0"
+              title="Return to Strategies"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-black tracking-tight text-foreground">Create Strategy</h1>
+              <Badge variant="secondary" className="text-[10px] font-bold px-2 py-0.5 uppercase tracking-wider bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+                Step {step + 1} of {STEPS.length}
+              </Badge>
+              <Badge variant="outline" className="text-[10px] font-semibold text-muted-foreground hidden md:inline-flex">
+                DEPLOYMENT WIZARD
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Build, calibrate, and deploy institutional-grade algorithmic strategies in 4 simple steps
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 self-stretch sm:self-auto justify-end">
+          <Link href="/strategies">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-foreground h-9 px-3"
+            >
+              Cancel &amp; Exit
+            </Button>
+          </Link>
+        </div>
       </div>
 
-      {/* Stepper */}
-      <div className="flex items-center gap-0">
-        {STEPS.map((label, i) => (
-          <div key={i} className="flex items-center flex-1">
-            <div className="flex flex-col items-center gap-1 min-w-0">
-              <div
-                className={cn(
-                  "h-8 w-8 rounded-full flex items-center justify-center text-sm font-semibold border-2 transition-all",
-                  i < step
-                    ? "bg-[hsl(var(--green))] border-[hsl(var(--green))] text-white"
-                    : i === step
-                      ? "border-[hsl(var(--primary))] text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
-                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] bg-[hsl(var(--background))]"
-                )}
-              >
-                {i < step ? <Check className="h-4 w-4" /> : i + 1}
+      {/* ─── Full-Width Stepper Ribbon ─── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {STEPS.map((s, i) => {
+          const isDone = i < step;
+          const isCurrent = i === step;
+
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => {
+                if (i < step) setStep(i);
+              }}
+              disabled={i > step}
+              className={cn(
+                "relative rounded-2xl border p-3.5 text-left transition-all duration-200 overflow-hidden flex items-center justify-between gap-3 bg-card",
+                isCurrent
+                  ? "border-blue-500/50 shadow-xs ring-1 ring-blue-500/20"
+                  : isDone
+                    ? "border-border/70 hover:border-border cursor-pointer shadow-2xs"
+                    : "border-border/40 opacity-50 cursor-not-allowed"
+              )}
+            >
+              {isCurrent && (
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400" />
+              )}
+              {isDone && (
+                <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
+              )}
+
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className={cn(
+                    "h-8 w-8 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 transition-all",
+                    isDone && "bg-emerald-500/15 text-emerald-600 border border-emerald-500/30",
+                    isCurrent && "bg-blue-600 text-white shadow-2xs shadow-blue-600/30",
+                    !isDone && !isCurrent && "bg-secondary text-muted-foreground border border-border/50"
+                  )}
+                >
+                  {isDone ? <Check className="h-4 w-4 stroke-[3]" /> : i + 1}
+                </div>
+                <div className="min-w-0">
+                  <p
+                    className={cn(
+                      "text-xs font-bold truncate leading-tight",
+                      isCurrent ? "text-foreground" : isDone ? "text-foreground/90" : "text-muted-foreground"
+                    )}
+                  >
+                    {s.title}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground truncate hidden sm:block mt-0.5">
+                    {s.subtitle}
+                  </p>
+                </div>
               </div>
+
               <span
                 className={cn(
-                  "text-[10px] font-medium text-center leading-tight hidden sm:block",
-                  i === step
-                    ? "text-[hsl(var(--foreground))] font-bold"
-                    : "text-[hsl(var(--muted-foreground))]"
+                  "text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded shrink-0",
+                  isCurrent
+                    ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                    : isDone
+                      ? "bg-emerald-500/10 text-emerald-600"
+                      : "text-muted-foreground/50"
                 )}
               >
-                {label}
+                {isDone ? "Done" : isCurrent ? "Active" : `Step ${i + 1}`}
               </span>
-            </div>
-            {i < STEPS.length - 1 && (
-              <div
-                className={cn(
-                  "flex-1 h-0.5 mx-2 mt-[-16px] rounded transition-all",
-                  i < step
-                    ? "bg-[hsl(var(--green))]"
-                    : "bg-[hsl(var(--border))]"
-                )}
-              />
-            )}
-          </div>
-        ))}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Step card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{STEPS[step]}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
+      {/* ─── Main Grid: Left Wizard Step (8 Cols) + Right Blueprint Inspector (4 Cols) ─── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left: Active Wizard Step Card & Nav Buttons */}
+        <div className="lg:col-span-8 xl:col-span-8 2xl:col-span-9 space-y-6">
+          <Card className="relative rounded-2xl overflow-hidden border border-border/70 bg-card p-5 sm:p-6 shadow-xs space-y-6">
+            {step === 0 && <Step1StrategyType form={form} set={set} />}
+            {step === 1 && <Step2InstrumentConfig form={form} set={set} />}
+            {step === 2 && <Step3RiskManagement form={form} set={set} />}
+            {step === 3 && <Step4BrokerReview form={form} set={set} brokers={brokers} />}
 
-          {step === 0 && (
-            <div className="space-y-5">
-              <div>
-                <label className="text-sm font-semibold mb-2 block">Strategy Name</label>
-                <Input
-                  id="strategy-name"
-                  placeholder="e.g. Nifty 15-Min Breakout"
-                  value={form.name}
-                  onChange={(e) => set("name", e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-semibold mb-2 block">Strategy Type</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {[
-                    {
-                      type: "EMA_VWAP_CROSSOVER",
-                      label: "Intraday Auto Stock Picker (₹500/day Target)",
-                      desc: "Auto-scans top liquid NSE stocks at 9:15 AM, picks the best momentum stock using EMA + VWAP crossover with candle confirmation, & executes Zerodha MIS orders automatically with a ₹500 target & ₹500 SL (1:1 RR).",
-                      icon: Zap,
-                      badge: "₹500/day Target",
-                      badgeColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold",
-                      isAutoStockPreset: true,
-                    },
-                    {
-                      type: "BREAKOUT_15MIN",
-                      label: "15-Min Breakout (Single Instrument)",
-                      desc: "Enters after 5-min candle closes above/below the first 15-min range for a specific stock or index. Fixed SL & Target.",
-                      icon: BarChart2,
-                      badge: null,
-                      badgeColor: "",
-                      isAutoStockPreset: false,
-                    },
-                    {
-                      type: "EMA_VWAP_CROSSOVER",
-                      label: "15-EMA & VWAP",
-                      desc: "Trade when 15-period EMA crosses VWAP. Confirmation candle logic. Optimized for Options & Stocks.",
-                      icon: TrendingUp,
-                      badge: null,
-                      badgeColor: "",
-                      isAutoStockPreset: false,
-                    },
-                    {
-                      type: "NIFTY_OPTIONS_SCALPER",
-                      label: "Nifty 10-Point Options Scalper",
-                      desc: "Captures 10 option points daily on Nifty CE/PE using 3 triggers (EMA-VWAP Crossover, VWAP Pullback Rejection, 15-Min ORB). Auto-trails SL to COST at +5 pts & stops after 1 win.",
-                      icon: Target,
-                      badge: "Nifty 10-Pts Daily",
-                      badgeColor: "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold",
-                      isAutoStockPreset: false,
-                    },
-                    {
-                      type: "STOCK_OPTIONS_BUYING",
-                      label: "Stock Options Buying",
-                      desc: "Best for 20k-25k capital. Trades ATM stock options using 15-EMA & VWAP crossover on 5/15-min stock charts with dynamic SL & RR Target.",
-                      icon: Flame,
-                      badge: "F&O Stocks",
-                      badgeColor: "bg-blue-100 text-blue-700",
-                      isAutoStockPreset: false,
-                    },
-                  ].map(({ type, label, desc, icon: Icon, badge, badgeColor, isAutoStockPreset }) => (
-                    <button
-                      key={label}
-                      id={`type-${label}`}
-                      onClick={() => {
-                        set("type", type);
-                        if (isAutoStockPreset) {
-                          set("name", "Intraday Auto Stock Picker (₹500/day Target)");
-                          set("symbol", "AUTO");
-                          set("exchange", "NSE");
-                          set("instrumentType", "STOCK");
-                          set("product", "MIS");
-                          set("targetRs", "500");
-                          set("stopLossRs", "500");
-                          set("maxTradesPerDay", "2");
-                        } else if (type === "NIFTY_OPTIONS_SCALPER") {
-                          set("name", "Nifty 10-Point Options Scalper");
-                          set("symbol", "NIFTY 50");
-                          set("exchange", "NSE");
-                          set("instrumentType", "INDEX");
-                          set("product", "MIS");
-                          set("lots", "1");
-                          set("dsTargetPoints", "10");
-                          set("dsStopLossPoints", "7");
-                          set("maxTradesPerDay", "3");
-                        } else if (type === "STOCK_OPTIONS_BUYING") {
-                          set("symbol", "AUTO");
-                          set("exchange", "NSE");
-                          set("instrumentType", "STOCK");
-                        } else if (form.symbol === "AUTO" && !isAutoStockPreset) {
-                          set("symbol", "NIFTY 50");
-                          set("exchange", "NSE");
-                          set("instrumentType", "INDEX");
-                        }
-                      }}
-                      className={cn(
-                        "text-left p-4 rounded-xl border-2 transition-all",
-                        form.type === type
-                          ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.06)] shadow-sm"
-                          : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.4)] hover:bg-[hsl(var(--secondary)/0.5)]"
-                      )}
-                    >
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className={cn(
-                          "h-10 w-10 rounded-lg flex items-center justify-center",
-                          form.type === type ? "bg-[hsl(var(--primary)/0.15)]" : "bg-[hsl(var(--secondary))]"
-                        )}>
-                          <Icon className={cn("h-5 w-5", form.type === type ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]")} />
-                        </div>
-                        <div>
-                          <p className="font-bold text-sm">{label}</p>
-                          {badge && (
-                            <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full font-semibold", badgeColor || "bg-[hsl(var(--green)/0.15)] text-green-600")}>
-                              {badge}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">{desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+            {/* Bottom Navigation Controls inside card */}
+            <div className="flex items-center justify-between pt-4 border-t border-border/50">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setStep((s) => Math.max(0, s - 1))}
+                disabled={step === 0 || submitting}
+                className="h-9.5 px-4 rounded-xl border-border/70 bg-card hover:bg-accent font-semibold text-xs transition-all"
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" /> Previous Step
+              </Button>
 
-          {step === 1 && (
-            <div className="space-y-5">
-              {/* Preset quick-select */}
-              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_RSI_OPTIONS" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "DAILY_SCALPER") && (
-                <div>
-                  <label className="text-sm font-semibold mb-2 block">Quick Select Instrument</label>
-                  <div className="flex flex-wrap gap-2">
-                    {PRESET_INSTRUMENTS.map((p) => (
-                      <button
-                        key={p.label}
-                        onClick={() => {
-                          set("symbol", p.symbol);
-                          set("exchange", p.exchange);
-                          set("instrumentType", p.type);
-                        }}
-                        className={cn(
-                          "px-3 py-1.5 rounded-lg text-sm font-medium border transition-all",
-                          form.symbol === p.symbol
-                            ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
-                            : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.4)]"
-                        )}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="relative space-y-2">
-                <label className="text-sm font-medium block">Search Symbol (Stock, Option, Future)</label>
-                <div className="relative">
-                  <Input
-                    placeholder="Search e.g. RELIANCE, NIFTY 22000 CE..."
-                    value={searchQuery}
-                    onChange={(e) => handleSymbolSearch(e.target.value)}
-                    className="pr-10"
-                  />
-                  {isSearching && (
-                    <div className="absolute right-3 top-2.5">
-                      <Loader2 className="h-5 w-5 animate-spin text-[hsl(var(--muted-foreground))]" />
-                    </div>
-                  )}
-                </div>
-
-                {/* Search Results Dropdown */}
-                {searchResults.length > 0 && (
-                  <div className="absolute z-50 w-full mt-1 bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl max-h-60 overflow-y-auto divide-y divide-[hsl(var(--border)/0.5)]">
-                    {searchResults.map((item) => {
-                      const itemPrice = item.ltp || item.ltpNSE || item.price;
-                      return (
-                        <button
-                          key={`${item.exchange}:${item.symbol}`}
-                          onClick={() => selectInstrument(item)}
-                          className="w-full flex items-center justify-between p-3 hover:bg-[hsl(var(--secondary)/0.5)] transition-colors text-left group"
-                        >
-                          <div>
-                            <p className="text-sm font-bold text-[hsl(var(--foreground))] group-hover:text-indigo-600 transition-colors">
-                              {item.symbol}
-                            </p>
-                            <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase truncate max-w-[220px]">
-                              {item.name}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {itemPrice ? (
-                              <div className="text-right">
-                                <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                                  ₹{Number(itemPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                                </p>
-                                <span className="text-[9px] text-slate-400">Live LTP</span>
-                              </div>
-                            ) : null}
-                            <Badge className="text-[10px] font-semibold">{item.exchange}</Badge>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+              <div className="flex items-center gap-2.5">
+                {step < STEPS.length - 1 ? (
+                  <Button
+                    type="button"
+                    onClick={() => setStep((s) => s + 1)}
+                    disabled={!canNext()}
+                    className="h-9.5 px-5 rounded-xl font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 transition-all flex items-center gap-1.5"
+                  >
+                    Continue to {STEPS[step + 1].title} <ChevronRight className="h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={submitting || !canNext()}
+                    className="h-9.5 px-6 rounded-xl font-extrabold text-xs bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-600/25 transition-all flex items-center gap-2"
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Creating Strategy...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="h-4 w-4 stroke-[3]" />
+                        Create &amp; Deploy Strategy
+                      </>
+                    )}
+                  </Button>
                 )}
+              </div>
+            </div>
+          </Card>
+        </div>
 
-                <div className="flex items-center justify-between p-3 rounded-lg bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))]">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Current Selection</p>
-                    <p className="text-sm font-bold">{form.symbol} <span className="text-[10px] font-normal text-[hsl(var(--muted-foreground))]">({form.exchange})</span></p>
-                  </div>
-                  <Badge variant="secondary">{form.instrumentType}</Badge>
+        {/* Right: Live Strategy Specification & Blueprint Inspector (Sticky) */}
+        <div className="lg:col-span-4 xl:col-span-4 2xl:col-span-3 space-y-4 lg:sticky lg:top-6">
+          <Card className="relative rounded-2xl overflow-hidden border border-border/70 bg-card p-4 sm:p-5 shadow-xs space-y-4">
+            {/* Top Ambient Accent Bar */}
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400" />
+
+            {/* Top Header */}
+            <div className="flex items-center justify-between border-b border-border/50 pb-3 pt-0.5">
+              <div className="flex items-center gap-2">
+                <div className={cn("p-1.5 rounded-lg shrink-0", meta.iconColor)}>
+                  <MetaIcon className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-foreground">
+                    Live Configuration
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground">{meta.label}</p>
                 </div>
               </div>
+              <Badge className={cn("text-[9px] font-extrabold px-2 py-0 uppercase shadow-2xs", meta.badgeClass)}>
+                {meta.badge}
+              </Badge>
+            </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium block">Number of Lots</label>
-                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-                      1 Lot = {getLotSize(form.symbol)} Qty
+            {/* Strategy Title & Description */}
+            <div>
+              <p className="text-xs font-bold text-foreground leading-tight truncate">
+                {form.name || "Untitled Strategy"}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                {meta.desc}
+              </p>
+            </div>
+
+            {/* 3-Box Matrix (EXACTLY MATCHING StrategyCard in strategies/page.tsx!) */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="p-2 rounded-xl bg-secondary/40 border border-border/50 text-center flex flex-col justify-center">
+                <span className="text-[10px] font-medium text-muted-foreground">Sizing</span>
+                <span className="text-xs font-bold text-foreground truncate mt-0.5">
+                  {form.type === "STOCK_OPTIONS_BUYING"
+                    ? `₹${Number(form.sMaxCapital || 25000).toLocaleString("en-IN")}`
+                    : `${form.lots || 1} Lot`}
+                </span>
+              </div>
+
+              <div className="p-2 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center flex flex-col justify-center">
+                <span className="text-[10px] font-medium text-rose-500/80">Stop Loss</span>
+                <span className="text-xs font-bold text-rose-600 mt-0.5 truncate">
+                  {form.type === "STOCK_OPTIONS_BUYING"
+                    ? "Breakeven Trail"
+                    : form.type === "NIFTY_OPTIONS_SCALPER"
+                      ? "-7 Pts (Server SL)"
+                      : `₹${form.stopLossRs || 500}`}
+                </span>
+              </div>
+
+              <div className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-center flex flex-col justify-center">
+                <span className="text-[10px] font-medium text-emerald-600/80">Target</span>
+                <span className="text-xs font-bold text-emerald-600 mt-0.5 truncate">
+                  {form.type === "STOCK_OPTIONS_BUYING"
+                    ? "T1 (+50%) / T2"
+                    : form.type === "NIFTY_OPTIONS_SCALPER"
+                      ? "+10 Pts"
+                      : `₹${form.targetRs || 500}`}
+                </span>
+              </div>
+            </div>
+
+            {/* Execution & Asset Status Ribbon */}
+            <div className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg bg-secondary/30 border border-border/40">
+              <div className="flex items-center gap-1.5 text-muted-foreground text-[11px]">
+                <Activity className="h-3 w-3 text-muted-foreground/70" />
+                <span>Mode:</span>
+                <span
+                  className={cn(
+                    "font-bold uppercase text-[10px] px-1.5 py-0.2 rounded",
+                    form.isPaperTrade
+                      ? "bg-amber-500/10 text-amber-600"
+                      : "bg-emerald-500/10 text-emerald-600"
+                  )}
+                >
+                  {form.isPaperTrade ? "Paper Trade" : "Live Broker"}
+                </span>
+              </div>
+              <span className="text-[10px] font-bold text-foreground">
+                {form.symbol === "AUTO" || form.sIsAutoStockSelect
+                  ? "180+ F&O Auto"
+                  : form.symbol || "AUTO"}
+              </span>
+            </div>
+
+            {/* Guardrails checklist */}
+            <div className="space-y-1.5 pt-1 border-t border-border/40">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Built-In Guardrails
+              </p>
+              {meta.features.map((feat: string, idx: number) => (
+                <div key={idx} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+                  <span className="truncate">{feat}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Pre-Flight Checklist */}
+            <div className="space-y-2 pt-1 border-t border-border/40">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Pre-Flight Readiness
+              </p>
+              <div className="space-y-1 text-xs">
+                {[
+                  { label: "Algorithm Selected", ready: !!form.type },
+                  { label: "Instrument & Sizing", ready: !!form.symbol && Number(form.lots) > 0 },
+                  { label: "Risk Guards Defined", ready: Number(form.stopLossRs || form.sMaxCapital || form.dsStopLossPoints) > 0 },
+                  { label: "Broker Verification", ready: form.isPaperTrade || !!form.brokerAccountId },
+                ].map((item, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-[11px] py-1">
+                    <span className="flex items-center gap-1.5">
+                      {item.ready ? (
+                        <Check className="h-3.5 w-3.5 text-emerald-500 stroke-[3]" />
+                      ) : (
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground/30 inline-block" />
+                      )}
+                      <span className={cn(item.ready ? "text-foreground font-medium" : "text-muted-foreground")}>
+                        {item.label}
+                      </span>
+                    </span>
+                    <span className={cn("text-[9px] font-bold uppercase", item.ready ? "text-emerald-600" : "text-muted-foreground/60")}>
+                      {item.ready ? "Ready" : "Pending"}
                     </span>
                   </div>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={form.lots}
-                    onChange={(e) => set("lots", e.target.value)}
-                  />
-                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                    {form.symbol === 'AUTO'
-                      ? 'Quantity will be dynamically calculated to achieve target'
-                      : `Total Quantity: ${Number(form.lots) * getLotSize(form.symbol)} shares`}
-                  </p>
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-2 block">Product Type</label>
-                  <select
-                    value={form.product}
-                    onChange={(e) => set("product", e.target.value)}
-                    className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
-                  >
-                    <option value="MIS">MIS (Intraday)</option>
-                    <option value="NRML">NRML (Overnight)</option>
-                  </select>
-                </div>
-              </div>
-
-              {form.type === "EMA_VWAP_CROSSOVER" && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">EMA Period</label>
-                    <Input type="number" value={form.emaPeriod} onChange={(e) => set("emaPeriod", e.target.value)} />
-                  </div>
-                  {/* Trading Mode: Equity vs Options */}
-                  <div>
-                    <label className="text-sm font-semibold mb-2 block">Trading Instrument</label>
-                    <div className="p-1 rounded-xl bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))] grid grid-cols-2 gap-1">
-                      <button
-                        type="button"
-                        onClick={() => set("isOptionBuyingOnly", false)}
-                        className={cn(
-                          "flex flex-col items-center gap-1 py-3 rounded-lg text-xs font-semibold transition-all",
-                          !form.isOptionBuyingOnly
-                            ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
-                            : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                        )}
-                      >
-                        <BarChart2 className="h-5 w-5 mb-0.5" />
-                        <span>Equity / Stock</span>
-                        <span className="text-[10px] font-normal opacity-70">Trade NSE/BSE directly</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => set("isOptionBuyingOnly", true)}
-                        className={cn(
-                          "flex flex-col items-center gap-1 py-3 rounded-lg text-xs font-semibold transition-all",
-                          form.isOptionBuyingOnly
-                            ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
-                            : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                        )}
-                      >
-                        <Target className="h-5 w-5 mb-0.5" />
-                        <span>Options (CE/PE)</span>
-                        <span className="text-[10px] font-normal opacity-70">Buy ATM options on NFO</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {form.type === "EMA_RSI_OPTIONS" && (
-                <div className="space-y-4">
-                  <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-100">
-                    <p className="text-xs font-semibold text-indigo-700">EMA + RSI + VWAP Triple Confirmation</p>
-                    <p className="text-[11px] text-indigo-600 mt-1">Enters ONLY when EMA crossover + RSI in range + price is on right side of VWAP.</p>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">EMA Fast</label>
-                      <Input type="number" value={form.emaFast} onChange={e => set("emaFast", e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">EMA Slow</label>
-                      <Input type="number" value={form.emaSlow} onChange={e => set("emaSlow", e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">RSI Period</label>
-                      <Input type="number" value={form.rsiPeriod} onChange={e => set("rsiPeriod", e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">RSI Min (Long)</label>
-                      <Input type="number" value={form.rsiEntryMin} onChange={e => set("rsiEntryMin", e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">RSI Max (Long)</label>
-                      <Input type="number" value={form.rsiEntryMax} onChange={e => set("rsiEntryMax", e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">Skip first (min)</label>
-                      <Input type="number" value={form.startAfterMin} onChange={e => set("startAfterMin", e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {form.type === "STOCK_OPTIONS_BUYING" && (
-                <div className="space-y-4">
-                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-100">
-                    <p className="text-xs font-semibold text-blue-700">🔥 Stock Options Buying (EMA + VWAP Crossover + Inside Candle)</p>
-                    <p className="text-[11px] text-blue-600 mt-1">Triggers when the 15-EMA crosses VWAP on the stock, followed by an Inside Candle (Mother & Baby candle) setup. Places trigger entry orders on dynamic ATM CE/PE contracts.</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-medium mb-1 block">Timeframe</label>
-                      <select
-                        value={form.sTimeframe}
-                        onChange={(e) => set("sTimeframe", e.target.value)}
-                        className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
-                      >
-                        <option value="5min">5 Minute Candles</option>
-                        <option value="15min">15 Minute Candles</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium mb-1 block">EMA Period</label>
-                      <Input type="number" value={form.sEmaPeriod} onChange={e => set("sEmaPeriod", e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {form.type === "DAILY_SCALPER" && (
-                <div className="space-y-4">
-                  <div className="p-3 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200">
-                    <p className="text-xs font-semibold text-emerald-700">⚡ Daily Target Scalper</p>
-                    <p className="text-[11px] text-emerald-600 mt-1">Trades ATM index options on 3-minute chart based on 9-EMA + VWAP + RSI crossover. Automatically halts trading once your daily profit target is met.</p>
-                  </div>
-
-                  {/* Index Selector */}
-                  <div>
-                    <label className="text-sm font-semibold mb-2 block">Select Index</label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {[
-                        { label: "NIFTY 50", symbol: "NIFTY 50", exchange: "NSE" },
-                        { label: "BANK NIFTY", symbol: "BANKNIFTY", exchange: "NSE" },
-                        { label: "SENSEX", symbol: "SENSEX", exchange: "BSE" },
-                      ].map(idx => (
-                        <button
-                          key={idx.symbol}
-                          onClick={() => {
-                            set("symbol", idx.symbol);
-                            set("exchange", idx.exchange);
-                            set("instrumentType", "INDEX");
-                          }}
-                          className={cn(
-                            "text-left p-3.5 rounded-xl border-2 transition-all",
-                            form.symbol === idx.symbol
-                              ? "border-emerald-400 bg-emerald-50 shadow-sm"
-                              : "border-[hsl(var(--border))] hover:border-emerald-300"
-                          )}
-                        >
-                          <p className="font-bold text-sm">{idx.label}</p>
-                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">
-                            1 Lot = {getLotSize(idx.symbol)} Qty
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Capital size */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 block">Available Capital (₹)</label>
-                      <Input
-                        type="number"
-                        min={5000}
-                        value={form.dsCapital}
-                        onChange={(e) => set("dsCapital", e.target.value)}
-                      />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                        Ensures trade cost does not exceed your budget (default ₹20,000)
-                      </p>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-sm font-semibold">Number of Lots</label>
-                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                          Lot Size: {getLotSize(form.symbol)} Qty
-                        </span>
-                      </div>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={form.lots}
-                        onChange={(e) => set("lots", e.target.value)}
-                      />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                        Total Quantity: {Number(form.lots) * getLotSize(form.symbol)} Qty
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="space-y-5">
-              {form.type === "NIFTY_OPTIONS_SCALPER" && (
-                <>
-                  <div className="p-3 rounded-xl bg-purple-50 border border-purple-100 dark:bg-purple-950/20 dark:border-purple-900">
-                    <p className="text-xs font-semibold text-purple-700 dark:text-purple-300">⚡ Nifty 10-Point Scalper Risk & Target Controls</p>
-                    <p className="text-[11px] text-purple-600 dark:text-purple-400 mt-1">Captures +10 option points per winning trade, automatically trails SL to COST at +5 points, and auto-halts for the day after 1 winning trade.</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Target className="h-4 w-4 text-emerald-500" />
-                        Target Option Points
-                      </label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={form.dsTargetPoints || "10"}
-                        onChange={(e) => set("dsTargetPoints", e.target.value)}
-                        className="border-emerald-200 focus:ring-emerald-300 font-semibold"
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Option target in points (default: +10 pts = ₹650 per lot)
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Shield className="h-4 w-4 text-red-500" />
-                        Stop Loss Option Points
-                      </label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={form.dsStopLossPoints || "7"}
-                        onChange={(e) => set("dsStopLossPoints", e.target.value)}
-                        className="border-red-200 focus:ring-red-300 font-semibold"
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Initial Stop Loss in option points (default: -7 pts = ₹455 per lot)
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Zap className="h-4 w-4 text-amber-500" />
-                        Max Trades / Day
-                      </label>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={form.maxTradesPerDay || "3"}
-                        onChange={(e) => set("maxTradesPerDay", e.target.value)}
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Maximum trades allowed per day (auto-halts after 1 win)
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Shield className="h-4 w-4 text-blue-500" />
-                        Breakeven Trail Level
-                      </label>
-                      <Input
-                        type="number"
-                        disabled
-                        value="5"
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        SL automatically moves to Entry Price (COST) at +5 pts profit
-                      </p>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {form.type === "DAILY_SCALPER" && (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Target className="h-4 w-4 text-emerald-500" />
-                        Daily Target Profit (₹)
-                      </label>
-                      <Input
-                        type="number"
-                        min={100}
-                        value={form.dsDailyTargetRs}
-                        onChange={(e) => set("dsDailyTargetRs", e.target.value)}
-                        className="border-emerald-200 focus:ring-emerald-300 font-semibold"
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Halt strategy once net P&L reaches this target (default ₹500)
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Shield className="h-4 w-4 text-red-500" />
-                        Daily Max Loss (₹)
-                      </label>
-                      <Input
-                        type="number"
-                        min={100}
-                        value={form.dsDailyMaxLossRs}
-                        onChange={(e) => set("dsDailyMaxLossRs", e.target.value)}
-                        className="border-red-200 focus:ring-red-300 font-semibold"
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Halt strategy if daily losses touch this limit (default ₹800)
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 pt-2">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 block">Override Target Points</label>
-                      <Input
-                        type="number"
-                        placeholder="Default (10 Nifty, 20 Banknifty, 30 Sensex)"
-                        value={form.dsTargetPoints}
-                        onChange={(e) => set("dsTargetPoints", e.target.value)}
-                      />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                        Optional: Set custom target points in option premium
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 block">Override Stop Loss Points</label>
-                      <Input
-                        type="number"
-                        placeholder="Default (7 Nifty, 15 Banknifty, 20 Sensex)"
-                        value={form.dsStopLossPoints}
-                        onChange={(e) => set("dsStopLossPoints", e.target.value)}
-                      />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                        Optional: Set custom SL points in option premium
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                      <Zap className="h-4 w-4 text-amber-500" />
-                      Max Trades / Day
-                    </label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={form.dsMaxTradesPerDay}
-                      onChange={(e) => set("dsMaxTradesPerDay", e.target.value)}
-                    />
-                    <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                      Max number of option trades to initiate in a day
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
-                <>
-                  {/* Info box */}
-                  <div className="flex gap-3 p-3 rounded-xl bg-[hsl(var(--primary)/0.06)] border border-[hsl(var(--primary)/0.15)]">
-                    <Info className="h-4 w-4 text-[hsl(var(--primary))] mt-0.5 shrink-0" />
-                    <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
-                      Orders are placed as <strong>Limit</strong> orders Entry, Stop-Loss (SL-Limit), and Target.
-                      Fixed amounts are per trade (not per lot). SL price = Entry Qty).
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {form.type === "STOCK_OPTIONS_BUYING" && (
-                <>
-                  {/* Info box */}
-                  <div className="flex gap-3 p-3 rounded-xl bg-blue-50 border border-blue-100">
-                    <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
-                    <p className="text-xs text-blue-600 leading-relaxed font-semibold">
-                      Risk Management: Stop Loss is dynamically set to the Option's Mother Candle Low. Target is determined using the Risk-Reward Ratio.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Shield className="h-4 w-4 text-red-500" />
-                        Max Capital Budget (₹)
-                      </label>
-                      <Input
-                        type="number"
-                        min={1000}
-                        value={form.sMaxCapital}
-                        onChange={(e) => set("sMaxCapital", e.target.value)}
-                        className="border-red-200 focus:ring-red-300 font-semibold"
-                      />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                        Failsafe: Skips trade if 1 lot exceeds this capital (e.g. 25000).
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Target className="h-4 w-4 text-green-500" />
-                        Risk-Reward Ratio (e.g. 2 for 1:2)
-                      </label>
-                      <Input
-                        type="number"
-                        min={0.5}
-                        step={0.5}
-                        value={form.sRiskRewardRatio}
-                        onChange={(e) => set("sRiskRewardRatio", e.target.value)}
-                        className="border-green-200 focus:ring-green-300 font-semibold"
-                      />
-                      <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                        If risk is ₹1.50 and RR is 2, Target is ₹3.00 profit.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">Trigger Offset (points)</label>
-                      <Input
-                        type="number"
-                        step={0.05}
-                        value={form.sTriggerOffset}
-                        onChange={(e) => set("sTriggerOffset", e.target.value)}
-                      />
-                      <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Points above mother high to entry (e.g. 0.50)</p>
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">Slippage Buffer %</label>
-                      <Input
-                        type="number"
-                        value={form.sProtectionBufferPct}
-                        onChange={(e) => set("sProtectionBufferPct", e.target.value)}
-                      />
-                      <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Max execution slippage allowed (default 10%)</p>
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold mb-1 block">Max Trades / Day</label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={form.maxTradesPerDay}
-                        onChange={(e) => set("maxTradesPerDay", e.target.value)}
-                      />
-                      <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-1">Stops trading after this count</p>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {form.type === "BREAKOUT_15MIN" && (
-                <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-indigo-600" />
-                      <span className="text-sm font-bold text-indigo-950">Dynamic Volatility & Trap Reversal</span>
-                    </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
-                      High Accuracy Mode
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 pt-1">
-                    <div>
-                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-slate-700">
-                        <Target className="h-3.5 w-3.5 text-green-600" />
-                        Risk : Reward Ratio
-                      </label>
-                      <Input
-                        type="number"
-                        step={0.5}
-                        min={1}
-                        max={5}
-                        value={form.b15RiskRewardRatio}
-                        onChange={(e) => set("b15RiskRewardRatio", e.target.value)}
-                        className="bg-white border-indigo-200 font-semibold text-xs"
-                      />
-                      <p className="text-[10px] text-slate-500 mt-1">Default 1:2.0 RR (Target = 2x ATR Risk)</p>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-slate-700">
-                        <TrendingUp className="h-3.5 w-3.5 text-blue-600" />
-                        Strike Moneyness
-                      </label>
-                      <select
-                        value={form.b15Moneyness}
-                        onChange={(e) => set("b15Moneyness", e.target.value)}
-                        className="w-full h-9 rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                        <option value="ITM">1-Strike ITM (Recommended - High Delta)</option>
-                        <option value="ATM">ATM (At-The-Money)</option>
-                      </select>
-                      <p className="text-[10px] text-slate-500 mt-1">ITM options reduce theta decay drag</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-indigo-100">
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={form.b15EnableDynamicAtr}
-                        onChange={(e) => set("b15EnableDynamicAtr", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-800 block">Dynamic ATR Scaling</span>
-                        <span className="text-[9px] text-slate-500">Auto-calibrates buffer & SL to volatility</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={form.b15EnableFakeoutReversal}
-                        onChange={(e) => set("b15EnableFakeoutReversal", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-800 block">⚡ Fakeout Trap Reversal</span>
-                        <span className="text-[9px] text-slate-500">Auto-flips trade on failed breakout traps</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={form.b15EnableBreakevenTrail}
-                        onChange={(e) => set("b15EnableBreakevenTrail", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-800 block">🛡 Breakeven Lock (+1R)</span>
-                        <span className="text-[9px] text-slate-500">Trails SL to Cost once in profit</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={form.b15EnableVwapFilter}
-                        onChange={(e) => set("b15EnableVwapFilter", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-800 block">VWAP / EMA Filter</span>
-                        <span className="text-[9px] text-slate-500">Only trades with macro trend</span>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {(form.type === "BREAKOUT_15MIN" || form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
-                <>
-                  {((form.type === "BREAKOUT_15MIN" && (form.instrumentType === "INDEX" || form.instrumentType === "OPTION")) ||
-                    (form.type === "EMA_VWAP_CROSSOVER" && form.isOptionBuyingOnly)) && (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                            <TrendingUp className="h-4 w-4 text-blue-500" />
-                            Min Premium
-                          </label>
-                          <Input
-                            type="number"
-                            value={form.minPremium}
-                            onChange={(e) => set("minPremium", e.target.value)}
-                            className="focus:ring-blue-300"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                            <TrendingUp className="h-4 w-4 text-blue-600" />
-                            Max Premium
-                          </label>
-                          <Input
-                            type="number"
-                            value={form.maxPremium}
-                            onChange={(e) => set("maxPremium", e.target.value)}
-                            className="focus:ring-blue-300"
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <p className="text-[10px] text-[hsl(var(--muted-foreground))] italic px-1">
-                            When breakout occurs, the bot will pick an Option contract with premium between {form.minPremium} and {form.maxPremium}.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Shield className="h-4 w-4 text-red-500" />
-                        Stop Loss
-                      </label>
-                      <Input
-                        id="stopLossRs"
-                        type="number"
-                        min={1}
-                        value={form.stopLossRs}
-                        onChange={(e) => set("stopLossRs", e.target.value)}
-                        className="border-red-200 focus:ring-red-300"
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Fixed loss limit per trade in
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                        <Target className="h-4 w-4 text-green-500" />
-                        Target
-                      </label>
-                      <Input
-                        id="targetRs"
-                        type="number"
-                        min={1}
-                        value={form.targetRs}
-                        onChange={(e) => set("targetRs", e.target.value)}
-                        className="border-green-200 focus:ring-green-300"
-                      />
-                      <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                        Fixed target profit per trade in
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                      <Zap className="h-4 w-4 text-amber-500" />
-                      Max Trades Per Day
-                    </label>
-                    <Input
-                      id="maxTradesPerDay"
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={form.maxTradesPerDay}
-                      onChange={(e) => set("maxTradesPerDay", e.target.value)}
-                    />
-                    <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                      Safety cap strategy stops placing new trades after this limit
-                    </p>
-                  </div>
-
-                  {form.type === "EMA_VWAP_CROSSOVER" && (
-                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Lock className="h-4 w-4 text-emerald-500 shrink-0" />
-                          <span className="text-sm font-bold text-[hsl(var(--foreground))]">Profit Floor Locking & Peak Trailing</span>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={form.enableProfitFloor}
-                            onChange={(e) => set("enableProfitFloor", e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
-                        </label>
-                      </div>
-                      <p className="text-xs text-[hsl(var(--foreground))] opacity-90 leading-relaxed">
-                        Once target profit (<strong>₹{form.targetRs}</strong>) is reached, locks in minimum <strong>₹{form.targetRs}</strong> profit and trails <strong>₹{form.profitFloorBufferRs || 100}</strong> behind peak P&L so you can ride big trends!
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Live preview */}
-                  <div className="p-4 rounded-xl bg-[hsl(var(--secondary)/0.5)] border border-[hsl(var(--border))] space-y-2">
-                    <p className="text-xs font-bold text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
-                      Risk/Reward Preview
-                    </p>
-                    <div className="flex gap-6">
-                      <div>
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Max Loss / Trade</p>
-                        <p className="text-base font-bold text-red-500">
-                          {Number(form.stopLossRs).toLocaleString("en-IN")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">Max Profit / Trade</p>
-                        <p className="text-base font-bold text-green-600">
-                          + {Number(form.targetRs).toLocaleString("en-IN")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">R:R Ratio</p>
-                        <p className="text-base font-bold">
-                          1 : {(Number(form.targetRs) / Math.max(Number(form.stopLossRs), 1)).toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-6">
-              {/* Trading Mode Card */}
-              <div className="p-1 rounded-2xl bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))]">
-                <div className="grid grid-cols-2 gap-1">
-                  <button
-                    onClick={() => set("isPaperTrade", true)}
-                    className={cn(
-                      "flex flex-col items-center gap-2 py-4 rounded-xl transition-all",
-                      form.isPaperTrade
-                        ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
-                        : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                    )}
-                  >
-                    <div className={cn(
-                      "p-2 rounded-lg",
-                      form.isPaperTrade ? "bg-amber-100 text-amber-600" : "bg-[hsl(var(--secondary)/0.5)]"
-                    )}>
-                      <Zap className="h-5 w-5" />
-                    </div>
-                    <div className="text-center">
-                      <p className="text-xs font-bold uppercase tracking-wider">Paper Trading</p>
-                      <p className="text-[10px] opacity-70">Virtual money, no risk</p>
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => set("isPaperTrade", false)}
-                    className={cn(
-                      "flex flex-col items-center gap-2 py-4 rounded-xl transition-all",
-                      !form.isPaperTrade
-                        ? "bg-[hsl(var(--background))] border border-[hsl(var(--border))] shadow-sm text-[hsl(var(--primary))]"
-                        : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                    )}
-                  >
-                    <div className={cn(
-                      "p-2 rounded-lg",
-                      !form.isPaperTrade ? "bg-red-100 text-red-600" : "bg-[hsl(var(--secondary)/0.5)]"
-                    )}>
-                      <TrendingUp className="h-5 w-5" />
-                    </div>
-                    <div className="text-center">
-                      <p className="text-xs font-bold uppercase tracking-wider">Live Trading</p>
-                      <p className="text-[10px] opacity-70">Real capital execution</p>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div>
-                  <label className="text-sm font-semibold mb-2 block">Broker Account</label>
-                  {brokers.length === 0 ? (
-                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200">
-                      <p className="text-sm text-amber-700 font-medium">No broker connected</p>
-                      <p className="text-xs text-amber-600 mt-1">
-                        Please connect a broker account first from the Brokers page.
-                      </p>
-                    </div>
-                  ) : (
-                    <select
-                      id="brokerAccountId"
-                      value={form.brokerAccountId}
-                      onChange={(e) => set("brokerAccountId", e.target.value)}
-                      className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
-                    >
-                      <option value="">Select broker account</option>
-                      {brokers.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.broker} - {b.clientId ?? b.id.slice(0, 8)}
-                          {!b.tokenExpiry || new Date(b.tokenExpiry) < new Date() ? " Session expired" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* Summary */}
-                <div className="space-y-2">
-                  <p className="text-sm font-bold text-[hsl(var(--muted-foreground))] uppercase tracking-wide text-xs">
-                    Configuration Summary
-                  </p>
-                  {(() => {
-                    const items: [string, any][] = [
-                      ["Name", form.name],
-                    ];
-
-                    let typeLabel = "";
-                    if (form.type === "BREAKOUT_15MIN") typeLabel = "15-Min High/Low Breakout";
-                    else if (form.type === "EMA_VWAP_CROSSOVER") typeLabel = "EMA-VWAP Crossover";
-                    else if (form.type === "EMA_RSI_OPTIONS") typeLabel = "EMA + RSI + VWAP";
-                    else if (form.type === "DAILY_SCALPER") typeLabel = "Daily Target Scalper";
-                    else if (form.type === "STOCK_OPTIONS_BUYING") typeLabel = "Stock Options Buying";
-                    else if (form.type === "NIFTY_OPTIONS_SCALPER") typeLabel = "Nifty 10-Point Options Scalper";
-
-                    items.push(["Type", typeLabel]);
-                    items.push(["Symbol", `${form.symbol}  ${form.exchange}`]);
-                    items.push(["Order Size", `${form.lots} Lots (${Number(form.lots) * getLotSize(form.symbol)} Qty)`]);
-                    items.push(["Product", form.product]);
-
-                    if (form.type === "NIFTY_OPTIONS_SCALPER") {
-                      items.push(["Target Points", `+${form.dsTargetPoints || 10} pts (+₹${Number(form.dsTargetPoints || 10) * Number(form.lots) * 65})`]);
-                      items.push(["Stop Loss Points", `-${form.dsStopLossPoints || 7} pts (-₹${Number(form.dsStopLossPoints || 7) * Number(form.lots) * 65})`]);
-                      items.push(["Cost SL Trail", `At +5 pts profit`]);
-                      items.push(["Daily Target Goal", `Auto-stop after 1 win`]);
-                      items.push(["Max Trades", `${form.maxTradesPerDay || 3} / day`]);
-                    } else if (form.type === "DAILY_SCALPER") {
-                      items.push(["Capital Budget", `₹${Number(form.dsCapital).toLocaleString("en-IN")}`]);
-                      items.push(["Daily Profit Target", `₹${Number(form.dsDailyTargetRs).toLocaleString("en-IN")}`]);
-                      items.push(["Daily Loss Limit", `₹${Number(form.dsDailyMaxLossRs).toLocaleString("en-IN")}`]);
-                      items.push(["Max Trades", `${form.dsMaxTradesPerDay} / day`]);
-                      if (form.dsTargetPoints) items.push(["Custom Target Points", `${form.dsTargetPoints} pts`]);
-                      if (form.dsStopLossPoints) items.push(["Custom SL Points", `${form.dsStopLossPoints} pts`]);
-                    } else if (form.type === "STOCK_OPTIONS_BUYING") {
-                      items.push(["Capital Budget", `₹${Number(form.sMaxCapital).toLocaleString("en-IN")}`]);
-                      items.push(["Risk-Reward Ratio", `1 : ${form.sRiskRewardRatio}`]);
-                      items.push(["EMA Period", form.sEmaPeriod]);
-                      items.push(["Timeframe", form.sTimeframe]);
-                      items.push(["Trigger Offset", `${form.sTriggerOffset} pts`]);
-                      items.push(["Max Trades", `${form.maxTradesPerDay} / day`]);
-                    } else {
-                      items.push(["Stop Loss", `₹${Number(form.stopLossRs).toLocaleString("en-IN")} (fixed)`]);
-                      items.push(["Target", `₹${Number(form.targetRs).toLocaleString("en-IN")} (fixed)`]);
-                      items.push(["Max Trades", `${form.maxTradesPerDay} / day`]);
-
-                      if (form.type === "BREAKOUT_15MIN") {
-                        if (form.instrumentType === "INDEX" || form.instrumentType === "OPTION") {
-                          items.push(["Premium Range", `₹${form.minPremium} - ₹${form.maxPremium}`]);
-                        }
-                      } else if (form.type === "EMA_VWAP_CROSSOVER") {
-                        items.push(["EMA Period", form.emaPeriod]);
-                        items.push(["Option Only", form.isOptionBuyingOnly ? "Yes" : "No"]);
-                      } else if (form.type === "EMA_RSI_OPTIONS") {
-                        items.push(["EMA Fast / Slow", `${form.emaFast} / ${form.emaSlow}`]);
-                        items.push(["RSI Period", form.rsiPeriod]);
-                        items.push(["RSI Entry Range", `${form.rsiEntryMin} - ${form.rsiEntryMax}`]);
-                        items.push(["Start Delay", `${form.startAfterMin} mins`]);
-                      }
-                    }
-
-                    return items.map(([label, value]) => (
-                      <div key={label} className="flex justify-between py-2 border-b border-[hsl(var(--border))] last:border-0 px-1">
-                        <span className="text-sm text-[hsl(var(--muted-foreground))]">{label}</span>
-                        <span className="text-sm font-semibold">{value}</span>
-                      </div>
-                    ));
-                  })()}
-                </div>
-
-                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900">
-                  <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1"> Risk Reminder</p>
-                  <p className="text-xs text-amber-600 dark:text-amber-500">
-                    Ensure your Zerodha API has order placement permissions and your IP is whitelisted.
-                    Always test during off-hours or with minimal quantities first.
-                  </p>
-                </div>
+                ))}
               </div>
             </div>
-          )}
 
-        </CardContent>
-      </Card>
-
-      {/* Navigation */}
-      <div className="flex justify-between">
-        <Button
-          variant="outline"
-          onClick={() => setStep((s) => Math.max(0, s - 1))}
-          disabled={step === 0}
-        >
-          <ChevronLeft className="h-4 w-4" /> Back
-        </Button>
-
-        {step < STEPS.length - 1 ? (
-          <Button
-            id="next-step"
-            onClick={() => setStep((s) => s + 1)}
-            disabled={!canNext()}
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            id="create-strategy"
-            variant="success"
-            onClick={handleSubmit}
-            disabled={submitting || !form.brokerAccountId}
-          >
-            {submitting ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /> Creating</>
-            ) : (
-              <><Check className="h-4 w-4" /> Create Strategy</>
-            )}
-          </Button>
-        )}
+            {/* Trading Edge Note */}
+            <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 text-blue-700 dark:text-blue-300 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <Sparkles className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                <span>Trading Edge</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {meta.tip}
+              </p>
+            </div>
+          </Card>
+        </div>
       </div>
     </div>
   );
 }
-
-
-
-
-
-
-

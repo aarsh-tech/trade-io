@@ -22,6 +22,9 @@ export function usePortfolio(brokerId?: string | null) {
       return res.data.data;
     },
     enabled: !!brokerId,
+    // Holdings are long-term CNC delivery assets; refresh lazily every 60s or on manual sync
+    refetchInterval: 60000,
+    staleTime: 30000,
   });
 
   const positionsQuery = useQuery({
@@ -32,6 +35,9 @@ export function usePortfolio(brokerId?: string | null) {
       return res.data.data;
     },
     enabled: !!brokerId,
+    // Positions refresh every 15s while real-time LTP & PnL stream over WebSocket
+    refetchInterval: 15000,
+    staleTime: 5000,
   });
 
   const marginsQuery = useQuery({
@@ -42,6 +48,9 @@ export function usePortfolio(brokerId?: string | null) {
       return res.data.data;
     },
     enabled: !!brokerId,
+    // Margins refresh every 30s to prevent Zerodha rate limit throttling
+    refetchInterval: 30000,
+    staleTime: 15000,
   });
 
   const renewSessionMutation = useMutation({

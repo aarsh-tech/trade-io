@@ -12,56 +12,30 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import axios from "axios";
 import { useAuthStore } from "@/store";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3002/v1";
+import { requestTokenRefresh } from "@/lib/api";
 
 // Refresh 12 minutes — well before any reasonable access-token expiry
 const REFRESH_INTERVAL_MS = 12 * 60 * 1000;
 
 export function useTokenRefresh() {
-  const { isAuthenticated, setAuth, clearAuth, user } = useAuthStore();
+  const { isAuthenticated, clearAuth } = useAuthStore();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isRefreshingRef = useRef(false);
 
   const silentRefresh = async () => {
-    // Don't run if not authenticated or already in progress
-    if (!isAuthenticated || isRefreshingRef.current) return;
+    // Don't run if not authenticated
+    if (!isAuthenticated) return;
 
-    const refreshToken = localStorage.getItem("refreshToken");
-    if (!refreshToken) return;
+    const refreshToken = typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
+    if (!refreshToken) {
+      clearAuth();
+      return;
+    }
 
-    isRefreshingRef.current = true;
     try {
-      const { data } = await axios.post(
-        `${API_BASE}/auth/refresh`,
-        { refreshToken },
-        { withCredentials: true }
-      );
-
-      const newAccess = data?.data?.accessToken;
-      const newRefresh = data?.data?.refreshToken;
-      const refreshedUser = data?.data?.user ?? user;
-
-      if (newAccess && refreshedUser) {
-        // Update localStorage + zustand store
-        localStorage.setItem("accessToken", newAccess);
-        if (newRefresh) localStorage.setItem("refreshToken", newRefresh);
-        setAuth(refreshedUser, newAccess, newRefresh ?? refreshToken);
-      }
+      await requestTokenRefresh();
     } catch (err: any) {
-      // Only log out if it's a real auth error (401/403), not a network glitch
-      const status = err?.response?.status;
-      if (status === 401 || status === 403) {
-        console.warn("[TokenRefresh] Refresh token invalid/expired — logging out");
-        clearAuth();
-      } else {
-        // Network error, server restart etc. — stay logged in, retry next interval
-        console.warn("[TokenRefresh] Refresh failed (network?), will retry:", err?.message);
-      }
-    } finally {
-      isRefreshingRef.current = false;
+      console.warn("[TokenRefresh] Silent refresh noticed:", err?.message);
     }
   };
 

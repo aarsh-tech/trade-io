@@ -50,6 +50,15 @@ export const useAuthStore = create<AuthStore>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (typeof window !== "undefined") {
+          const access = localStorage.getItem("accessToken");
+          const refresh = localStorage.getItem("refreshToken");
+          if (!access && !refresh) {
+            state?.clearAuth();
+          }
+        }
+      },
     }
   )
 );

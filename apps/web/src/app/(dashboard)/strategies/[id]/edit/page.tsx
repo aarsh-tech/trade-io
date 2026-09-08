@@ -6,11 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  ChevronLeft, Check, Loader2, Shield, Target, Zap, Info, ArrowLeft, RefreshCw, BarChart2, TrendingUp, Lock
+  ChevronLeft, Check, Loader2, Shield, Target, Zap, Info, ArrowLeft, RefreshCw, BarChart2, TrendingUp, Lock,
+  ArrowUpRight, ArrowDownRight, Shuffle, Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { strategyApi, brokerApi } from "@/lib/api";
+import { strategyApi, brokerApi, marketApi } from "@/lib/api";
 import Link from "next/link";
 
 const LOT_SIZES: Record<string, number> = {
@@ -21,12 +22,15 @@ const LOT_SIZES: Record<string, number> = {
   "MIDCPNIFTY": 120,
 };
 
-function getLotSize(symbol: string) {
-  if (symbol.includes("BANK")) return LOT_SIZES["BANKNIFTY"];
-  if (symbol.includes("SENSEX")) return LOT_SIZES["SENSEX"];
-  if (symbol.includes("FIN")) return LOT_SIZES["FINNIFTY"];
-  if (symbol.includes("MID")) return LOT_SIZES["MIDCPNIFTY"];
-  return LOT_SIZES["NIFTY"];
+function getLotSize(symbol: string, dynamicLot?: number) {
+  if (dynamicLot && dynamicLot > 0) return dynamicLot;
+  const s = (symbol || "").toUpperCase().trim();
+  if (s.includes("BANK")) return LOT_SIZES["BANKNIFTY"];
+  if (s.includes("SENSEX")) return LOT_SIZES["SENSEX"];
+  if (s.includes("FIN")) return LOT_SIZES["FINNIFTY"];
+  if (s.includes("MID")) return LOT_SIZES["MIDCPNIFTY"];
+  if (s.includes("NIFTY")) return LOT_SIZES["NIFTY"];
+  return LOT_SIZES[s] || 1;
 }
 
 interface BrokerAccount {
@@ -54,6 +58,7 @@ export default function EditStrategyPage() {
     product: "MIS" as "MIS" | "NRML",
     stopLossRs: "500",
     targetRs: "500",
+    exitExactAtTarget: false,
     maxTradesPerDay: "2",
     minPremium: "100",
     maxPremium: "300",
@@ -71,13 +76,16 @@ export default function EditStrategyPage() {
     sMaxCapital: "25000",
     sTriggerOffset: "0.50",
     sProtectionBufferPct: "10",
-    sMinRvol: "1.5",
+    sMinRvol: "1.25",
     sMoneyness: "ITM",
     sTarget1RR: "1.5",
     sTarget2RR: "3.0",
     sEnableTrailingSl: true,
     sTrailingStepPct: "20",
     sEnableHtfFilter: true,
+    sDirectionBias: "BOTH" as "BOTH" | "CALL_ONLY" | "PUT_ONLY",
+    sSetupType: "BOTH" as "BOTH" | "INSIDE_CANDLE" | "PULLBACK_REJECTION",
+    sIsAutoStockSelect: true,
     // Breakout 15-Min Dynamic Upgrades
     b15EnableDynamicAtr: true,
     b15RiskRewardRatio: "2.0",
@@ -85,8 +93,21 @@ export default function EditStrategyPage() {
     b15EnableVwapFilter: true,
     b15EnableBreakevenTrail: true,
     b15Moneyness: "ITM" as "ITM" | "ATM",
+    b15EntryTimeframe: "3min" as "1min" | "3min" | "5min",
+    b15EnableEmaVwapTrailing: true,
+    b15TrailingEmaPeriod: "9",
+    b15TrailingVwapSource: "both" as "both" | "ema" | "vwap",
+    b15MaxLossesPerDay: "1",
+    b15EnableMiddayChopFilter: true,
+    b15MiddayDeadZoneStart: "11:45",
+    b15MiddayDeadZoneEnd: "13:00",
+    b15EnablePartialBooking: true,
+    b15PartialBookingPct: "50",
+    b15PartialBookingR: "1.8",
+    b15EnableCprSupportResistance: true,
     // Broker
     brokerAccountId: "",
+    lotSize: 0,
   });
 
   useEffect(() => {
@@ -103,16 +124,19 @@ export default function EditStrategyPage() {
 
         setBrokers(brokerList);
 
+        const initialLotSize = config.lotSize || getLotSize(config.symbol);
+
         setForm({
           name: strategy.name,
           type: strategy.type,
           symbol: config.symbol || "",
           exchange: config.exchange || "NSE",
           instrumentType: config.instrumentType || "INDEX",
-          lots: String(config.lots || (config.qty ? Math.round(config.qty / getLotSize(config.symbol)) : 1)),
+          lots: String(config.lots || (config.qty ? Math.round(config.qty / initialLotSize) : 1)),
           product: config.product || "MIS",
           stopLossRs: String(config.stopLossRs || "500"),
           targetRs: String(config.targetRs || "500"),
+          exitExactAtTarget: !!config.exitExactAtTarget,
           maxTradesPerDay: String(config.maxTradesPerDay || "2"),
           minPremium: String(config.minPremium || "100"),
           maxPremium: String(config.maxPremium || "300"),
@@ -128,23 +152,39 @@ export default function EditStrategyPage() {
           sEmaPeriod: String(config.emaPeriod || "15"),
           sRiskRewardRatio: String(config.riskRewardRatio || "2"),
           sMaxCapital: String(config.maxCapital || "25000"),
-          sTriggerOffset: String(config.triggerOffset || "0.50"),
-          sProtectionBufferPct: String(config.protectionBufferPct || "10"),
-          sMinRvol: String(config.minRvol || "1.5"),
-          sMoneyness: config.moneyness || "ITM",
-          sTarget1RR: String(config.target1RR || "1.5"),
-          sTarget2RR: String(config.target2RR || "3.0"),
+          sTriggerOffset: String(config.triggerOffset ?? "0.50"),
+          sProtectionBufferPct: String(config.protectionBufferPct ?? "10"),
+          sMinRvol: String(config.minRvol ?? "1.5"),
+          sMoneyness: (config.moneyness as "ITM" | "ATM") || "ITM",
+          sTarget1RR: String(config.target1RR ?? "1.5"),
+          sTarget2RR: String(config.target2RR ?? "3.0"),
           sEnableTrailingSl: config.enableTrailingSl !== false,
-          sTrailingStepPct: String(config.trailingStepPct || "20"),
+          sTrailingStepPct: String(config.trailingStepPct ?? "20"),
           sEnableHtfFilter: config.enableHtfFilter !== false,
+          sDirectionBias: config.directionBias || "BOTH",
+          sSetupType: config.setupType || "BOTH",
+          sIsAutoStockSelect: config.isAutoStockSelect !== false && (config.symbol === "AUTO" || config.isAutoStockSelect === true),
           // Breakout 15-Min Dynamic Upgrades
           b15EnableDynamicAtr: config.enableDynamicAtr !== false,
           b15RiskRewardRatio: String(config.riskRewardRatio || "2.0"),
           b15EnableFakeoutReversal: config.enableFakeoutReversal !== false,
           b15EnableVwapFilter: config.enableVwapFilter !== false,
           b15EnableBreakevenTrail: config.enableBreakevenTrail !== false,
-          b15Moneyness: config.moneyness || "ITM",
+          b15Moneyness: (config.moneyness as "ITM" | "ATM") || "ITM",
+          b15EntryTimeframe: config.entryTimeframe || "3min",
+          b15EnableEmaVwapTrailing: config.enableEmaVwapTrailing !== false,
+          b15TrailingEmaPeriod: String(config.trailingEmaPeriod || "9"),
+          b15TrailingVwapSource: config.trailingVwapSource || "both",
+          b15MaxLossesPerDay: String(config.maxLossesPerDay ?? "1"),
+          b15EnableMiddayChopFilter: config.enableMiddayChopFilter !== false,
+          b15MiddayDeadZoneStart: config.middayDeadZoneStart || "11:45",
+          b15MiddayDeadZoneEnd: config.middayDeadZoneEnd || "13:00",
+          b15EnablePartialBooking: config.enablePartialBooking !== false,
+          b15PartialBookingPct: String(config.partialBookingPct || "50"),
+          b15PartialBookingR: String(config.partialBookingR || "1.8"),
+          b15EnableCprSupportResistance: config.enableCprSupportResistance !== false,
           brokerAccountId: strategy.brokerAccountId || "",
+          lotSize: initialLotSize,
         });
       } catch (err) {
         toast.error("Failed to load strategy details");
@@ -156,6 +196,19 @@ export default function EditStrategyPage() {
     loadData();
   }, [id, router]);
 
+  useEffect(() => {
+    if (!form.symbol || form.symbol === "AUTO") return;
+    let isMounted = true;
+    marketApi.getLotSize(form.symbol, form.brokerAccountId)
+      .then((res: any) => {
+        if (isMounted && res.data?.lotSize) {
+          setForm((f) => ({ ...f, lotSize: res.data.lotSize }));
+        }
+      })
+      .catch(() => { });
+    return () => { isMounted = false; };
+  }, [form.symbol, form.brokerAccountId]);
+
   function set(k: string, v: any) {
     setForm((f) => ({ ...f, [k]: v }));
   }
@@ -163,25 +216,32 @@ export default function EditStrategyPage() {
   async function handleSubmit() {
     setSubmitting(true);
     try {
-      const lotSize = getLotSize(form.symbol);
+      const lotSize = form.lotSize || getLotSize(form.symbol, form.lotSize);
       const qty = Number(form.lots) * lotSize;
 
       let config: any;
       if (form.type === "STOCK_OPTIONS_BUYING") {
+        const isAuto = form.sIsAutoStockSelect || form.symbol === "AUTO";
         config = {
-          symbol: form.symbol.trim(),
+          symbol: isAuto ? "AUTO" : form.symbol.trim(),
+          isAutoStockSelect: isAuto,
+          autoScanUniverse: "FNO_ALL",
+          directionBias: form.sDirectionBias || "BOTH",
+          setupType: form.sSetupType || "BOTH",
           exchange: "NSE",
           timeframe: form.sTimeframe,
           emaPeriod: Number(form.sEmaPeriod),
           riskRewardRatio: Number(form.sRiskRewardRatio),
           maxCapital: Number(form.sMaxCapital),
           lots: Number(form.lots),
+          lotSize,
+          qty,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           product: form.product,
           startAfterMin: Number(form.startAfterMin || 25),
           triggerOffset: Number(form.sTriggerOffset),
           protectionBufferPct: Number(form.sProtectionBufferPct),
-          minRvol: Number(form.sMinRvol || 1.5),
+          minRvol: Number(form.sMinRvol || 1.25),
           moneyness: form.sMoneyness || "ITM",
           target1RR: Number(form.sTarget1RR || 1.5),
           target2RR: Number(form.sTarget2RR || 3.0),
@@ -195,6 +255,7 @@ export default function EditStrategyPage() {
           instrumentType: form.instrumentType, qty,
           lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          exitExactAtTarget: !!form.exitExactAtTarget,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableDynamicAtr: form.b15EnableDynamicAtr,
           riskRewardRatio: Number(form.b15RiskRewardRatio),
@@ -202,6 +263,18 @@ export default function EditStrategyPage() {
           enableVwapFilter: form.b15EnableVwapFilter,
           enableBreakevenTrail: form.b15EnableBreakevenTrail,
           moneyness: form.b15Moneyness,
+          entryTimeframe: form.b15EntryTimeframe || "3min",
+          enableEmaVwapTrailing: form.b15EnableEmaVwapTrailing,
+          trailingEmaPeriod: Number(form.b15TrailingEmaPeriod || 9),
+          trailingVwapSource: form.b15TrailingVwapSource || "both",
+          maxLossesPerDay: Number(form.b15MaxLossesPerDay || 1),
+          enableMiddayChopFilter: form.b15EnableMiddayChopFilter,
+          middayDeadZoneStart: form.b15MiddayDeadZoneStart || "11:45",
+          middayDeadZoneEnd: form.b15MiddayDeadZoneEnd || "13:00",
+          enablePartialBooking: form.b15EnablePartialBooking,
+          partialBookingPct: Number(form.b15PartialBookingPct || 50),
+          partialBookingR: Number(form.b15PartialBookingR || 1.8),
+          enableCprSupportResistance: form.b15EnableCprSupportResistance,
           ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
             minPremium: Number(form.minPremium), maxPremium: Number(form.maxPremium),
           }),
@@ -213,6 +286,7 @@ export default function EditStrategyPage() {
           emaPeriod: Number(form.emaPeriod), vwapSource: form.vwapSource || "close", isOptionBuyingOnly: form.isOptionBuyingOnly,
           qty, lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
+          exitExactAtTarget: !!form.exitExactAtTarget,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableProfitFloor: form.enableProfitFloor,
           profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
@@ -301,13 +375,71 @@ export default function EditStrategyPage() {
           <CardTitle className="text-sm font-medium">Instrument & Configuration</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {isStockOptionsBuying && (
+            <div className="space-y-2">
+              <label className="text-sm font-semibold block">Stock Selection Mode</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    set("sIsAutoStockSelect", true);
+                    set("symbol", "AUTO");
+                  }}
+                  className={cn(
+                    "p-3 rounded-xl border text-left transition-all",
+                    form.sIsAutoStockSelect || form.symbol === "AUTO"
+                      ? "border-blue-500 bg-blue-50/70 dark:bg-blue-950/30 shadow-xs font-bold text-blue-700 dark:text-blue-300"
+                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-blue-400/40"
+                  )}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                    <span className="text-xs">🎯 Auto F&O Scanner</span>
+                  </div>
+                  <p className="text-[10px] font-normal opacity-80 mt-1">
+                    Scans 180+ F&O stocks for 5%–10% intraday momentum leaders
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    set("sIsAutoStockSelect", false);
+                    if (form.symbol === "AUTO") set("symbol", "APOLLOHOSP");
+                  }}
+                  className={cn(
+                    "p-3 rounded-xl border text-left transition-all",
+                    !form.sIsAutoStockSelect && form.symbol !== "AUTO"
+                      ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30 shadow-xs font-bold text-indigo-700 dark:text-indigo-300"
+                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-indigo-400/40"
+                  )}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Target className="h-3.5 w-3.5 text-indigo-600" />
+                    <span className="text-xs">📌 Manual Stock</span>
+                  </div>
+                  <p className="text-[10px] font-normal opacity-80 mt-1">
+                    Select a specific stock (e.g. APOLLOHOSP, RELIANCE)
+                  </p>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium mb-2 block">Symbol</label>
               <Input
                 value={form.symbol}
                 onChange={(e) => set("symbol", e.target.value.toUpperCase())}
+                disabled={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO")}
+                className={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") ? "bg-blue-50/50 dark:bg-blue-950/20 font-bold text-blue-600" : ""}
               />
+              {isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") && (
+                <p className="text-[10px] text-blue-600 font-semibold mt-1">
+                  ✨ Dynamic: Auto-resolves top F&O breakout symbol in real-time
+                </p>
+              )}
             </div>
             <div>
               <label className="text-sm font-medium mb-2 block">Exchange</label>
@@ -327,8 +459,8 @@ export default function EditStrategyPage() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium block">Lots</label>
-                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-                  1 Lot = {getLotSize(form.symbol)} Qty
+                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400 px-2 py-0.5 rounded-full">
+                  1 Lot = {form.lotSize || getLotSize(form.symbol, form.lotSize)} Qty
                 </span>
               </div>
               <Input
@@ -416,6 +548,67 @@ export default function EditStrategyPage() {
                 <p className="text-xs text-blue-600 leading-relaxed font-semibold">
                   Risk Management: Stop Loss is dynamically set to the Option's Mother Candle Low. Target is determined using the Risk-Reward Ratio.
                 </p>
+              </div>
+
+              {/* Trade Directional Bias */}
+              <div className="mb-4">
+                <label className="text-xs font-semibold mb-1.5 block">Trade Directional Bias</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: "Both (Auto)", val: "BOTH", desc: "Long on Call, Short on Put", icon: Shuffle },
+                    { label: "Bullish (CE Only)", val: "CALL_ONLY", desc: "Buy Calls on Breakouts", icon: ArrowUpRight },
+                    { label: "Bearish (PE Only)", val: "PUT_ONLY", desc: "Buy Puts on Breakdowns", icon: ArrowDownRight },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    const isSelected = form.sDirectionBias === item.val;
+                    return (
+                      <button
+                        key={item.val}
+                        type="button"
+                        onClick={() => set("sDirectionBias", item.val)}
+                        className={cn(
+                          "text-left p-2.5 rounded-xl border text-xs transition-all",
+                          isSelected
+                            ? "border-blue-500 bg-blue-50/70 dark:bg-blue-950/30 font-bold shadow-xs"
+                            : "border-[hsl(var(--border))] hover:border-blue-400/40"
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span>{item.label}</span>
+                          <Icon className={cn("h-3.5 w-3.5", isSelected ? "text-blue-600" : "text-slate-400")} />
+                        </div>
+                        <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-0.5">{item.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Trigger Setup Mode */}
+              <div className="mb-4">
+                <label className="text-xs font-semibold mb-1.5 block">Trigger Setup Mode</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: "Dual Setup (Dual)", val: "BOTH", desc: "Inside Candle + 15-EMA Pullback" },
+                    { label: "Inside Candle Only", val: "INSIDE_CANDLE", desc: "Pure Range Breakout" },
+                    { label: "Pullback Rejection", val: "PULLBACK_REJECTION", desc: "EMA/VWAP Re-test" },
+                  ].map((item) => (
+                    <button
+                      key={item.val}
+                      type="button"
+                      onClick={() => set("sSetupType", item.val)}
+                      className={cn(
+                        "text-left p-2.5 rounded-xl border text-xs transition-all",
+                        form.sSetupType === item.val
+                          ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30 font-bold shadow-xs"
+                          : "border-[hsl(var(--border))] hover:border-indigo-400/40"
+                      )}
+                    >
+                      <p>{item.label}</p>
+                      <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-0.5">{item.desc}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -708,6 +901,28 @@ export default function EditStrategyPage() {
                   value={form.maxTradesPerDay}
                   onChange={(e) => set("maxTradesPerDay", e.target.value)}
                 />
+              </div>
+
+              {/* Exit Exact at Target */}
+              <div className="p-4 rounded-xl bg-[hsl(var(--card))] border border-[hsl(var(--border))] space-y-2 mt-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Target className="h-4 w-4 text-emerald-500 shrink-0" />
+                    <span className="text-sm font-bold text-[hsl(var(--foreground))]">Exit Exact at Target (Fixed Profit Target)</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.exitExactAtTarget || false}
+                      onChange={(e) => set("exitExactAtTarget", e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                  </label>
+                </div>
+                <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
+                  When enabled, immediately squares off the position the moment your exact target profit (<strong>₹{form.targetRs || "500"}</strong>) or stop loss (<strong>₹{form.stopLossRs || "500"}</strong>) is hit, with zero trailing or giving back gains.
+                </p>
               </div>
 
               {isEmaVwap && (
