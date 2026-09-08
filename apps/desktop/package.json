@@ -1,6 +1,8 @@
 {
   "name": "@algo-trade/desktop",
   "version": "1.0.0",
+  "description": "TradeIO Desktop Algorithmic Trading Platform",
+  "author": "TradeIO",
   "private": true,
   "main": "dist/main.js",
   "scripts": {
@@ -14,6 +16,7 @@
     "appId": "com.tradeio.app",
     "productName": "TradeIO",
     "copyright": "Copyright © 2026 TradeIO",
+    "npmRebuild": false,
     "asar": true,
     "directories": {
       "output": "release"
@@ -28,7 +31,7 @@
         "filter": ["**/*"]
       },
       {
-        "from": "../auth-service/dist",
+        "from": "../auth-service/standalone",
         "to": "backend",
         "filter": ["**/*"]
       }

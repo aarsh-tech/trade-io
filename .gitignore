@@ -14,7 +14,11 @@ release
 .env.production
 .DS_Store
 apps/auth-service/data/
+apps/auth-service/standalone/
+**/standalone/
 **/whatsapp_sessions/
 scripts/cache_nifty500/
 scripts/*
 !scripts/clean-cache.js
+!scripts/prep-desktop.js
+

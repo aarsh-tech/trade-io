@@ -57,6 +57,7 @@ function checkHttpService(url: string, timeoutMs = 1500): Promise<boolean> {
 
 function findBackendEntry(): string | null {
   const candidates = [
+    path.join(process.resourcesPath, "backend/dist/main.js"),
     path.join(process.resourcesPath, "backend/main.js"),
     path.resolve(__dirname, "../../auth-service/dist/main.js"),
     path.resolve(process.cwd(), "apps/auth-service/dist/main.js"),
