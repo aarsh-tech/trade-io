@@ -34,8 +34,15 @@ if (fs.existsSync(srcPublic)) {
   console.log('ℹ️  apps/web/public does not exist or is empty.');
 }
 
-// 3. Ensure auth-service standalone directory has latest dist/
+// 3. Ensure auth-service standalone directory is deployed with production dependencies
 const authServiceDir = path.join(rootDir, 'apps', 'auth-service');
+const destBackendNodeModules = path.join(authServiceDir, 'standalone', 'node_modules');
+if (!fs.existsSync(destBackendNodeModules)) {
+  console.log('📦 Deploying isolated standalone production dependencies for auth-service...');
+  execSync('pnpm --filter=@algo-trade/auth-service deploy apps/auth-service/standalone --prod', { stdio: 'inherit', cwd: rootDir });
+  console.log('✅ Standalone production dependencies deployed.');
+}
+
 const srcBackendDist = path.join(authServiceDir, 'dist');
 const destBackendDist = path.join(authServiceDir, 'standalone', 'dist');
 
