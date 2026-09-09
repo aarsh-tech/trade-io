@@ -138,6 +138,7 @@ export interface EmaVwapCrossoverConfig {
   enableDailyPnLLock?: boolean;       // One-and-Done rule: lock day on hitting profit target or max loss (default: true)
   enableParabolicVwapLock?: boolean;  // Lock profits using VWAP when trade goes parabolic (>2.5% gain or +2R) (default: true)
   enableTwoCandleEmaConfirmation?: boolean; // Require 2nd candle confirmation before exiting on EMA to prevent shakeouts (default: true)
+  enableEmaCandleExit?: boolean;      // Exit immediately when a confirmed 5m candle closes against trend across 15-EMA (default: true)
   enableTrendReEntry?: boolean;       // Allow 1 trend continuation re-entry if price reclaims EMA with volume (default: true)
 }
 
