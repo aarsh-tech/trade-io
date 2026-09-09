@@ -32,9 +32,14 @@
         "filter": ["**/*"]
       },
       {
-        "from": "../auth-service/dist",
+        "from": "../auth-service/standalone",
         "to": "backend",
-        "filter": ["**/*"]
+        "filter": [
+          "dist/**/*",
+          "node_modules/**/*",
+          "package.json",
+          ".env"
+        ]
       }
     ],
     "win": {
