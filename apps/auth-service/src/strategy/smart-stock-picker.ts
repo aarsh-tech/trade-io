@@ -305,7 +305,7 @@ export async function getTopCandidateStocks(
       const maxAllowedLoss = (stopLossRs && stopLossRs > 0) ? stopLossRs : 500;
       const estimatedRiskPerShare = Math.max(0.50, ltp * 0.01); // Baseline 1.0% structural stop distance
       const riskAllowedQty = Math.max(1, Math.floor(maxAllowedLoss / estimatedRiskPerShare));
-      const capitalAllowedQty = Math.max(1, Math.floor(((availableCapital || 15000) * 0.25 * 5) / ltp));
+      const capitalAllowedQty = Math.max(1, Math.floor(((availableCapital || 15000) * 0.50 * 5) / ltp));
       const maxAffordableQty = Math.max(1, Math.floor(maxBuyingPower / ltp));
       const qty = Math.max(1, Math.min(riskAllowedQty, capitalAllowedQty, maxAffordableQty));
 

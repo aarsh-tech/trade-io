@@ -35,6 +35,7 @@ interface StrategyState {
   cooldownSymbols?: Map<string, number>;
   invalidatedCrossoverTime?: number | null;
   entryPrice: number | null;
+  entryTime?: Date | null;
   stopLossPrice: number | null;
   spotStopLossPrice?: number | null;
   targetPrice: number | null;
@@ -873,6 +874,7 @@ export class EmaVwapCrossoverEngine {
               state.entryTriggered = null;
               state.optionSymbol = null;
               state.entryPrice = null;
+              state.entryTime = null;
               state.stopLossPrice = null;
               state.spotStopLossPrice = null;
               state.targetPrice = null;
@@ -908,12 +910,50 @@ export class EmaVwapCrossoverEngine {
           const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
           const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
           if (cCandles && cCandles.length >= 2) {
-            const cEmas = this.calculateEMA(cCandles, config.emaPeriod || 15);
-            const cVwaps = this.calculateVWAP(cCandles, config.vwapSource || 'close');
-            state.lastEma = cEmas[cCandles.length - 1];
-            state.lastVwap = cVwaps[cCandles.length - 1];
+            const closedCCandles = this.filterClosedCandles(cCandles, now, 5);
+            if (closedCCandles.length >= 2) {
+              const lastClosedIdx = closedCCandles.length - 1;
+              const lastClosedCandle = closedCCandles[lastClosedIdx];
+              const cEmas = this.calculateEMA(closedCCandles, config.emaPeriod || 15);
+              const cVwaps = this.calculateVWAP(closedCCandles, config.vwapSource || 'close');
+              const currEma = cEmas[lastClosedIdx];
+              const currVwap = cVwaps[lastClosedIdx];
+              state.lastEma = currEma;
+              state.lastVwap = currVwap;
+
+              // ── 15-EMA Structural Candle Exit Rule ──────────────────────────────────
+              // Mandatory holding rule: If a confirmed 5m candle closes against our trade direction across 15-EMA,
+              // the structural trend thesis has failed. Exit immediately to cut loss & preserve capital (active in all modes).
+              if (config.enableEmaCandleExit !== false && currEma !== null && state.entryPrice && (state.entryTime || state.setupTimestamp)) {
+                const entryTimeMs = (state.entryTime ? state.entryTime.getTime() : state.setupTimestamp) || 0;
+                const candleTimeMs = lastClosedCandle.date.getTime();
+                const candleCloseTimeMs = candleTimeMs + 5 * 60 * 1000;
+                // Only evaluate candles that finished strictly after our trade entry
+                if (candleCloseTimeMs > entryTimeMs + 2 * 60 * 1000) {
+                  const isLong = (config.isOptionBuyingOnly && state.optionSymbol) || state.entryTriggered === 'LONG';
+                  const isEmaBreached = isLong
+                    ? (lastClosedCandle.close < currEma)
+                    : (lastClosedCandle.close > currEma);
+
+                  if (isEmaBreached) {
+                    const dirStr = isLong ? 'below' : 'above';
+                    this.log(
+                      state,
+                      `🛑 [15-EMA STRUCTURAL CANDLE EXIT] Confirmed 5m candle [${this.formatCandleRange(lastClosedCandle.date, 5)}] closed ${dirStr} 15-EMA! Close: ₹${lastClosedCandle.close.toFixed(2)} vs 15-EMA: ₹${currEma.toFixed(2)}. Technical structure invalidated — immediately squaring off position.`
+                    );
+                    await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId], this.logger);
+                    this.stopRealtimeMonitor(state);
+                    await this.exitPosition(state, client, lastClosedCandle.close, 'SL');
+                    await this.persistLogs(state);
+                    return;
+                  }
+                }
+              }
+            }
           }
-        } catch (e) { }
+        } catch (e: any) {
+          this.logger.debug?.(`Open position candle analysis error: ${e.message}`);
+        }
 
         await this.monitorPosition(state, client, kite);
         await this.persistLogs(state);
@@ -960,8 +1000,9 @@ export class EmaVwapCrossoverEngine {
       }
 
       // ── Auto-Mode Multi-Stock Scanning ──────────────────────────────────────
-      // STRICT SINGLE-STOCK RULE: NEVER scan or change symbol if a position is open, confirmation pending, or order in-flight!
-      if (state.isAutoMode && !state.entryTriggered && !state.waitingForConfirmation && !state.isPlacingTrade) {
+      // Allow continuous scanning if no position is open. If waiting for confirmation on an idle setup (>= 5 mins / 1 candle without trigger), evaluate other active leaders!
+      const isIdleWaiting = !!(state.waitingForConfirmation && state.setupTimestamp && (now.getTime() - state.setupTimestamp >= 5 * 60 * 1000));
+      if (state.isAutoMode && !state.entryTriggered && (!state.waitingForConfirmation || isIdleWaiting) && !state.isPlacingTrade) {
         const nowMs = Date.now();
         // Throttle auto-scanning to at most once every 30 seconds to respect Zerodha 3 req/sec rate limit
         if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000) {
@@ -998,13 +1039,27 @@ export class EmaVwapCrossoverEngine {
           if (activeSetups.length > 0) {
             activeSetups.sort((a, b) => b.candidate.score - a.candidate.score);
             const best = activeSetups[0];
-            if (state.activeSymbol !== best.candidate.symbol) {
-              this.log(state, `🎯 Live Auto-Selected Stock with Active Setup: [${best.candidate.symbol}] (Score: ${best.candidate.score}, Qty: ${best.candidate.qty}) — ${best.details.description}`);
+
+            // If we are currently waiting on an idle setup, switch if the new leader has a fresh high-priority setup
+            const shouldSwitch = !state.waitingForConfirmation || (best.candidate.symbol !== state.activeSymbol && best.candidate.score > 2300);
+            if (shouldSwitch) {
+              if (state.waitingForConfirmation && state.activeSymbol !== best.candidate.symbol) {
+                this.log(state, `🔄 Pivoting from idle setup [${state.activeSymbol}] -> Active breakout leader [${best.candidate.symbol}] (Score: ${best.candidate.score})`);
+                state.waitingForConfirmation = null;
+                state.confirmationHigh = null;
+                state.confirmationLow = null;
+                state.invalidationPrice = null;
+                state.setupTimestamp = null;
+                state.setupType = undefined;
+              }
+              if (state.activeSymbol !== best.candidate.symbol) {
+                this.log(state, `🎯 Live Auto-Selected Stock with Active Setup: [${best.candidate.symbol}] (Score: ${best.candidate.score}, Qty: ${best.candidate.qty}) — ${best.details.description}`);
+              }
+              state.activeSymbol = best.candidate.symbol;
+              config.exchange = best.candidate.exchange;
+              config.qty = best.candidate.qty;
             }
-            state.activeSymbol = best.candidate.symbol;
-            config.exchange = best.candidate.exchange;
-            config.qty = best.candidate.qty;
-          } else if (candidates.length > 0) {
+          } else if (candidates.length > 0 && !state.waitingForConfirmation) {
             const fallback = candidates[0];
             if (state.activeSymbol !== fallback.symbol) {
               if (nowMs - (state.lastFallbackLogTime || 0) >= 60000) {
@@ -1054,7 +1109,8 @@ export class EmaVwapCrossoverEngine {
 
       // ── Confirmation / Breakout Check ──────────────────────────────────────
       if (state.waitingForConfirmation) {
-        const maxWaitCandles = (state.setupType === 'OPEN_LOW_DRIVE' || state.setupType === 'OPEN_HIGH_DRIVE') ? 5 : 4;
+        // Fast-pivot timeout: Allow max 2 candles (10m) for standard breakout/pullback setups, or 4 for opening drive
+        const maxWaitCandles = (state.setupType === 'OPEN_LOW_DRIVE' || state.setupType === 'OPEN_HIGH_DRIVE') ? 4 : 2;
         const timeframeMs = 5 * 60 * 1000;
         const elapsed = now.getTime() - state.setupTimestamp!;
         if (elapsed > maxWaitCandles * timeframeMs) {
@@ -1284,32 +1340,36 @@ export class EmaVwapCrossoverEngine {
         state.spotStopLossPrice = side === 'BUY' ? motherLow : motherHigh;
       } else {
         if (finalSide === 'BUY') {
-          // True Structural Candle SL: Place comfortably below entry/mother candle low with tick buffer
+          // True Structural Swing Shelf SL: Place comfortably below entry/swing shelf low with breathing buffer
           let rawSl: number;
           if (motherLow && motherLow < entry) {
-            const buffer = Math.max(symTickSize * 5, motherLow * 0.0035);
-            rawSl = motherLow <= (entry - buffer) ? motherLow : (entry - buffer);
+            const buffer = Math.max(symTickSize * 4, motherLow * 0.002);
+            rawSl = motherLow <= (entry - buffer) ? (motherLow - buffer) : (entry - buffer);
           } else {
-            rawSl = entry - Math.max(symTickSize * 10, entry * 0.012);
+            rawSl = entry - Math.max(symTickSize * 10, entry * 0.011);
           }
-          // Strict Intraday Equity SL cap: Max 1.2% of entry price
-          const maxAllowedDist = Math.max(symTickSize * 10, entry * 0.012);
-          sl = this.roundTick(Math.max(rawSl, entry - maxAllowedDist), symbol);
+          // Strict Intraday Equity SL boundaries: Max 1.45% of entry price, Min 0.85% breathing distance
+          const maxAllowedDist = Math.max(symTickSize * 15, entry * 0.0145);
+          const minBreathingDist = Math.max(symTickSize * 8, entry * 0.0085);
+          const boundedSl = Math.min(entry - minBreathingDist, Math.max(rawSl, entry - maxAllowedDist));
+          sl = this.roundTick(boundedSl, symbol);
           if (sl >= entry) sl = this.roundTick(entry - symTickSize * 5, symbol);
           const risk = Math.max(symTickSize, Math.abs(entry - sl));
           tgt = config.enableProfitFloor !== false ? this.roundTick(entry + risk * 2.0, symbol) : this.roundTick(entry + risk * 1.5, symbol);
         } else {
-          // True Structural Candle SL: Place comfortably above entry/mother candle high with tick buffer
+          // True Structural Swing Shelf SL: Place comfortably above entry/swing shelf high with breathing buffer
           let rawSl: number;
           if (motherHigh && motherHigh > entry) {
-            const buffer = Math.max(symTickSize * 5, motherHigh * 0.0035);
-            rawSl = motherHigh >= (entry + buffer) ? motherHigh : (entry + buffer);
+            const buffer = Math.max(symTickSize * 4, motherHigh * 0.002);
+            rawSl = motherHigh >= (entry + buffer) ? (motherHigh + buffer) : (entry + buffer);
           } else {
-            rawSl = entry + Math.max(symTickSize * 10, entry * 0.012);
+            rawSl = entry + Math.max(symTickSize * 10, entry * 0.011);
           }
-          // Strict Intraday Equity SL cap: Max 1.2% of entry price
-          const maxAllowedDist = Math.max(symTickSize * 10, entry * 0.012);
-          sl = this.roundTick(Math.min(rawSl, entry + maxAllowedDist), symbol);
+          // Strict Intraday Equity SL boundaries: Max 1.45% of entry price, Min 0.85% breathing distance
+          const maxAllowedDist = Math.max(symTickSize * 15, entry * 0.0145);
+          const minBreathingDist = Math.max(symTickSize * 8, entry * 0.0085);
+          const boundedSl = Math.max(entry + minBreathingDist, Math.min(rawSl, entry + maxAllowedDist));
+          sl = this.roundTick(boundedSl, symbol);
           if (sl <= entry) sl = this.roundTick(entry + symTickSize * 5, symbol);
           const risk = Math.max(symTickSize, Math.abs(sl - entry));
           tgt = config.enableProfitFloor !== false ? this.roundTick(entry - risk * 2.0, symbol) : this.roundTick(entry - risk * 1.5, symbol);
@@ -1412,9 +1472,9 @@ export class EmaVwapCrossoverEngine {
           return;
         }
 
-        // 2. Conservative Capital Allocation Cap: Max 25% of capital deployed per trade
-        // Prevents 85% or 100% of capital being concentrated in a single trade
-        const capitalAllocationFraction = 0.25; // 25% max capital allocation per trade
+        // 2. Dynamic Capital Allocation Cap: Deploy up to 50% of available Zerodha margin
+        // Balances healthy position size to reach ₹500 target on realistic 1% moves while maintaining a 50% cash buffer
+        const capitalAllocationFraction = 0.50; // 50% allocation per trade (5x MIS)
         const tradeCapitalBudget = liveCash * capitalAllocationFraction;
         const capitalAllowedQty = Math.max(1, Math.floor((tradeCapitalBudget * 5) / entry));
 
@@ -1443,10 +1503,18 @@ export class EmaVwapCrossoverEngine {
         const exactTargetDistance = targetThresholdRs / finalQty;
         const exactSlDistance = maxRiskThresholdRs / finalQty;
         tgt = this.roundTick(finalSide === 'BUY' ? entry + exactTargetDistance : entry - exactTargetDistance, symbol);
-        sl = this.roundTick(finalSide === 'BUY' ? entry - exactSlDistance : entry + exactSlDistance, symbol);
+        const rupeeCapSl = this.roundTick(finalSide === 'BUY' ? entry - exactSlDistance : entry + exactSlDistance, symbol);
+
+        // ── DYNAMIC TECHNICAL STOP LOSS GUARD ─────────────────────────────────────
+        // Never push the Stop Loss further than the chart's structural invalidation point!
+        // The rupee SL is a maximum loss ceiling (cap), while structural SL protects technical invalidation.
+        const structuralSl = sl;
+        sl = finalSide === 'BUY' ? Math.max(structuralSl, rupeeCapSl) : Math.min(structuralSl, rupeeCapSl);
+        const actualRiskPerShare = Math.abs(entry - sl);
+        const actualRiskRs = actualRiskPerShare * finalQty;
         this.log(
           state,
-          `🎯 [EXACT TARGET MODE] Recalibrated to exact Target/SL: ${finalQty} shares @ Entry ₹${entry.toFixed(2)} | Target: ₹${tgt.toFixed(2)} (+₹${targetThresholdRs}) | SL: ₹${sl.toFixed(2)} (-₹${maxRiskThresholdRs})`
+          `🎯 [EXACT TARGET MODE] Target: ₹${tgt.toFixed(2)} (+₹${targetThresholdRs}) | Dynamic Structural SL: ₹${sl.toFixed(2)} (Risk: ₹${actualRiskRs.toFixed(2)} | ₹${actualRiskPerShare.toFixed(2)}/sh, Cap: -₹${maxRiskThresholdRs})`
         );
       }
 
@@ -1543,6 +1611,7 @@ export class EmaVwapCrossoverEngine {
       state.slOrderId = slOrderId;
       state.targetOrderId = targetOrderId;
       state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
+      state.entryTime = triggerTime || new Date();
 
       if (!state.isPaperTrade && !isHistorical && state.executedQty > 0 && !slOrderId) {
         this.log(state, `⚠ Warning: Failed to place SL order at broker. Active monitoring will try to exit if needed.`);
@@ -1691,6 +1760,24 @@ export class EmaVwapCrossoverEngine {
           await this.exitPosition(state, client, currentPrice, 'SL');
           await this.persistLogs(state);
           return;
+        }
+
+        // ── 1.2 DYNAMIC BREAK-EVEN & PROFIT PROTECTION (Exact Target Mode) ──
+        // When position gains >= 50% of the target profit (e.g. >= +₹250 on ₹500 target),
+        // trail Stop Loss to Break-Even (Entry Price) to eliminate all downside risk!
+        if (state.entryPrice && state.peakPnlRs >= exactTargetRs * 0.48) {
+          const symTick = getInstrumentTickSize(symbol, currentPrice);
+          const breakEvenPrice = this.roundTick(isLong ? state.entryPrice + symTick * 2 : state.entryPrice - symTick * 2, symbol);
+          const needsSlAdvance = isLong ? (breakEvenPrice > (state.stopLossPrice || 0)) : (breakEvenPrice < (state.stopLossPrice || Infinity));
+          if (needsSlAdvance) {
+            state.stopLossPrice = breakEvenPrice;
+            state.isTrailingEma = true;
+            this.log(
+              state,
+              `🛡 [BREAK-EVEN PROFIT PROTECTION] Peak P&L reached +₹${state.peakPnlRs.toFixed(2)} (>= 50% of ₹${exactTargetRs} target)! Advancing SL to Break-Even (₹${breakEvenPrice.toFixed(2)}) to lock out risk.`
+            );
+            await this.updateBrokerSlSafe(client, kite, state, symbol);
+          }
         }
       }
 
@@ -2234,6 +2321,7 @@ export class EmaVwapCrossoverEngine {
       state.entryTriggered = null;
       state.optionSymbol = null;
       state.entryPrice = null;
+      state.entryTime = null;
       state.stopLossPrice = null;
       state.spotStopLossPrice = null;
       state.targetPrice = null;
@@ -2732,24 +2820,57 @@ export class EmaVwapCrossoverEngine {
     const dayRangePct = dayOpen > 0 ? ((dayHigh - dayLow) / dayOpen) * 100 : 0;
     const moveFromOpenPct = dayOpen > 0 ? ((currCandle.close - dayOpen) / dayOpen) * 100 : 0;
 
+    // Calculate Dynamic Average Candle Range (ATR/ACR) over last 10 candles
+    const recentCandles = candles.slice(Math.max(0, lastIdx - 9), lastIdx + 1);
+    const avgCandleRangePct = recentCandles.reduce((sum, c) => sum + (((c.high - c.low) / (c.close || 1)) * 100), 0) / Math.max(1, recentCandles.length);
+    // Dynamic max distance from 15-EMA scales with stock's recent volatility (0.75% to 2.20%)
+    const dynamicMaxEmaDistPct = Math.max(0.75, Math.min(2.20, avgCandleRangePct * 1.8));
+
+    // ── Structural Swing Shelf & Dynamic Breathing Space ────────────────────────
+    // Look back at the last 3 to 6 candles of today's price action to find the genuine consolidation shelf/base
+    const shelfLookback = Math.min(6, Math.max(3, todayCandles.length));
+    const shelfCandles = todayCandles.slice(todayCandles.length - shelfLookback);
+    const shelfLow = Math.min(...shelfCandles.map(tc => tc.candle.low));
+    const shelfHigh = Math.max(...shelfCandles.map(tc => tc.candle.high));
+
+    // Dynamic volatility buffer based on instrument tick size and ATR
+    const symTick = getInstrumentTickSize(config.symbol, currCandle.close);
+    const volatilityBuffer = Math.max(symTick * 4, currCandle.close * (avgCandleRangePct * 0.01 * 0.35));
+    // Intraday breathing boundaries: Min 0.85% (prevents noise stops), capped at 1.45%
+    const minBreathingDist = Math.max(symTick * 8, currCandle.close * 0.0085);
+    const maxBreathingDist = Math.max(symTick * 15, currCandle.close * 0.0145);
+
+    const getSwingShelfSl = (dir: 'LONG' | 'SHORT', candleExtreme: number): number => {
+      if (dir === 'LONG') {
+        // Anchor below the lower of the swing shelf low or immediate candle low with buffer
+        const anchorLow = Math.min(shelfLow, candleExtreme);
+        const rawDistance = currCandle.close - (anchorLow - volatilityBuffer);
+        const slDistance = Math.min(maxBreathingDist, Math.max(minBreathingDist, rawDistance));
+        return this.roundTick(currCandle.close - slDistance, config.symbol);
+      } else {
+        // Anchor above the higher of the swing shelf high or immediate candle high with buffer
+        const anchorHigh = Math.max(shelfHigh, candleExtreme);
+        const rawDistance = (anchorHigh + volatilityBuffer) - currCandle.close;
+        const slDistance = Math.min(maxBreathingDist, Math.max(minBreathingDist, rawDistance));
+        return this.roundTick(currCandle.close + slDistance, config.symbol);
+      }
+    };
+
     // ── 1. Pattern 1 (TOP PRIORITY): Fresh 5m EMA-VWAP Crossover (The IFCI Trade Setup) ──
     // Enters when price/15-EMA cleanly crosses and confirms across VWAP with tight structural SL
     const crossoverDetails = this.getLatestCrossoverTodayDetails(lastIdx, candles, emas, vwaps);
     if (crossoverDetails && (lastIdx - crossoverDetails.crossoverIdx) <= 2) {
       const cCandle = candles[crossoverDetails.crossoverIdx];
       const isLong = crossoverDetails.trend === 'LONG';
-      const cClose = cCandle.close;
-      const rawRisk = Math.abs(cClose - (isLong ? cCandle.low : cCandle.high));
-      const slDist = Math.max(0.10, Math.min(rawRisk, cClose * 0.012));
-      const slPrice = isLong ? this.roundTick(cClose - slDist, config.symbol) : this.roundTick(cClose + slDist, config.symbol);
+      const slPrice = getSwingShelfSl(crossoverDetails.trend, isLong ? cCandle.low : cCandle.high);
       return {
         trend: crossoverDetails.trend,
         setupType: 'DIRECT',
         triggerHigh: isLong ? cCandle.high : null,
         triggerLow: isLong ? null : cCandle.low,
         slPrice,
-        invalidationPrice: isLong ? cCandle.low : cCandle.high,
-        slNote: 'Fresh Crossover SL (Tight)',
+        invalidationPrice: slPrice,
+        slNote: 'Swing Shelf Crossover SL',
         candleTime: cCandle.date,
         candleIdx: crossoverDetails.crossoverIdx,
         scoreBoost: 500, // Top priority: highest precision setup
@@ -2765,15 +2886,15 @@ export class EmaVwapCrossoverEngine {
       const touchedEma = prevCandle.high >= prevEma * 0.998 || currCandle.high >= currEma * 0.998;
       const isBearishRejection = currCandle.close < currCandle.open && currCandle.close < currEma;
       if (touchedEma && isBearishRejection) {
-        const tightSl = Math.min(currCandle.high, currCandle.close * 1.012);
+        const tightSl = getSwingShelfSl('SHORT', currCandle.high);
         return {
           trend: 'SHORT',
           setupType: 'PULLBACK_REJECTION',
           triggerHigh: null,
           triggerLow: currCandle.low,
           slPrice: tightSl,
-          invalidationPrice: currCandle.high * 1.002,
-          slNote: 'Pullback High SL (Low Risk)',
+          invalidationPrice: tightSl,
+          slNote: 'Swing Shelf Pullback High SL',
           candleTime: currCandle.date,
           candleIdx: lastIdx,
           scoreBoost: 450, // Top priority: highest win-rate entry
@@ -2786,15 +2907,15 @@ export class EmaVwapCrossoverEngine {
       const touchedEma = prevCandle.low <= prevEma * 1.002 || currCandle.low <= currEma * 1.002;
       const isBullishBounce = currCandle.close > currCandle.open && currCandle.close > currEma;
       if (touchedEma && isBullishBounce) {
-        const tightSl = Math.max(currCandle.low, currCandle.close * 0.988);
+        const tightSl = getSwingShelfSl('LONG', currCandle.low);
         return {
           trend: 'LONG',
           setupType: 'PULLBACK_REJECTION',
           triggerHigh: currCandle.high,
           triggerLow: null,
           slPrice: tightSl,
-          invalidationPrice: currCandle.low * 0.998,
-          slNote: 'Pullback Low SL (Low Risk)',
+          invalidationPrice: tightSl,
+          slNote: 'Swing Shelf Pullback Low SL',
           candleTime: currCandle.date,
           candleIdx: lastIdx,
           scoreBoost: 450, // Top priority: highest win-rate entry
@@ -2803,58 +2924,92 @@ export class EmaVwapCrossoverEngine {
       }
     }
 
-    // ── 3. Pattern 3: Confirmed Trend Breakdown & Day Low Break (With Anti-Chasing Filter) ──
+    // ── Helper: Measure consecutive expanding candles without pullback to 15-EMA ──
+    const getConsecutiveCandlesCount = (dir: 'LONG' | 'SHORT'): number => {
+      let count = 0;
+      for (let i = todayCandles.length - 1; i >= 0; i--) {
+        const c = todayCandles[i].candle;
+        const cEma = emas[todayCandles[i].idx];
+        if (dir === 'LONG') {
+          const isBullish = c.close >= c.open;
+          const touchedEma = cEma !== null && c.low <= cEma * 1.002;
+          if (touchedEma && count > 0) break;
+          if (isBullish) count++;
+          else break;
+        } else {
+          const isBearish = c.close <= c.open;
+          const touchedEma = cEma !== null && c.high >= cEma * 0.998;
+          if (touchedEma && count > 0) break;
+          if (isBearish) count++;
+          else break;
+        }
+      }
+      return count;
+    };
+
+    // Volume baseline for breakout confirmation
+    const totalTodayVol = todayCandles.reduce((s, tc) => s + (tc.candle.volume || 0), 0);
+    const avgTodayVol = totalTodayVol / Math.max(1, todayCandles.length);
+    const hasVolumeSurge = (currCandle.volume || 0) >= avgTodayVol * 1.15;
+
+    // ── 3. Pattern 3: Confirmed Trend Breakdown & Day Low Break (With Anti-Chasing & Volatility Filters) ──
     if (isDowntrend && todayCandles.length >= 2) {
       const priorLows = todayCandles.slice(0, -1).map(tc => tc.candle.low);
       const priorLow = priorLows.length > 0 ? Math.min(...priorLows) : currCandle.low;
       const distFromEmaPct = ((currEma - currCandle.close) / currCandle.close) * 100;
+      const consecutiveBearish = getConsecutiveCandlesCount('SHORT');
 
       // Anti-chasing safety filter:
-      // If price is stretched > 1.8% below 15-EMA or down > 3.0% from open, DO NOT short breakdown directly!
-      // Chasing an extended dump will cause getting caught in a pullback spike. Wait for pullback to EMA instead.
-      const isOverExtended = distFromEmaPct > 1.8 || Math.abs(moveFromOpenPct) > 3.0;
+      // 1. Dynamic ATR-based EMA stretch limit
+      // 2. Consecutive candle exhaustion guard: If >= 3 red candles already dropped without pullback, do not short breakdown!
+      const isOverExtended = distFromEmaPct > dynamicMaxEmaDistPct || Math.abs(moveFromOpenPct) > 3.0 || consecutiveBearish >= 3;
 
       if (!isOverExtended && (currCandle.low <= priorLow * 1.003 || moveFromOpenPct <= -1.2)) {
-        const tightSl = Math.min(currCandle.high, currEma, currCandle.close * 1.012);
+        // Swing Shelf SL: Anchored above shelf high with volatility breathing room
+        const tightSl = getSwingShelfSl('SHORT', currCandle.high);
         return {
           trend: 'SHORT',
           setupType: 'TREND_BREAKDOWN',
           triggerHigh: null,
           triggerLow: Math.min(priorLow, currCandle.low),
           slPrice: tightSl,
-          invalidationPrice: Math.min(currCandle.high, currEma * 1.004),
-          slNote: 'Day Low Breakdown SL (Tight)',
+          invalidationPrice: tightSl,
+          slNote: 'Day Low Breakdown SL (Swing Shelf)',
           candleTime: currCandle.date,
           candleIdx: lastIdx,
-          scoreBoost: 350 + Math.round(Math.abs(moveFromOpenPct) * 40),
-          description: `Intraday Trend Breakdown below Day Low ₹${priorLow.toFixed(2)} (Day Move: ${moveFromOpenPct.toFixed(2)}%)`
+          scoreBoost: 350 + Math.round(Math.abs(moveFromOpenPct) * 40) + (hasVolumeSurge ? 80 : 0),
+          description: `Intraday Trend Breakdown below Day Low ₹${priorLow.toFixed(2)} (Day Move: ${moveFromOpenPct.toFixed(2)}%)${hasVolumeSurge ? ' [Vol Surge]' : ''}`
         };
       }
     }
 
-    // ── 4. Pattern 4: Confirmed Trend Breakout & Day High Break (With Anti-Chasing Filter) ──
+    // ── 4. Pattern 4: Confirmed Trend Breakout & Day High Break (With Anti-Chasing & Volatility Filters) ──
     if (isUptrend && todayCandles.length >= 2) {
       const priorHighs = todayCandles.slice(0, -1).map(tc => tc.candle.high);
       const priorHigh = priorHighs.length > 0 ? Math.max(...priorHighs) : currCandle.high;
       const distFromEmaPct = ((currCandle.close - currEma) / currCandle.close) * 100;
+      const consecutiveBullish = getConsecutiveCandlesCount('LONG');
 
       // Anti-chasing safety filter:
-      const isOverExtended = distFromEmaPct > 1.8 || moveFromOpenPct > 3.0;
+      // 1. Dynamic ATR-based EMA stretch limit
+      // 2. Consecutive candle exhaustion guard: If >= 3 green candles already surged without pullback (like NATIONALUM at 11:00 AM on candle #6), DO NOT buy the high!
+      const isOverExtended = distFromEmaPct > dynamicMaxEmaDistPct || moveFromOpenPct > 3.0 || consecutiveBullish >= 3;
 
       if (!isOverExtended && (currCandle.high >= priorHigh * 0.997 || moveFromOpenPct >= 1.2)) {
-        const tightSl = Math.max(currCandle.low, currEma, currCandle.close * 0.988);
+        // Swing Shelf SL: Anchored below shelf low with volatility breathing room
+        const tightSl = getSwingShelfSl('LONG', currCandle.low);
         return {
           trend: 'LONG',
           setupType: 'TREND_BREAKOUT',
           triggerHigh: Math.max(priorHigh, currCandle.high),
           triggerLow: null,
           slPrice: tightSl,
-          invalidationPrice: Math.max(currCandle.low, currEma * 0.996),
-          slNote: 'Day High Breakout SL (Tight)',
+          invalidationPrice: tightSl,
+          slNote: 'Day High Breakout SL (Swing Shelf)',
           candleTime: currCandle.date,
           candleIdx: lastIdx,
-          scoreBoost: 350 + Math.round(moveFromOpenPct * 40),
-          description: `Intraday Trend Breakout above Day High ₹${priorHigh.toFixed(2)} (Day Move: +${moveFromOpenPct.toFixed(2)}%)`
+          scoreBoost: 350 + Math.round(moveFromOpenPct * 40) + (hasVolumeSurge ? 80 : 0),
+          description: `Intraday Trend Breakout above Day High ₹${priorHigh.toFixed(2)} (Day Move: +${moveFromOpenPct.toFixed(2)}%)${hasVolumeSurge ? ' [Vol Surge]' : ''}`
         };
       }
     }
@@ -2867,14 +3022,15 @@ export class EmaVwapCrossoverEngine {
     if (isInsideCandle && (isUptrend || isDowntrend)) {
       const trend = isUptrend ? 'LONG' : 'SHORT';
       const isLong = trend === 'LONG';
+      const tightSl = getSwingShelfSl(trend, isLong ? mother.low : mother.high);
       return {
         trend,
         setupType: 'INSIDE_CANDLE',
         triggerHigh: isLong ? mother.high : null,
         triggerLow: isLong ? null : mother.low,
-        slPrice: isLong ? Math.max(mother.low, baby.close * 0.988) : Math.min(mother.high, baby.close * 1.012),
-        invalidationPrice: isLong ? mother.low : mother.high,
-        slNote: 'Mother Candle SL (Tight)',
+        slPrice: tightSl,
+        invalidationPrice: tightSl,
+        slNote: 'Inside Candle Swing Shelf SL',
         candleTime: baby.date,
         candleIdx: lastIdx,
         scoreBoost: 180,
