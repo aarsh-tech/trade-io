@@ -28,6 +28,20 @@ export class BrokersService {
     return data;
   }
 
+  clearAccountCache(accountId: string, userId?: string) {
+    this.cache.delete(`holdings:${accountId}`);
+    this.cache.delete(`positions:${accountId}`);
+    this.cache.delete(`margins:${accountId}`);
+    if (userId) {
+      this.cache.delete(`overview:${userId}`);
+    }
+    for (const key of Array.from(this.cache.keys())) {
+      if (key.includes(accountId)) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
   async getHoldings(userId: string, accountId: string) {
     const cacheKey = `holdings:${accountId}`;
     const cached = this.getFromCache(cacheKey);
@@ -37,10 +51,16 @@ export class BrokersService {
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+    if (!acc.accessToken) return [];
 
     const client = this.factory.createClient(acc);
-    const result = await client.getHoldings();
-    return this.setInCache(cacheKey, result, 30_000); // 30s cache
+    try {
+      const result = await client.getHoldings();
+      return this.setInCache(cacheKey, result, 30_000); // 30s cache for successful fetches
+    } catch (err: any) {
+      console.warn(`Failed to fetch holdings for broker ${accountId}: ${err?.message || err}`);
+      return [];
+    }
   }
 
   async getPositions(userId: string, accountId: string) {
@@ -52,10 +72,16 @@ export class BrokersService {
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+    if (!acc.accessToken) return [];
 
     const client = this.factory.createClient(acc);
-    const result = await client.getPositions();
-    return this.setInCache(cacheKey, result, 3_000); // 3s cache
+    try {
+      const result = await client.getPositions();
+      return this.setInCache(cacheKey, result, 3_000); // 3s cache
+    } catch (err: any) {
+      console.warn(`Failed to fetch positions for broker ${accountId}: ${err?.message || err}`);
+      return [];
+    }
   }
 
   async getMargins(userId: string, accountId: string) {
@@ -67,10 +93,19 @@ export class BrokersService {
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
+    if (!acc.accessToken) return null;
 
     const client = this.factory.createClient(acc);
-    const result = await client.getMargins();
-    return this.setInCache(cacheKey, result, 10_000); // 10s cache
+    try {
+      const result = await client.getMargins();
+      if (result) {
+        return this.setInCache(cacheKey, result, 10_000); // 10s cache
+      }
+      return null;
+    } catch (err: any) {
+      console.warn(`Failed to fetch margins for broker ${accountId}: ${err?.message || err}`);
+      return null;
+    }
   }
 
   async getLoginUrl(userId: string, accountId: string) {
@@ -179,12 +214,61 @@ export class BrokersService {
     expiry.setDate(expiry.getDate() + 1);
     expiry.setHours(6, 0, 0, 0);
 
-    await this.prisma.brokerAccount.update({
+    const updatedAcc = await this.prisma.brokerAccount.update({
       where: { id: accountId },
-      data: { accessToken: session.access_token, tokenExpiry: expiry },
+      data: { accessToken: session.access_token, tokenExpiry: expiry, isActive: true },
     });
+
+    // 1. Invalidate client factory instance
     this.factory.invalidateClient(accountId);
-    return { success: true };
+
+    // 2. Clear all cached portfolio data for this account
+    this.clearAccountCache(accountId, userId);
+
+    // 3. Pre-warm fresh client & eager-load live data immediately
+    const client = this.factory.createClient(updatedAcc);
+    let freshMargins: any = null;
+    let freshHoldings: any[] = [];
+    let freshPositions: any[] = [];
+
+    try {
+      [freshMargins, freshHoldings, freshPositions] = await Promise.all([
+        client.getMargins().catch((err: any) => {
+          console.warn('Initial margins sync warning:', err?.message || err);
+          return null;
+        }),
+        client.getHoldings().catch((err: any) => {
+          console.warn('Initial holdings sync warning:', err?.message || err);
+          return [];
+        }),
+        client.getPositions().catch((err: any) => {
+          console.warn('Initial positions sync warning:', err?.message || err);
+          return [];
+        }),
+      ]);
+
+      if (freshMargins) {
+        this.setInCache(`margins:${accountId}`, freshMargins, 15_000);
+      }
+      if (freshHoldings && freshHoldings.length > 0) {
+        this.setInCache(`holdings:${accountId}`, freshHoldings, 30_000);
+      }
+      if (freshPositions && freshPositions.length > 0) {
+        this.setInCache(`positions:${accountId}`, freshPositions, 5_000);
+      }
+    } catch (e: any) {
+      console.warn('Post-login pre-warm notice:', e?.message || e);
+    }
+
+    return {
+      success: true,
+      data: {
+        margins: freshMargins,
+        holdings: freshHoldings,
+        positions: freshPositions,
+      },
+      message: 'Broker session established and portfolio synchronized',
+    };
   }
 
   async list(userId: string) {

@@ -3,12 +3,9 @@ import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
-export const PORTFOLIO_KEYS = {
-  all: ["portfolio"] as const,
-  holdings: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "holdings", brokerId].filter(Boolean),
-  positions: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "positions", brokerId].filter(Boolean),
-  margins: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "margins", brokerId].filter(Boolean),
-};
+import { queryKeys } from "@/lib/query-keys";
+
+export const PORTFOLIO_KEYS = queryKeys.portfolio;
 
 export function usePortfolio(brokerId?: string | null) {
   const queryClient = useQueryClient();
@@ -54,18 +51,43 @@ export function usePortfolio(brokerId?: string | null) {
   });
 
   const renewSessionMutation = useMutation({
-    mutationFn: (requestToken: string) => {
+    mutationFn: async (rawToken: string) => {
       if (!brokerId) throw new Error("No broker selected");
-      return brokerApi.setSession(brokerId, requestToken);
+      let token = (rawToken || "").trim();
+      if (token.includes("request_token=")) {
+        try {
+          const match = token.match(/request_token=([a-zA-Z0-9]+)/);
+          if (match && match[1]) token = match[1];
+        } catch {}
+      }
+      if (!token) throw new Error("Please enter or paste a valid request token");
+      const res = await brokerApi.setSession(brokerId, token);
+      return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: PORTFOLIO_KEYS.all });
-      queryClient.invalidateQueries({ queryKey: ["brokers"] }); // Force broker list to refresh
-      toast.success("Session renewed successfully!");
-      router.push("/portfolio");
+    onSuccess: async (data: any) => {
+      const payload = data?.data;
+      // 1. Immediately prime query cache with fresh live data from backend response
+      if (payload?.margins) {
+        queryClient.setQueryData(PORTFOLIO_KEYS.margins(brokerId || undefined), payload.margins);
+      }
+      if (payload?.holdings) {
+        queryClient.setQueryData(PORTFOLIO_KEYS.holdings(brokerId || undefined), payload.holdings);
+      }
+      if (payload?.positions) {
+        queryClient.setQueryData(PORTFOLIO_KEYS.positions(brokerId || undefined), payload.positions);
+      }
+
+      // 2. Refetch queries in parallel to ensure 100% synchronization across pages
+      await Promise.allSettled([
+        queryClient.refetchQueries({ queryKey: queryKeys.portfolio.all, exact: false }),
+        queryClient.refetchQueries({ queryKey: queryKeys.brokers.all, exact: false }),
+        queryClient.refetchQueries({ queryKey: queryKeys.market.all, exact: false }),
+      ]);
+
+      toast.success("Broker session authenticated! Live portfolio & margins synced.");
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.message || "Failed to renew session");
+      toast.error(err?.response?.data?.message || err?.message || "Failed to renew session");
     },
   });
 

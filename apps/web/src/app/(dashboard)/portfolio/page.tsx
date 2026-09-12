@@ -190,13 +190,73 @@ export default function PortfolioPage() {
     });
   };
 
+  // Auto-detect Zerodha request_token on desktop redirect
+  useEffect(() => {
+    if (typeof window === "undefined" || !activeBrokerId) return;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("request_token") || params.get("requestToken");
+
+    if (token) {
+      renewSession(token)
+        .then(() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("request_token");
+          url.searchParams.delete("requestToken");
+          url.searchParams.delete("action");
+          url.searchParams.delete("status");
+          url.searchParams.delete("type");
+          const nextUrl = url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "");
+          window.history.replaceState({}, document.title, nextUrl);
+        })
+        .catch((err) => {
+          console.error("Auto token renewal failed:", err);
+        });
+    }
+  }, [activeBrokerId, renewSession]);
+
   const handleOpenLogin = async () => {
     const url = await getLoginUrl();
     if (url) window.open(url, "_blank");
   };
 
+  const handleAutomatedLogin = async () => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get("request_token") || urlParams.get("requestToken");
+      if (urlToken) {
+        try {
+          await renewSession(urlToken);
+          setShowRenewModal(false);
+          setRequestToken("");
+          return;
+        } catch {}
+      }
+
+      try {
+        if (navigator?.clipboard?.readText) {
+          const clipText = await navigator.clipboard.readText();
+          let token = (clipText || "").trim();
+          if (token.includes("request_token=")) {
+            const match = token.match(/request_token=([a-zA-Z0-9]+)/);
+            if (match && match[1]) token = match[1];
+          }
+          if (token && token.length >= 10 && !token.includes(" ")) {
+            setRequestToken(token);
+            await renewSession(token);
+            setShowRenewModal(false);
+            setRequestToken("");
+            return;
+          }
+        }
+      } catch {}
+    }
+
+    await handleOpenLogin();
+  };
+
   const handleRenewSession = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!requestToken) return;
     try {
       await renewSession(requestToken);
       setShowRenewModal(false);
@@ -877,7 +937,7 @@ export default function PortfolioPage() {
               <form onSubmit={handleRenewSession} className="space-y-3">
                 <Button
                   type="button"
-                  onClick={() => handleRenewSession({ preventDefault: () => {} } as any)}
+                  onClick={handleAutomatedLogin}
                   disabled={isRenewing}
                   className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
                 >
@@ -902,8 +962,15 @@ export default function PortfolioPage() {
 
                 <Input
                   value={requestToken}
-                  onChange={(e) => setRequestToken(e.target.value)}
-                  placeholder="Paste token or session ID here..."
+                  onChange={(e) => {
+                    let val = e.target.value.trim();
+                    if (val.includes("request_token=")) {
+                      const match = val.match(/request_token=([a-zA-Z0-9]+)/);
+                      if (match && match[1]) val = match[1];
+                    }
+                    setRequestToken(val);
+                  }}
+                  placeholder="Paste token or redirect URL here..."
                   className="h-9 border-slate-200 bg-white text-slate-900 text-xs focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
                 />
 

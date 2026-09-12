@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { useMarketData } from "@/hooks/use-market-data";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable, DataTableColumnHeader } from "@/components/ui/data-table";
 import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -155,6 +157,107 @@ export default function PositionsPage() {
       setIsProcessing(false);
     }
   };
+
+  const columns = useMemo<ColumnDef<typeof livePositions[0]>[]>(() => [
+    {
+      accessorKey: "product",
+      header: "Product",
+      cell: ({ row }) => (
+        <Badge variant="secondary" className="text-[11px] font-bold">
+          {row.original.product || "MIS"}
+        </Badge>
+      ),
+    },
+    {
+      accessorKey: "symbol",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
+      cell: ({ row }) => (
+        <span className="font-semibold text-foreground">
+          {row.original.symbol}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "qty",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Qty" className="justify-end" />,
+      cell: ({ row }) => {
+        const isLong = row.original.qty > 0;
+        return (
+          <div className={cn(
+            "text-right font-mono font-semibold",
+            isLong ? "text-emerald-500" : "text-rose-500"
+          )}>
+            {row.original.qty > 0 ? `+${row.original.qty}` : row.original.qty}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "avgPrice",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Avg. Price" className="justify-end" />,
+      cell: ({ row }) => (
+        <div className="text-right font-mono text-foreground">
+          ₹{row.original.avgPrice?.toFixed(2) || "0.00"}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "ltp",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="LTP" className="justify-end" />,
+      cell: ({ row }) => (
+        <div className="text-right font-mono font-semibold text-foreground">
+          ₹{row.original.ltp?.toFixed(2) || "0.00"}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "pnl",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Current P&L" className="justify-end" />,
+      cell: ({ row }) => {
+        const pnl = row.original.pnl || 0;
+        return (
+          <div className={cn(
+            "text-right font-mono font-bold",
+            pnl > 0 ? "text-emerald-500" : pnl < 0 ? "text-rose-500" : "text-muted-foreground"
+          )}>
+            {pnl > 0 ? "+" : ""}₹{pnl.toFixed(2)}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "pnlPct",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Change %" className="justify-end" />,
+      cell: ({ row }) => {
+        const pct = row.original.pnlPct || 0;
+        return (
+          <div className={cn(
+            "text-right font-mono font-medium",
+            pct >= 0 ? "text-emerald-500" : "text-rose-500"
+          )}>
+            {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+          </div>
+        );
+      },
+    },
+    {
+      id: "action",
+      header: () => <div className="text-center text-xs font-semibold text-muted-foreground">Action</div>,
+      cell: ({ row }) => (
+        <div className="text-center">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setSquareOffPosition(row.original)}
+            disabled={isProcessing}
+            className="h-7 text-xs px-2.5"
+          >
+            Exit
+          </Button>
+        </div>
+      ),
+    },
+  ], [isProcessing]);
 
   return (
     <div className="space-y-6 animate-[fade-up_0.3s_ease_both]">
@@ -402,75 +505,16 @@ export default function PositionsPage() {
                 })}
               </div>
 
-              {/* ─── Desktop Table (>= md) ─── */}
-              <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-muted/40 text-xs font-semibold text-muted-foreground border-b border-border">
-                    <tr>
-                      <th className="py-3 px-4">Product</th>
-                      <th className="py-3 px-4">Instrument</th>
-                      <th className="py-3 px-4 text-right">Qty</th>
-                      <th className="py-3 px-4 text-right">Avg. Price</th>
-                      <th className="py-3 px-4 text-right">LTP</th>
-                      <th className="py-3 px-4 text-right">Current P&L</th>
-                      <th className="py-3 px-4 text-right">Change %</th>
-                      <th className="py-3 px-4 text-center">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {livePositions.map((pos, idx) => {
-                      const isLong = pos.qty > 0;
-
-                      return (
-                        <tr key={idx} className="hover:bg-muted/30 transition-colors">
-                          <td className="py-3.5 px-4 font-mono text-xs">
-                            <Badge variant="secondary" className="text-[11px] font-bold">
-                              {pos.product || "MIS"}
-                            </Badge>
-                          </td>
-                          <td className="py-3.5 px-4 font-semibold text-foreground">
-                            {pos.symbol}
-                          </td>
-                          <td className={cn(
-                            "py-3.5 px-4 text-right font-mono font-semibold",
-                            isLong ? "text-emerald-500" : "text-rose-500"
-                          )}>
-                            {pos.qty > 0 ? `+${pos.qty}` : pos.qty}
-                          </td>
-                          <td className="py-3.5 px-4 text-right font-mono text-foreground">
-                            ₹{pos.avgPrice?.toFixed(2) || "0.00"}
-                          </td>
-                          <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
-                            ₹{pos.ltp?.toFixed(2) || "0.00"}
-                          </td>
-                          <td className={cn(
-                            "py-3.5 px-4 text-right font-mono font-bold",
-                            pos.pnl > 0 ? "text-emerald-500" : pos.pnl < 0 ? "text-rose-500" : "text-muted-foreground"
-                          )}>
-                            {pos.pnl > 0 ? "+" : ""}₹{pos.pnl?.toFixed(2) || "0.00"}
-                          </td>
-                          <td className={cn(
-                            "py-3.5 px-4 text-right font-mono font-medium",
-                            pos.pnlPct >= 0 ? "text-emerald-500" : "text-rose-500"
-                          )}>
-                            {pos.pnlPct >= 0 ? "+" : ""}{pos.pnlPct.toFixed(2)}%
-                          </td>
-                          <td className="py-3.5 px-4 text-center">
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => setSquareOffPosition(pos)}
-                              disabled={isProcessing}
-                              className="h-7 text-xs px-2.5"
-                            >
-                              Exit
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              {/* ─── Desktop TanStack DataTable (>= md) ─── */}
+              <div className="hidden md:block p-4">
+                <DataTable
+                  columns={columns}
+                  data={livePositions}
+                  searchKey="symbol"
+                  searchPlaceholder="Filter positions by symbol..."
+                  pageSize={15}
+                  emptyMessage="No open positions found."
+                />
               </div>
             </>
           )}

@@ -8,6 +8,11 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 
 interface OrderWindowProps {
   isOpen: boolean;
@@ -20,10 +25,42 @@ interface OrderWindowProps {
   onTypeChange?: (type: 'BUY' | 'SELL') => void;
 }
 
-type TabType = 'Regular' | 'Cover' | 'AMO' | 'Iceberg';
-type ProductType = 'MIS' | 'CNC';
-type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SL-M';
-type ValidityType = 'DAY' | 'IOC' | 'TTL';
+export type TabType = 'Regular' | 'Cover' | 'AMO' | 'Iceberg';
+export type ProductType = 'MIS' | 'CNC';
+export type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SL-M';
+export type ValidityType = 'DAY' | 'IOC' | 'TTL';
+
+export const orderFormSchema = z.object({
+  product: z.enum(['MIS', 'CNC']),
+  orderType: z.enum(['MARKET', 'LIMIT', 'SL', 'SL-M']),
+  exchange: z.enum(['NSE', 'BSE']),
+  qty: z.coerce.number().int().min(1, "Quantity must be at least 1"),
+  price: z.coerce.number().min(0, "Price cannot be negative"),
+  triggerPrice: z.coerce.number().min(0, "Trigger price cannot be negative"),
+  activeTab: z.enum(['Regular', 'Cover', 'AMO', 'Iceberg']),
+  validity: z.enum(['DAY', 'IOC', 'TTL']),
+  ttlMinutes: z.coerce.number().min(1).optional(),
+  disclosedQty: z.coerce.number().min(0).optional(),
+  orderTag: z.string().max(20, "Tag cannot exceed 20 characters").optional(),
+}).refine((data) => {
+  if ((data.orderType === 'LIMIT' || data.orderType === 'SL') && data.price <= 0) {
+    return false;
+  }
+  return true;
+}, {
+  message: "Price must be > 0 for Limit & SL orders",
+  path: ["price"],
+}).refine((data) => {
+  if ((data.orderType === 'SL' || data.orderType === 'SL-M') && data.triggerPrice <= 0) {
+    return false;
+  }
+  return true;
+}, {
+  message: "Trigger price must be > 0 for SL & SL-M orders",
+  path: ["triggerPrice"],
+});
+
+export type OrderFormValues = z.infer<typeof orderFormSchema>;
 
 export function OrderWindow({
   isOpen,
@@ -35,20 +72,44 @@ export function OrderWindow({
   brokerId,
   onTypeChange,
 }: OrderWindowProps) {
-  const [product, setProduct] = useState<ProductType>('MIS');
-  const [orderType, setOrderType] = useState<OrderType>('LIMIT');
-  const [qty, setQty] = useState(1);
-  const [price, setPrice] = useState(ltp);
-  const [triggerPrice, setTriggerPrice] = useState(0);
-  const [activeTab, setActiveTab] = useState<TabType>('Regular');
-  const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
+  const queryClient = useQueryClient();
+
+  const {
+    handleSubmit,
+    watch,
+    setValue,
+    formState: { errors },
+  } = useForm<OrderFormValues>({
+    resolver: zodResolver(orderFormSchema),
+    defaultValues: {
+      product: 'MIS',
+      orderType: 'LIMIT',
+      exchange: 'NSE',
+      qty: 1,
+      price: ltp > 0 ? Number(ltp.toFixed(2)) : 0,
+      triggerPrice: 0,
+      activeTab: 'Regular',
+      validity: 'DAY',
+      ttlMinutes: 2,
+      disclosedQty: 0,
+      orderTag: '',
+    },
+  });
+
+  const product = watch("product");
+  const orderType = watch("orderType");
+  const qty = watch("qty") ?? 1;
+  const price = watch("price") ?? 0;
+  const triggerPrice = watch("triggerPrice") ?? 0;
+  const activeTab = watch("activeTab");
+  const exchange = watch("exchange");
+  const validity = watch("validity");
+  const ttlMinutes = watch("ttlMinutes") ?? 2;
+  const disclosedQty = watch("disclosedQty") ?? 0;
+  const orderTag = watch("orderTag") ?? "";
 
   // Advanced options state
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [validity, setValidity] = useState<ValidityType>('DAY');
-  const [disclosedQty, setDisclosedQty] = useState(0);
-  const [orderTag, setOrderTag] = useState('');
-  const [ttlMinutes, setTtlMinutes] = useState(2);
 
   // Settings popover state
   const [showSettings, setShowSettings] = useState(false);
@@ -58,17 +119,17 @@ export function OrderWindow({
   const [isRefreshingMargin, setIsRefreshingMargin] = useState(false);
 
   useEffect(() => {
-    if (ltp > 0) {
-      setPrice(Number(ltp.toFixed(2)));
+    if (ltp > 0 && isOpen) {
+      setValue("price", Number(ltp.toFixed(2)));
     }
-  }, [ltp, isOpen]);
+  }, [ltp, isOpen, setValue]);
 
   useEffect(() => {
-    // Reset trigger price when order type changes
-    if (orderType === 'MARKET') {
-      setPrice(ltp);
+    // Reset price when order type changes to market
+    if (orderType === 'MARKET' && ltp > 0) {
+      setValue("price", Number(ltp.toFixed(2)));
     }
-  }, [orderType, ltp]);
+  }, [orderType, ltp, setValue]);
 
   if (!isOpen) return null;
 
@@ -83,7 +144,7 @@ export function OrderWindow({
     ? (effectivePrice * qty) / 5
     : (effectivePrice * qty);
 
-  const handlePlaceOrder = async () => {
+  const onSubmit = async (data: OrderFormValues) => {
     if (!brokerId) {
       toast.error("No active broker selected");
       return;
@@ -91,23 +152,28 @@ export function OrderWindow({
 
     try {
       setIsSubmitting(true);
-      const variety = activeTab === 'AMO' ? 'amo' : activeTab === 'Cover' ? 'co' : activeTab === 'Iceberg' ? 'iceberg' : 'regular';
+      const variety = data.activeTab === 'AMO' ? 'amo' : data.activeTab === 'Cover' ? 'co' : data.activeTab === 'Iceberg' ? 'iceberg' : 'regular';
       await brokerApi.placeOrder(brokerId, {
         symbol,
-        exchange,
+        exchange: data.exchange,
         side: type,
-        product,
-        orderType,
-        qty: qty,
-        price: orderType === 'MARKET' ? 0 : price,
-        triggerPrice: orderType.startsWith('SL') ? triggerPrice : 0,
+        product: data.product,
+        orderType: data.orderType,
+        qty: data.qty,
+        price: data.orderType === 'MARKET' ? 0 : data.price,
+        triggerPrice: data.orderType.startsWith('SL') ? data.triggerPrice : 0,
         variety,
-        validity,
-        disclosedQty,
-        tag: orderTag || undefined,
+        validity: data.validity,
+        disclosedQty: data.disclosedQty,
+        tag: data.orderTag || undefined,
       });
 
-      toast.success(`${activeTab === 'AMO' ? 'AMO' : type} order placed for ${qty} ${symbol}`);
+      toast.success(`${data.activeTab === 'AMO' ? 'AMO' : type} order placed for ${data.qty} ${symbol}`);
+
+      // Centralized query cache invalidation via Query Key Factory
+      queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.portfolio.all });
+
       onClose();
     } catch (error: any) {
       toast.error(error?.response?.data?.message || "Failed to place order");
@@ -162,7 +228,7 @@ export function OrderWindow({
                   <div className="flex items-center gap-3 text-[11px] text-white/90 font-medium">
                     <label
                       className="flex items-center gap-1.5 cursor-pointer hover:opacity-100 transition-opacity"
-                      onClick={() => setExchange("BSE")}
+                      onClick={() => setValue("exchange", "BSE")}
                     >
                       <div className={cn(
                         "h-2 w-2 rounded-full transition-all",
@@ -175,7 +241,7 @@ export function OrderWindow({
 
                     <label
                       className="flex items-center gap-1.5 cursor-pointer hover:opacity-100 transition-opacity"
-                      onClick={() => setExchange("NSE")}
+                      onClick={() => setValue("exchange", "NSE")}
                     >
                       <div className={cn(
                         "h-2 w-2 rounded-full transition-all",
@@ -225,7 +291,7 @@ export function OrderWindow({
                     <button
                       key={tab}
                       type="button"
-                      onClick={() => setActiveTab(tab)}
+                      onClick={() => setValue("activeTab", tab)}
                       className={cn(
                         "px-3 sm:px-4 py-2 sm:py-2.5 text-[11px] sm:text-[12px] font-semibold cursor-pointer border-b-2 transition-all relative whitespace-nowrap",
                         isActive ? "text-[#333]" : "text-slate-500 hover:text-slate-800 border-transparent"
@@ -268,7 +334,7 @@ export function OrderWindow({
                         <span className="text-[11px] text-slate-400">Default Product</span>
                         <select
                           value={product}
-                          onChange={(e) => setProduct(e.target.value as ProductType)}
+                          onChange={(e) => setValue("product", e.target.value as ProductType)}
                           className="w-full border rounded-lg px-2 py-1 bg-slate-50 text-xs"
                         >
                           <option value="MIS">Intraday (MIS)</option>
@@ -279,7 +345,7 @@ export function OrderWindow({
                         <span className="text-[11px] text-slate-400">Default Order Type</span>
                         <select
                           value={orderType}
-                          onChange={(e) => setOrderType(e.target.value as OrderType)}
+                          onChange={(e) => setValue("orderType", e.target.value as OrderType)}
                           className="w-full border rounded-lg px-2 py-1 bg-slate-50 text-xs"
                         >
                           <option value="LIMIT">Limit</option>
@@ -301,7 +367,7 @@ export function OrderWindow({
                 {/* Intraday MIS */}
                 <label
                   className="flex items-center gap-2 cursor-pointer group"
-                  onClick={() => setProduct('MIS')}
+                  onClick={() => setValue("product", "MIS")}
                 >
                   <div
                     className={cn(
@@ -328,7 +394,7 @@ export function OrderWindow({
                 {/* Longterm CNC */}
                 <label
                   className="flex items-center gap-2 cursor-pointer group"
-                  onClick={() => setProduct('CNC')}
+                  onClick={() => setValue("product", "CNC")}
                 >
                   <div
                     className={cn(
@@ -365,14 +431,14 @@ export function OrderWindow({
                       type="number"
                       min={1}
                       value={qty}
-                      onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                      onChange={(e) => setValue("qty", Math.max(1, parseInt(e.target.value) || 1), { shouldValidate: true })}
                       className="w-full h-full bg-transparent pl-2 sm:pl-3 pr-5 sm:pr-6 text-xs sm:text-[14px] font-bold text-slate-800 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     />
                     {/* Stepper buttons (+ / -) */}
                     <div className="absolute right-0 top-0 bottom-0 w-5 sm:w-6 flex flex-col border-l border-slate-200/60 bg-slate-100/50">
                       <button
                         type="button"
-                        onClick={() => setQty((prev) => prev + 1)}
+                        onClick={() => setValue("qty", qty + 1, { shouldValidate: true })}
                         className="flex-1 flex items-center justify-center text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 transition-colors"
                       >
                         <Plus className="h-2 sm:h-2.5 w-2 sm:w-2.5" />
@@ -380,13 +446,14 @@ export function OrderWindow({
                       <div className="border-t border-slate-200/60" />
                       <button
                         type="button"
-                        onClick={() => setQty((prev) => Math.max(1, prev - 1))}
+                        onClick={() => setValue("qty", Math.max(1, qty - 1), { shouldValidate: true })}
                         className="flex-1 flex items-center justify-center text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 transition-colors"
                       >
                         <Minus className="h-2 sm:h-2.5 w-2 sm:w-2.5" />
                       </button>
                     </div>
                   </div>
+                  {errors.qty && <p className="text-[10px] text-rose-500 font-semibold">{errors.qty.message}</p>}
                 </div>
 
                 {/* PRICE FIELD */}
@@ -405,13 +472,14 @@ export function OrderWindow({
                       step="0.05"
                       disabled={orderType === 'MARKET'}
                       value={orderType === 'MARKET' ? (ltp > 0 ? ltp : 0) : price}
-                      onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => setValue("price", parseFloat(e.target.value) || 0, { shouldValidate: true })}
                       className={cn(
                         "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
                         orderType === 'MARKET' ? "text-slate-400 cursor-not-allowed" : "text-slate-800"
                       )}
                     />
                   </div>
+                  {errors.price && <p className="text-[10px] text-rose-500 font-semibold">{errors.price.message}</p>}
                 </div>
 
                 {/* TRIGGER PRICE FIELD */}
@@ -430,13 +498,14 @@ export function OrderWindow({
                       step="0.05"
                       disabled={!orderType.startsWith('SL')}
                       value={orderType.startsWith('SL') ? triggerPrice : 0}
-                      onChange={(e) => setTriggerPrice(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => setValue("triggerPrice", parseFloat(e.target.value) || 0, { shouldValidate: true })}
                       className={cn(
                         "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
                         !orderType.startsWith('SL') ? "text-slate-400 cursor-not-allowed" : "text-slate-800"
                       )}
                     />
                   </div>
+                  {errors.triggerPrice && <p className="text-[10px] text-rose-500 font-semibold">{errors.triggerPrice.message}</p>}
                 </div>
               </div>
 
@@ -448,7 +517,7 @@ export function OrderWindow({
                     <label
                       key={t}
                       className="flex items-center gap-1.5 sm:gap-2 cursor-pointer group"
-                      onClick={() => setOrderType(t.toUpperCase() as OrderType)}
+                      onClick={() => setValue("orderType", t.toUpperCase() as OrderType, { shouldValidate: true })}
                     >
                       <div
                         className={cn(
@@ -511,12 +580,12 @@ export function OrderWindow({
                             <label
                               key={v}
                               className="flex items-center gap-1.5 cursor-pointer"
-                              onClick={() => setValidity(v)}
+                              onClick={() => setValue("validity", v, { shouldValidate: true })}
                             >
                               <input
                                 type="radio"
                                 checked={validity === v}
-                                onChange={() => setValidity(v)}
+                                onChange={() => setValue("validity", v, { shouldValidate: true })}
                                 className="accent-[#4184f3]"
                               />
                               <span className="text-slate-700 font-medium text-xs">{v}</span>
@@ -534,7 +603,7 @@ export function OrderWindow({
                             type="number"
                             min={1}
                             value={ttlMinutes}
-                            onChange={(e) => setTtlMinutes(parseInt(e.target.value) || 1)}
+                            onChange={(e) => setValue("ttlMinutes", parseInt(e.target.value) || 1)}
                             className="h-8 text-xs bg-[#edf2f7] border-slate-200 w-28 rounded-lg"
                           />
                         </div>
@@ -549,7 +618,7 @@ export function OrderWindow({
                             type="number"
                             min={0}
                             value={disclosedQty}
-                            onChange={(e) => setDisclosedQty(parseInt(e.target.value) || 0)}
+                            onChange={(e) => setValue("disclosedQty", parseInt(e.target.value) || 0)}
                             className="h-8 text-xs bg-[#edf2f7] border-slate-200 rounded-lg"
                             placeholder="Optional"
                           />
@@ -562,10 +631,11 @@ export function OrderWindow({
                           <Input
                             type="text"
                             value={orderTag}
-                            onChange={(e) => setOrderTag(e.target.value)}
+                            onChange={(e) => setValue("orderTag", e.target.value)}
                             className="h-8 text-xs bg-[#edf2f7] border-slate-200 rounded-lg"
                             placeholder="e.g. Scalp1"
                           />
+                          {errors.orderTag && <p className="text-[10px] text-rose-500 font-semibold">{errors.orderTag.message}</p>}
                         </div>
                       </div>
                     </motion.div>
@@ -614,7 +684,7 @@ export function OrderWindow({
 
                 <Button
                   type="button"
-                  onClick={handlePlaceOrder}
+                  onClick={handleSubmit(onSubmit)}
                   disabled={isSubmitting}
                   className="text-white font-bold px-5 sm:px-8 h-8.5 sm:h-9 rounded-lg sm:rounded-xl text-xs transition-all shadow-sm hover:brightness-105 active:scale-[0.98]"
                   style={{
