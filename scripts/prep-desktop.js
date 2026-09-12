@@ -34,6 +34,20 @@ if (fs.existsSync(srcPublic)) {
   console.log('✅ public copied.');
 }
 
+// 2. Ensure Next.js runtime @swc helper packages are present without duplicating next
+const swcSrc = path.join(webDir, '.next', 'standalone', 'node_modules', '.pnpm', 'node_modules', '@swc');
+const swcDest = path.join(webDir, '.next', 'standalone', 'node_modules', '@swc');
+if (fs.existsSync(swcSrc)) {
+  console.log('📦 Syncing @swc helpers into standalone node_modules...');
+  fs.cpSync(swcSrc, swcDest, { recursive: true, force: true });
+  console.log('✅ @swc helpers synced.');
+}
+// Clean up duplicated next in standalone root if present
+const duplicatedNext = path.join(webDir, '.next', 'standalone', 'node_modules', 'next');
+if (fs.existsSync(duplicatedNext)) {
+  fs.rmSync(duplicatedNext, { recursive: true, force: true });
+}
+
 // 2. Ensure auth-service dist exists
 const srcBackendDist = path.join(authServiceDir, 'dist', 'main.js');
 if (!fs.existsSync(srcBackendDist)) {
