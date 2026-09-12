@@ -10,14 +10,15 @@
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win",
-    "dist:portable": "electron-builder --win portable"
+    "dist:portable": "electron-builder --win portable",
+    "dist:nsis": "electron-builder --win nsis"
   },
   "build": {
     "appId": "com.tradeio.app",
     "productName": "TradeIO",
     "copyright": "Copyright © 2026 TradeIO",
     "npmRebuild": false,
-    "compression": "store",
+    "compression": "normal",
     "asar": true,
     "directories": {
       "output": "release"
@@ -29,27 +30,23 @@
       {
         "from": "../web/.next/standalone",
         "to": "web-server",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*",
+          "!**/*.map",
+          "!**/tests/**",
+          "!**/test/**"
+        ]
       },
       {
         "from": "../auth-service/standalone",
         "to": "backend",
         "filter": [
-          "dist/**/*",
-          "node_modules/**/*",
-          "package.json",
-          ".env"
+          "**/*"
         ]
       }
     ],
     "win": {
       "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        },
         {
           "target": "nsis",
           "arch": [
@@ -58,12 +55,18 @@
         }
       ]
     },
+    "portable": {
+      "artifactName": "TradeIO.exe",
+      "requestExecutionLevel": "user"
+    },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "artifactName": "TradeIO-Setup.exe"
     }
   },
   "devDependencies": {

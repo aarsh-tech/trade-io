@@ -63,8 +63,10 @@ function checkHttpService(url: string, timeoutMs = 1500): Promise<boolean> {
 
 function findBackendEntry(): string | null {
   const candidates = [
+    path.join(process.resourcesPath, "backend/main.bundle.js"),
     path.join(process.resourcesPath, "backend/dist/main.js"),
     path.join(process.resourcesPath, "backend/main.js"),
+    path.resolve(__dirname, "../../auth-service/standalone/main.bundle.js"),
     path.resolve(__dirname, "../../auth-service/dist/main.js"),
     path.resolve(process.cwd(), "apps/auth-service/dist/main.js"),
   ];
@@ -78,6 +80,14 @@ function findWebEntry(): string | null {
     path.resolve(process.cwd(), "apps/web/.next/standalone/apps/web/server.js"),
   ];
   return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+function getBackendDir(entryPath: string): string {
+  const dir = path.dirname(entryPath);
+  if (path.basename(dir).toLowerCase() === "dist") {
+    return path.dirname(dir);
+  }
+  return dir;
 }
 
 async function startBackend(): Promise<void> {
@@ -95,6 +105,7 @@ async function startBackend(): Promise<void> {
 
   const dbPath = getDatabasePath().replace(/\\/g, "/");
   const sqliteUrl = `file:${dbPath}`;
+  const backendDir = getBackendDir(backendEntry);
   const env: Record<string, string> = {
     ...process.env,
     PORT: String(BACKEND_PORT),
@@ -110,11 +121,11 @@ async function startBackend(): Promise<void> {
     ELECTRON_RUN_AS_NODE: "1",
   };
 
-  console.log(`Auto-starting backend process from: ${backendEntry} with DB: ${sqliteUrl}`);
+  console.log(`Auto-starting backend process from: ${backendEntry} (cwd: ${backendDir}) with DB: ${sqliteUrl}`);
   try {
     backendProcess = fork(backendEntry, [], {
       env,
-      cwd: path.dirname(backendEntry),
+      cwd: backendDir,
       stdio: "pipe",
     });
 

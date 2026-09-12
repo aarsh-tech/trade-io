@@ -21,4 +21,6 @@ scripts/cache_nifty500/
 scripts/*
 !scripts/clean-cache.js
 !scripts/prep-desktop.js
+!scripts/clean-dist.js
+prisma/client-sqlite/
 

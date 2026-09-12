@@ -2,87 +2,101 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-console.log('🚀 [Desktop Prep] Starting Electron standalone asset preparation...');
+console.log('🚀 [Desktop Prep] Starting Ultra-Fast Standalone Bundle Preparation...');
 
 const rootDir = path.resolve(__dirname, '..');
 const webDir = path.join(rootDir, 'apps', 'web');
-const standaloneDir = path.join(webDir, '.next', 'standalone', 'apps', 'web');
+const standaloneWebDir = path.join(webDir, '.next', 'standalone', 'apps', 'web');
+const authServiceDir = path.join(rootDir, 'apps', 'auth-service');
+const standaloneBackendDir = path.join(authServiceDir, 'standalone');
 
-// 1. Copy static folder to web standalone
+// 1. Copy web static & public folders to web standalone
 const srcStatic = path.join(webDir, '.next', 'static');
-const destStatic = path.join(standaloneDir, '.next', 'static');
-
+const destStatic = path.join(standaloneWebDir, '.next', 'static');
 if (fs.existsSync(srcStatic)) {
-  console.log(`📦 Copying .next/static -> ${destStatic}`);
+  console.log(`📦 Syncing .next/static -> ${destStatic}`);
   fs.mkdirSync(path.dirname(destStatic), { recursive: true });
   fs.cpSync(srcStatic, destStatic, { recursive: true });
-  console.log('✅ .next/static copied successfully.');
+  console.log('✅ .next/static copied.');
 } else {
-  console.warn('⚠️  apps/web/.next/static not found. Make sure to run `pnpm --filter web build` first.');
+  console.warn('⚠️  apps/web/.next/static not found. Running web build first...');
+  execSync('pnpm --filter web build', { stdio: 'inherit', cwd: rootDir });
+  fs.mkdirSync(path.dirname(destStatic), { recursive: true });
+  fs.cpSync(srcStatic, destStatic, { recursive: true });
 }
 
-// 2. Copy public folder to web standalone
 const srcPublic = path.join(webDir, 'public');
-const destPublic = path.join(standaloneDir, 'public');
-
+const destPublic = path.join(standaloneWebDir, 'public');
 if (fs.existsSync(srcPublic)) {
-  console.log(`📦 Copying public -> ${destPublic}`);
+  console.log(`📦 Syncing public -> ${destPublic}`);
   fs.mkdirSync(destPublic, { recursive: true });
   fs.cpSync(srcPublic, destPublic, { recursive: true });
-  console.log('✅ public folder copied successfully.');
-} else {
-  console.log('ℹ️  apps/web/public does not exist or is empty.');
+  console.log('✅ public copied.');
 }
 
-// 3. Ensure auth-service standalone directory is deployed with production dependencies
-const authServiceDir = path.join(rootDir, 'apps', 'auth-service');
-const destBackendNodeModules = path.join(authServiceDir, 'standalone', 'node_modules');
-if (!fs.existsSync(destBackendNodeModules)) {
-  console.log('📦 Deploying isolated standalone production dependencies for auth-service...');
-  execSync('pnpm --filter=@algo-trade/auth-service deploy apps/auth-service/standalone --prod', { stdio: 'inherit', cwd: rootDir });
-  console.log('✅ Standalone production dependencies deployed.');
+// 2. Ensure auth-service dist exists
+const srcBackendDist = path.join(authServiceDir, 'dist', 'main.js');
+if (!fs.existsSync(srcBackendDist)) {
+  console.log('🔨 Compiling auth-service NestJS...');
+  execSync('pnpm --filter @algo-trade/auth-service build', { stdio: 'inherit', cwd: rootDir });
 }
 
-const srcBackendDist = path.join(authServiceDir, 'dist');
-const destBackendDist = path.join(authServiceDir, 'standalone', 'dist');
-
-if (fs.existsSync(srcBackendDist)) {
-  console.log(`📦 Copying backend dist -> ${destBackendDist}`);
-  fs.mkdirSync(destBackendDist, { recursive: true });
-  fs.cpSync(srcBackendDist, destBackendDist, { recursive: true });
-  console.log('✅ backend dist copied to standalone successfully.');
+// 3. Bundle auth-service into a single lean JS file via @vercel/ncc (~3.5MB)
+console.log('⚡ Bundling auth-service into a single standalone executable file (~3.5MB)...');
+if (fs.existsSync(standaloneBackendDir)) {
+  try {
+    fs.rmSync(standaloneBackendDir, { recursive: true, force: true });
+  } catch {
+    execSync(`cmd /c "rmdir /s /q \\"${standaloneBackendDir}\\""`, { stdio: 'ignore' });
+  }
 }
+fs.mkdirSync(standaloneBackendDir, { recursive: true });
 
-// 4. Generate SQLite Prisma Client and sync to standalone
+execSync(
+  `npx @vercel/ncc build "${srcBackendDist}" -o "${standaloneBackendDir}" -m --external @prisma/client`,
+  { stdio: 'inherit', cwd: rootDir }
+);
+
+if (fs.existsSync(path.join(standaloneBackendDir, 'index.js'))) {
+  fs.renameSync(
+    path.join(standaloneBackendDir, 'index.js'),
+    path.join(standaloneBackendDir, 'main.bundle.js')
+  );
+}
+console.log('✅ Auth-service bundled into main.bundle.js.');
+
+// 4. Generate SQLite Prisma Client and install in standalone/node_modules
 console.log('🗄️  Generating SQLite Prisma Client...');
 execSync('npx prisma generate --schema=./prisma/schema.sqlite.prisma', { stdio: 'inherit', cwd: rootDir });
 
-// Copy generated SQLite client to auth-service standalone node_modules
-const pnpmPrismaSources = [
-  path.join(rootDir, 'node_modules', '.pnpm', '@prisma+client@6.2.1_prisma@6.2.1', 'node_modules', '.prisma', 'client'),
-  path.join(rootDir, 'node_modules', '.prisma', 'client'),
-];
-const generatedPrismaDir = pnpmPrismaSources.find((p) => fs.existsSync(p));
+const generatedPrismaDir = path.join(rootDir, 'prisma', 'client-sqlite');
+const destDotPrisma = path.join(standaloneBackendDir, 'node_modules', '.prisma', 'client');
+fs.mkdirSync(destDotPrisma, { recursive: true });
+fs.cpSync(generatedPrismaDir, destDotPrisma, { recursive: true });
 
-if (generatedPrismaDir) {
-  const destPrismaDirs = [
-    path.join(authServiceDir, 'standalone', 'node_modules', '.pnpm', '@prisma+client@6.2.1_prisma@6.2.1', 'node_modules', '.prisma', 'client'),
-    path.join(authServiceDir, 'standalone', 'node_modules', '.prisma', 'client'),
-  ];
+// Create minimal @prisma/client wrapper
+const destAtPrisma = path.join(standaloneBackendDir, 'node_modules', '@prisma', 'client');
+fs.mkdirSync(destAtPrisma, { recursive: true });
+fs.writeFileSync(
+  path.join(destAtPrisma, 'package.json'),
+  JSON.stringify({ name: '@prisma/client', version: '6.2.1', main: 'index.js' }, null, 2)
+);
+fs.writeFileSync(
+  path.join(destAtPrisma, 'index.js'),
+  "module.exports = require('.prisma/client/default');\n"
+);
+console.log('✅ SQLite Prisma client linked cleanly.');
 
-  for (const dest of destPrismaDirs) {
-    console.log(`📦 Syncing SQLite Prisma client -> ${dest}`);
-    fs.mkdirSync(dest, { recursive: true });
-    fs.cpSync(generatedPrismaDir, dest, { recursive: true });
-  }
-  console.log('✅ SQLite Prisma client synced to standalone node_modules successfully.');
+// Copy .env to standalone
+const srcEnv = path.join(authServiceDir, '.env');
+if (fs.existsSync(srcEnv)) {
+  fs.copyFileSync(srcEnv, path.join(standaloneBackendDir, '.env'));
 } else {
-  console.warn('⚠️  Could not find generated .prisma/client in root node_modules.');
+  fs.writeFileSync(path.join(standaloneBackendDir, '.env'), 'PORT=3002\n');
 }
 
 // 5. Build Desktop Electron TypeScript Main
 console.log('⚡ Building Electron Desktop main process...');
 execSync('pnpm --filter @algo-trade/desktop run build:main', { stdio: 'inherit', cwd: rootDir });
 
-console.log('🎉 [Desktop Prep] All desktop assets, SQLite schema, and standalone bundles are ready for electron-builder packaging!');
-
+console.log('🎉 [Desktop Prep] Ultra-compact standalone bundles are ready for instant electron packaging!');
