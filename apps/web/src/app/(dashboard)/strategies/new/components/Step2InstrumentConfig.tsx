@@ -66,14 +66,14 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
       {/* ── GAMMA BLAST SPECIAL CONFIG ── */}
       {form.type === "GAMMA_BLAST_EXPIRY" && (
         <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 shadow-xs">
+          <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 shadow-xs">
             <div className="flex items-center gap-2 mb-1.5">
-              <Sparkles className="h-4 w-4 text-amber-700 dark:text-amber-400" />
-              <p className="text-xs sm:text-sm font-bold text-amber-900 dark:text-amber-200">
+              <Sparkles className="h-4 w-4 text-amber-700 " />
+              <p className="text-xs sm:text-sm font-bold text-amber-950 font-black">
                 Gamma Blast (CAS &amp; Expiry Special) Configuration
               </p>
             </div>
-            <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">
+            <p className="text-xs text-slate-900 font-medium leading-relaxed">
               Trades explosive 01:00 PM – 03:05 PM momentum spikes on NIFTY (Tuesdays) &amp; SENSEX (Thursdays). The engine automatically selects cheap ₹8–₹15 / ₹12–₹25 strikes using live Open Interest (OI) &amp; range breakout triggers.
             </p>
           </div>
@@ -98,13 +98,13 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   className={cn(
                     "text-left p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between bg-card",
                     form.gbIndex === item.val || form.symbol === item.val
-                      ? "border-amber-500 bg-amber-50/40 dark:bg-amber-950/20 shadow-xs ring-1 ring-amber-500/30"
+                      ? "border-amber-500 bg-amber-50/40  shadow-xs ring-1 ring-amber-500/30"
                       : "border-border hover:border-amber-400/50 hover:bg-accent/40"
                   )}
                 >
                   <div>
                     <p className="font-bold text-xs sm:text-sm text-foreground">{item.label}</p>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-snug">{item.desc}</p>
+                    <p className="text-xs text-slate-700 font-medium mt-1 leading-snug">{item.desc}</p>
                   </div>
                   <Badge variant="secondary" className="text-[10px] font-bold mt-2.5 w-fit border border-border/70">
                     1 Lot = {item.lotSize} Qty
@@ -119,7 +119,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-xs sm:text-sm font-bold text-foreground">Base Position Lots</label>
-                <span className="text-xs text-blue-700 dark:text-blue-300 font-bold bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-md border border-blue-200/60 dark:border-blue-800/60">
+                <span className="text-xs text-blue-700  font-bold bg-blue-50  px-2 py-0.5 rounded-md border border-blue-200/60 ">
                   1 to 5 Lots Recommended
                 </span>
               </div>
@@ -131,7 +131,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 onChange={(e) => set("lots", e.target.value)}
                 className="font-semibold text-xs h-10 bg-background border-border text-foreground rounded-xl"
               />
-              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+              <p className="text-xs text-slate-700 font-medium mt-1">
                 Total Qty: {Number(form.lots || 1) * (form.symbol === "SENSEX" ? 20 : 65)} shares
               </p>
             </div>
@@ -149,13 +149,13 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           </div>
 
           {/* Smart Auto Premium Discovery */}
-          <div className="flex items-start gap-3 p-4 rounded-2xl border border-blue-500/30 bg-blue-500/10 shadow-xs">
-            <Sparkles className="h-5 w-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+          <div className="flex items-start gap-3 p-4 rounded-2xl border-2 border-blue-300 bg-blue-50 shadow-xs">
+            <Sparkles className="h-5 w-5 text-blue-600  shrink-0 mt-0.5" />
             <div>
               <p className="text-xs sm:text-sm font-bold text-foreground">
                 Auto-Adaptive Near-OTM Strike Discovery Enabled
               </p>
-              <p className="text-xs text-slate-700 dark:text-slate-300 mt-1 leading-relaxed">
+              <p className="text-xs text-slate-900 font-medium mt-1 leading-relaxed">
                 The engine automatically targets high-delta Near-OTM contracts (1–3 strikes from Spot ATM) that rapidly cross In-The-Money during breakouts and retain intrinsic cash settlement value.
               </p>
             </div>
@@ -166,7 +166,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs sm:text-sm font-bold text-foreground">High-Conviction A+ Setup Boost</p>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-700 font-medium mt-0.5">
                   Automatically boost position up to 3–5 lots when Range Breakout + Volume Surge + OI Unwinding align
                 </p>
               </div>
@@ -203,7 +203,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                       onChange={(e) => set("gbEnablePartialProfitBooking", e.target.checked)}
                       className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
-                    <label htmlFor="partialBooking" className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                    <label htmlFor="partialBooking" className="text-xs text-slate-900 font-medium font-medium">
                       Exit 50% lots @ 2.0x milestone; trail remainder
                     </label>
                   </div>
@@ -215,13 +215,13 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           {/* Time Window */}
           <div className="flex items-center justify-between p-3.5 rounded-2xl bg-secondary/40 border border-border">
             <div className="flex items-center gap-2.5">
-              <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+              <Clock className="h-4 w-4 text-blue-600  shrink-0" />
               <div>
                 <p className="text-xs font-bold text-foreground">Execution Window: 01:00 PM – 03:25 PM IST</p>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">Active hold &amp; trail through 15:25–15:30 candle | Hard Auto-Exit @ 03:29:30 PM before market close</p>
+                <p className="text-xs text-slate-700 font-medium mt-0.5">Active hold &amp; trail through 15:25–15:30 candle | Hard Auto-Exit @ 03:29:30 PM before market close</p>
               </div>
             </div>
-            <Badge className="text-[10px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 font-bold shrink-0">
+            <Badge className="text-[10px] bg-emerald-500/15 text-emerald-700  border border-emerald-500/30 font-bold shrink-0">
               CAS Guard Enabled
             </Badge>
           </div>
@@ -245,12 +245,12 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 className={cn(
                   "p-4 rounded-2xl border-2 text-left transition-all relative overflow-hidden bg-card",
                   form.sIsAutoStockSelect !== false && form.symbol === "AUTO"
-                    ? "border-blue-600 bg-blue-50/40 dark:bg-blue-950/20 shadow-xs ring-1 ring-blue-500/30"
+                    ? "border-blue-600 bg-blue-50/40  shadow-xs ring-1 ring-blue-500/30"
                     : "border-border hover:border-blue-400/50 hover:bg-accent/40 shadow-2xs"
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-extrabold text-blue-700 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1">
+                  <span className="text-[11px] font-extrabold text-blue-700  uppercase tracking-wider flex items-center gap-1">
                     <Sparkles className="h-3.5 w-3.5" /> Recommended
                   </span>
                   <Badge className="text-[9px] bg-blue-600 text-white font-extrabold">180+ F&amp;O Scanner</Badge>
@@ -258,7 +258,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 <p className="font-extrabold text-sm text-foreground mt-2">
                   🎯 Auto F&amp;O Momentum Scanner
                 </p>
-                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                <p className="text-xs text-slate-800 font-medium mt-1 leading-relaxed">
                   Scans all 180+ liquid F&amp;O stocks. Picks momentum leaders with 5%–10% intraday potential (RVOL ≥ 1.25, Open=Low/High institutional footprints).
                 </p>
               </button>
@@ -274,12 +274,12 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 className={cn(
                   "p-4 rounded-2xl border-2 text-left transition-all relative overflow-hidden bg-card",
                   form.sIsAutoStockSelect === false && form.symbol !== "AUTO"
-                    ? "border-indigo-600 bg-indigo-50/40 dark:bg-indigo-950/20 shadow-xs ring-1 ring-indigo-500/30"
+                    ? "border-indigo-600 bg-indigo-50/40  shadow-xs ring-1 ring-indigo-500/30"
                     : "border-border hover:border-indigo-400/50 hover:bg-accent/40 shadow-2xs"
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                  <span className="text-[11px] font-bold text-slate-700 font-medium uppercase tracking-wider">
                     Custom Stock
                   </span>
                   <Badge variant="outline" className="text-[9px] font-bold border-border text-foreground">Single Stock</Badge>
@@ -287,7 +287,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 <p className="font-extrabold text-sm text-foreground mt-2">
                   📌 Manual Stock Selection
                 </p>
-                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                <p className="text-xs text-slate-800 font-medium mt-1 leading-relaxed">
                   Trade options on a specific F&amp;O stock you choose (e.g. APOLLOHOSP, RELIANCE, TRENT, BAJFINANCE).
                 </p>
               </button>
@@ -295,38 +295,38 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           </div>
 
           {form.sIsAutoStockSelect !== false && form.symbol === "AUTO" ? (
-            <div className="p-4 rounded-2xl border border-blue-500/30 bg-blue-500/10 space-y-3 shadow-xs">
+            <div className="p-4 rounded-2xl border-2 border-blue-300 bg-blue-50 space-y-3 shadow-xs">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-xl bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-500/30">
+                  <div className="p-2.5 rounded-xl bg-blue-500/20 text-blue-700  border border-blue-500/30">
                     <Zap className="h-4 w-4" />
                   </div>
                   <div>
                     <p className="text-xs sm:text-sm font-bold text-foreground">
                       Live F&amp;O Momentum Engine Active
                     </p>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-700 font-medium mt-0.5">
                       Scanning all 180+ NSE F&amp;O instruments continuously from 09:15 AM
                     </p>
                   </div>
                 </div>
-                <Badge variant="outline" className="text-xs border-blue-500/40 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50 font-bold px-2.5 py-0.5">
+                <Badge variant="outline" className="text-xs border-blue-500/40 text-blue-700  bg-blue-50  font-bold px-2.5 py-0.5">
                   Symbol: AUTO
                 </Badge>
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center pt-2 border-t border-border/60">
                 <div className="p-2.5 rounded-xl bg-card border border-border/70 shadow-2xs">
-                  <p className="text-xs font-bold text-blue-700 dark:text-blue-300">180+ Liquid Stocks</p>
-                  <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Scanned dynamically</p>
+                  <p className="text-xs font-bold text-blue-700 ">180+ Liquid Stocks</p>
+                  <p className="text-[10px] text-slate-700 font-medium mt-0.5">Scanned dynamically</p>
                 </div>
                 <div className="p-2.5 rounded-xl bg-card border border-border/70 shadow-2xs">
-                  <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300">5%–10% Velocity</p>
-                  <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Day range expansion</p>
+                  <p className="text-xs font-bold text-indigo-700 ">5%–10% Velocity</p>
+                  <p className="text-[10px] text-slate-700 font-medium mt-0.5">Day range expansion</p>
                 </div>
                 <div className="p-2.5 rounded-xl bg-card border border-border/70 shadow-2xs">
-                  <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">Auto Lot &amp; Strike</p>
-                  <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Live NFO master fetch</p>
+                  <p className="text-xs font-bold text-emerald-700 ">Auto Lot &amp; Strike</p>
+                  <p className="text-[10px] text-slate-700 font-medium mt-0.5">Live NFO master fetch</p>
                 </div>
               </div>
             </div>
@@ -352,12 +352,12 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     className={cn(
                       "p-3 rounded-xl border text-left text-xs transition-all bg-card",
                       form.symbol === preset.sym
-                        ? "border-blue-600 bg-blue-50/40 dark:bg-blue-950/20 text-foreground font-bold shadow-xs ring-1 ring-blue-500/30"
+                        ? "border-blue-600 bg-blue-50/40  text-foreground font-bold shadow-xs ring-1 ring-blue-500/30"
                         : "border-border hover:border-blue-400/50 hover:bg-accent/40 text-foreground"
                     )}
                   >
                     <p className="font-bold text-xs">{preset.sym}</p>
-                    <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">1 Lot = {preset.lot}</p>
+                    <p className="text-[10px] text-slate-700 font-medium mt-0.5">1 Lot = {preset.lot}</p>
                   </button>
                 ))}
               </div>
@@ -400,19 +400,19 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                         <p className="text-sm font-bold text-foreground group-hover:text-blue-600 transition-colors">
                           {item.symbol}
                         </p>
-                        <p className="text-xs text-slate-600 dark:text-slate-400 uppercase truncate max-w-[220px]">
+                        <p className="text-xs text-slate-700 font-medium uppercase truncate max-w-[220px]">
                           {item.name}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
                         {item.lotSize && item.lotSize > 1 ? (
-                          <Badge variant="outline" className="text-[10px] font-bold border-amber-500/40 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40">
+                          <Badge variant="outline" className="text-[10px] font-bold border-amber-500/40 text-amber-700  bg-amber-50 ">
                             Lot: {item.lotSize}
                           </Badge>
                         ) : null}
                         {itemPrice ? (
                           <div className="text-right">
-                            <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                            <p className="text-xs font-bold text-emerald-700 ">
                               ₹{Number(itemPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </p>
                             <span className="text-[10px] text-slate-500">Live LTP</span>
@@ -428,11 +428,11 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
 
             <div className="flex items-center justify-between p-4 rounded-2xl bg-secondary/40 border border-border">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Current Selection</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-700 font-medium">Current Selection</p>
                 <div className="flex items-center gap-2.5 mt-0.5">
-                  <p className="text-sm font-bold text-foreground">{form.symbol} <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">({form.exchange})</span></p>
+                  <p className="text-sm font-bold text-foreground">{form.symbol} <span className="text-xs font-semibold text-slate-700 font-medium">({form.exchange})</span></p>
                   {(form.lotSize || getLotSize(form.symbol, form.lotSize)) > 1 && (
-                    <span className="text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800/60 px-2.5 py-0.5 rounded-md">
+                    <span className="text-xs font-bold text-amber-700  bg-amber-50  border border-amber-200/60  px-2.5 py-0.5 rounded-md">
                       1 Lot = {form.lotSize || getLotSize(form.symbol, form.lotSize)} Qty
                     </span>
                   )}
@@ -443,11 +443,11 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           </div>
 
           {form.type === "NIFTY_OPTIONS_SCALPER" && (
-            <div className="flex items-start gap-3 p-4 rounded-2xl border border-purple-500/30 bg-purple-500/10 shadow-xs">
-              <Sparkles className="h-5 w-5 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3 p-4 rounded-2xl border-2 border-purple-300 bg-purple-50 shadow-xs">
+              <Sparkles className="h-5 w-5 text-purple-600  shrink-0 mt-0.5" />
               <div className="text-xs space-y-1">
                 <p className="font-bold text-foreground">Dynamic Margin Lot Sizing Active</p>
-                <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-normal">
+                <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
                   Instead of a fixed 1-lot limit, the engine detects your live Zerodha margin, preserves a 15% cash buffer, and deploys 85% tradeable margin into lots (1 Lot = {form.lotSize || getLotSize(form.symbol || 'NIFTY', form.lotSize)} Qty).
                 </p>
               </div>
@@ -455,11 +455,11 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           )}
 
           {form.type === "BREAKOUT_15MIN" && (
-            <div className="flex items-start gap-3 p-4 rounded-2xl border border-blue-500/30 bg-blue-500/10 shadow-xs">
-              <Sparkles className="h-5 w-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3 p-4 rounded-2xl border-2 border-blue-300 bg-blue-50 shadow-xs">
+              <Sparkles className="h-5 w-5 text-blue-600  shrink-0 mt-0.5" />
               <div className="text-xs space-y-1">
                 <p className="font-bold text-foreground">Strict Risk Sizing &amp; Exchange Server SL Active</p>
-                <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-normal">
+                <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
                   Automatically queries live Zerodha cash margin. Sizes quantity strictly by your Stop Loss ₹ (never risking more than configured) and caps capital deployment at 25% (5x MIS leverage). Arms a server-side SL-L order at Zerodha on entry fill and monitors Target 1 (+2R) for uncapped momentum trailing.
                 </p>
               </div>
@@ -472,7 +472,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 <label className="text-xs sm:text-sm font-bold text-foreground block">
                   {form.type === "NIFTY_OPTIONS_SCALPER" || form.type === "BREAKOUT_15MIN" ? "Minimum / Base Lots" : "Number of Lots"}
                 </label>
-                <span className="text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800/60 px-2.5 py-0.5 rounded-md">
+                <span className="text-xs font-bold text-amber-700  bg-amber-50  border border-amber-200/60  px-2.5 py-0.5 rounded-md">
                   1 Lot = {form.lotSize || getLotSize(form.symbol, form.lotSize)} Qty
                 </span>
               </div>
@@ -483,7 +483,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 onChange={(e) => set("lots", e.target.value)}
                 className="font-semibold text-xs h-10 bg-background border-border text-foreground rounded-xl"
               />
-              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+              <p className="text-xs text-slate-700 font-medium mt-1">
                 {form.type === 'NIFTY_OPTIONS_SCALPER' || form.type === 'BREAKOUT_15MIN'
                   ? 'Dynamic Margin Allocation: Auto-scales lots from Zerodha cash (85% deployed, 15% buffer)'
                   : form.type === 'STOCK_OPTIONS_BUYING' && form.symbol === 'AUTO'
@@ -511,9 +511,9 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
       {/* ── Strategy-Specific Config Sections ── */}
       {form.type === "NIFTY_OPTIONS_SCALPER" && (
         <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/30 shadow-xs">
-            <p className="text-xs sm:text-sm font-bold text-purple-900 dark:text-purple-200">⚡ Nifty 10-Point Scalper Engine Setup</p>
-            <p className="text-xs text-slate-700 dark:text-slate-200 mt-1 leading-relaxed font-normal">
+          <div className="p-4 rounded-2xl bg-purple-50 border-2 border-purple-300 shadow-xs">
+            <p className="text-xs sm:text-sm font-bold text-purple-950 font-black">⚡ Nifty 10-Point Scalper Engine Setup</p>
+            <p className="text-xs text-slate-900 font-medium mt-1 leading-relaxed font-normal">
               Trades rapid momentum impulses on high-delta options using 3 confluence triggers (EMA-VWAP Crossover, Pullback Rejection &amp; 15-Min ORB). Automatically scales lots from live margin, trails to breakeven at +6 pts, and rides uncapped runners with dynamic momentum ratchets.
             </p>
           </div>
@@ -538,26 +538,26 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   className={cn(
                     "text-xs p-3 rounded-2xl border text-left transition-all font-medium bg-card",
                     form.symbol === p.sym
-                      ? "border-purple-600 bg-purple-50/40 dark:bg-purple-950/20 shadow-xs ring-1 ring-purple-500/30"
+                      ? "border-purple-600 bg-purple-50/40  shadow-xs ring-1 ring-purple-500/30"
                       : "border-border hover:border-purple-400/50 hover:bg-accent/40 text-foreground"
                   )}
                 >
                   <p className="font-bold text-xs sm:text-sm text-foreground">{p.label}</p>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">{p.sub}</p>
+                  <p className="text-xs text-slate-700 font-medium mt-0.5">{p.sub}</p>
                 </button>
               ))}
             </div>
 
             {form.symbol.toUpperCase().includes("HYBRID") && (
-              <div className="mt-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 text-xs space-y-2 shadow-xs">
+              <div className="mt-3 p-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50 text-xs space-y-2 shadow-xs">
                 <div className="flex items-center gap-1.5 font-bold">
-                  <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  <Sparkles className="h-4 w-4 text-emerald-600 " />
                   <span className="text-foreground text-xs sm:text-sm">AUTO_HYBRID Weekly Expiry Engine Schedule</span>
-                  <Badge className="bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold ml-auto border-0">
+                  <Badge className="bg-emerald-600/20 text-emerald-700  text-[9px] font-bold ml-auto border-0">
                     +88% Monthly ROI Backtest
                   </Badge>
                 </div>
-                <div className="text-xs text-slate-700 dark:text-slate-300 grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-normal">
+                <div className="text-xs text-slate-900 font-medium grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-normal">
                   <div>• <span className="font-bold text-foreground">Tuesday:</span> NIFTY 50 Weekly Expiry (+10 pt target, 90% win rate)</div>
                   <div>• <span className="font-bold text-foreground">Thursday:</span> SENSEX Weekly Expiry (+35 pt target, 70% win rate)</div>
                   <div>• <span className="font-bold text-foreground">Friday:</span> SENSEX Momentum (+35 pt target, 100% win rate)</div>
@@ -572,10 +572,10 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between">
               <div className="space-y-0.5 pr-4">
                 <p className="text-xs sm:text-sm font-bold text-foreground flex items-center gap-1.5">
-                  <TrendingUp className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                  <TrendingUp className="h-4 w-4 text-purple-600 " />
                   Dynamic Compounding Position Sizing
                 </p>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-700 font-medium leading-relaxed">
                   Deploys 85% tradeable margin from live Zerodha balance (preserving 15% cash buffer). Compounds lots up as capital grows to achieve &ge;60% monthly ROI.
                 </p>
               </div>
@@ -624,11 +624,11 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between">
               <div>
                 <label className="text-xs sm:text-sm font-bold text-foreground block">Scalping Candle Timeframe</label>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-700 font-medium mt-0.5">
                   Calculates EMA, VWAP and StochRSI on this timeframe for entry signals.
                 </p>
               </div>
-              <span className="text-xs font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/60 dark:border-purple-800/60 px-2.5 py-0.5 rounded-full">
+              <span className="text-xs font-bold text-purple-700  bg-purple-50  border border-purple-200/60  px-2.5 py-0.5 rounded-full">
                 {form.dsTimeframe === "3minute" ? "High Sensitivity (3m)" : "Standard Scalp (5m)"}
               </span>
             </div>
@@ -652,10 +652,10 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between p-3.5 rounded-2xl border border-border bg-card shadow-2xs">
               <div className="space-y-0.5 pr-4">
                 <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <TrendingUp className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                  <TrendingUp className="h-3.5 w-3.5 text-purple-600 " />
                   Day VWAP Trend Bias Filter
                 </p>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-700 font-medium leading-relaxed">
                   Only buys CE when Index is above Day VWAP; only buys PE when Index is below Day VWAP. Eliminates over 50% of counter-trend trap entries.
                 </p>
               </div>
@@ -671,10 +671,10 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between p-3.5 rounded-2xl border border-border bg-card shadow-2xs">
               <div className="space-y-0.5 pr-4">
                 <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <BarChart2 className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                  <BarChart2 className="h-3.5 w-3.5 text-blue-600 " />
                   Institutional Volume Surge (RVOL &ge; 1.15x)
                 </p>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-700 font-medium leading-relaxed">
                   Requires trigger candle volume to be 1.15x higher than 10-period average or higher than previous candle. Skips low-volume retail traps.
                 </p>
               </div>
@@ -687,18 +687,18 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             </div>
 
             {/* Macro Day Trend Alignment (Proven 76.9% Win Rate) */}
-            <div className="flex items-center justify-between p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-2xs">
+            <div className="flex items-center justify-between p-3.5 rounded-2xl border-2 border-emerald-300 bg-emerald-50 shadow-2xs">
               <div className="space-y-0.5 pr-4">
                 <div className="flex items-center gap-1.5">
-                  <TrendingUp className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <TrendingUp className="h-3.5 w-3.5 text-emerald-600 " />
                   <p className="text-xs font-bold text-foreground">
                     Macro Day Trend Alignment
                   </p>
-                  <Badge className="bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold border-0">
+                  <Badge className="bg-emerald-600/20 text-emerald-700  text-[9px] font-bold border-0">
                     76.9% Win Rate Shield
                   </Badge>
                 </div>
-                <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-900 font-medium leading-relaxed">
                   On Bull Days (Open &ge; Prev Close), suppresses counter-trend PE pullbacks. On Bear Days, suppresses counter-trend CE pullbacks. Proven on Zerodha data to eliminate 80% of losing traps.
                 </p>
               </div>
@@ -714,10 +714,10 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between p-3.5 rounded-2xl border border-border bg-card shadow-2xs">
               <div className="space-y-0.5 pr-4">
                 <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                  <Clock className="h-3.5 w-3.5 text-amber-600 " />
                   Extended Midday Dead-Zone Shield (11:30 AM – 1:30 PM IST)
                 </p>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-700 font-medium leading-relaxed">
                   Skips new entries during the European transition lunch lull (11:30–13:30) when liquidity drops and theta decay accelerates. Focuses capital on prime morning &amp; afternoon breakout windows.
                 </p>
               </div>
@@ -734,9 +734,9 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
 
       {form.type === "BREAKOUT_15MIN" && (
         <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 shadow-xs">
-            <p className="text-xs sm:text-sm font-bold text-blue-900 dark:text-blue-200">🚀 15-Minute Opening Range Breakout Setup</p>
-            <p className="text-xs text-slate-700 dark:text-slate-200 mt-1 leading-relaxed font-normal">
+          <div className="p-4 rounded-2xl bg-blue-50 border-2 border-blue-300 shadow-xs">
+            <p className="text-xs sm:text-sm font-bold text-blue-950 font-black">🚀 15-Minute Opening Range Breakout Setup</p>
+            <p className="text-xs text-slate-900 font-medium mt-1 leading-relaxed font-normal">
               Monitors the first 15-minute candle (09:15–09:30 AM). Enters when a 5-minute candle closes beyond the high or low with volume &amp; VWAP alignment. If a false breakout occurs, it detects the liquidity trap and reverses immediately!
             </p>
           </div>
@@ -759,12 +759,12 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   className={cn(
                     "text-xs p-3 rounded-2xl border text-left transition-all font-medium bg-card",
                     form.symbol === p.sym
-                      ? "border-blue-600 bg-blue-50/40 dark:bg-blue-950/20 text-foreground font-bold shadow-xs ring-1 ring-blue-500/30"
+                      ? "border-blue-600 bg-blue-50/40  text-foreground font-bold shadow-xs ring-1 ring-blue-500/30"
                       : "border-border hover:border-blue-400/50 hover:bg-accent/40 text-foreground"
                   )}
                 >
                   <p className="font-bold text-xs sm:text-sm text-foreground">{p.label}</p>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">{p.exch}:{p.sym}</p>
+                  <p className="text-xs text-slate-700 font-medium mt-0.5">{p.exch}:{p.sym}</p>
                 </button>
               ))}
             </div>
@@ -775,11 +775,11 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between">
               <div>
                 <label className="text-xs sm:text-sm font-bold text-foreground block">Entry &amp; Trap Timeframe</label>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-700 font-medium mt-0.5">
                   Establishes 15m range (09:15–09:30), then monitors this lower timeframe for liquidity sweep traps &amp; reclaim entries.
                 </p>
               </div>
-              <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/60 dark:border-indigo-800/60 px-2.5 py-0.5 rounded-full">
+              <span className="text-xs font-bold text-indigo-700  bg-indigo-50  border border-indigo-200/60  px-2.5 py-0.5 rounded-full">
                 Multi-Timeframe
               </span>
             </div>
@@ -811,8 +811,8 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 className={cn(
                   "flex flex-col items-center gap-1 py-3.5 rounded-xl text-xs font-bold transition-all",
                   !form.isOptionBuyingOnly
-                    ? "bg-card border border-border shadow-xs text-blue-600 dark:text-blue-400"
-                    : "text-slate-600 dark:text-slate-400 hover:text-foreground"
+                    ? "bg-card border border-border shadow-xs text-blue-600 "
+                    : "text-slate-700 font-medium hover:text-foreground"
                 )}
               >
                 <BarChart2 className="h-5 w-5 mb-0.5" />
@@ -825,8 +825,8 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 className={cn(
                   "flex flex-col items-center gap-1 py-3.5 rounded-xl text-xs font-bold transition-all",
                   form.isOptionBuyingOnly
-                    ? "bg-card border border-border shadow-xs text-blue-600 dark:text-blue-400"
-                    : "text-slate-600 dark:text-slate-400 hover:text-foreground"
+                    ? "bg-card border border-border shadow-xs text-blue-600 "
+                    : "text-slate-700 font-medium hover:text-foreground"
                 )}
               >
                 <Target className="h-5 w-5 mb-0.5" />
@@ -840,14 +840,14 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
 
       {form.type === "STOCK_OPTIONS_BUYING" && (
         <div className="space-y-5">
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-blue-500/10 border border-blue-500/30 shadow-xs">
+          <div className="p-4 rounded-2xl bg-blue-50 border-2 border-blue-300 shadow-xs">
             <div className="flex items-center gap-2 mb-1">
-              <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <p className="text-xs sm:text-sm font-bold text-blue-900 dark:text-blue-200">
+              <Sparkles className="h-4 w-4 text-blue-600 " />
+              <p className="text-xs sm:text-sm font-bold text-blue-950 font-black">
                 Institutional 80% Profitability Engine (EMA-VWAP + Inside Candle + Pullbacks)
               </p>
             </div>
-            <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed mt-1 font-normal">
+            <p className="text-xs text-slate-900 font-medium leading-relaxed mt-1 font-normal">
               Engineered for asymmetric risk-to-reward. Combines 15-EMA/VWAP momentum alignment with Inside Candle range compression and pullback rejections, backed by strict High-Delta ITM strike liquidity filters.
             </p>
           </div>
@@ -856,7 +856,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs sm:text-sm font-bold text-foreground">Trade Directional Bias</label>
-              <span className="text-xs text-blue-700 dark:text-blue-300 font-bold bg-blue-50 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-800/60 px-2 py-0.5 rounded-md">
+              <span className="text-xs text-blue-700  font-bold bg-blue-50  border border-blue-200/60  px-2 py-0.5 rounded-md">
                 Set PE-Only for Breakdown Setups (e.g. APOLLOHOSP M-Pattern)
               </span>
             </div>
@@ -876,15 +876,15 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     className={cn(
                       "text-left p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between bg-card",
                       isSelected
-                        ? "border-blue-600 bg-blue-50/40 dark:bg-blue-950/20 shadow-xs ring-1 ring-blue-500/30"
+                        ? "border-blue-600 bg-blue-50/40  shadow-xs ring-1 ring-blue-500/30"
                         : "border-border hover:border-blue-400/50 hover:bg-accent/40"
                     )}
                   >
                     <div className="flex items-center justify-between">
                       <p className="font-bold text-xs sm:text-sm text-foreground">{item.label}</p>
-                      <Icon className={cn("h-4 w-4", isSelected ? "text-blue-600 dark:text-blue-400" : "text-slate-400")} />
+                      <Icon className={cn("h-4 w-4", isSelected ? "text-blue-600 " : "text-slate-400")} />
                     </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{item.desc}</p>
+                    <p className="text-xs text-slate-700 font-medium mt-1">{item.desc}</p>
                   </button>
                 );
               })}
@@ -909,12 +909,12 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     className={cn(
                       "text-left p-3.5 rounded-2xl border-2 transition-all bg-card",
                       isSelected
-                        ? "border-indigo-600 bg-indigo-50/40 dark:bg-indigo-950/20 shadow-xs ring-1 ring-indigo-500/30"
+                        ? "border-indigo-600 bg-indigo-50/40  shadow-xs ring-1 ring-indigo-500/30"
                         : "border-border hover:border-indigo-400/50 hover:bg-accent/40"
                     )}
                   >
                     <p className="font-bold text-xs sm:text-sm text-foreground">{item.label}</p>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{item.desc}</p>
+                    <p className="text-xs text-slate-700 font-medium mt-1">{item.desc}</p>
                   </button>
                 );
               })}
@@ -971,7 +971,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           <div className="flex items-center justify-between p-4 rounded-2xl border border-border bg-card shadow-xs">
             <div>
               <p className="text-xs sm:text-sm font-bold text-foreground">Higher Timeframe (15-Min) Trend Filter</p>
-              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-700 font-medium mt-0.5">
                 Ensures trade aligns with the 50-EMA on the 15-min chart before triggering option entry.
               </p>
             </div>
