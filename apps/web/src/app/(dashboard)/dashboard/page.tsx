@@ -30,7 +30,7 @@ import {
   Zap
 } from "lucide-react";
 import Link from "next/link";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 interface Holding {
   symbol: string;
   qty: number;
@@ -39,19 +39,33 @@ interface Holding {
   pnl: number;
 }
 
+interface MarginSegment {
+  enabled?: boolean;
+  net?: number;
+  available?: {
+    cash?: number;
+    live_balance?: number;
+    opening_balance?: number;
+    collateral?: number;
+    intraday_payin?: number;
+    adhoc_margin?: number;
+    [key: string]: any;
+  };
+  utilised?: {
+    debits?: number;
+    exposure?: number;
+    m2m_realised?: number;
+    m2m_unrealised?: number;
+    option_premium?: number;
+    pnl?: number;
+    span?: number;
+    [key: string]: any;
+  };
+}
+
 interface Margin {
-  equity: {
-    available: {
-      cash: number;
-      live_balance?: number;
-      opening_balance?: number;
-    };
-    utilised: { debits: number };
-  };
-  commodity?: {
-    available: { cash: number };
-    utilised: { debits: number };
-  };
+  equity?: MarginSegment;
+  commodity?: MarginSegment;
 }
 
 interface Broker {
@@ -111,13 +125,73 @@ export default function DashboardPage() {
     getLoginUrl,
   } = usePortfolio(activeBroker?.id);
 
+  // Auto-detect Zerodha request_token on desktop redirect
+  useEffect(() => {
+    if (typeof window === "undefined" || !activeBroker?.id) return;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("request_token") || params.get("requestToken");
+
+    if (token) {
+      renewSession(token)
+        .then(() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("request_token");
+          url.searchParams.delete("requestToken");
+          url.searchParams.delete("action");
+          url.searchParams.delete("status");
+          url.searchParams.delete("type");
+          const nextUrl = url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "");
+          window.history.replaceState({}, document.title, nextUrl);
+        })
+        .catch((err) => {
+          console.error("Auto token renewal failed:", err);
+        });
+    }
+  }, [activeBroker?.id, renewSession]);
+
   const handleOpenLogin = async () => {
     const url = await getLoginUrl();
     if (url) window.open(url, "_blank");
   };
 
+  const handleAutomatedLogin = async () => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get("request_token") || urlParams.get("requestToken");
+      if (urlToken) {
+        try {
+          await renewSession(urlToken);
+          setShowRenewModal(false);
+          setRequestToken("");
+          return;
+        } catch { }
+      }
+
+      try {
+        if (navigator?.clipboard?.readText) {
+          const clipText = await navigator.clipboard.readText();
+          let token = (clipText || "").trim();
+          if (token.includes("request_token=")) {
+            const match = token.match(/request_token=([a-zA-Z0-9]+)/);
+            if (match && match[1]) token = match[1];
+          }
+          if (token && token.length >= 10 && !token.includes(" ")) {
+            setRequestToken(token);
+            await renewSession(token);
+            setShowRenewModal(false);
+            setRequestToken("");
+            return;
+          }
+        }
+      } catch { }
+    }
+
+    await handleOpenLogin();
+  };
+
   const handleRenewSession = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!requestToken) return;
     try {
       await renewSession(requestToken);
       setShowRenewModal(false);
@@ -153,10 +227,20 @@ export default function DashboardPage() {
     const marginAvailable =
       safeMargins?.equity?.available?.live_balance ??
       safeMargins?.equity?.available?.cash ??
+      safeMargins?.equity?.net ??
       0;
     const marginsUsed = safeMargins?.equity?.utilised?.debits ?? 0;
     const openingBalance =
       safeMargins?.equity?.available?.opening_balance ?? marginAvailable;
+
+    const commodityMarginAvailable =
+      safeMargins?.commodity?.available?.live_balance ??
+      safeMargins?.commodity?.available?.cash ??
+      safeMargins?.commodity?.net ??
+      0;
+    const commodityMarginsUsed = safeMargins?.commodity?.utilised?.debits ?? 0;
+    const commodityOpeningBalance =
+      safeMargins?.commodity?.available?.opening_balance ?? commodityMarginAvailable;
 
     return {
       totalInvestment,
@@ -166,6 +250,9 @@ export default function DashboardPage() {
       marginAvailable,
       marginsUsed,
       openingBalance,
+      commodityMarginAvailable,
+      commodityMarginsUsed,
+      commodityOpeningBalance,
       holdingsCount: safeHoldings.length,
     };
   }, [holdings, margins]);
@@ -360,7 +447,10 @@ export default function DashboardPage() {
                   Margin Available
                 </span>
                 <div className="text-xl font-bold font-mono text-slate-900 tracking-tight mt-0.5">
-                  ₹0.00
+                  ₹{stats.commodityMarginAvailable.toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
                 </div>
               </div>
             </div>
@@ -368,11 +458,15 @@ export default function DashboardPage() {
             <div className="mt-2.5 pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
               <div>
                 <span className="text-[10px] text-slate-400 block">Margins Used</span>
-                <span className="font-mono font-semibold text-slate-800 text-xs">₹0.00</span>
+                <span className="font-mono font-semibold text-slate-800 text-xs">
+                  ₹{stats.commodityMarginsUsed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
               </div>
               <div>
                 <span className="text-[10px] text-slate-400 block">Opening Balance</span>
-                <span className="font-mono font-semibold text-slate-800 text-xs">₹0.00</span>
+                <span className="font-mono font-semibold text-slate-800 text-xs">
+                  ₹{stats.commodityOpeningBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
               </div>
             </div>
           </CardContent>
@@ -660,7 +754,7 @@ export default function DashboardPage() {
               <form onSubmit={handleRenewSession} className="space-y-3">
                 <Button
                   type="button"
-                  onClick={() => handleRenewSession({ preventDefault: () => { } } as any)}
+                  onClick={handleAutomatedLogin}
                   disabled={isRenewing}
                   className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
                 >
@@ -685,8 +779,15 @@ export default function DashboardPage() {
 
                 <Input
                   value={requestToken}
-                  onChange={(e) => setRequestToken(e.target.value)}
-                  placeholder="Paste token or session ID here..."
+                  onChange={(e) => {
+                    let val = e.target.value.trim();
+                    if (val.includes("request_token=")) {
+                      const match = val.match(/request_token=([a-zA-Z0-9]+)/);
+                      if (match && match[1]) val = match[1];
+                    }
+                    setRequestToken(val);
+                  }}
+                  placeholder="Paste token or redirect URL here..."
                   className="h-9 border-slate-200 bg-white text-slate-900 text-xs focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
                 />
 
