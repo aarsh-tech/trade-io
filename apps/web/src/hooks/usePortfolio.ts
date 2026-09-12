@@ -3,12 +3,9 @@ import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
-export const PORTFOLIO_KEYS = {
-  all: ["portfolio"] as const,
-  holdings: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "holdings", brokerId].filter(Boolean),
-  positions: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "positions", brokerId].filter(Boolean),
-  margins: (brokerId?: string) => [...PORTFOLIO_KEYS.all, "margins", brokerId].filter(Boolean),
-};
+import { queryKeys } from "@/lib/query-keys";
+
+export const PORTFOLIO_KEYS = queryKeys.portfolio;
 
 export function usePortfolio(brokerId?: string | null) {
   const queryClient = useQueryClient();
@@ -82,9 +79,9 @@ export function usePortfolio(brokerId?: string | null) {
 
       // 2. Refetch queries in parallel to ensure 100% synchronization across pages
       await Promise.allSettled([
-        queryClient.refetchQueries({ queryKey: PORTFOLIO_KEYS.all, exact: false }),
-        queryClient.refetchQueries({ queryKey: ["brokers"], exact: false }),
-        queryClient.refetchQueries({ queryKey: ["dashboard"], exact: false }),
+        queryClient.refetchQueries({ queryKey: queryKeys.portfolio.all, exact: false }),
+        queryClient.refetchQueries({ queryKey: queryKeys.brokers.all, exact: false }),
+        queryClient.refetchQueries({ queryKey: queryKeys.market.all, exact: false }),
       ]);
 
       toast.success("Broker session authenticated! Live portfolio & margins synced.");

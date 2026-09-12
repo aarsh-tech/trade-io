@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   ChevronRight,
@@ -22,8 +22,6 @@ import {
   CheckCircle2,
   Sparkles,
   Activity,
-  Clock,
-  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -695,8 +693,8 @@ export default function NewStrategyPage() {
 
             {/* 3-Box Matrix (EXACTLY MATCHING StrategyCard in strategies/page.tsx!) */}
             <div className="grid grid-cols-3 gap-2">
-              <div className="p-2 rounded-xl bg-secondary/40 border border-border/50 text-center flex flex-col justify-center">
-                <span className="text-[10px] font-medium text-muted-foreground">Sizing</span>
+              <div className="p-2.5 rounded-xl bg-secondary/50 border border-border text-center flex flex-col justify-center">
+                <span className="text-[10px] font-semibold text-slate-600 dark:text-slate-400">Sizing</span>
                 <span className="text-xs font-bold text-foreground truncate mt-0.5">
                   {form.type === "STOCK_OPTIONS_BUYING"
                     ? `₹${Number(form.sMaxCapital || 25000).toLocaleString("en-IN")}`
@@ -704,9 +702,9 @@ export default function NewStrategyPage() {
                 </span>
               </div>
 
-              <div className="p-2 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center flex flex-col justify-center">
-                <span className="text-[10px] font-medium text-rose-500/80">Stop Loss</span>
-                <span className="text-xs font-bold text-rose-600 mt-0.5 truncate">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-center flex flex-col justify-center">
+                <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300">Stop Loss</span>
+                <span className="text-xs font-bold text-rose-700 dark:text-rose-300 mt-0.5 truncate">
                   {form.type === "STOCK_OPTIONS_BUYING"
                     ? "Breakeven Trail"
                     : form.type === "NIFTY_OPTIONS_SCALPER"
@@ -715,9 +713,9 @@ export default function NewStrategyPage() {
                 </span>
               </div>
 
-              <div className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-center flex flex-col justify-center">
-                <span className="text-[10px] font-medium text-emerald-600/80">Target</span>
-                <span className="text-xs font-bold text-emerald-600 mt-0.5 truncate">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center flex flex-col justify-center">
+                <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300">Target</span>
+                <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300 mt-0.5 truncate">
                   {form.type === "STOCK_OPTIONS_BUYING"
                     ? "T1 (+50%) / T2"
                     : form.type === "NIFTY_OPTIONS_SCALPER"
@@ -728,22 +726,22 @@ export default function NewStrategyPage() {
             </div>
 
             {/* Execution & Asset Status Ribbon */}
-            <div className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg bg-secondary/30 border border-border/40">
-              <div className="flex items-center gap-1.5 text-muted-foreground text-[11px]">
-                <Activity className="h-3 w-3 text-muted-foreground/70" />
+            <div className="flex items-center justify-between text-xs py-2 px-3 rounded-xl bg-secondary/40 border border-border">
+              <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 text-xs">
+                <Activity className="h-3.5 w-3.5 text-slate-500 shrink-0" />
                 <span>Mode:</span>
                 <span
                   className={cn(
-                    "font-bold uppercase text-[10px] px-1.5 py-0.2 rounded",
+                    "font-bold uppercase text-[10px] px-2 py-0.5 rounded-md",
                     form.isPaperTrade
-                      ? "bg-amber-500/10 text-amber-600"
-                      : "bg-emerald-500/10 text-emerald-600"
+                      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                      : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
                   )}
                 >
                   {form.isPaperTrade ? "Paper Trade" : "Live Broker"}
                 </span>
               </div>
-              <span className="text-[10px] font-bold text-foreground">
+              <span className="text-xs font-bold text-foreground">
                 {form.symbol === "AUTO" || form.sIsAutoStockSelect
                   ? "180+ F&O Auto"
                   : form.symbol || "AUTO"}
@@ -751,20 +749,20 @@ export default function NewStrategyPage() {
             </div>
 
             {/* Guardrails checklist */}
-            <div className="space-y-1.5 pt-1 border-t border-border/40">
+            <div className="space-y-1.5 pt-1 border-t border-border/60">
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Built-In Guardrails
               </p>
               {meta.features.map((feat: string, idx: number) => (
-                <div key={idx} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+                <div key={idx} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   <span className="truncate">{feat}</span>
                 </div>
               ))}
             </div>
 
             {/* Pre-Flight Checklist */}
-            <div className="space-y-2 pt-1 border-t border-border/40">
+            <div className="space-y-2 pt-1 border-t border-border/60">
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Pre-Flight Readiness
               </p>
@@ -775,18 +773,18 @@ export default function NewStrategyPage() {
                   { label: "Risk Guards Defined", ready: Number(form.stopLossRs || form.sMaxCapital || form.dsStopLossPoints) > 0 },
                   { label: "Broker Verification", ready: form.isPaperTrade || !!form.brokerAccountId },
                 ].map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between text-[11px] py-1">
-                    <span className="flex items-center gap-1.5">
+                  <div key={idx} className="flex items-center justify-between text-xs py-1">
+                    <span className="flex items-center gap-2">
                       {item.ready ? (
                         <Check className="h-3.5 w-3.5 text-emerald-500 stroke-[3]" />
                       ) : (
-                        <span className="h-2 w-2 rounded-full bg-muted-foreground/30 inline-block" />
+                        <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-700 inline-block" />
                       )}
-                      <span className={cn(item.ready ? "text-foreground font-medium" : "text-muted-foreground")}>
+                      <span className={cn(item.ready ? "text-foreground font-medium" : "text-slate-500 dark:text-slate-400")}>
                         {item.label}
                       </span>
                     </span>
-                    <span className={cn("text-[9px] font-bold uppercase", item.ready ? "text-emerald-600" : "text-muted-foreground/60")}>
+                    <span className={cn("text-[10px] font-bold uppercase px-1.5 py-0.5 rounded", item.ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "text-slate-400")}>
                       {item.ready ? "Ready" : "Pending"}
                     </span>
                   </div>
@@ -795,12 +793,12 @@ export default function NewStrategyPage() {
             </div>
 
             {/* Trading Edge Note */}
-            <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 text-blue-700 dark:text-blue-300 space-y-1">
-              <div className="flex items-center gap-1.5 text-xs font-bold">
-                <Sparkles className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+            <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/30 space-y-1.5">
+              <div className="flex items-center gap-2 text-xs font-bold text-blue-900 dark:text-blue-200">
+                <Sparkles className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                 <span>Trading Edge</span>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed font-normal">
                 {meta.tip}
               </p>
             </div>

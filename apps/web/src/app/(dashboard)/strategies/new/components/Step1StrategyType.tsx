@@ -31,7 +31,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       badgeClass: "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-600 text-white font-extrabold shadow-2xs",
       timing: "09:15 AM",
       tag: "180+ F&O Scanner",
-      tagColor: "text-indigo-600 dark:text-indigo-400 bg-indigo-500/10",
+      tagColor: "text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/60 dark:border-indigo-800/60",
       desc: "Scans 180+ F&O stocks for 5%–10% momentum. Buys ITM options, books 50% at T1 (+50% ROI), trails SL to cost, and rides T2 (+100% ROI).",
       icon: Flame,
       iconColor: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
@@ -50,7 +50,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       badgeClass: "bg-emerald-600 hover:bg-emerald-600 text-white font-extrabold shadow-2xs",
       timing: "09:15 AM",
       tag: "5x MIS Leverage",
-      tagColor: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+      tagColor: "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60",
       desc: "Scans 180+ F&O stocks for highest-momentum mover with 15-EMA + VWAP confirmation. Trades MIS with dynamic ₹500 target & ₹500 SL.",
       icon: TrendingUp,
       iconColor: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
@@ -69,7 +69,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       badgeClass: "bg-amber-600 hover:bg-amber-600 text-white font-extrabold shadow-2xs",
       timing: "01:30 PM",
       tag: "NIFTY & SENSEX",
-      tagColor: "text-amber-600 dark:text-amber-400 bg-amber-500/10",
+      tagColor: "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800/60",
       desc: "Trades explosive 01:30 PM – 03:25 PM Gamma spikes on NIFTY (Tue) & SENSEX (Thu). Buys cheap ₹8–₹15 options with Live OI confirmation.",
       icon: Zap,
       iconColor: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
@@ -88,7 +88,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       badgeClass: "bg-purple-600 hover:bg-purple-600 text-white font-extrabold shadow-2xs",
       timing: "09:20 AM",
       tag: "Uncapped Trail",
-      tagColor: "text-purple-600 dark:text-purple-400 bg-purple-500/10",
+      tagColor: "text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/60 dark:border-purple-800/60",
       desc: "Captures rapid Nifty impulses using 3 confluence triggers. Auto-sizes lots dynamically from live Zerodha margin and arms exchange SL.",
       icon: Target,
       iconColor: "text-purple-600 dark:text-purple-400 bg-purple-500/10 border-purple-500/20",
@@ -107,7 +107,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       badgeClass: "bg-cyan-600 hover:bg-cyan-600 text-white font-extrabold shadow-2xs",
       timing: "09:30 AM",
       tag: "Trap Reversal",
-      tagColor: "text-cyan-600 dark:text-cyan-400 bg-cyan-500/10",
+      tagColor: "text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200/60 dark:border-cyan-800/60",
       desc: "Trades 15-Min Opening Range Breakouts & Breakdowns with false-breakout trap reversal and server SL-L at Zerodha.",
       icon: BarChart2,
       iconColor: "text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
@@ -124,17 +124,17 @@ export function Step1StrategyType({ form, set }: Step1Props) {
   return (
     <div className="space-y-5">
       {/* ─── Strategy Identifier Name Card ─── */}
-      <div className="rounded-xl border border-border/70 bg-card p-3.5 shadow-2xs">
+      <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-blue-600/10 text-blue-600 border border-blue-600/20 shrink-0">
-              <Bot className="h-4 w-4" />
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 border border-blue-500/20 shrink-0">
+              <Bot className="h-5 w-5" />
             </div>
             <div>
-              <label className="text-xs font-bold text-foreground block">
+              <label htmlFor="strategy-name" className="text-xs sm:text-sm font-bold text-foreground block">
                 Strategy Identifier Name
               </label>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
                 Customize your strategy name or use the auto-generated algorithm title
               </p>
             </div>
@@ -145,7 +145,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
               placeholder="e.g. Stock Options Hunter"
-              className="h-9 text-xs font-semibold bg-secondary/30 border-border/70 focus:border-blue-500 rounded-lg"
+              className="h-10 text-xs font-semibold bg-background border-border focus:border-blue-500 rounded-xl text-foreground placeholder:text-muted-foreground/60 shadow-2xs"
             />
           </div>
         </div>
@@ -261,8 +261,8 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                   className={cn(
                     "relative overflow-hidden rounded-2xl border p-4.5 flex flex-col justify-between gap-3.5 transition-all duration-300 text-left cursor-pointer group bg-card",
                     isSelected
-                      ? "border-blue-500/50 shadow-[0_4px_20px_rgba(59,130,246,0.12)] ring-1 ring-blue-500/30"
-                      : "border-border/70 hover:border-border hover:shadow-xs"
+                      ? "border-blue-600 bg-blue-50/30 dark:bg-blue-950/20 shadow-sm ring-1 ring-blue-500/30"
+                      : "border-border hover:border-blue-400/50 hover:bg-accent/40 shadow-xs"
                   )}
                 >
                   {/* Top Ambient Bar when selected - matching Algo UI */}
@@ -276,7 +276,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <Badge
                           className={cn(
-                            "text-[9px] font-extrabold px-2 py-0 tracking-wider uppercase",
+                            "text-[9px] font-extrabold px-2 py-0.5 tracking-wider uppercase",
                             badgeClass
                           )}
                         >
@@ -284,9 +284,9 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                         </Badge>
                         <Badge
                           variant="outline"
-                          className="text-[9px] font-medium border-border/70 text-muted-foreground bg-secondary/30 gap-1 py-0"
+                          className="text-[9px] font-semibold border-border text-slate-600 dark:text-slate-400 bg-background/80 gap-1 py-0.5"
                         >
-                          <Clock className="h-2.5 w-2.5" />
+                          <Clock className="h-2.5 w-2.5 text-slate-500" />
                           {timing}
                         </Badge>
                       </div>
@@ -301,7 +301,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                           {tag}
                         </span>
                         {isSelected && (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20">
+                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 rounded-full border border-blue-500/30">
                             <Check className="h-2.5 w-2.5 stroke-[3]" /> SELECTED
                           </span>
                         )}
@@ -312,30 +312,30 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                     <div className="flex items-start gap-3 mt-1">
                       <div
                         className={cn(
-                          "p-2 rounded-xl shrink-0 transition-colors border",
+                          "p-2.5 rounded-xl shrink-0 transition-colors border",
                           iconColor
                         )}
                       >
-                        <Icon className="h-4.5 w-4.5" />
+                        <Icon className="h-5 w-5" />
                       </div>
                       <div className="min-w-0">
                         <p className="font-extrabold text-sm text-foreground leading-snug group-hover:text-blue-600 transition-colors">
                           {label}
                         </p>
-                        <p className="text-[11px] text-muted-foreground leading-relaxed mt-1 line-clamp-3">
+                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mt-1 line-clamp-3 font-normal">
                           {desc}
                         </p>
                       </div>
                     </div>
 
                     {/* Features List */}
-                    <div className="pt-2.5 border-t border-border/40 grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
+                    <div className="pt-2.5 border-t border-border/60 grid grid-cols-2 gap-2 text-xs text-slate-700 dark:text-slate-200 font-medium">
                       {features.map((feat, idx) => (
-                        <span key={idx} className="flex items-center gap-1 truncate">
+                        <span key={idx} className="flex items-center gap-1.5 truncate">
                           <CheckCircle2
                             className={cn(
-                              "h-3 w-3 shrink-0",
-                              isSelected ? "text-blue-500" : "text-emerald-500"
+                              "h-3.5 w-3.5 shrink-0",
+                              isSelected ? "text-blue-600" : "text-emerald-600 dark:text-emerald-400"
                             )}
                           />
                           <span className="truncate">{feat}</span>
