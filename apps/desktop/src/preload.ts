@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   retryConnection: () => ipcRenderer.invoke("retry-connection"),
   getServiceStatus: () => ipcRenderer.invoke("get-service-status"),
   openDevTools: () => ipcRenderer.invoke("open-devtools"),
+  openLogFolder: () => ipcRenderer.invoke("open-log-folder"),
   onStatusUpdate: (callback: (data: { web: boolean; api: boolean; timestamp: number }) => void) => {
     ipcRenderer.on("status-update", (_event, data) => callback(data));
   },

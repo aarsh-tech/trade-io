@@ -10,6 +10,19 @@ app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
 app.commandLine.appendSwitch("enable-high-resolution-time");
 
+// Enforce single instance application lock
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
 let webProcess: ChildProcess | null = null;
@@ -28,6 +41,32 @@ function getUserDataDir(): string {
   }
   return userDir;
 }
+
+function logToFile(message: string): void {
+  try {
+    const dataDir = getUserDataDir();
+    const logPath = path.join(dataDir, "tradeio.log");
+    if (fs.existsSync(logPath)) {
+      const stats = fs.statSync(logPath);
+      if (stats.size > 10 * 1024 * 1024) {
+        fs.renameSync(logPath, path.join(dataDir, "tradeio.old.log"));
+      }
+    }
+    const timestamp = new Date().toISOString();
+    fs.appendFileSync(logPath, `[${timestamp}] ${message}\n`, "utf8");
+  } catch {}
+}
+
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+console.log = (...args: any[]) => {
+  originalConsoleLog(...args);
+  logToFile(args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" "));
+};
+console.error = (...args: any[]) => {
+  originalConsoleError(...args);
+  logToFile("[ERROR] " + args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" "));
+};
 
 function getDatabasePath(): string {
   const dataDir = getUserDataDir();
@@ -136,6 +175,15 @@ async function startBackend(): Promise<void> {
     backendProcess.stderr?.on("data", (data) => {
       console.error(`[Backend Error] ${data}`);
     });
+
+    backendProcess.on("exit", (code, signal) => {
+      console.log(`[Backend Exit] Process exited with code ${code}, signal ${signal}`);
+      backendProcess = null;
+    });
+
+    backendProcess.on("error", (err) => {
+      console.error(`[Backend Process Error]`, err);
+    });
   } catch (err) {
     console.error("Failed to fork backend process:", err);
   }
@@ -177,6 +225,15 @@ async function startFrontend(): Promise<void> {
 
     webProcess.stderr?.on("data", (data) => {
       console.error(`[Web Error] ${data}`);
+    });
+
+    webProcess.on("exit", (code, signal) => {
+      console.log(`[Web Exit] Process exited with code ${code}, signal ${signal}`);
+      webProcess = null;
+    });
+
+    webProcess.on("error", (err) => {
+      console.error(`[Web Process Error]`, err);
     });
   } catch (err) {
     console.error("Failed to fork web process:", err);
@@ -494,8 +551,11 @@ function getLoadingHtml(): string {
       <button class="btn-primary" id="retry-btn">
         <span>🔄 Retry Now</span>
       </button>
+      <button class="btn-secondary" id="logs-btn">
+        <span>📁 View Logs</span>
+      </button>
       <button class="btn-secondary" id="devtools-btn">
-        <span>🐞 Toggle DevTools</span>
+        <span>🐞 DevTools</span>
       </button>
     </div>
   </div>
@@ -505,6 +565,7 @@ function getLoadingHtml(): string {
     const apiStatusEl = document.getElementById('api-status');
     const retryBtn = document.getElementById('retry-btn');
     const devtoolsBtn = document.getElementById('devtools-btn');
+    const logsBtn = document.getElementById('logs-btn');
 
     function updatePill(el, isOnline) {
       if (isOnline) {
@@ -531,6 +592,12 @@ function getLoadingHtml(): string {
           retryBtn.textContent = '🔄 Retry Now';
         }, 1000);
       });
+
+      if (logsBtn && window.electronAPI.openLogFolder) {
+        logsBtn.addEventListener('click', () => {
+          window.electronAPI.openLogFolder();
+        });
+      }
 
       devtoolsBtn.addEventListener('click', () => {
         window.electronAPI.openDevTools();
@@ -637,7 +704,24 @@ function createWindow(): void {
 
 // IPC Handlers
 ipcMain.handle("retry-connection", async () => {
+  if (!backendProcess) {
+    console.log("Retry triggered: restarting backend process...");
+    await startBackend();
+  }
+  if (!webProcess) {
+    console.log("Retry triggered: restarting frontend process...");
+    await startFrontend();
+  }
   return await performHealthCheck();
+});
+
+ipcMain.handle("open-log-folder", () => {
+  try {
+    const dir = getUserDataDir();
+    shell.openPath(dir);
+  } catch (err) {
+    console.error("Failed to open log folder:", err);
+  }
 });
 
 ipcMain.handle("get-service-status", async () => {
