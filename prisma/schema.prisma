@@ -12,11 +12,18 @@ datasource db {
 
 // ─── Users & Auth ─────────────────────────────────────────────────────────────
 
+enum Role {
+  ADMIN
+  USER
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
   name         String
   passwordHash String
+  role         Role     @default(USER)
+  isActive     Boolean  @default(true)
   totpSecret   String?
   twoFaEnabled Boolean  @default(false)
   resetToken   String?  @unique

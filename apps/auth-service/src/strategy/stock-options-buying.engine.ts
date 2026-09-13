@@ -1562,6 +1562,9 @@ export class StockOptionsBuyingEngine {
   private log(state: StrategyState, msg: string) {
     const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
     state.logs.push(`[${ts}] ${msg}`);
+    if (state.logs.length > 300) {
+      state.logs = state.logs.slice(-200);
+    }
     this.logger.log(`[${state.executionId}] ${msg}`);
   }
 

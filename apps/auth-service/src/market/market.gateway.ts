@@ -40,6 +40,10 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  // Buffered ticks for high-performance batched broadcasting
+  private tickBuffer: Record<string, number> = {};
+  private flushTimer: NodeJS.Timeout | null = null;
+
   getSubscribedSymbols(): string[] {
     return Array.from(this.subscriptions.keys());
   }
@@ -106,29 +110,47 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * Broadcast LTP update to all subscribed clients across all room aliases
+   * Broadcast LTP update to subscribed clients (subscriber-aware, zero wasted emits)
    */
   broadcastLTP(symbol: string, ltp: number) {
     const rawSym = symbol.includes(':') ? symbol.split(':')[1] : symbol;
-    const nseSym = `NSE:${rawSym}`;
-    const bseSym = `BSE:${rawSym}`;
-    const nfoSym = `NFO:${rawSym}`;
+
+    // Check if any client is actually subscribed before serializing/emitting
+    const hasSubscribers =
+      this.subscriptions.has(rawSym) ||
+      this.subscriptions.has(symbol) ||
+      this.subscriptions.has(`NSE:${rawSym}`) ||
+      this.subscriptions.has(`BSE:${rawSym}`) ||
+      this.subscriptions.has(`NFO:${rawSym}`);
+
+    if (!hasSubscribers) return;
 
     const payload = { symbol: rawSym, ltp, timestamp: new Date().toISOString() };
 
-    this.server.to(`symbol:${symbol}`).emit('ltp', payload);
-    if (symbol !== rawSym) this.server.to(`symbol:${rawSym}`).emit('ltp', payload);
-    if (symbol !== nseSym) this.server.to(`symbol:${nseSym}`).emit('ltp', payload);
-    if (symbol !== bseSym) this.server.to(`symbol:${bseSym}`).emit('ltp', payload);
-    if (symbol !== nfoSym) this.server.to(`symbol:${nfoSym}`).emit('ltp', payload);
+    // Emit to normalized room (all clients subscribed to this symbol joined symbol:rawSym)
+    this.server.to(`symbol:${rawSym}`).emit('ltp', payload);
+    if (symbol !== rawSym) {
+      this.server.to(`symbol:${symbol}`).emit('ltp', payload);
+    }
   }
 
   /**
-   * Broadcast multiple LTP updates
+   * High-performance batched tick broadcasting
+   * Merges high-frequency ticks into a 75ms window to eliminate CPU spikes and redundant packet serialization
    */
   broadcastTicks(ticks: Record<string, number>) {
-    Object.entries(ticks).forEach(([symbol, ltp]) => {
-      this.broadcastLTP(symbol, ltp);
-    });
+    Object.assign(this.tickBuffer, ticks);
+
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => {
+        const pending = { ...this.tickBuffer };
+        this.tickBuffer = {};
+        this.flushTimer = null;
+
+        Object.entries(pending).forEach(([symbol, ltp]) => {
+          this.broadcastLTP(symbol, ltp);
+        });
+      }, 75);
+    }
   }
 }

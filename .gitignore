@@ -22,5 +22,7 @@ scripts/*
 !scripts/clean-cache.js
 !scripts/prep-desktop.js
 !scripts/clean-dist.js
+!scripts/seed-admin.js
+!scripts/db-cleanup.js
 prisma/client-sqlite/
 

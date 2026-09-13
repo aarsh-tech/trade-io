@@ -239,5 +239,22 @@ export const swingApi = {
     api.get("/swing-scanner/last", { params }),
 };
 
+// ─── Admin ────────────────────────────────────────────────────────────────────
+export const adminApi = {
+  listUsers: () => api.get("/admin/users"),
+  createUser: (data: { email: string; name: string; password?: string; role?: "ADMIN" | "USER" }) =>
+    api.post("/admin/users", data),
+  updateStatus: (userId: string, isActive: boolean) =>
+    api.patch(`/admin/users/${userId}/status`, { isActive }),
+  updateRole: (userId: string, role: "ADMIN" | "USER") =>
+    api.patch(`/admin/users/${userId}/role`, { role }),
+  resetPassword: (userId: string, newPassword?: string) =>
+    api.post(`/admin/users/${userId}/reset-password`, { newPassword }),
+  revokeSessions: (userId: string) =>
+    api.post(`/admin/users/${userId}/revoke-sessions`),
+  deleteUser: (userId: string) =>
+    api.delete(`/admin/users/${userId}`),
+};
+
 
 

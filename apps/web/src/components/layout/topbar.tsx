@@ -43,9 +43,22 @@ export function TopBar() {
             <span className="text-xs sm:text-sm font-bold text-slate-700 group-hover:text-blue-600 transition-colors truncate max-w-[140px]">
               {user?.name || "User"}
             </span>
-            <span className="text-[9px] text-slate-400 font-medium">Standard Account</span>
+            {user?.role === "ADMIN" ? (
+              <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                Administrator
+              </span>
+            ) : (
+              <span className="text-[9px] text-slate-400 font-medium">Standard Account</span>
+            )}
           </div>
-          <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-full bg-blue-50 border border-blue-200/80 flex items-center justify-center text-blue-600 font-bold text-xs sm:text-sm shadow-2xs group-hover:bg-blue-600 group-hover:text-white transition-all">
+          <div
+            className={cn(
+              "h-8 w-8 sm:h-9 sm:w-9 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm shadow-2xs transition-all",
+              user?.role === "ADMIN"
+                ? "bg-purple-50 border border-purple-300 text-purple-700 group-hover:bg-purple-600 group-hover:text-white"
+                : "bg-blue-50 border border-blue-200/80 text-blue-600 group-hover:bg-blue-600 group-hover:text-white"
+            )}
+          >
             {user?.name?.charAt(0) || "U"}
           </div>
         </Link>

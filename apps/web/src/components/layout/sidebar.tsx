@@ -17,6 +17,7 @@ import {
   Layers,
   Activity,
   BookOpen,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -37,6 +38,10 @@ const navItems = [
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/brokers", label: "Brokers", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
+];
+
+const adminNavItems = [
+  { href: "/admin/users", label: "User Access", icon: ShieldCheck, badge: "ADMIN" },
 ];
 
 
@@ -128,14 +133,66 @@ export function Sidebar() {
               </Link>
             );
           })}
-        </nav>
 
+          {/* Admin Navigation */}
+          {user?.role === "ADMIN" && (
+            <div className="pt-3 mt-3 border-t border-slate-100">
+              {!sidebarCollapsed && (
+                <div className="px-3 pb-1.5 flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">
+                    Administration
+                  </span>
+                  <span className="text-[8px] font-bold uppercase bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200">
+                    Admin
+                  </span>
+                </div>
+              )}
+              {adminNavItems.map(({ href, label, icon: Icon, badge }: any) => {
+                const active = pathname.startsWith(href);
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative",
+                      active
+                        ? "bg-purple-50 text-purple-700 border border-purple-200/80 shadow-[0_2px_10px_rgba(147,51,234,0.08)]"
+                        : "text-slate-600 hover:bg-purple-50/60 hover:text-purple-700 border border-transparent",
+                      sidebarCollapsed && "justify-center px-0"
+                    )}
+                    title={sidebarCollapsed ? label : undefined}
+                  >
+                    <Icon
+                      className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-purple-600" : "text-purple-500 group-hover:text-purple-700")}
+                    />
+                    {!sidebarCollapsed && <span className="truncate font-semibold">{label}</span>}
+                    {!sidebarCollapsed && badge && (
+                      <span className="ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200">
+                        {badge}
+                      </span>
+                    )}
+                    {active && !sidebarCollapsed && (
+                      <div className="absolute left-0 w-1 h-5 bg-purple-600 rounded-r-full" />
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </nav>
 
         {/* User Section */}
         <div className="px-3 py-4 border-t border-border">
           {!sidebarCollapsed && user && (
             <div className="mb-3 px-3 py-2 rounded-lg bg-muted/50 border border-border">
-              <p className="text-sm font-semibold text-foreground truncate">{user.name}</p>
+              <div className="flex items-center justify-between gap-1.5">
+                <p className="text-sm font-semibold text-foreground truncate">{user.name}</p>
+                {user.role === "ADMIN" && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200 shrink-0">
+                    ADMIN
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-muted-foreground truncate uppercase tracking-wider">{user.email}</p>
             </div>
           )}

@@ -21,6 +21,8 @@
     "db:studio": "prisma studio --schema=./prisma/schema.prisma",
     "db:sqlite:generate": "prisma generate --schema=./prisma/schema.sqlite.prisma",
     "db:sqlite:push": "prisma db push --schema=./prisma/schema.sqlite.prisma",
+    "db:seed:admin": "node scripts/seed-admin.js",
+    "db:cleanup": "node scripts/db-cleanup.js",
     "desktop:prep": "node scripts/prep-desktop.js",
     "desktop:build": "pnpm --filter @algo-trade/desktop build:main",
     "desktop:dist": "pnpm desktop:prep && pnpm --filter @algo-trade/desktop dist:nsis && node scripts/clean-dist.js",
