@@ -18,7 +18,9 @@
     "db:generate": "prisma generate --schema=./prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema=./prisma/schema.prisma",
     "db:push": "prisma db push --schema=./prisma/schema.prisma",
-    "db:studio": "prisma studio --schema=./prisma/schema.prisma"
+    "db:studio": "prisma studio --schema=./prisma/schema.prisma",
+    "db:seed:admin": "node scripts/seed-admin.js",
+    "db:cleanup": "node scripts/db-cleanup.js"
   },
   "devDependencies": {
     "turbo": "2.3.3",

@@ -13,7 +13,7 @@ export class UsersService {
     const passwordHash = await bcrypt.hash(data.password, 12);
     return this.prisma.user.create({
       data: { email: data.email, name: data.name, passwordHash },
-      select: { id: true, email: true, name: true, twoFaEnabled: true, createdAt: true },
+      select: { id: true, email: true, name: true, role: true, isActive: true, twoFaEnabled: true, createdAt: true },
     });
   }
 
@@ -24,7 +24,7 @@ export class UsersService {
   async findById(id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: { id: true, email: true, name: true, twoFaEnabled: true, totpSecret: true, createdAt: true },
+      select: { id: true, email: true, name: true, role: true, isActive: true, twoFaEnabled: true, totpSecret: true, createdAt: true },
     });
     if (!user) throw new NotFoundException('User not found');
     return user;

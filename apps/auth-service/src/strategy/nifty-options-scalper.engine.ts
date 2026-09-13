@@ -1873,7 +1873,7 @@ export class NiftyOptionsScalperEngine {
     const sym = symbol || config.symbol;
     const exch = exchange || config.exchange;
     const data = await client.getHistoricalData(sym, exch, interval, from, now);
-    return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
+    return (data || []).slice(-250).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
 
   private async getHistoricalOptionPrice(client: any, symbol: string, exchange: string, timestamp: Date): Promise<number | null> {
@@ -1979,7 +1979,14 @@ export class NiftyOptionsScalperEngine {
 
   private roundTick(p: number) { return Math.round(p / 0.05) * 0.05; }
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
-  private log(state: ScalperStrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
+  private log(state: ScalperStrategyState, msg: string) {
+    const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    state.logs.push(`[${ts}] ${msg}`);
+    if (state.logs.length > 300) {
+      state.logs = state.logs.slice(-200);
+    }
+    this.logger.log(`[${state.executionId}] ${msg}`);
+  }
   private async persistLogs(state: ScalperStrategyState) {
     try {
       await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-500)) } });

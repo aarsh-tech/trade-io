@@ -20,6 +20,7 @@ import {
   LogOut,
   ChevronRight,
   User,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store";
@@ -174,6 +175,31 @@ export function MobileBottomNav() {
                   className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 bg-white px-2.5 py-1 rounded-md border border-blue-200 shadow-2xs shrink-0"
                 >
                   Profile
+                </Link>
+              </div>
+            )}
+
+            {/* Admin Banner if Admin */}
+            {user?.role === "ADMIN" && (
+              <div className="px-4 py-2 bg-purple-50 border-b border-purple-200/80">
+                <Link
+                  href="/admin/users"
+                  onClick={() => setDrawerOpen(false)}
+                  className="flex items-center justify-between p-2 rounded-lg bg-white border border-purple-200 shadow-2xs hover:bg-purple-50/50 transition-colors"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-md bg-purple-600 text-white">
+                      <ShieldCheck className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-800">User Access Control</span>
+                        <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-purple-100 text-purple-700">ADMIN</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500">Provision & manage accounts</p>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-purple-400" />
                 </Link>
               </div>
             )}

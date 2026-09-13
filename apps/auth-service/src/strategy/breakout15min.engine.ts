@@ -2120,7 +2120,7 @@ export class Breakout15MinEngine {
     const from = new Date(`${istDateStr}T09:15:00.000+05:30`);
     from.setDate(from.getDate() - 5);
     const data = await client.getHistoricalData(symbol, exchange, interval, from, now);
-    return (data || []).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
+    return (data || []).slice(-250).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
   }
 
   private getIstHhmm(date: Date): number {
@@ -2765,7 +2765,14 @@ export class Breakout15MinEngine {
 
   private roundTick(price: number, tick = 0.05) { return Math.round(price / tick) * tick; }
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }); }
-  private log(state: StrategyState, msg: string) { const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); state.logs.push(`[${ts}] ${msg}`); this.logger.log(`[${state.executionId}] ${msg}`); }
+  private log(state: StrategyState, msg: string) {
+    const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    state.logs.push(`[${ts}] ${msg}`);
+    if (state.logs.length > 300) {
+      state.logs = state.logs.slice(-200);
+    }
+    this.logger.log(`[${state.executionId}] ${msg}`);
+  }
   private async persistLogs(state: StrategyState) {
     try {
       await this.prisma.strategyExecution.update({

@@ -9,6 +9,7 @@ import { MarketModule } from './market/market.module';
 import { StrategyModule } from './strategy/strategy.module';
 import { SwingScannerModule } from './swing-scanner/swing-scanner.module';
 import { OrdersModule } from './orders/orders.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { OrdersModule } from './orders/orders.module';
     PrismaModule,
     UsersModule,
     AuthModule,
+    AdminModule,
     BrokersModule,
     MarketModule,
     StrategyModule,

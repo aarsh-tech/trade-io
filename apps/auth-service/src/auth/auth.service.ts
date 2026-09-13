@@ -35,6 +35,10 @@ export class AuthService {
     const user = await this.users.findByEmail(dto.email);
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
+    if (user.isActive === false) {
+      throw new UnauthorizedException('Your account has been deactivated or suspended. Please contact your administrator.');
+    }
+
     const valid = await this.users.validatePassword(user, dto.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
@@ -58,6 +62,8 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
+        role: user.role,
+        isActive: user.isActive,
         twoFaEnabled: user.twoFaEnabled,
       },
       ...tokens,
@@ -85,8 +91,8 @@ export class AuthService {
       await this.prisma.refreshToken.deleteMany({ where: { token } }).catch(() => {});
 
       const user = await this.users.findById(stored.userId);
-      if (!user) {
-        throw new UnauthorizedException('User not found');
+      if (!user || user.isActive === false) {
+        throw new UnauthorizedException('Account has been deactivated or not found');
       }
       const tokens = await this.generateTokens(user.id, user.email);
       return { user, ...tokens };
@@ -160,7 +166,11 @@ export class AuthService {
   }
 
   async validateAccessToken(payload: { sub: string }) {
-    return this.users.findById(payload.sub);
+    const user = await this.users.findById(payload.sub);
+    if (!user || user.isActive === false) {
+      throw new UnauthorizedException('Account has been deactivated or not found');
+    }
+    return user;
   }
 
   async forgotPassword(email: string) {

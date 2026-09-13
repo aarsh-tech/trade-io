@@ -1,6 +1,6 @@
 import {
   Controller, Post, Body, Get, UseGuards, Request,
-  HttpCode, HttpStatus,
+  HttpCode, HttpStatus, ForbiddenException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -14,10 +14,11 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  @ApiOperation({ summary: 'Register a new user' })
+  @ApiOperation({ summary: 'Register a new user (Disabled - Admin Provisioning Only)' })
   async register(@Body() dto: RegisterDto) {
-    const result = await this.authService.register(dto);
-    return { success: true, data: result };
+    throw new ForbiddenException(
+      'Public registration is closed. Accounts are provisioned exclusively by system administrators.'
+    );
   }
 
   @Post('login')

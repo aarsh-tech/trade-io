@@ -79,11 +79,32 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
   ) { }
 
+  private isIndianMarketOpen(): boolean {
+    const now = new Date();
+    // Convert to Indian Standard Time (UTC + 5:30)
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const istTime = new Date(now.getTime() + istOffsetMs);
+
+    const day = istTime.getUTCDay(); // 0 = Sun, 6 = Sat
+    if (day === 0 || day === 6) return false;
+
+    const hours = istTime.getUTCHours();
+    const minutes = istTime.getUTCMinutes();
+    const currentMinute = hours * 60 + minutes;
+
+    // Active market hours window: 09:00 AM (pre-open) to 03:35 PM (closing settlement)
+    const openMinute = 9 * 60; // 09:00
+    const closeMinute = 15 * 60 + 35; // 15:35
+
+    return currentMinute >= openMinute && currentMinute <= closeMinute;
+  }
+
   async onModuleInit() {
     this.logger.log('Initializing Ticker Service...');
     await this.syncTickers();
 
-    this.refreshInterval = setInterval(() => this.syncTickers(), 10000);
+    // Check every 30 seconds (reduced from 10s to lower idle load)
+    this.refreshInterval = setInterval(() => this.syncTickers(), 30000);
   }
 
   onModuleDestroy() {
@@ -91,6 +112,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     this.tickers.forEach((ticker) => {
       try { ticker.disconnect(); } catch (_) {}
     });
+    this.tickers.clear();
   }
 
   /**
@@ -104,8 +126,35 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         select: {
           brokerAccountId: true,
           config: true,
-        }
+        },
       });
+
+      // Add symbols subscribed by active connected dashboard clients
+      const dashboardSymbols = this.marketGateway.getSubscribedSymbols();
+
+      // OPTIMIZATION 1: If NO active strategies AND NO dashboard clients watching, SLEEP.
+      if (activeStrategies.length === 0 && (!dashboardSymbols || dashboardSymbols.length === 0)) {
+        if (this.tickers.size > 0) {
+          this.logger.log('TickerService: No active strategies or dashboard clients; entering idle sleep mode.');
+          this.tickers.forEach((ticker) => {
+            try { ticker.disconnect(); } catch (_) {}
+          });
+          this.tickers.clear();
+        }
+        return;
+      }
+
+      // OPTIMIZATION 2: Outside market hours and no active strategies, SLEEP.
+      if (!this.isIndianMarketOpen() && activeStrategies.length === 0) {
+        if (this.tickers.size > 0) {
+          this.logger.log('TickerService: Market is closed and no active strategies; entering sleep mode.');
+          this.tickers.forEach((ticker) => {
+            try { ticker.disconnect(); } catch (_) {}
+          });
+          this.tickers.clear();
+        }
+        return;
+      }
 
       // Group symbols by broker account
       const symbolsByAccount = new Map<string, Set<string>>();
@@ -128,28 +177,29 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         }
       });
 
-      // Add symbols subscribed by dashboard clients
-      const dashboardSymbols = this.marketGateway.getSubscribedSymbols();
-      
-      // Default account for dashboard feeds if no strategies
-      let defaultAccount = activeStrategies[0]?.brokerAccountId;
-      if (!defaultAccount) {
-        const firstActive = await this.prisma.brokerAccount.findFirst({
-          where: { isActive: true, accessToken: { not: null } }
-        });
-        if (firstActive) defaultAccount = firstActive.id;
-      }
-
-      if (defaultAccount) {
-        if (!symbolsByAccount.has(defaultAccount)) {
-          symbolsByAccount.set(defaultAccount, new Set());
+      // Only assign defaultAccount if dashboard users are actually watching symbols
+      if (dashboardSymbols && dashboardSymbols.length > 0) {
+        let defaultAccount = activeStrategies[0]?.brokerAccountId;
+        if (!defaultAccount) {
+          const firstActive = await this.prisma.brokerAccount.findFirst({
+            where: { isActive: true, accessToken: { not: null } },
+          });
+          if (firstActive) defaultAccount = firstActive.id;
         }
-        dashboardSymbols.forEach(sym => symbolsByAccount.get(defaultAccount).add(sym));
+
+        if (defaultAccount) {
+          if (!symbolsByAccount.has(defaultAccount)) {
+            symbolsByAccount.set(defaultAccount, new Set());
+          }
+          dashboardSymbols.forEach((sym) => symbolsByAccount.get(defaultAccount).add(sym));
+        }
       }
 
-      // For each account, ensure a ticker is running and subscribed
+      // For each account with active symbols, ensure a ticker is running
       for (const [accountId, symbols] of symbolsByAccount.entries()) {
-        await this.ensureTickerRunning(accountId, Array.from(symbols));
+        if (symbols.size > 0) {
+          await this.ensureTickerRunning(accountId, Array.from(symbols));
+        }
       }
     } catch (err) {
       this.logger.error(`Failed to sync tickers: ${err.message}`);
@@ -157,6 +207,11 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureTickerRunning(accountId: string, symbols: string[]) {
+    // OPTIMIZATION 3: Never open a websocket if there are 0 symbols to subscribe
+    if (!symbols || symbols.length === 0) {
+      return;
+    }
+
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
     if (!account || !account.isActive || !account.accessToken) {
       if (this.tickers.has(accountId)) {
@@ -171,12 +226,30 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // OPTIMIZATION 4: Check tokenExpiry. If token is expired, do not hammer broker API!
+    if (account.tokenExpiry && new Date(account.tokenExpiry) < new Date()) {
+      if (!this.failedAccounts.has(accountId)) {
+        this.logger.warn(`Broker account ${account.clientId || account.id} session token is expired. Please re-authenticate on the Brokers page.`);
+      }
+      this.failedAccounts.set(accountId, { timestamp: Date.now(), accessToken: account.accessToken });
+      if (this.tickers.has(accountId)) {
+        const existing = this.tickers.get(accountId);
+        if (existing?.disconnect) {
+          try { existing.disconnect(); } catch (_) {}
+        }
+        this.tickers.delete(accountId);
+      }
+      return;
+    }
+
+    // OPTIMIZATION 5: 5-minute cooldown on failed/disconnected accounts
     const failedInfo = this.failedAccounts.get(accountId);
     if (failedInfo) {
       if (failedInfo.accessToken !== account.accessToken) {
+        // Token was refreshed/updated! Clear cooldown and reconnect immediately
         this.failedAccounts.delete(accountId);
-      } else if (Date.now() - failedInfo.timestamp < 120000) {
-        // Cooldown for 2 minutes before re-attempting connection for failed account
+      } else if (Date.now() - failedInfo.timestamp < 300000) {
+        // 5-minute cooldown before retrying
         return;
       } else {
         this.failedAccounts.delete(accountId);
@@ -195,15 +268,15 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       } else {
         const currentTokens = new Set<number>(tickerData.tokens || []);
         const requestedTokens = symbols
-          .map(s => tickerData.resolveToken(s))
+          .map((s) => tickerData.resolveToken(s))
           .filter((t): t is number => typeof t === 'number' && !isNaN(t));
-        
-        const tokensToSubscribe = requestedTokens.filter(t => !currentTokens.has(t));
+
+        const tokensToSubscribe = requestedTokens.filter((t) => !currentTokens.has(t));
         if (tokensToSubscribe.length > 0 && tickerData.instance) {
           this.logger.log(`Subscribing to ${tokensToSubscribe.length} new tokens for account ${account.clientId}`);
           tickerData.instance.subscribe(tokensToSubscribe);
           tickerData.instance.setMode(tickerData.instance.modeFull, tokensToSubscribe);
-          tokensToSubscribe.forEach(t => currentTokens.add(t));
+          tokensToSubscribe.forEach((t) => currentTokens.add(t));
           tickerData.tokens = Array.from(currentTokens);
         }
         return;
@@ -322,23 +395,40 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       ticker.on('error', (err: any) => {
-        const errMsg = err?.message || String(err || '');
+        const errMsg =
+          err?.message ||
+          err?.error_type ||
+          (typeof err === 'object' && Object.keys(err).length > 0
+            ? JSON.stringify(err)
+            : String(err || 'Unknown connection error'));
         this.logger.error(`Zerodha Ticker error for account ${account.clientId}: ${errMsg}`);
-        if (errMsg.includes('403') || errMsg.includes('Forbidden') || errMsg.includes('TokenException')) {
-          this.logger.warn(`Zerodha session/token for account ${account.clientId} is invalid or expired (403 Forbidden). Stopping auto-reconnect.`);
-          this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
-          try {
-            if (typeof ticker.autoReconnect === 'function') {
-              ticker.autoReconnect(false);
-            }
-            ticker.disconnect();
-          } catch (_) {}
-          this.tickers.delete(account.id);
-        }
+        this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
+        try {
+          if (typeof ticker.autoReconnect === 'function') {
+            ticker.autoReconnect(false);
+          }
+          ticker.disconnect();
+        } catch (_) {}
+        this.tickers.delete(account.id);
       });
 
       ticker.on('disconnect', (error: any) => {
-        this.logger.warn(`Zerodha Ticker disconnected for account ${account.clientId}: ${error?.message || error}`);
+        const errDetail =
+          error?.message ||
+          error?.reason ||
+          (typeof error === 'object' && Object.keys(error).length > 0
+            ? JSON.stringify(error)
+            : 'Connection closed / Session inactive');
+        this.logger.warn(`Zerodha Ticker disconnected for account ${account.clientId}: ${errDetail}`);
+        // Immediately set cooldown so we don't spam reconnect loops
+        this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
+        try {
+          if (typeof ticker.autoReconnect === 'function') {
+            ticker.autoReconnect(false);
+          }
+          ticker.disconnect();
+        } catch (_) {}
+        this.tickers.delete(account.id);
       });
 
       ticker.on('reconnect', (reconnectCount: number, reconnectInterval: number) => {
@@ -363,8 +453,9 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         resolveToken,
         accessToken: account.accessToken,
       });
-    } catch (err) {
-      this.logger.error(`Failed to setup Zerodha Ticker for ${account.id}: ${err.message}`);
+    } catch (err: any) {
+      const msg = err?.message || String(err || '');
+      this.logger.error(`Failed to setup Zerodha Ticker for ${account.clientId || account.id}: ${msg}`);
       this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
       this.tickers.delete(account.id);
     }
