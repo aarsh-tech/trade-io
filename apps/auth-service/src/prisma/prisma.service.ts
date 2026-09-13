@@ -44,6 +44,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           "email" TEXT NOT NULL UNIQUE,
           "name" TEXT NOT NULL,
           "passwordHash" TEXT NOT NULL,
+          "role" TEXT NOT NULL DEFAULT 'USER',
+          "isActive" BOOLEAN NOT NULL DEFAULT 1,
           "totpSecret" TEXT,
           "twoFaEnabled" BOOLEAN NOT NULL DEFAULT 0,
           "resetToken" TEXT UNIQUE,
@@ -214,6 +216,14 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         CREATE INDEX IF NOT EXISTS "watchlists_userId_idx" ON "watchlists"("userId");
       `);
 
+      // Fallback migration for existing SQLite databases
+      try {
+        await this.$executeRawUnsafe(`ALTER TABLE "users" ADD COLUMN "role" TEXT NOT NULL DEFAULT 'USER';`);
+      } catch {}
+      try {
+        await this.$executeRawUnsafe(`ALTER TABLE "users" ADD COLUMN "isActive" BOOLEAN NOT NULL DEFAULT 1;`);
+      } catch {}
+
       this.logger.log('Database tables verified / initialized successfully.');
     } catch (err: any) {
       this.logger.warn(`Schema initialization notice: ${err?.message || err}`);
@@ -238,8 +248,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             email,
             name,
             passwordHash,
+            role: 'ADMIN',
+            isActive: true,
             twoFaEnabled: false,
-          },
+          } as any,
         });
         this.logger.log(`Pre-seeded default user [${email}] successfully!`);
       } else {

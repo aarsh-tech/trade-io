@@ -10,7 +10,14 @@ const standaloneWebDir = path.join(webDir, '.next', 'standalone', 'apps', 'web')
 const authServiceDir = path.join(rootDir, 'apps', 'auth-service');
 const standaloneBackendDir = path.join(authServiceDir, 'standalone');
 
-// 1. Copy web static & public folders to web standalone
+// 0. Recompile auth-service NestJS
+console.log('🔨 Compiling auth-service NestJS...');
+execSync('pnpm --filter @algo-trade/auth-service build', { stdio: 'inherit', cwd: rootDir });
+
+// 1. Build web and copy static & public folders to web standalone
+console.log('🔨 Compiling web Next.js standalone...');
+execSync('pnpm --filter web build', { stdio: 'inherit', cwd: rootDir });
+
 const srcStatic = path.join(webDir, '.next', 'static');
 const destStatic = path.join(standaloneWebDir, '.next', 'static');
 if (fs.existsSync(srcStatic)) {
@@ -18,11 +25,6 @@ if (fs.existsSync(srcStatic)) {
   fs.mkdirSync(path.dirname(destStatic), { recursive: true });
   fs.cpSync(srcStatic, destStatic, { recursive: true });
   console.log('✅ .next/static copied.');
-} else {
-  console.warn('⚠️  apps/web/.next/static not found. Running web build first...');
-  execSync('pnpm --filter web build', { stdio: 'inherit', cwd: rootDir });
-  fs.mkdirSync(path.dirname(destStatic), { recursive: true });
-  fs.cpSync(srcStatic, destStatic, { recursive: true });
 }
 
 const srcPublic = path.join(webDir, 'public');
@@ -48,14 +50,8 @@ if (fs.existsSync(duplicatedNext)) {
   fs.rmSync(duplicatedNext, { recursive: true, force: true });
 }
 
-// 2. Ensure auth-service dist exists
-const srcBackendDist = path.join(authServiceDir, 'dist', 'main.js');
-if (!fs.existsSync(srcBackendDist)) {
-  console.log('🔨 Compiling auth-service NestJS...');
-  execSync('pnpm --filter @algo-trade/auth-service build', { stdio: 'inherit', cwd: rootDir });
-}
-
 // 3. Bundle auth-service into a single lean JS file via @vercel/ncc (~3.5MB)
+const srcBackendDist = path.join(authServiceDir, 'dist', 'main.js');
 console.log('⚡ Bundling auth-service into a single standalone executable file (~3.5MB)...');
 if (fs.existsSync(standaloneBackendDir)) {
   try {
@@ -101,13 +97,20 @@ fs.writeFileSync(
 );
 console.log('✅ SQLite Prisma client linked cleanly.');
 
-// Copy .env to standalone
-const srcEnv = path.join(authServiceDir, '.env');
-if (fs.existsSync(srcEnv)) {
-  fs.copyFileSync(srcEnv, path.join(standaloneBackendDir, '.env'));
-} else {
-  fs.writeFileSync(path.join(standaloneBackendDir, '.env'), 'PORT=3002\n');
-}
+// Write clean standalone .env (does not leak dev credentials or PostgreSQL URLs)
+const standaloneEnv = [
+  'PORT=3002',
+  'NODE_ENV=production',
+  'JWT_SECRET=tradeio-standalone-desktop-jwt-secret-2026',
+  'JWT_REFRESH_SECRET=tradeio-standalone-desktop-refresh-secret-2026',
+  'ENCRYPTION_KEY=tradeio-32-byte-standalone-secret-key!',
+  'ENCRYPTION_SECRET=tradeio-32-byte-standalone-secret-key!',
+  'DEFAULT_USER_EMAIL=virali@tradeapex.com',
+  'DEFAULT_USER_PASSWORD=VS@123456',
+  'DEFAULT_USER_NAME=Virali',
+].join('\n');
+fs.writeFileSync(path.join(standaloneBackendDir, '.env'), standaloneEnv + '\n');
+console.log('✅ Standalone .env configured.');
 
 // 5. Build Desktop Electron TypeScript Main
 console.log('⚡ Building Electron Desktop main process...');
