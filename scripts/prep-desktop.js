@@ -15,8 +15,15 @@ console.log('🔨 Compiling auth-service NestJS...');
 execSync('pnpm --filter @algo-trade/auth-service build', { stdio: 'inherit', cwd: rootDir });
 
 // 1. Build web and copy static & public folders to web standalone
-console.log('🔨 Compiling web Next.js standalone...');
-execSync('pnpm --filter web build', { stdio: 'inherit', cwd: rootDir });
+const skipWeb = process.argv.includes('--skip-web') || process.argv.includes('--quick');
+const hasExistingWeb = fs.existsSync(path.join(standaloneWebDir, 'server.js'));
+
+if (skipWeb && hasExistingWeb) {
+  console.log('⚡ [Fast Build] Skipping web compilation, using existing standalone build...');
+} else {
+  console.log('🔨 Compiling web Next.js standalone...');
+  execSync('pnpm --filter web build', { stdio: 'inherit', cwd: rootDir });
+}
 
 const srcStatic = path.join(webDir, '.next', 'static');
 const destStatic = path.join(standaloneWebDir, '.next', 'static');

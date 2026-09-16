@@ -18,7 +18,7 @@
     "productName": "TradeIO",
     "copyright": "Copyright © 2026 TradeIO",
     "npmRebuild": false,
-    "compression": "normal",
+    "compression": "store",
     "asar": true,
     "directories": {
       "output": "release"
