@@ -1416,13 +1416,61 @@ export class Breakout15MinEngine {
       state.currentPnlPct = pnlPct;
       state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-      // ── 0. Check if Server SL Order filled directly at Zerodha ──────────
-      if (!state.isPaperTrade && state.slOrderId && state.slOrderId !== 'FAILED' && client) {
-        try {
-          const kite = client['kite'];
-          if (kite && kite.getOrders) {
+      // ── 0. Partial Entry Fill Sync & Broker Order Status Check ──────────
+      if (!state.isPaperTrade && client) {
+        const kite = client['kite'] || client;
+        if (kite && kite.getOrders) {
+          try {
             const orders = await kite.getOrders().catch(() => []);
-            const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
+
+            // Check if entry filled more shares
+            if (state.entryOrderId && (state.executedQty || 0) < state.config.qty) {
+              const entryOrder = orders.find((o: any) => o.order_id === state.entryOrderId);
+              if (entryOrder) {
+                const filled = Number(entryOrder.filled_quantity) || 0;
+                if (filled > (state.executedQty || 0)) {
+                  const prevQty = state.executedQty || 0;
+                  state.executedQty = filled;
+                  if (entryOrder.average_price && Number(entryOrder.average_price) > 0) {
+                    state.entryPrice = Number(entryOrder.average_price);
+                  }
+                  this.log(state, `📈 Partial fill sync: executed shares increased from ${prevQty} to ${state.executedQty}/${state.config.qty} @ Avg ₹${state.entryPrice!.toFixed(2)}`);
+
+                  // Sync broker SL order quantity
+                  if (state.slOrderId && state.slOrderId !== 'FAILED') {
+                    try {
+                      if (client.modifyOrder) {
+                        await client.modifyOrder(state.slOrderId, { quantity: state.executedQty });
+                      } else if (kite.modifyOrder) {
+                        await kite.modifyOrder('regular', state.slOrderId, { quantity: state.executedQty });
+                      }
+                      this.log(state, `🔄 Modified broker SL order (${state.slOrderId}) quantity to ${state.executedQty}`);
+                    } catch (slModErr: any) {
+                      this.log(state, `⚠ Failed to modify SL order qty: ${slModErr.message}`);
+                    }
+                  }
+
+                  // Sync broker Target order quantity
+                  if (state.config.exitExactAtTarget && state.targetOrderId && state.targetOrderId !== 'FAILED') {
+                    try {
+                      if (client.modifyOrder) {
+                        await client.modifyOrder(state.targetOrderId, { quantity: state.executedQty });
+                      } else if (kite.modifyOrder) {
+                        await kite.modifyOrder('regular', state.targetOrderId, { quantity: state.executedQty });
+                      }
+                      this.log(state, `🔄 Modified broker Target order (${state.targetOrderId}) quantity to ${state.executedQty}`);
+                    } catch (tgtModErr: any) {
+                      this.log(state, `⚠ Failed to modify Target order qty: ${tgtModErr.message}`);
+                    }
+                  }
+                }
+              }
+            }
+
+            // Check if Server SL or Target Order filled directly at Zerodha
+            const slOrder = state.slOrderId && state.slOrderId !== 'FAILED' ? orders.find((o: any) => o.order_id === state.slOrderId) : null;
+            const targetOrder = state.targetOrderId && state.targetOrderId !== 'FAILED' ? orders.find((o: any) => o.order_id === state.targetOrderId) : null;
+
             if (slOrder && slOrder.status === 'COMPLETE') {
               if (isExiting) return;
               isExiting = true;
@@ -1432,9 +1480,17 @@ export class Breakout15MinEngine {
               this.stopRealtimeMonitor(state);
               await this.exitPosition(state, client, avgPrice, isProfitExit ? 'TARGET' : 'SL');
               return;
+            } else if (targetOrder && targetOrder.status === 'COMPLETE') {
+              if (isExiting) return;
+              isExiting = true;
+              const avgPrice = Number(targetOrder.average_price) || state.targetPrice!;
+              this.log(state, `🎯 Zerodha Server Target Order (${state.targetOrderId}) filled at ₹${avgPrice.toFixed(2)}`);
+              this.stopRealtimeMonitor(state);
+              await this.exitPosition(state, client, avgPrice, 'TARGET');
+              return;
             }
-          }
-        } catch { }
+          } catch { }
+        }
       }
 
       // ── 1. 3:05 PM Mandatory EOD Cutoff ──────────────────────────────────
@@ -1754,56 +1810,118 @@ export class Breakout15MinEngine {
     } else {
       const kite = client?.['kite'] || client;
       let isAlreadyFilledAtBroker = false;
+      let brokerFilledQty = 0;
 
-      // 1. Check if server SL order completed at broker
-      if (kite && state.slOrderId && state.slOrderId !== 'FAILED') {
+      // 1. Check if server SL or Target order completed at broker
+      if (kite && (state.slOrderId || state.targetOrderId)) {
         try {
           const orders = await kite.getOrders().catch(() => []);
-          const slOrder = orders.find((o: any) => o.order_id === state.slOrderId);
-          if (slOrder && slOrder.status === 'COMPLETE') {
-            isAlreadyFilledAtBroker = true;
-            exitOrderId = state.slOrderId;
-            exitOrderType = 'SL';
+          const slOrder = state.slOrderId && state.slOrderId !== 'FAILED' ? orders.find((o: any) => o.order_id === state.slOrderId) : null;
+          const targetOrder = state.targetOrderId && state.targetOrderId !== 'FAILED' ? orders.find((o: any) => o.order_id === state.targetOrderId) : null;
+
+          if (reason === 'SL' && (slOrder?.status === 'COMPLETE' || Number(slOrder?.filled_quantity) > 0)) {
+            const slFilled = Number(slOrder.filled_quantity) || 0;
             if (slOrder.average_price && Number(slOrder.average_price) > 0) {
               actualExitPrice = Number(slOrder.average_price);
             }
-            this.log(state, `🛑 Confirmed Broker SL Order executed: ${exitOrderId} @ ₹${actualExitPrice.toFixed(2)}`);
+            exitOrderId = state.slOrderId!;
+            exitOrderType = 'SL';
+            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+
+            if (slFilled >= qty) {
+              isAlreadyFilledAtBroker = true;
+              this.log(state, `🛑 Confirmed Broker SL Order executed: ${exitOrderId} @ ₹${actualExitPrice.toFixed(2)}`);
+            } else {
+              brokerFilledQty = slFilled;
+              this.log(state, `⚠ Broker SL Order (${exitOrderId}) only filled ${slFilled}/${qty} shares @ Avg ₹${actualExitPrice.toFixed(2)}. Remaining ${qty - slFilled} shares will be squared off at market!`);
+            }
+          } else if (reason === 'TARGET' && (targetOrder?.status === 'COMPLETE' || Number(targetOrder?.filled_quantity) > 0)) {
+            const tgtFilled = Number(targetOrder.filled_quantity) || 0;
+            if (targetOrder.average_price && Number(targetOrder.average_price) > 0) {
+              actualExitPrice = Number(targetOrder.average_price);
+            }
+            exitOrderId = state.targetOrderId!;
+            exitOrderType = 'LIMIT';
+            await this.cancelBrokerOrderSafe(client, state.slOrderId);
+
+            if (tgtFilled >= qty) {
+              isAlreadyFilledAtBroker = true;
+              this.log(state, `🎯 Confirmed Broker Target Order executed: ${exitOrderId} @ ₹${actualExitPrice.toFixed(2)}`);
+            } else {
+              brokerFilledQty = tgtFilled;
+              this.log(state, `⚠ Broker Target Order (${exitOrderId}) only filled ${tgtFilled}/${qty} shares @ Avg ₹${actualExitPrice.toFixed(2)}. Remaining ${qty - tgtFilled} shares will be squared off at market!`);
+            }
           }
         } catch { }
       }
 
       if (!isAlreadyFilledAtBroker) {
-        // Cancel pending broker SL order before placing market exit
+        // Cancel pending broker SL and Target orders before placing market exit
         await this.cancelBrokerOrderSafe(client, state.slOrderId);
         await this.cancelBrokerOrderSafe(client, state.targetOrderId);
 
+        const remainingQtyToExit = Math.max(1, qty - brokerFilledQty);
+
         // Capital Wipeout Guard: Check if position is already closed or if exit order would reverse position
         let isManuallyClosed = false;
+        let marketExitQty = remainingQtyToExit;
         try {
           const exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger);
           if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
             isManuallyClosed = true;
             this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
+          } else if (exitSafety.brokerQty && Math.abs(exitSafety.brokerQty) > 0) {
+            marketExitQty = Math.min(remainingQtyToExit, Math.abs(exitSafety.brokerQty));
           }
         } catch (posErr: any) {
           this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
         }
 
-        if (!isManuallyClosed && client) {
+        if (!isManuallyClosed && client && marketExitQty > 0) {
           try {
             exitOrderId = await client.placeOrder({
               symbol,
               exchange,
               product: config.product ?? 'MIS',
-              qty,
+              qty: marketExitQty,
               side: exitSide,
               orderType: 'MARKET',
             });
             exitOrderType = 'MARKET';
-            this.log(state, `✅ Live Market Exit Order placed (${reason}): ${exitOrderId}`);
+            this.log(state, `✅ Live Market Exit Order placed (${reason}) for ${marketExitQty} shares: ${exitOrderId}`);
           } catch (err: any) {
             this.log(state, `❌ Live Market Exit Order failed (${reason}): ${err.message}`);
           }
+        }
+      }
+
+      // ── Fail-Safe Broker Position Flattener ──────────────────────
+      // Ensure absolutely no leftover orphan shares remain open at Zerodha
+      if (kite && kite.getPositions && !state.isPaperTrade) {
+        try {
+          await new Promise(r => setTimeout(r, 600)); // Allow exchange match to settle
+          const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger);
+          if (finalPos.isOpen && finalPos.netQty !== 0) {
+            const orphanSide = finalPos.netQty > 0 ? 'SELL' : 'BUY';
+            const orphanQty = Math.abs(finalPos.netQty);
+            this.log(state, `🚨 [FAIL-SAFE SAFETY NET] Detected ${orphanQty} orphaned shares still open at Zerodha! Executing emergency market square-off order to flatten position completely...`);
+            const emergencyOrderId = await client.placeOrder({
+              symbol,
+              exchange,
+              product: config.product ?? 'MIS',
+              qty: orphanQty,
+              side: orphanSide,
+              orderType: 'MARKET',
+            }).catch((e: any) => {
+              this.log(state, `❌ Emergency square-off failed: ${e.message}`);
+              return null;
+            });
+            if (emergencyOrderId) {
+              this.log(state, `🛡 Emergency square-off executed successfully (${orphanSide} ${orphanQty} shares): ${emergencyOrderId}`);
+            }
+          }
+        } catch (guardErr: any) {
+          this.logger.warn(`Fail-safe position zeroing check notice: ${guardErr.message}`);
         }
       }
 
