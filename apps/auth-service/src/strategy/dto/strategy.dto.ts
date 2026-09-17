@@ -26,8 +26,11 @@ export interface GammaBlastExpiryConfig {
   maxPremiumNifty?: number;            // Optional override
   minPremiumSensex?: number;           // Optional override
   maxPremiumSensex?: number;           // Optional override
-  startTime: string;                   // default '13:00' (1:00 PM)
+  startTime: string;                   // default '09:20' (09:20 AM - Full Day Scalper)
   endTime: string;                     // default '15:25' (3:25 PM - Hold/Trail through closing candle)
+  tradingMode?: 'FULL_DAY_SCALPER' | 'AFTERNOON_GAMMA_ONLY'; // default: 'FULL_DAY_SCALPER'
+  enableOrbMorningTrigger?: boolean;   // Capture 09:20-11:30 Opening Range (ORH/ORL) momentum breakouts (default: true)
+  enableMiddayBreakout?: boolean;      // Capture 11:30-13:30 compression channel breakouts (default: true)
   enableOiFilter?: boolean;            // Confirm with live Call/Put OI unwinding & PCR (default: true)
   enableVolumeSurge?: boolean;         // Require >= 2.5x volume surge on breakout (default: true)
   enableRatchetTrailing?: boolean;     // Sub-second 1.4x Cost lock, 2x +50% lock, 3x+ Peak trail (default: true)
@@ -43,6 +46,9 @@ export interface GammaBlastExpiryConfig {
   initialSlPct?: number;               // Initial SL % from entry premium (default: 50%)
   stopLossRs?: number;                 // Max daily loss in INR
   targetRs?: number;                   // Target profit in INR
+  stopLossPoints?: number;             // Target SL in option points (e.g. 25 pts)
+  targetPoints?: number;               // Target profit in option points (e.g. 45 to 50 pts)
+  exitExactAtTarget?: boolean;         // Exit immediately at exact target profit (e.g. ₹1,000) and stop loss (e.g. ₹500) without trailing
 }
 
 // ─── Breakout 15-Min Config ────────────────────────────────────────────────────
@@ -140,6 +146,8 @@ export interface EmaVwapCrossoverConfig {
   enableTwoCandleEmaConfirmation?: boolean; // Require 2nd candle confirmation before exiting on EMA to prevent shakeouts (default: true)
   enableEmaCandleExit?: boolean;      // Exit immediately when a confirmed 5m candle closes against trend across 15-EMA (default: true)
   enableTrendReEntry?: boolean;       // Allow 1 trend continuation re-entry if price reclaims EMA with volume (default: true)
+  minStockPrice?: number;             // Minimum stock price floor for auto scanner (default: ₹300)
+  enableHybridTrailing?: boolean;     // Hybrid mode: In Exact Target mode, trail SL to 15-EMA & VWAP with 0.30% noise buffer once Break-Even is locked (default: true)
 }
 
 export interface NiftyOptionsScalperConfig {
@@ -268,6 +276,11 @@ export class UpdateStrategyDto {
   @IsString()
   @IsOptional()
   name?: string;
+
+  @ApiPropertyOptional({ enum: StrategyTypeEnum })
+  @IsEnum(StrategyTypeEnum)
+  @IsOptional()
+  type?: StrategyTypeEnum;
 
   @ApiPropertyOptional()
   @IsString()

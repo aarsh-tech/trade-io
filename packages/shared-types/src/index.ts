@@ -13,6 +13,7 @@ export enum StrategyType {
   STOCK_OPTIONS_BUYING = 'STOCK_OPTIONS_BUYING',
   DAILY_SCALPER = 'DAILY_SCALPER',
   NIFTY_OPTIONS_SCALPER = 'NIFTY_OPTIONS_SCALPER',
+  GAMMA_BLAST_EXPIRY = 'GAMMA_BLAST_EXPIRY',
   CUSTOM = 'CUSTOM',
 }
 
@@ -159,20 +160,61 @@ export interface EmaVwapCrossoverConfig {
   enableParabolicVwapLock?: boolean;
   enableTwoCandleEmaConfirmation?: boolean;
   enableTrendReEntry?: boolean;
+  minStockPrice?: number;
+  exitExactAtTarget?: boolean;
+  enableHybridTrailing?: boolean;
+}
+
+export interface GammaBlastExpiryConfig {
+  symbol: 'AUTO' | 'NIFTY' | 'SENSEX';
+  exchange: 'NFO' | 'BFO' | 'NSE';
+  lots: number;
+  qty?: number;
+  product: 'MIS' | 'NRML';
+  maxTradesPerDay: number;
+  maxWinsPerDay?: number;
+  autoSelectStrike?: boolean;
+  minPremiumNifty?: number;
+  maxPremiumNifty?: number;
+  minPremiumSensex?: number;
+  maxPremiumSensex?: number;
+  startTime: string; // default '09:20' (09:20 AM Full Day Scalper)
+  endTime: string;   // default '15:25'
+  tradingMode?: 'FULL_DAY_SCALPER' | 'AFTERNOON_GAMMA_ONLY'; // default: 'FULL_DAY_SCALPER'
+  enableOrbMorningTrigger?: boolean; // default: true
+  enableMiddayBreakout?: boolean;    // default: true
+  enableOiFilter?: boolean;
+  enableVolumeSurge?: boolean;
+  enableRatchetTrailing?: boolean;
+  enablePeakTrailing?: boolean;
+  peakTrailingPct?: number;
+  enableEmaExit?: boolean;
+  emaPeriod?: number;
+  costLockMultiple?: number;
+  profitLock2xMultiple?: number;
+  enableHighConvictionBoost?: boolean;
+  maxConvictionLots?: number;
+  enablePartialProfitBooking?: boolean;
+  initialSlPct?: number;
+  stopLossRs?: number;
+  targetRs?: number;
+  stopLossPoints?: number;
+  targetPoints?: number;
+  exitExactAtTarget?: boolean;
 }
 
 export interface CreateStrategyDto {
   name: string;
   type: StrategyType;
   brokerAccountId: string;
-  config: Breakout15MinConfig | EmaVwapCrossoverConfig;
+  config: Breakout15MinConfig | EmaVwapCrossoverConfig | GammaBlastExpiryConfig | Record<string, any>;
 }
 
 export interface StrategyDto {
   id: string;
   name: string;
   type: StrategyType;
-  config: Breakout15MinConfig | EmaVwapCrossoverConfig;
+  config: Breakout15MinConfig | EmaVwapCrossoverConfig | GammaBlastExpiryConfig | Record<string, any>;
   isActive: boolean;
   brokerAccountId?: string;
   createdAt: string;
