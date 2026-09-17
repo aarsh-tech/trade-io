@@ -76,7 +76,7 @@ const getStrategyMeta = (type: string) => {
       };
     case "GAMMA_BLAST_EXPIRY":
       return {
-        label: "Gamma Blast (CAS Expiry)",
+        label: "Daily Index Scalper (SENSEX & NIFTY)",
         badge: "⚡ DAILY INDEX SCALPER",
         badgeClass: "bg-amber-600 text-white font-extrabold shadow-2xs",
         icon: Zap,

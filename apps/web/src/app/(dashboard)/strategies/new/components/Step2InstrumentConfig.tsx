@@ -63,18 +63,18 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
 
   return (
     <div className="space-y-5">
-      {/* ── GAMMA BLAST SPECIAL CONFIG ── */}
+      {/* ── DAILY INDEX SCALPER SPECIAL CONFIG ── */}
       {form.type === "GAMMA_BLAST_EXPIRY" && (
         <div className="space-y-4">
           <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 shadow-xs">
             <div className="flex items-center gap-2 mb-1.5">
               <Sparkles className="h-4 w-4 text-amber-700 " />
               <p className="text-xs sm:text-sm font-bold text-amber-950 font-black">
-                Gamma Blast &amp; Daily Index Scalper Configuration (All Trading Days)
+                Daily Index Scalper Configuration (SENSEX &amp; NIFTY — All Trading Days)
               </p>
             </div>
             <p className="text-xs text-slate-900 font-medium leading-relaxed">
-              Executes on <strong>ALL trading days (Mon–Fri)</strong> from 09:20 AM to 03:25 PM IST. On regular non-expiry days, it trades high-delta ATM contracts (Delta ~0.50) for clean 1:1 index points tracking with zero theta-decay trap. On expiry days, it automatically unleashes explosive Near-OTM gamma leverage in the afternoon.
+              Executes on <strong>ALL trading days (Mon–Fri)</strong> from 09:20 AM to 03:25 PM IST. Selects high-delta ATM contracts (Delta ~0.50) calculated directly from running Future prices for precise 1:1 index points tracking with zero theta-decay trap.
             </p>
           </div>
 
@@ -238,7 +238,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 </div>
                 <p className="text-xs font-semibold text-emerald-600">09:20 AM – 03:25 PM IST</p>
                 <p className="text-xs text-slate-700 font-medium mt-1 leading-snug">
-                  Trades Morning ORB (09:20–11:30), Midday Flags (11:30–13:30), &amp; Afternoon Gamma Spikes (13:30–15:25).
+                  Trades Morning ORB (09:20–11:30), Midday Flags (11:30–13:30), &amp; Afternoon Momentum (13:30–15:25).
                 </p>
               </button>
 
@@ -284,7 +284,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               </div>
             </div>
             <Badge className="text-[10px] bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 font-bold shrink-0">
-              CAS Guard Active
+              Auto Square-Off Active
             </Badge>
           </div>
         </div>

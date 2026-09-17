@@ -14,7 +14,7 @@ interface Step3Props {
 export function Step3RiskManagement({ form, set }: Step3Props) {
   return (
     <div className="space-y-6">
-      {/* ── GAMMA BLAST RISK & RATCHET TRAILING CONTROLS ── */}
+      {/* ── DAILY INDEX SCALPER RISK & RATCHET TRAILING CONTROLS ── */}
       {form.type === "GAMMA_BLAST_EXPIRY" && (
         <div className="space-y-5">
           {/* Info Card */}

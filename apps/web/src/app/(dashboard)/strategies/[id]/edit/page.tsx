@@ -66,7 +66,7 @@ export default function EditStrategyPage() {
     maxPremium: "300",
     enableProfitFloor: true,
     profitFloorBufferRs: "100",
-    // Gamma Blast Expiry
+    // Daily Index Scalper (SENSEX & NIFTY)
     gbTradingMode: "FULL_DAY" as "FULL_DAY" | "AFTERNOON_ONLY",
     gbStartTime: "09:20",
     gbEndTime: "15:25",
@@ -159,7 +159,7 @@ export default function EditStrategyPage() {
           maxPremium: String(config.maxPremium || "300"),
           enableProfitFloor: config.enableProfitFloor !== false,
           profitFloorBufferRs: String(config.profitFloorBufferRs || "100"),
-          // Gamma Blast Expiry
+          // Daily Index Scalper (SENSEX & NIFTY)
           gbTradingMode: (config.tradingMode || (config.startTime === "13:00" ? "AFTERNOON_ONLY" : "FULL_DAY")),
           gbStartTime: config.startTime || "09:20",
           gbEndTime: config.endTime || "15:25",
@@ -428,7 +428,7 @@ export default function EditStrategyPage() {
               <option value="EMA_VWAP_CROSSOVER">15-EMA &amp; VWAP Crossover (Intraday Stocks &amp; Options)</option>
               <option value="BREAKOUT_15MIN">15-Min Opening Range Breakout (ORB)</option>
               <option value="STOCK_OPTIONS_BUYING">Stock Options Buying (Auto F&amp;O Momentum Leaders)</option>
-              <option value="GAMMA_BLAST_EXPIRY">⚡ Gamma Blast (CAS Expiry Special — SENSEX &amp; NIFTY Scalper)</option>
+              <option value="GAMMA_BLAST_EXPIRY">⚡ Daily Index Scalper (SENSEX &amp; NIFTY — All Days)</option>
             </select>
           </div>
 
@@ -461,11 +461,11 @@ export default function EditStrategyPage() {
                 <div className="flex items-center gap-2 mb-1.5">
                   <Sparkles className="h-4 w-4 text-amber-500" />
                   <p className="text-sm font-bold text-amber-600 dark:text-amber-400">
-                    ⚡ Gamma Blast (CAS Expiry Special — Full-Day Price Action)
+                    ⚡ Daily Index Scalper (SENSEX &amp; NIFTY — Full-Day Price Action)
                   </p>
                 </div>
                 <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
-                  Full-day systematic price action scalper for Index Expiry days (SENSEX Thursdays &amp; NIFTY Tuesdays). Operates across 3 market phases: Morning ORB (09:20–11:30), Midday Compression (11:30–13:30), and Explosive Afternoon Gamma Spikes (13:30–15:25).
+                  Full-day systematic price action scalper for SENSEX &amp; NIFTY across all trading days (Mon–Fri). Operates across 3 market phases: Morning ORB (09:20–11:30), Midday Compression (11:30–13:30), and Afternoon Momentum (13:30–15:25). Selects high-delta ATM contracts directly from running Future prices.
                 </p>
               </div>
 

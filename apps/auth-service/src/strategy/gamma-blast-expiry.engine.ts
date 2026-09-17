@@ -387,7 +387,7 @@ export class GammaBlastExpiryEngine {
     if (!state) return;
     const now = new Date();
 
-    this.log(state, `🔍 Running catch-up for Gamma Blast (CAS Expiry Special)...`);
+    this.log(state, `🔍 Running catch-up for Daily Index Scalper (SENSEX & NIFTY)...`);
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
     if (!account || !account.accessToken) {
       this.log(state, `⚠️ Catch-up skipped: No active broker account or access token found. Please authenticate your broker in Broker Settings.`);

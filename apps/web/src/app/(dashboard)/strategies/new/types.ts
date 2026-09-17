@@ -102,7 +102,7 @@ export interface StrategyFormState {
   b15PartialBookingPct: string;
   b15PartialBookingR: string;
   b15EnableCprSupportResistance: boolean;
-  // Gamma Blast Expiry Special
+  // Daily Index Scalper (SENSEX & NIFTY)
   gbIndex: "AUTO" | "NIFTY" | "SENSEX";
   gbTradingMode?: "FULL_DAY" | "AFTERNOON_ONLY";
   gbEnableOrbMorningTrigger?: boolean;

@@ -64,7 +64,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
     },
     {
       type: "GAMMA_BLAST_EXPIRY" as const,
-      label: "Gamma Blast (CAS & Expiry Special)",
+      label: "Daily Index Scalper (SENSEX & NIFTY)",
       badge: "⚡ DAILY INDEX SCALPER",
       badgeClass: "bg-amber-600 hover:bg-amber-600 text-white font-extrabold shadow-xs",
       timing: "09:20 AM – 03:25 PM",
@@ -207,7 +207,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                       set("lots", "1");
                       set("maxTradesPerDay", "1");
                     } else if (type === "GAMMA_BLAST_EXPIRY") {
-                      set("name", "Gamma Blast (CAS Expiry Special)");
+                      set("name", "Daily Index Scalper (SENSEX & NIFTY)");
                       set("symbol", "AUTO");
                       set("exchange", "NFO");
                       set("instrumentType", "OPTION");

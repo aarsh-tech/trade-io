@@ -818,7 +818,7 @@ function StrategyCard({
                   : isStockOptions
                     ? "Stock Options"
                     : isGammaBlast
-                      ? "Gamma Blast (Expiry)"
+                      ? "Daily Index Scalper"
                       : is15Min
                         ? "15-Min Breakout (Dynamic)"
                         : isEmaVwap
