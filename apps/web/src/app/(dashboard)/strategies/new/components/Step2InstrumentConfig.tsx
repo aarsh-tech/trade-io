@@ -70,22 +70,22 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center gap-2 mb-1.5">
               <Sparkles className="h-4 w-4 text-amber-700 " />
               <p className="text-xs sm:text-sm font-bold text-amber-950 font-black">
-                Gamma Blast (CAS &amp; Expiry Special) Configuration
+                Gamma Blast &amp; Daily Index Scalper Configuration (All Trading Days)
               </p>
             </div>
             <p className="text-xs text-slate-900 font-medium leading-relaxed">
-              Trades explosive 01:00 PM – 03:05 PM momentum spikes on NIFTY (Tuesdays) &amp; SENSEX (Thursdays). The engine automatically selects cheap ₹8–₹15 / ₹12–₹25 strikes using live Open Interest (OI) &amp; range breakout triggers.
+              Executes on <strong>ALL trading days (Mon–Fri)</strong> from 09:20 AM to 03:25 PM IST. On regular non-expiry days, it trades high-delta ATM contracts (Delta ~0.50) for clean 1:1 index points tracking with zero theta-decay trap. On expiry days, it automatically unleashes explosive Near-OTM gamma leverage in the afternoon.
             </p>
           </div>
 
-          {/* Expiry Day Mode Selection */}
+          {/* Underlier Selection */}
           <div>
-            <label className="text-xs sm:text-sm font-bold text-foreground mb-2 block">Expiry Day Mode</label>
+            <label className="text-xs sm:text-sm font-bold text-foreground mb-2 block">Underlying Index &amp; Trading Schedule</label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
-                { label: "AUTO (Smart Expiry)", val: "AUTO", desc: "Tue: NIFTY, Thu: SENSEX", lotSize: 65 },
-                { label: "NIFTY 50", val: "NIFTY", desc: "Tuesday Expiry (Lot: 65)", lotSize: 65 },
-                { label: "BSE SENSEX", val: "SENSEX", desc: "Thursday Expiry (Lot: 20)", lotSize: 20 },
+                { label: "AUTO (Smart All-Days)", val: "AUTO", desc: "Mon–Wed: NIFTY | Thu–Fri: SENSEX (Switches to live expiry)", lotSize: 65 },
+                { label: "NIFTY 50 (All Days)", val: "NIFTY", desc: "Trades NIFTY every day (Mon–Fri). High-Delta ATM daily.", lotSize: 65 },
+                { label: "BSE SENSEX (All Days)", val: "SENSEX", desc: "Trades SENSEX every day (Mon–Fri). High-Delta ATM daily.", lotSize: 20 },
               ].map((item) => (
                 <button
                   key={item.val}
@@ -149,14 +149,14 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           </div>
 
           {/* Smart Auto Premium Discovery */}
-          <div className="flex items-start gap-3 p-4 rounded-2xl border-2 border-blue-300 bg-blue-50 shadow-xs">
-            <Sparkles className="h-5 w-5 text-blue-600  shrink-0 mt-0.5" />
+          <div className="flex items-start gap-3 p-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50 shadow-xs">
+            <Sparkles className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
             <div>
               <p className="text-xs sm:text-sm font-bold text-foreground">
-                Auto-Adaptive Near-OTM Strike Discovery Enabled
+                Strict High-Delta ATM &amp; ITM Strike Selection (Zero Cheap OTM)
               </p>
               <p className="text-xs text-slate-900 font-medium mt-1 leading-relaxed">
-                The engine automatically targets high-delta Near-OTM contracts (1–3 strikes from Spot ATM) that rapidly cross In-The-Money during breakouts and retain intrinsic cash settlement value.
+                Cheap OTM options are completely excluded. The engine trades strictly At-The-Money (ATM, Delta ~0.50) or 1-strike In-The-Money (ITM, Delta ~0.55–0.65) contracts for direct 1:1 index tracking without theta decay.
               </p>
             </div>
           </div>
@@ -212,17 +212,79 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             )}
           </div>
 
-          {/* Time Window */}
+          {/* Execution Window Mode */}
+          <div>
+            <label className="text-xs sm:text-sm font-bold text-foreground mb-2 block">Execution Window &amp; Daypart Mode</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  set("gbTradingMode", "FULL_DAY");
+                  set("gbStartTime", "09:20");
+                  set("gbEndTime", "15:25");
+                }}
+                className={cn(
+                  "p-3.5 rounded-2xl border-2 text-left transition-all bg-card",
+                  (form.gbTradingMode || "FULL_DAY") === "FULL_DAY" && (form.gbStartTime || "09:20") === "09:20"
+                    ? "border-emerald-500 bg-emerald-50/40 shadow-xs ring-1 ring-emerald-500/30 font-bold"
+                    : "border-border hover:border-emerald-400/50 hover:bg-accent/40"
+                )}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-foreground">🚀 Full Day Scalper</span>
+                  <Badge className="text-[9px] bg-emerald-500/20 text-emerald-700 border-emerald-500/30 font-bold">
+                    RECOMMENDED
+                  </Badge>
+                </div>
+                <p className="text-xs font-semibold text-emerald-600">09:20 AM – 03:25 PM IST</p>
+                <p className="text-xs text-slate-700 font-medium mt-1 leading-snug">
+                  Trades Morning ORB (09:20–11:30), Midday Flags (11:30–13:30), &amp; Afternoon Gamma Spikes (13:30–15:25).
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  set("gbTradingMode", "AFTERNOON_ONLY");
+                  set("gbStartTime", "13:00");
+                  set("gbEndTime", "15:25");
+                }}
+                className={cn(
+                  "p-3.5 rounded-2xl border-2 text-left transition-all bg-card",
+                  form.gbTradingMode === "AFTERNOON_ONLY" || form.gbStartTime === "13:00"
+                    ? "border-amber-500 bg-amber-50/40 shadow-xs ring-1 ring-amber-500/30 font-bold"
+                    : "border-border hover:border-amber-400/50 hover:bg-accent/40"
+                )}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-foreground">⏰ Afternoon Only</span>
+                  <Badge className="text-[9px] bg-amber-500/20 text-amber-700 border-amber-500/30 font-bold">
+                    AFTERNOON TREND
+                  </Badge>
+                </div>
+                <p className="text-xs font-semibold text-amber-600">01:00 PM – 03:25 PM IST</p>
+                <p className="text-xs text-slate-700 font-medium mt-1 leading-snug">
+                  Trades only during the afternoon high-volatility window using high-delta ATM contracts.
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* Time Window Details Pill */}
           <div className="flex items-center justify-between p-3.5 rounded-2xl bg-secondary/40 border border-border">
             <div className="flex items-center gap-2.5">
-              <Clock className="h-4 w-4 text-blue-600  shrink-0" />
+              <Clock className="h-4 w-4 text-blue-600 shrink-0" />
               <div>
-                <p className="text-xs font-bold text-foreground">Execution Window: 01:00 PM – 03:25 PM IST</p>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">Active hold &amp; trail through 15:25–15:30 candle | Hard Auto-Exit @ 03:29:30 PM before market close</p>
+                <p className="text-xs font-bold text-foreground">
+                  Active Window: {form.gbStartTime || "09:20"} – {form.gbEndTime || "15:25"} IST
+                </p>
+                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  Hold &amp; trail through 15:25–15:30 candle | Hard Auto-Exit @ 03:29:30 PM before market close
+                </p>
               </div>
             </div>
-            <Badge className="text-[10px] bg-emerald-500/15 text-emerald-700  border border-emerald-500/30 font-bold shrink-0">
-              CAS Guard Enabled
+            <Badge className="text-[10px] bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 font-bold shrink-0">
+              CAS Guard Active
             </Badge>
           </div>
         </div>

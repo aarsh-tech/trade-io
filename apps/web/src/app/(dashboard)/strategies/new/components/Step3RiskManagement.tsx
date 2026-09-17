@@ -138,6 +138,24 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </label>
           </div>
 
+          {/* Exact Target Mode Toggle */}
+          <div className="p-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50/50 shadow-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs sm:text-sm font-bold text-foreground">Fixed Rupee Target &amp; Loss Cutoff</p>
+                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  Exit immediately when ₹{form.targetRs || "1500"} target or -₹{form.stopLossRs || "500"} SL is hit; locks profits at +50% milestone
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={form.exitExactAtTarget}
+                onChange={(e) => set("exitExactAtTarget", e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+              />
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-semibold mb-2 block text-foreground">Max Trades / Day</label>
@@ -150,7 +168,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 className="bg-background border-border text-foreground font-semibold"
               />
               <p className="text-xs text-slate-700 font-medium mt-1">
-                Max 2 attempts per expiry session to protect capital
+                Max 2 attempts per session to protect capital
               </p>
             </div>
             <div>
@@ -158,11 +176,11 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               <Input
                 type="text"
                 disabled
-                value="15:05 IST (Square-Off)"
-                className="font-bold text-amber-700  bg-amber-500/10 border-amber-500/30"
+                value={`${form.gbEndTime || "15:25"} IST (Square-Off)`}
+                className="font-bold text-amber-700 bg-amber-500/10 border-amber-500/30"
               />
               <p className="text-xs text-slate-700 font-medium mt-1">
-                Auto-squares off at 3:05 PM sharp
+                Holds &amp; trails through closing candle; hard exit @ 15:29:30
               </p>
             </div>
           </div>

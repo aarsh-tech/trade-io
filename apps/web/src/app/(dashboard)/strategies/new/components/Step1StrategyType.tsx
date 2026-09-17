@@ -65,19 +65,19 @@ export function Step1StrategyType({ form, set }: Step1Props) {
     {
       type: "GAMMA_BLAST_EXPIRY" as const,
       label: "Gamma Blast (CAS & Expiry Special)",
-      badge: "⚡ 01:30 PM EXPIRY HUNTER",
+      badge: "⚡ DAILY INDEX SCALPER",
       badgeClass: "bg-amber-600 hover:bg-amber-600 text-white font-extrabold shadow-xs",
-      timing: "01:30 PM",
-      tag: "NIFTY & SENSEX",
+      timing: "09:20 AM – 03:25 PM",
+      tag: "NIFTY & SENSEX (ALL DAYS)",
       tagColor: "text-amber-950 bg-amber-100 border border-amber-300 font-bold",
-      desc: "Trades explosive 01:30 PM – 03:25 PM Gamma spikes on NIFTY (Tue) & SENSEX (Thu). Buys cheap ₹8–₹15 options with Live OI confirmation.",
+      desc: "Trades high-probability index breakouts every day (Mon–Fri). Selects high-delta ATM & ITM options with institutional VWAP, 15-EMA & volume confirmation.",
       icon: Zap,
       iconColor: "text-amber-700 bg-amber-100 border border-amber-300",
       features: [
-        "NIFTY (Tue) & SENSEX (Thu)",
-        "Cheap ₹8–₹15 Strike Hunter",
+        "NIFTY & SENSEX (All Days)",
+        "High-Delta ATM & ITM (Zero Cheap OTM)",
         "Zero-Latency Ratchet Trailing",
-        "15:05 Sharp Auto Square-Off",
+        "15:29 Auto Square-Off Defense",
       ],
       isAutoStockPreset: false,
     },
@@ -214,7 +214,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                       set("product", "NRML");
                       set("lots", "1");
                       set("gbIndex", "AUTO");
-                      set("gbStartTime", "13:00");
+                      set("gbStartTime", "09:20");
                       set("gbEndTime", "15:25");
                       set("gbEnableOiFilter", true);
                       set("gbEnableVolumeSurge", true);

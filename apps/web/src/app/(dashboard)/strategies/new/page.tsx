@@ -77,18 +77,18 @@ const getStrategyMeta = (type: string) => {
     case "GAMMA_BLAST_EXPIRY":
       return {
         label: "Gamma Blast (CAS Expiry)",
-        badge: "⚡ 01:30 PM EXPIRY",
+        badge: "⚡ DAILY INDEX SCALPER",
         badgeClass: "bg-amber-600 text-white font-extrabold shadow-2xs",
         icon: Zap,
         iconColor: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
-        desc: "Trades explosive 01:30 PM – 03:25 PM Gamma spikes on NIFTY (Tue) & SENSEX (Thu). Buys cheap ₹8–₹15 options with Live OI confirmation.",
+        desc: "Trades high-probability index breakouts every day (Mon–Fri). Selects high-delta ATM & ITM options with institutional VWAP, 15-EMA & volume confirmation.",
         features: [
-          "NIFTY (Tue) & SENSEX (Thu)",
-          "Cheap ₹8–₹15 Strike Hunter",
+          "NIFTY & SENSEX (All Days)",
+          "High-Delta ATM & ITM (Zero Cheap OTM)",
           "Zero-Latency Ratchet Trailing",
-          "15:05 Sharp Auto Square-Off",
+          "15:29 Auto Square-Off Defense",
         ],
-        tip: "Designed to capture 2x–5x explosive expiry afternoon gamma spikes with capped risk.",
+        tip: "Captures high-probability index scalps with strictly high-delta ATM/ITM options and capped risk.",
       };
     case "NIFTY_OPTIONS_SCALPER":
       return {
@@ -246,7 +246,7 @@ export default function NewStrategyPage() {
     gbMaxPremiumNifty: "15",
     gbMinPremiumSensex: "12",
     gbMaxPremiumSensex: "25",
-    gbStartTime: "13:00",
+    gbStartTime: "09:20",
     gbEndTime: "15:25",
     gbEnableOiFilter: true,
     gbEnableVolumeSurge: true,
@@ -296,6 +296,9 @@ export default function NewStrategyPage() {
       let config: any;
       if (form.type === "GAMMA_BLAST_EXPIRY") {
         config = {
+          tradingMode: form.gbTradingMode === "AFTERNOON_ONLY" ? "AFTERNOON_GAMMA_ONLY" : "FULL_DAY_SCALPER",
+          enableOrbMorningTrigger: form.gbEnableOrbMorningTrigger !== false,
+          enableMiddayBreakout: form.gbEnableMiddayBreakout !== false,
           symbol: form.symbol.trim() === "SENSEX" ? "SENSEX" : (form.symbol.trim() === "AUTO" ? "AUTO" : "NIFTY"),
           exchange: form.symbol.trim() === "SENSEX" ? "BFO" : "NFO",
           lots: Number(form.lots || 1),
@@ -303,7 +306,7 @@ export default function NewStrategyPage() {
           maxTradesPerDay: Number(form.maxTradesPerDay || 2),
           maxWinsPerDay: 1,
           autoSelectStrike: true,
-          startTime: form.gbStartTime || "13:00",
+          startTime: form.gbTradingMode === "AFTERNOON_ONLY" ? "13:00" : (form.gbStartTime || "09:20"),
           endTime: form.gbEndTime || "15:25",
           enableOiFilter: form.gbEnableOiFilter,
           enableVolumeSurge: form.gbEnableVolumeSurge,
@@ -312,8 +315,11 @@ export default function NewStrategyPage() {
           maxConvictionLots: Number(form.gbMaxConvictionLots || 3),
           enablePartialProfitBooking: form.gbEnablePartialProfitBooking,
           initialSlPct: Number(form.gbInitialSlPct || 50),
-          targetRs: Number(form.targetRs || 1500),
+          targetRs: Number(form.targetRs || 1000),
           stopLossRs: Number(form.stopLossRs || 500),
+          targetPoints: Math.round(Number(form.targetRs || 1000) / (lotSize || 20)),
+          stopLossPoints: Math.round(Number(form.stopLossRs || 500) / (lotSize || 20)),
+          exitExactAtTarget: !!form.exitExactAtTarget,
         };
       } else if (form.type === "NIFTY_OPTIONS_SCALPER") {
         config = {

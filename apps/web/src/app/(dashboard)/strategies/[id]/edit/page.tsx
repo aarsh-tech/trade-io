@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   ChevronLeft, Check, Loader2, Shield, Target, Zap, Info, ArrowLeft, RefreshCw, BarChart2, TrendingUp, Lock,
-  ArrowUpRight, ArrowDownRight, Shuffle, Sparkles
+  ArrowUpRight, ArrowDownRight, Shuffle, Sparkles, Clock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -50,7 +50,7 @@ export default function EditStrategyPage() {
 
   const [form, setForm] = useState({
     name: "",
-    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "STOCK_OPTIONS_BUYING" | "",
+    type: "" as "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "STOCK_OPTIONS_BUYING" | "GAMMA_BLAST_EXPIRY" | "",
     symbol: "",
     exchange: "NSE",
     instrumentType: "INDEX" as "INDEX" | "STOCK" | "OPTION" | "FUTURE",
@@ -59,11 +59,26 @@ export default function EditStrategyPage() {
     stopLossRs: "500",
     targetRs: "500",
     exitExactAtTarget: false,
+    enableHybridTrailing: true,
+    minStockPrice: "300",
     maxTradesPerDay: "2",
     minPremium: "100",
     maxPremium: "300",
     enableProfitFloor: true,
     profitFloorBufferRs: "100",
+    // Gamma Blast Expiry
+    gbTradingMode: "FULL_DAY" as "FULL_DAY" | "AFTERNOON_ONLY",
+    gbStartTime: "09:20",
+    gbEndTime: "15:25",
+    gbEnableOrbMorningTrigger: true,
+    gbEnableMiddayBreakout: true,
+    gbEnableOiFilter: true,
+    gbEnableVolumeSurge: true,
+    gbEnableRatchetTrailing: true,
+    gbEnableHighConvictionBoost: true,
+    gbMaxConvictionLots: "3",
+    gbEnablePartialProfitBooking: true,
+    gbInitialSlPct: "50",
     // EMA-VWAP crossover
     emaPeriod: "15",
     vwapSource: "close" as "close" | "hlc3",
@@ -129,19 +144,34 @@ export default function EditStrategyPage() {
         setForm({
           name: strategy.name,
           type: strategy.type,
-          symbol: config.symbol || "",
-          exchange: config.exchange || "NSE",
-          instrumentType: config.instrumentType || "INDEX",
+          symbol: config.symbol || (strategy.type === "GAMMA_BLAST_EXPIRY" ? "AUTO" : ""),
+          exchange: config.exchange || (config.symbol === "SENSEX" ? "BFO" : "NSE"),
+          instrumentType: config.instrumentType || (strategy.type === "GAMMA_BLAST_EXPIRY" ? "OPTION" : "INDEX"),
           lots: String(config.lots || (config.qty ? Math.round(config.qty / initialLotSize) : 1)),
-          product: config.product || "MIS",
+          product: config.product || (strategy.type === "GAMMA_BLAST_EXPIRY" ? "NRML" : "MIS"),
           stopLossRs: String(config.stopLossRs || "500"),
-          targetRs: String(config.targetRs || "500"),
+          targetRs: String(config.targetRs || (strategy.type === "GAMMA_BLAST_EXPIRY" ? "1500" : "500")),
           exitExactAtTarget: !!config.exitExactAtTarget,
+          enableHybridTrailing: config.enableHybridTrailing !== false,
+          minStockPrice: String(config.minStockPrice || "300"),
           maxTradesPerDay: String(config.maxTradesPerDay || "2"),
           minPremium: String(config.minPremium || "100"),
           maxPremium: String(config.maxPremium || "300"),
           enableProfitFloor: config.enableProfitFloor !== false,
           profitFloorBufferRs: String(config.profitFloorBufferRs || "100"),
+          // Gamma Blast Expiry
+          gbTradingMode: (config.tradingMode || (config.startTime === "13:00" ? "AFTERNOON_ONLY" : "FULL_DAY")),
+          gbStartTime: config.startTime || "09:20",
+          gbEndTime: config.endTime || "15:25",
+          gbEnableOrbMorningTrigger: config.enableOrbMorningTrigger !== false,
+          gbEnableMiddayBreakout: config.enableMiddayBreakout !== false,
+          gbEnableOiFilter: config.enableOiFilter !== false,
+          gbEnableVolumeSurge: config.enableVolumeSurge !== false,
+          gbEnableRatchetTrailing: config.enableRatchetTrailing !== false,
+          gbEnableHighConvictionBoost: config.enableHighConvictionBoost !== false,
+          gbMaxConvictionLots: String(config.maxConvictionLots || 3),
+          gbEnablePartialProfitBooking: config.enablePartialProfitBooking !== false,
+          gbInitialSlPct: String(config.initialSlPct || 50),
           // EMA-VWAP crossover
           emaPeriod: String(config.emaPeriod || "15"),
           vwapSource: config.vwapSource || "close",
@@ -220,7 +250,38 @@ export default function EditStrategyPage() {
       const qty = Number(form.lots) * lotSize;
 
       let config: any;
-      if (form.type === "STOCK_OPTIONS_BUYING") {
+      if (form.type === "GAMMA_BLAST_EXPIRY") {
+        const symbol = form.symbol.trim() === "SENSEX" ? "SENSEX" : (form.symbol.trim() === "NIFTY" ? "NIFTY" : "AUTO");
+        const exchange = symbol === "SENSEX" ? "BFO" : "NFO";
+        config = {
+          tradingMode: form.gbTradingMode,
+          enableOrbMorningTrigger: form.gbEnableOrbMorningTrigger,
+          enableMiddayBreakout: form.gbEnableMiddayBreakout,
+          symbol,
+          exchange,
+          lots: Number(form.lots || 1),
+          lotSize,
+          qty,
+          product: form.product || "NRML",
+          maxTradesPerDay: Number(form.maxTradesPerDay || 2),
+          maxWinsPerDay: 1,
+          autoSelectStrike: true,
+          startTime: form.gbTradingMode === "AFTERNOON_ONLY" ? "13:00" : (form.gbStartTime || "09:20"),
+          endTime: form.gbEndTime || "15:25",
+          enableOiFilter: form.gbEnableOiFilter,
+          enableVolumeSurge: form.gbEnableVolumeSurge,
+          enableRatchetTrailing: form.gbEnableRatchetTrailing,
+          enableHighConvictionBoost: form.gbEnableHighConvictionBoost,
+          maxConvictionLots: Number(form.gbMaxConvictionLots || 3),
+          enablePartialProfitBooking: form.gbEnablePartialProfitBooking,
+          initialSlPct: Number(form.gbInitialSlPct || 50),
+          targetRs: Number(form.targetRs || 1000),
+          stopLossRs: Number(form.stopLossRs || 500),
+          targetPoints: Math.round(Number(form.targetRs || 1000) / (lotSize || 20)),
+          stopLossPoints: Math.round(Number(form.stopLossRs || 500) / (lotSize || 20)),
+          exitExactAtTarget: !!form.exitExactAtTarget,
+        };
+      } else if (form.type === "STOCK_OPTIONS_BUYING") {
         const isAuto = form.sIsAutoStockSelect || form.symbol === "AUTO";
         config = {
           symbol: isAuto ? "AUTO" : form.symbol.trim(),
@@ -256,6 +317,7 @@ export default function EditStrategyPage() {
           lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
           exitExactAtTarget: !!form.exitExactAtTarget,
+          enableHybridTrailing: form.enableHybridTrailing !== false,
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableDynamicAtr: form.b15EnableDynamicAtr,
           riskRewardRatio: Number(form.b15RiskRewardRatio),
@@ -287,6 +349,8 @@ export default function EditStrategyPage() {
           qty, lots: Number(form.lots), product: form.product,
           stopLossRs: Number(form.stopLossRs), targetRs: Number(form.targetRs),
           exitExactAtTarget: !!form.exitExactAtTarget,
+          enableHybridTrailing: form.enableHybridTrailing !== false,
+          minStockPrice: Number(form.minStockPrice || 300),
           maxTradesPerDay: Number(form.maxTradesPerDay),
           enableProfitFloor: form.enableProfitFloor,
           profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
@@ -298,6 +362,7 @@ export default function EditStrategyPage() {
 
       await strategyApi.update(id, {
         name: form.name,
+        type: form.type as any,
         brokerAccountId: form.brokerAccountId || undefined,
         config: JSON.stringify(config),
       });
@@ -322,6 +387,7 @@ export default function EditStrategyPage() {
   const is15Min = form.type === "BREAKOUT_15MIN";
   const isEmaVwap = form.type === "EMA_VWAP_CROSSOVER";
   const isStockOptionsBuying = form.type === "STOCK_OPTIONS_BUYING";
+  const isGammaBlast = form.type === "GAMMA_BLAST_EXPIRY";
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-[fade-up_0.4s_ease_both]">
@@ -353,6 +419,20 @@ export default function EditStrategyPage() {
           </div>
 
           <div>
+            <label className="text-sm font-semibold mb-2 block">Strategy Type / Architecture</label>
+            <select
+              value={form.type}
+              onChange={(e) => set("type", e.target.value)}
+              className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm font-bold text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+            >
+              <option value="EMA_VWAP_CROSSOVER">15-EMA &amp; VWAP Crossover (Intraday Stocks &amp; Options)</option>
+              <option value="BREAKOUT_15MIN">15-Min Opening Range Breakout (ORB)</option>
+              <option value="STOCK_OPTIONS_BUYING">Stock Options Buying (Auto F&amp;O Momentum Leaders)</option>
+              <option value="GAMMA_BLAST_EXPIRY">⚡ Gamma Blast (CAS Expiry Special — SENSEX &amp; NIFTY Scalper)</option>
+            </select>
+          </div>
+
+          <div>
             <label className="text-sm font-semibold mb-2 block">Broker Account</label>
             <select
               value={form.brokerAccountId}
@@ -375,6 +455,219 @@ export default function EditStrategyPage() {
           <CardTitle className="text-sm font-medium">Instrument & Configuration</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {isGammaBlast && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-amber-500/10 border-2 border-amber-500/30">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Sparkles className="h-4 w-4 text-amber-500" />
+                  <p className="text-sm font-bold text-amber-600 dark:text-amber-400">
+                    ⚡ Gamma Blast (CAS Expiry Special — Full-Day Price Action)
+                  </p>
+                </div>
+                <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
+                  Full-day systematic price action scalper for Index Expiry days (SENSEX Thursdays &amp; NIFTY Tuesdays). Operates across 3 market phases: Morning ORB (09:20–11:30), Midday Compression (11:30–13:30), and Explosive Afternoon Gamma Spikes (13:30–15:25).
+                </p>
+              </div>
+
+              {/* Expiry Index Selection */}
+              <div>
+                <label className="text-sm font-semibold mb-2 block">Index Underlier &amp; Contract</label>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: "AUTO (Smart Expiry)", val: "AUTO", desc: "Tue: NIFTY, Thu: SENSEX", lotSize: 20 },
+                    { label: "BSE SENSEX", val: "SENSEX", desc: "Thursday Expiry (20 Lot)", lotSize: 20 },
+                    { label: "NIFTY 50", val: "NIFTY", desc: "Tuesday Expiry (65 Lot)", lotSize: 65 },
+                  ].map((item) => {
+                    const isSelected = form.symbol === item.val || (item.val === "AUTO" && (!form.symbol || form.symbol === "AUTO"));
+                    return (
+                      <button
+                        key={item.val}
+                        type="button"
+                        onClick={() => {
+                          set("symbol", item.val);
+                          set("exchange", item.val === "SENSEX" ? "BFO" : (item.val === "NIFTY" ? "NFO" : "BFO"));
+                          set("lotSize", item.lotSize);
+                        }}
+                        className={cn(
+                          "text-left p-3 rounded-xl border text-xs transition-all",
+                          isSelected
+                            ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/30 font-bold shadow-xs text-amber-700 dark:text-amber-300"
+                            : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-amber-400/40"
+                        )}
+                      >
+                        <p className="font-bold">{item.label}</p>
+                        <p className="text-[10px] opacity-80 mt-1">{item.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Execution Window Mode */}
+              <div>
+                <label className="text-sm font-semibold mb-2 block">Execution Window &amp; Daypart Trading Mode</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      set("gbTradingMode", "FULL_DAY");
+                      set("gbStartTime", "09:20");
+                      set("gbEndTime", "15:25");
+                    }}
+                    className={cn(
+                      "p-3.5 rounded-xl border text-left transition-all",
+                      form.gbTradingMode === "FULL_DAY"
+                        ? "border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30 font-bold shadow-xs text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/40"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-emerald-400/40"
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold">🚀 Full Day Scalper</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600">
+                        RECOMMENDED
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-medium">09:20 AM – 03:25 PM IST</p>
+                    <p className="text-[10px] opacity-80 mt-1 leading-snug">
+                      Trades Morning ORB (09:20–11:30), Midday Flags (11:30–13:30), &amp; Afternoon Gamma Spikes (13:30–15:25).
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      set("gbTradingMode", "AFTERNOON_ONLY");
+                      set("gbStartTime", "13:00");
+                      set("gbEndTime", "15:25");
+                    }}
+                    className={cn(
+                      "p-3.5 rounded-xl border text-left transition-all",
+                      form.gbTradingMode === "AFTERNOON_ONLY"
+                        ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/30 font-bold shadow-xs text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/40"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-amber-400/40"
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold">⏰ Afternoon Only</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">
+                        AFTERNOON TREND
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-medium">01:00 PM – 03:25 PM IST</p>
+                    <p className="text-[10px] opacity-80 mt-1 leading-snug">
+                      Trades only during the afternoon high-volatility window using high-delta ATM contracts.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Start Time and End Time */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Execution Start Time</label>
+                  <Input
+                    value={form.gbStartTime}
+                    onChange={(e) => set("gbStartTime", e.target.value)}
+                    placeholder="09:20"
+                    className="font-semibold text-xs"
+                  />
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">Default 09:20 AM after opening 5m bar</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold mb-1 block">Execution End Time</label>
+                  <Input
+                    value={form.gbEndTime}
+                    onChange={(e) => set("gbEndTime", e.target.value)}
+                    placeholder="15:25"
+                    className="font-semibold text-xs"
+                  />
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">Hard square-off @ 15:29:30 PM</p>
+                </div>
+              </div>
+
+              {/* Multi-Phase Triggers Toggles */}
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[hsl(var(--border))]">
+                <label className="flex items-center gap-2 p-2.5 rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.gbEnableOrbMorningTrigger}
+                    onChange={(e) => set("gbEnableOrbMorningTrigger", e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Morning ORB Trigger</span>
+                    <span className="text-[10px] text-[hsl(var(--muted-foreground))]">09:20–11:30 Opening Range breakouts</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2 p-2.5 rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.gbEnableMiddayBreakout}
+                    onChange={(e) => set("gbEnableMiddayBreakout", e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Midday Breakout</span>
+                    <span className="text-[10px] text-[hsl(var(--muted-foreground))]">11:30–13:30 25-min channel breakthrough</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2 p-2.5 rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.gbEnableOiFilter}
+                    onChange={(e) => set("gbEnableOiFilter", e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Live OI Unwinding Filter</span>
+                    <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Confirms short-covering &amp; writer panic</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2 p-2.5 rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.gbEnableRatchetTrailing}
+                    onChange={(e) => set("gbEnableRatchetTrailing", e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Ratchet Zero-Decay Trailing</span>
+                    <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Locks gains at 1.5x, 2.0x, 3.0x milestones</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2 p-2.5 rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.gbEnableHighConvictionBoost}
+                    onChange={(e) => set("gbEnableHighConvictionBoost", e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">A+ Conviction Lot Boost</span>
+                    <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Boosts lots to {form.gbMaxConvictionLots} on high conviction</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2 p-2.5 rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.gbEnablePartialProfitBooking}
+                    onChange={(e) => set("gbEnablePartialProfitBooking", e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">2.0x Partial Profit Booking</span>
+                    <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Banks 50% lots @ 2x; trails runner</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
+
           {isStockOptionsBuying && (
             <div className="space-y-2">
               <label className="text-sm font-semibold block">Stock Selection Mode</label>
@@ -426,34 +719,36 @@ export default function EditStrategyPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-2 block">Symbol</label>
-              <Input
-                value={form.symbol}
-                onChange={(e) => set("symbol", e.target.value.toUpperCase())}
-                disabled={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO")}
-                className={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") ? "bg-blue-50/50 dark:bg-blue-950/20 font-bold text-blue-600" : ""}
-              />
-              {isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") && (
-                <p className="text-[10px] text-blue-600 font-semibold mt-1">
-                  ✨ Dynamic: Auto-resolves top F&O breakout symbol in real-time
-                </p>
-              )}
+          {!isGammaBlast && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-2 block">Symbol</label>
+                <Input
+                  value={form.symbol}
+                  onChange={(e) => set("symbol", e.target.value.toUpperCase())}
+                  disabled={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO")}
+                  className={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") ? "bg-blue-50/50 dark:bg-blue-950/20 font-bold text-blue-600" : ""}
+                />
+                {isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") && (
+                  <p className="text-[10px] text-blue-600 font-semibold mt-1">
+                    ✨ Dynamic: Auto-resolves top F&O breakout symbol in real-time
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-2 block">Exchange</label>
+                <select
+                  value={form.exchange}
+                  onChange={(e) => set("exchange", e.target.value)}
+                  className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+                >
+                  <option value="NSE">NSE</option>
+                  <option value="BSE">BSE</option>
+                  <option value="NFO">NFO (F&O)</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label className="text-sm font-medium mb-2 block">Exchange</label>
-              <select
-                value={form.exchange}
-                onChange={(e) => set("exchange", e.target.value)}
-                className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
-              >
-                <option value="NSE">NSE</option>
-                <option value="BSE">BSE</option>
-                <option value="NFO">NFO (F&O)</option>
-              </select>
-            </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -903,29 +1198,71 @@ export default function EditStrategyPage() {
                 />
               </div>
 
-              {/* Exit Exact at Target */}
-              <div className="p-4 rounded-xl bg-[hsl(var(--card))] border border-[hsl(var(--border))] space-y-2 mt-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Target className="h-4 w-4 text-emerald-500 shrink-0" />
-                    <span className="text-sm font-bold text-[hsl(var(--foreground))]">Exit Exact at Target (Fixed Profit Target)</span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.exitExactAtTarget || false}
-                      onChange={(e) => set("exitExactAtTarget", e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+              {isEmaVwap && form.instrumentType !== "OPTION" && (
+                <div>
+                  <label className="text-sm font-semibold mb-2 block flex items-center justify-between">
+                    <span>Min Stock Price (₹)</span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))] font-normal">
+                      Excludes slow-moving stocks below ₹300
+                    </span>
                   </label>
+                  <Input
+                    type="number"
+                    value={form.minStockPrice}
+                    onChange={(e) => set("minStockPrice", e.target.value)}
+                    placeholder="300"
+                  />
                 </div>
-                <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
-                  When enabled, immediately squares off the position the moment your exact target profit (<strong>₹{form.targetRs || "500"}</strong>) or stop loss (<strong>₹{form.stopLossRs || "500"}</strong>) is hit, with zero trailing or giving back gains.
-                </p>
-              </div>
+              )}
 
-              {isEmaVwap && (
+              {/* Exit Exact at Target */}
+              {!isGammaBlast && (
+                <div className="p-4 rounded-xl bg-[hsl(var(--card))] border border-[hsl(var(--border))] space-y-3 mt-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Target className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span className="text-sm font-bold text-[hsl(var(--foreground))]">Exit Exact at Target (Fixed Profit Target)</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.exitExactAtTarget || false}
+                        onChange={(e) => set("exitExactAtTarget", e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
+                    When enabled, immediately squares off the position the moment your exact target profit (<strong>₹{form.targetRs || "500"}</strong>) or stop loss (<strong>₹{form.stopLossRs || "500"}</strong>) is hit.
+                  </p>
+
+                  {form.exitExactAtTarget && (
+                    <div className="pt-3 mt-2 border-t border-[hsl(var(--border))] flex items-center justify-between">
+                      <div className="space-y-0.5 pr-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-emerald-500">Option B: Hybrid 15-EMA & VWAP Trailing</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-medium">Recommended</span>
+                        </div>
+                        <p className="text-[11px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+                          Locks Break-Even at 50% target (+₹{Math.round(Number(form.targetRs || 500) / 2)}). As the trade approaches target, dynamically trails broker SL behind 15-EMA & VWAP with a 0.30% noise buffer to lock in intermediate gains if a reversal occurs.
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={form.enableHybridTrailing !== false}
+                          onChange={(e) => set("enableHybridTrailing", e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-8 h-4 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isEmaVwap && !isGammaBlast && (
                 <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5 mt-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">

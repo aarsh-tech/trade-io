@@ -43,7 +43,8 @@ import {
   Terminal,
   TrendingUp,
   X,
-  Zap
+  Zap,
+  Settings2
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -564,6 +565,7 @@ export default function StrategyDetailPage() {
   const isEmaVwap = strategy.type === "EMA_VWAP_CROSSOVER";
   const isNiftyScalper = strategy.type === "NIFTY_OPTIONS_SCALPER";
   const isStockOptions = strategy.type === "STOCK_OPTIONS_BUYING";
+  const isGammaBlast = strategy.type === "GAMMA_BLAST_EXPIRY";
   const isDailyScalper = strategy.type === "DAILY_SCALPER";
 
   return (
@@ -893,6 +895,19 @@ export default function StrategyDetailPage() {
             </DialogContent>
           </Dialog>
 
+          {/* Edit Full Strategy Button */}
+          <Link href={`/strategies/${id}/edit`}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 px-3 text-xs gap-1.5 border-border/80 bg-card hover:bg-accent/60 shadow-xs font-semibold rounded-xl"
+              title="Edit Complete Strategy Configuration"
+            >
+              <Pencil className="h-3.5 w-3.5 text-primary" />
+              <span>Edit Strategy</span>
+            </Button>
+          </Link>
+
           {/* Primary Start / Stop Button */}
           <Button
             size="sm"
@@ -938,9 +953,11 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-foreground">
                 {isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
                   ? "AUTO (180+ F&O)"
-                  : cfg.symbol || "AUTO"}
+                  : isGammaBlast
+                    ? (cfg.symbol === "AUTO" ? "AUTO (Smart Expiry)" : cfg.symbol || "AUTO")
+                    : cfg.symbol || "AUTO"}
               </span>
-              <span className="text-[11px] text-muted-foreground">({cfg.exchange || "NSE"})</span>
+              <span className="text-[11px] text-muted-foreground">({cfg.exchange || (cfg.symbol === "SENSEX" ? "BFO" : "NSE")})</span>
             </div>
           </CardContent>
         </Card>
@@ -959,7 +976,9 @@ export default function StrategyDetailPage() {
               <span className="text-xl font-extrabold text-foreground truncate">
                 {isNiftyScalper
                   ? "Auto Margin"
-                  : isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
+                  : isGammaBlast
+                    ? `${cfg.lots || 1} Lot${(cfg.lots || 1) > 1 ? "s" : ""}`
+                    : isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
                     ? "Auto NFO Lots"
                     : is15Min
                     ? "Risk-Based (5x)"
@@ -972,7 +991,17 @@ export default function StrategyDetailPage() {
                           : "Dynamic"}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {isNiftyScalper ? "Auto Lots" : isStockOptions ? "Real Lot Size" : is15Min ? "MIS 5x / Lots" : isEmaVwap ? "MIS 5x" : "Sizing"}
+                {isNiftyScalper
+                  ? "Auto Lots"
+                  : isGammaBlast
+                    ? `${(cfg.lots || 1) * (cfg.symbol === "SENSEX" ? 20 : 65)} Qty`
+                    : isStockOptions
+                      ? "Real Lot Size"
+                      : is15Min
+                        ? "MIS 5x / Lots"
+                        : isEmaVwap
+                          ? "MIS 5x"
+                          : "Sizing"}
               </span>
             </div>
           </CardContent>
@@ -991,19 +1020,33 @@ export default function StrategyDetailPage() {
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-rose-600">
                 {cfg.exitExactAtTarget
-                  ? `Fixed ₹${cfg.stopLossRs ?? "500"}`
-                  : isNiftyScalper
-                  ? "-7 Points"
-                  : isStockOptions
-                    ? "Mother Low / Trail"
-                    : is15Min
-                    ? "Candle SL"
-                    : isEmaVwap
-                      ? "Candle Low"
-                      : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
+                  ? (isGammaBlast && cfg.stopLossPoints ? `-${cfg.stopLossPoints} Pts (₹${cfg.stopLossRs ?? 500})` : `Fixed ₹${cfg.stopLossRs ?? "500"}`)
+                  : isGammaBlast
+                    ? (cfg.stopLossPoints ? `-${cfg.stopLossPoints} Pts (₹${cfg.stopLossRs ?? 500})` : `₹${cfg.stopLossRs ?? 500} (${cfg.initialSlPct || 50}%)`)
+                    : isNiftyScalper
+                    ? "-7 Points"
+                    : isStockOptions
+                      ? "Mother Low / Trail"
+                      : is15Min
+                      ? "Candle SL"
+                      : isEmaVwap
+                        ? "Candle Low"
+                        : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {cfg.exitExactAtTarget ? "Exact Loss Cut" : isNiftyScalper ? "Server SL + Trail" : isStockOptions ? "Breakeven @ T1" : is15Min ? "Server SL Armed" : isEmaVwap ? "15-EMA Trailed" : "Risk Cap"}
+                {cfg.exitExactAtTarget
+                  ? (cfg.enableHybridTrailing !== false ? "Break-Even + Hybrid Trail" : "Exact Loss Cut")
+                  : isGammaBlast
+                    ? "Zero-Decay Ratchet"
+                    : isNiftyScalper
+                      ? "Server SL + Trail"
+                      : isStockOptions
+                        ? "Breakeven @ T1"
+                        : is15Min
+                          ? "Server SL Armed"
+                          : isEmaVwap
+                            ? "15-EMA Trailed"
+                            : "Risk Cap"}
               </span>
             </div>
           </CardContent>
@@ -1022,19 +1065,33 @@ export default function StrategyDetailPage() {
             <div className="mt-2 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-emerald-600">
                 {cfg.exitExactAtTarget
-                  ? `Fixed ₹${cfg.targetRs ?? "500"}`
-                  : isNiftyScalper
-                  ? "+10 Pts + Trail"
-                  : isStockOptions
-                    ? "1:1.5 & 1:3 RR"
-                    : is15Min
-                    ? "1:2 RR + Trail"
-                    : isEmaVwap
-                      ? "15-EMA / VWAP"
-                      : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
+                  ? (isGammaBlast && cfg.targetPoints ? `+${cfg.targetPoints} Pts (₹${cfg.targetRs ?? 1000})` : `Fixed ₹${cfg.targetRs ?? "500"}`)
+                  : isGammaBlast
+                    ? (cfg.targetPoints ? `+${cfg.targetPoints} Pts (₹${cfg.targetRs ?? 1000})` : `₹${cfg.targetRs ?? 1500}`)
+                    : isNiftyScalper
+                    ? "+10 Pts + Trail"
+                    : isStockOptions
+                      ? "1:1.5 & 1:3 RR"
+                      : is15Min
+                      ? "1:2 RR + Trail"
+                      : isEmaVwap
+                        ? "15-EMA / VWAP"
+                        : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {cfg.exitExactAtTarget ? "Exact Target Exit" : isNiftyScalper ? "Uncapped Momentum" : isStockOptions ? "Banker & Runner" : is15Min ? "Uncapped Momentum" : isEmaVwap ? "Trend Exhaustion" : "Target"}
+                {cfg.exitExactAtTarget
+                  ? (cfg.enableHybridTrailing !== false ? "Fixed Tgt + Hybrid Trail" : "Exact Target Exit")
+                  : isGammaBlast
+                    ? "2.0x Partial & Runner"
+                    : isNiftyScalper
+                      ? "Uncapped Momentum"
+                      : isStockOptions
+                        ? "Banker & Runner"
+                        : is15Min
+                          ? "Uncapped Momentum"
+                          : isEmaVwap
+                            ? "Trend Exhaustion"
+                            : "Target"}
               </span>
             </div>
           </CardContent>
@@ -1520,51 +1577,71 @@ export default function StrategyDetailPage() {
               </p>
             </div>
 
-            {!editing ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setEditing(true);
-                  setEditConfig({});
-                }}
-                className="gap-1.5 text-xs h-8"
-              >
-                <Pencil className="h-3.5 w-3.5" /> Edit Configuration
-              </Button>
-            ) : (
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={saveConfig}
-                  className="gap-1.5 text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
-                >
-                  <Check className="h-3.5 w-3.5" /> Save Changes
-                </Button>
+            <div className="flex items-center gap-2">
+              <Link href={`/strategies/${id}/edit`}>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setEditing(false)}
-                  className="text-xs h-8"
+                  className="gap-1.5 text-xs h-8 text-primary border-primary/30 bg-primary/5 hover:bg-primary/10 font-semibold"
                 >
-                  <X className="h-3.5 w-3.5" /> Cancel
+                  <Settings2 className="h-3.5 w-3.5" /> Full Strategy Settings
                 </Button>
-              </div>
-            )}
+              </Link>
+              {!editing ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditing(true);
+                    setEditConfig({});
+                  }}
+                  className="gap-1.5 text-xs h-8"
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Quick Edit
+                </Button>
+              ) : (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    disabled={busy}
+                    onClick={saveConfig}
+                    className="gap-1.5 text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    <Check className="h-3.5 w-3.5" /> Save Changes
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditing(false)}
+                    className="text-xs h-8"
+                  >
+                    <X className="h-3.5 w-3.5" /> Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardHeader>
 
           <CardContent className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
               <Field
                 label="Target Symbol"
-                editing={false}
-                value={cfg.symbol || "AUTO (Smart Stock Picker)"}
+                editing={editing}
+                value={editing ? String(editConfig.symbol ?? cfg.symbol ?? "AUTO") : (cfg.symbol || "AUTO (Smart Stock Picker)")}
+                onChange={(v) => setEditConfig((e) => ({ ...e, symbol: v.toUpperCase() }))}
               />
               <Field
                 label="Exchange"
-                editing={false}
-                value={cfg.exchange || "NSE"}
+                editing={editing}
+                value={editing ? String(editConfig.exchange ?? cfg.exchange ?? "NSE") : (cfg.exchange || "NSE")}
+                onChange={(v) => setEditConfig((e) => ({ ...e, exchange: v.toUpperCase() }))}
+              />
+              <Field
+                label="Lots / Sizing"
+                editing={editing}
+                value={editing ? String(editConfig.lots ?? cfg.lots ?? 1) : String(cfg.lots ?? 1)}
+                onChange={(v) => setEditConfig((e) => ({ ...e, lots: Number(v) }))}
+                type="number"
               />
               <Field
                 label="Execution Product"
@@ -1594,6 +1671,75 @@ export default function StrategyDetailPage() {
                 onChange={(v) => setEditConfig((e) => ({ ...e, maxTradesPerDay: Number(v) }))}
                 type="number"
               />
+              {!isGammaBlast && !isNiftyScalper && (
+                <Field
+                  label="Min Stock Price (₹)"
+                  editing={editing}
+                  value={editing ? String(editConfig.minStockPrice ?? cfg.minStockPrice ?? 300) : `₹${cfg.minStockPrice ?? 300}`}
+                  onChange={(v) => setEditConfig((e) => ({ ...e, minStockPrice: Number(v) }))}
+                  type="number"
+                />
+              )}
+
+              {isGammaBlast && (
+                <>
+                  <Field
+                    label="Trading Window Mode"
+                    editing={false}
+                    value={cfg.tradingMode === "AFTERNOON_ONLY" ? "Afternoon Only (13:00–15:25 IST)" : "Full Day Scalper (09:20–15:25 IST)"}
+                  />
+                  <Field
+                    label="Execution Hours"
+                    editing={editing}
+                    value={editing ? String(editConfig.startTime ?? cfg.startTime ?? "09:20") : `${cfg.startTime ?? "09:20"} – ${cfg.endTime ?? "15:25"} IST`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, startTime: v }))}
+                  />
+                  <Field
+                    label="Initial Stop Loss %"
+                    editing={editing}
+                    value={editing ? String(editConfig.initialSlPct ?? cfg.initialSlPct ?? 50) : `${cfg.initialSlPct ?? 50}% Option SL`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, initialSlPct: Number(v) }))}
+                    type="number"
+                  />
+                  <Field
+                    label="Max Conviction Lots"
+                    editing={editing}
+                    value={editing ? String(editConfig.maxConvictionLots ?? cfg.maxConvictionLots ?? 3) : `${cfg.maxConvictionLots ?? 3} Lots`}
+                    onChange={(v) => setEditConfig((e) => ({ ...e, maxConvictionLots: Number(v) }))}
+                    type="number"
+                  />
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Morning ORB Trigger (09:20–11:30)</p>
+                    <p className="text-sm font-bold text-emerald-600">
+                      {cfg.enableOrbMorningTrigger !== false ? "Active (High/Low Breakout + VWAP)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Channel Breakout (11:30–13:30)</p>
+                    <p className="text-sm font-bold text-amber-600">
+                      {cfg.enableMiddayBreakout !== false ? "Active (25-30m Compression Expansion)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Live OI Unwinding Confirmation</p>
+                    <p className="text-sm font-bold text-blue-600">
+                      {cfg.enableOiFilter !== false ? "Active (Confirms Writer Panic)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Ratchet Zero-Decay Trailing</p>
+                    <p className="text-sm font-bold text-indigo-600">
+                      {cfg.enableRatchetTrailing !== false ? "Active (1.5x, 2.0x, 3.0x Milestone Locks)" : "Disabled"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">2.0x Partial Profit Booking</p>
+                    <p className="text-sm font-bold text-purple-600">
+                      {cfg.enablePartialProfitBooking !== false ? "Active (50% booked @ 2x, runner trailed)" : "Disabled"}
+                    </p>
+                  </div>
+                </>
+              )}
 
               {isNiftyScalper && (
                 <>

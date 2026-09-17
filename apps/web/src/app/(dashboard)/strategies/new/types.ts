@@ -104,6 +104,9 @@ export interface StrategyFormState {
   b15EnableCprSupportResistance: boolean;
   // Gamma Blast Expiry Special
   gbIndex: "AUTO" | "NIFTY" | "SENSEX";
+  gbTradingMode?: "FULL_DAY" | "AFTERNOON_ONLY";
+  gbEnableOrbMorningTrigger?: boolean;
+  gbEnableMiddayBreakout?: boolean;
   gbMinPremiumNifty: string;
   gbMaxPremiumNifty: string;
   gbMinPremiumSensex: string;
