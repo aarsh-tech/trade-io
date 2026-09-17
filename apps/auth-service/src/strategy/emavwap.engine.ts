@@ -441,7 +441,7 @@ export class EmaVwapCrossoverEngine {
     try {
       if (state.config.symbol === 'AUTO') {
         const excluded = new Set(state.cooldownSymbols?.keys() || []);
-        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 25, excluded);
+        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 25, excluded, (state.config as any).minStockPrice || 300);
         this.log(state, `🚀 Multi-Stock Momentum Scanner: Scanning top Zerodha liquid leaders for active setups...`);
 
         const activeSetups: Array<{ candidate: any; details: any }> = [];
@@ -922,9 +922,13 @@ export class EmaVwapCrossoverEngine {
               state.lastVwap = currVwap;
 
               // ── 15-EMA Structural Candle Exit Rule ──────────────────────────────────
-              // Mandatory holding rule: If a confirmed 5m candle closes against our trade direction across 15-EMA,
-              // the structural trend thesis has failed. Exit immediately to cut loss & preserve capital (active in all modes).
-              if (config.enableEmaCandleExit !== false && currEma !== null && state.entryPrice && (state.entryTime || state.setupTimestamp)) {
+              // In Exact Target mode, the trader has armed exact broker Target & Stop Loss orders.
+              // We do not prematurely kill the trade on minor candle noise unless explicitly opted in.
+              const shouldRunEmaCandleExit = config.exitExactAtTarget
+                ? config.enableEmaCandleExit === true
+                : config.enableEmaCandleExit !== false;
+
+              if (shouldRunEmaCandleExit && currEma !== null && state.entryPrice && (state.entryTime || state.setupTimestamp)) {
                 const entryTimeMs = (state.entryTime ? state.entryTime.getTime() : state.setupTimestamp) || 0;
                 const candleTimeMs = lastClosedCandle.date.getTime();
                 const candleCloseTimeMs = candleTimeMs + 5 * 60 * 1000;
@@ -1008,11 +1012,11 @@ export class EmaVwapCrossoverEngine {
         if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000) {
           state.lastAutoScanTime = nowMs;
           const excluded = new Set(state.cooldownSymbols?.keys() || []);
-          const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 8, excluded);
+          const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 15, excluded, (config as any).minStockPrice || 300);
           const activeSetups: Array<{ candidate: any; details: any }> = [];
 
-          // Evaluate top 4 momentum leaders sequentially with a 350ms throttle delay to prevent 429 rate limit
-          for (const candidate of candidates.slice(0, 4)) {
+          // Evaluate top 8 momentum leaders sequentially with a 200ms throttle delay to prevent 429 rate limit
+          for (const candidate of candidates.slice(0, 8)) {
             try {
               const testConfig = { ...config, symbol: candidate.symbol, exchange: candidate.exchange };
               const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
@@ -1778,6 +1782,41 @@ export class EmaVwapCrossoverEngine {
             );
             await this.updateBrokerSlSafe(client, kite, state, symbol);
           }
+
+          // ── 1.3 HYBRID BUFFERED 15-EMA & VWAP TRAILING IN PROFIT (Option B) ──
+          // When Exact Target Mode is active and Break-Even is locked:
+          // As price approaches target and 15-EMA & VWAP advance above Break-Even into profit,
+          // dynamically trail the broker Stop Loss order behind 15-EMA (with 0.30% noise buffer) & VWAP.
+          // This locks in intermediate gains (+₹500 to +₹800) if the stock reverses before reaching the exact target,
+          // while the 0.30% buffer ensures 10-paise candle wicks do NOT trigger premature stopouts!
+          const isHybridEnabled = (state.config as any).enableHybridTrailing !== false;
+          if (isHybridEnabled && state.lastEma && !isOptionTrade) {
+            const emaBuffer = state.lastEma * 0.0030; // 0.30% noise buffer
+            const bufferedEma = isLong ? (state.lastEma - emaBuffer) : (state.lastEma + emaBuffer);
+
+            // Resilient trend support: take the safer/lower support line (for long) to avoid false wick triggers
+            let trendSupport = bufferedEma;
+            if (state.lastVwap && state.lastVwap > 0) {
+              trendSupport = isLong ? Math.min(bufferedEma, state.lastVwap) : Math.max(bufferedEma, state.lastVwap);
+            }
+
+            // Advance SL ONLY if trend support has climbed strictly into PROFIT beyond Break-Even
+            const isTrailBeyondBreakEven = isLong ? (trendSupport > breakEvenPrice) : (trendSupport < breakEvenPrice);
+            if (isTrailBeyondBreakEven) {
+              const roundedTrailSl = this.roundTick(trendSupport, symbol);
+              const isBetterSl = isLong ? (roundedTrailSl > (state.stopLossPrice || 0)) : (roundedTrailSl < (state.stopLossPrice || Infinity));
+              if (isBetterSl) {
+                state.stopLossPrice = roundedTrailSl;
+                state.isTrailingEma = true;
+                const lockedProfitRs = (isLong ? (roundedTrailSl - state.entryPrice) : (state.entryPrice - roundedTrailSl)) * activeQty;
+                this.log(
+                  state,
+                  `📈 [HYBRID 15-EMA/VWAP TRAIL] Dynamic trend support advanced to ₹${roundedTrailSl.toFixed(2)} (in profit with 0.30% noise buffer)! Trailing broker SL to lock +₹${lockedProfitRs.toFixed(2)} gain.`
+                );
+                await this.updateBrokerSlSafe(client, kite, state, symbol);
+              }
+            }
+          }
         }
       }
 
@@ -2126,7 +2165,7 @@ export class EmaVwapCrossoverEngine {
 
     const targetThresholdRs = state.config.targetRs || 500;
     const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
-    const isTrailingEnabled = state.config.enableProfitFloor !== false;
+    const isTrailingEnabled = state.config.enableProfitFloor !== false && !state.config.exitExactAtTarget;
 
     // Periodic fallback P&L logging (only if real-time websocket monitor isn't running)
     const nowMs = Date.now();
@@ -2137,11 +2176,69 @@ export class EmaVwapCrossoverEngine {
       this.log(state, `📊 [LIVE P&L] ${symbol}: ₹${currentPrice.toFixed(2)} | Entry: ₹${state.entryPrice!.toFixed(2)} | SL: ₹${state.stopLossPrice!.toFixed(2)} | Tgt: ₹${state.targetPrice!.toFixed(2)} | P&L: ${sign}₹${pnlRs.toFixed(2)} (${pctSign}${pnlPct.toFixed(2)}%) | Executed Qty: ${activeQty} | Peak: +₹${state.peakPnlRs.toFixed(2)}${state.isTrailingEma ? ' (15-EMA Trailing Active)' : ''}`);
     }
 
+    // ── Exact Target / Stop Loss Exit & Hybrid Trailing (Fallback Polling Monitor) ──
+    const exactTargetRs = state.config.targetRs && state.config.targetRs > 0 ? state.config.targetRs : 500;
+    const exactStopLossRs = state.config.stopLossRs && state.config.stopLossRs > 0 ? state.config.stopLossRs : 500;
+
+    if (state.config.exitExactAtTarget) {
+      if (pnlRs >= exactTargetRs) {
+        this.log(state, `🎯 [EXACT TARGET EXIT - MONITOR] Target profit (+₹${pnlRs.toFixed(2)} >= ₹${exactTargetRs}) reached! Squaring off position.`);
+        if (state.slOrderId) await this.cancelBrokerOrderSafe(client, state.slOrderId);
+        if (state.targetOrderId) await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+        await this.exitPosition(state, client, currentPrice, 'TARGET');
+        await this.persistLogs(state);
+        return;
+      }
+      if (pnlRs <= -exactStopLossRs) {
+        this.log(state, `🛑 [EXACT STOP LOSS EXIT - MONITOR] Stop loss (-₹${Math.abs(pnlRs).toFixed(2)} <= -₹${exactStopLossRs}) hit! Squaring off position.`);
+        if (state.slOrderId) await this.cancelBrokerOrderSafe(client, state.slOrderId);
+        if (state.targetOrderId) await this.cancelBrokerOrderSafe(client, state.targetOrderId);
+        await this.exitPosition(state, client, currentPrice, 'SL');
+        await this.persistLogs(state);
+        return;
+      }
+
+      // Dynamic Break-Even Protection (at 50% target)
+      if (state.entryPrice && state.peakPnlRs >= exactTargetRs * 0.48) {
+        const symTick = getInstrumentTickSize(symbol, currentPrice);
+        const breakEvenPrice = this.roundTick(isLong ? state.entryPrice + symTick * 2 : state.entryPrice - symTick * 2, symbol);
+        const needsSlAdvance = isLong ? (breakEvenPrice > (state.stopLossPrice || 0)) : (breakEvenPrice < (state.stopLossPrice || Infinity));
+        if (needsSlAdvance) {
+          state.stopLossPrice = breakEvenPrice;
+          state.isTrailingEma = true;
+          this.log(state, `🛡 [BREAK-EVEN PROFIT PROTECTION] Advancing SL to Break-Even (₹${breakEvenPrice.toFixed(2)}) to lock out risk.`);
+          await this.updateBrokerSlSafe(client, kite, state, symbol);
+        }
+
+        // Option B: Hybrid 15-EMA & VWAP Trailing with 0.30% Noise Buffer
+        const isHybridEnabled = (state.config as any).enableHybridTrailing !== false;
+        if (isHybridEnabled && state.lastEma && !isOptionTrade) {
+          const emaBuffer = state.lastEma * 0.0030;
+          const bufferedEma = isLong ? (state.lastEma - emaBuffer) : (state.lastEma + emaBuffer);
+          let trendSupport = bufferedEma;
+          if (state.lastVwap && state.lastVwap > 0) {
+            trendSupport = isLong ? Math.min(bufferedEma, state.lastVwap) : Math.max(bufferedEma, state.lastVwap);
+          }
+          const isTrailBeyondBreakEven = isLong ? (trendSupport > breakEvenPrice) : (trendSupport < breakEvenPrice);
+          if (isTrailBeyondBreakEven) {
+            const roundedTrailSl = this.roundTick(trendSupport, symbol);
+            const isBetterSl = isLong ? (roundedTrailSl > (state.stopLossPrice || 0)) : (roundedTrailSl < (state.stopLossPrice || Infinity));
+            if (isBetterSl) {
+              state.stopLossPrice = roundedTrailSl;
+              state.isTrailingEma = true;
+              const lockedProfitRs = (isLong ? (roundedTrailSl - state.entryPrice) : (state.entryPrice - roundedTrailSl)) * activeQty;
+              this.log(state, `📈 [HYBRID 15-EMA/VWAP TRAIL] Dynamic trend support advanced to ₹${roundedTrailSl.toFixed(2)} (in profit with 0.30% noise buffer)! Trailing broker SL to lock +₹${lockedProfitRs.toFixed(2)} gain.`);
+              await this.updateBrokerSlSafe(client, kite, state, symbol);
+            }
+          }
+        }
+      }
+    }
+
     // ── Intraday Multi-Stage Profit Ratchet & Breakeven Protection ───────────
     // ── Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ─────────────────
     const entryPrice = state.entryPrice || currentPrice;
     const moveFromEntryPct = entryPrice > 0 ? (isLong ? (currentPrice - entryPrice) / entryPrice : (entryPrice - currentPrice) / entryPrice) * 100 : 0;
-
 
     // Check Target 1 / Dynamic VWAP & EMA Trailing
     if ((pnlRs >= targetThresholdRs || isTarget1Reached) && !state.isTrailingEma && isTrailingEnabled) {
@@ -2765,7 +2862,7 @@ export class EmaVwapCrossoverEngine {
       } catch { }
 
       const excluded = new Set(state.cooldownSymbols?.keys() || []);
-      const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 12, excluded);
+      const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 12, excluded, (state.config as any).minStockPrice || 300);
       if (candidates.length === 0) return false;
 
       // Sort candidates to align with Market Bias
@@ -2919,15 +3016,21 @@ export class EmaVwapCrossoverEngine {
 
     const getSwingShelfSl = (dir: 'LONG' | 'SHORT', candleExtreme: number): number => {
       if (dir === 'LONG') {
-        // Anchor below the lower of the swing shelf low or immediate candle low with buffer
-        const anchorLow = Math.min(shelfLow, candleExtreme);
-        const rawDistance = currCandle.close - (anchorLow - volatilityBuffer);
+        // Anchor below the lower of the true day low, swing shelf low, or immediate candle low with buffer.
+        // If the day's swing low (e.g. 1140 for DRREDDY) is within structural breathing boundary (<= 1.45%),
+        // anchoring right below day low provides the most resilient invalidation level with zero noise stopouts!
+        const trueSwingLow = (dayLow > 0 && (currCandle.close - dayLow) <= maxBreathingDist)
+          ? Math.min(dayLow, shelfLow, candleExtreme)
+          : Math.min(shelfLow, candleExtreme);
+        const rawDistance = currCandle.close - (trueSwingLow - volatilityBuffer);
         const slDistance = Math.min(maxBreathingDist, Math.max(minBreathingDist, rawDistance));
         return this.roundTick(currCandle.close - slDistance, config.symbol);
       } else {
-        // Anchor above the higher of the swing shelf high or immediate candle high with buffer
-        const anchorHigh = Math.max(shelfHigh, candleExtreme);
-        const rawDistance = (anchorHigh + volatilityBuffer) - currCandle.close;
+        // Anchor above the higher of the true day high, swing shelf high, or immediate candle high with buffer
+        const trueSwingHigh = (dayHigh > 0 && (dayHigh - currCandle.close) <= maxBreathingDist)
+          ? Math.max(dayHigh, shelfHigh, candleExtreme)
+          : Math.max(shelfHigh, candleExtreme);
+        const rawDistance = (trueSwingHigh + volatilityBuffer) - currCandle.close;
         const slDistance = Math.min(maxBreathingDist, Math.max(minBreathingDist, rawDistance));
         return this.roundTick(currCandle.close + slDistance, config.symbol);
       }

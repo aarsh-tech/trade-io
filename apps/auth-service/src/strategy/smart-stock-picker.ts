@@ -3,7 +3,7 @@ import { NIFTY_500_UNIVERSE, FO_STOCKS_LIST } from '../market/market.constants';
 
 // ─── Minimal Filter for Pure Penny / Illiquid / Extreme High-Price Symbols ───────────────────
 const BLACKLISTED_SLOW_STOCKS = new Set([
-  'IDEA', 'VODAFONE', 'JISLJALEQS', 'YESBANK', 'SUZLON'
+  'IDEA', 'VODAFONE', 'JISLJALEQS', 'YESBANK', 'SUZLON', 'IFCI', 'NIACL'
 ]);
 
 export const globalTickSizeMap = new Map<string, number>();
@@ -117,6 +117,7 @@ export async function autoSelectStock(
   logger?: Logger,
   maxCapital?: number,
   excludedSymbols?: Set<string>,
+  minStockPrice: number = 300,
 ): Promise<{ symbol: string; exchange: string; ltp: number; qty: number }> {
   // 0. Detect available Zerodha equity capital
   let availableCapital = maxCapital;
@@ -134,7 +135,7 @@ export async function autoSelectStock(
     availableCapital = 15000; // Safe default capital
   }
 
-  const topCandidates = await getTopCandidateStocks(kite, targetRs, stopLossRs, logger, availableCapital, 10, excludedSymbols);
+  const topCandidates = await getTopCandidateStocks(kite, targetRs, stopLossRs, logger, availableCapital, 10, excludedSymbols, minStockPrice);
   if (topCandidates.length > 0) {
     const top = topCandidates[0];
     logger?.log(`✅ Auto-picked Top Momentum Leader: ${top.symbol} (Score: ${top.score}, LTP: ₹${top.ltp.toFixed(2)}, Trend: ${top.trend || 'ACTIVE'}, Qty: ${top.qty})`);
@@ -184,6 +185,7 @@ export async function getTopCandidateStocks(
   maxCapital?: number,
   limit: number = 20,
   excludedSymbols?: Set<string>,
+  minStockPrice: number = 300,
 ): Promise<CandidateStock[]> {
   const result: CandidateStock[] = [];
 
@@ -231,8 +233,9 @@ export async function getTopCandidateStocks(
       const ltp = quote.last_price;
 
       // ── 1. Capital-Constrained Price Filter ────────────────────────────────
-      // Allow any liquid F&O or NIFTY 500 stock affordable by user's 5x MIS leverage (min ₹15 to exclude non-tradable illiquid pennies)
-      if (ltp < 15 || ltp > maxBuyingPower) continue;
+      // Strictly enforce minimum stock price (minimum ₹300) to exclude slow-moving penny / sub-300 stocks
+      const effectiveMinPrice = Math.max(300, minStockPrice ?? 300);
+      if (ltp < effectiveMinPrice || ltp > maxBuyingPower) continue;
 
       const prevClose = quote.ohlc.close;
       const todayOpen = quote.ohlc.open || ltp;
@@ -266,7 +269,9 @@ export async function getTopCandidateStocks(
       const absDayChange = Math.abs(dayChangePct);
 
       // Minimum move filter to skip flat/dormant stocks
-      if (absChangeFromOpen < 0.20 && dayRangePct < 0.5 && !isOpenLow && !isOpenHigh) continue;
+      const moveFromLowPct = todayLow > 0 ? ((ltp - todayLow) / todayLow) * 100 : 0;
+      const moveFromHighPct = todayHigh > 0 ? ((todayHigh - ltp) / todayHigh) * 100 : 0;
+      if (absChangeFromOpen < 0.15 && moveFromLowPct < 0.35 && moveFromHighPct < 0.35 && dayRangePct < 0.4 && !isOpenLow && !isOpenHigh) continue;
 
       // Exhaustion Guard (Anti-Chasing):
       // Skip stocks that have already dumped or rallied > 3.0% from open or > 4.5% on the day (like PVRINOX dumping 7% at open).
@@ -277,21 +282,23 @@ export async function getTopCandidateStocks(
       const shortDropFromOpen = Math.max(0, -changeFromOpenPct);
       const shortDropFromPrev = Math.max(0, -dayChangePct);
       const shortScore = Math.round(
-        (shortDropFromOpen * 180) +
-        (shortDropFromPrev * 120) +
-        (dayRangePct * 80) +
-        (Math.min(turnoverCr / 2, 40) * 15) +
+        (shortDropFromOpen * 150) +
+        (shortDropFromPrev * 90) +
+        (moveFromHighPct * 90) +
+        (dayRangePct * 70) +
+        (Math.min(turnoverCr / 2, 50) * 20) +
         (isOpenHigh ? 180 : 0) // Confluence boost for Open=High
       );
 
-      // Long momentum score (for rallies/breakouts)
+      // Long momentum score (for rallies/breakouts, e.g. reversals from day low like DRREDDY)
       const longGainFromOpen = Math.max(0, changeFromOpenPct);
       const longGainFromPrev = Math.max(0, dayChangePct);
       const longScore = Math.round(
-        (longGainFromOpen * 180) +
-        (longGainFromPrev * 120) +
-        (dayRangePct * 80) +
-        (Math.min(turnoverCr / 2, 40) * 15) +
+        (longGainFromOpen * 150) +
+        (longGainFromPrev * 90) +
+        (moveFromLowPct * 90) +
+        (dayRangePct * 70) +
+        (Math.min(turnoverCr / 2, 50) * 20) +
         (isOpenLow ? 180 : 0) // Confluence boost for Open=Low
       );
 
@@ -358,6 +365,7 @@ export async function getTopFnoCandidates(
   limit: number = 10,
   logger?: Logger,
   excludedSymbols?: Set<string>,
+  minStockPrice: number = 300,
 ): Promise<FnoCandidateStock[]> {
   const result: FnoCandidateStock[] = [];
 
@@ -412,12 +420,14 @@ export async function getTopFnoCandidates(
   const istDate = new Date(new Date().getTime() + 330 * 60000 + new Date().getTimezoneOffset() * 60000);
   const istHhmm = istDate.getHours() * 60 + istDate.getMinutes();
   const isMarketOpening = istHhmm <= (9 * 60 + 20);
+  const effectiveMinPrice = Math.max(300, minStockPrice ?? 300);
 
   for (const sym of candidateSymbols) {
     const key = `NSE:${sym}`;
     const quote = liveQuotes[key];
     if (quote?.last_price && quote.last_price > 0 && quote.ohlc?.close) {
       const ltp = quote.last_price;
+      if (ltp < effectiveMinPrice) continue;
       const prevClose = quote.ohlc.close;
       const todayOpen = quote.ohlc.open || ltp;
       const todayHigh = quote.ohlc.high || ltp;

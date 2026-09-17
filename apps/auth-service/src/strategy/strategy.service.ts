@@ -142,6 +142,7 @@ export class StrategyService implements OnModuleInit {
       where: { id },
       data: {
         ...(dto.name && { name: dto.name }),
+        ...(dto.type && { type: dto.type as any }),
         ...(dto.config && { config: dto.config }),
         ...(validBrokerAccountId !== undefined && {
           brokerAccountId: validBrokerAccountId,
