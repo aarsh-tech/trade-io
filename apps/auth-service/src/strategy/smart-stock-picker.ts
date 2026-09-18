@@ -268,38 +268,47 @@ export async function getTopCandidateStocks(
       const absChangeFromOpen = Math.abs(changeFromOpenPct);
       const absDayChange = Math.abs(dayChangePct);
 
-      // Minimum move filter to skip flat/dormant stocks
+      // Minimum move filter to skip flat/dormant stocks (e.g. rangebound chop)
       const moveFromLowPct = todayLow > 0 ? ((ltp - todayLow) / todayLow) * 100 : 0;
       const moveFromHighPct = todayHigh > 0 ? ((todayHigh - ltp) / todayHigh) * 100 : 0;
-      if (absChangeFromOpen < 0.15 && moveFromLowPct < 0.35 && moveFromHighPct < 0.35 && dayRangePct < 0.4 && !isOpenLow && !isOpenHigh) continue;
+      if (absChangeFromOpen < 0.20 && absDayChange < 0.50 && dayRangePct < 0.6 && !isOpenLow && !isOpenHigh) continue;
 
-      // Exhaustion Guard (Anti-Chasing):
-      // Skip stocks that have already dumped or rallied > 3.0% from open or > 4.5% on the day (like PVRINOX dumping 7% at open).
-      // Stocks that have already made an extreme move have exhausted their daily ATR and are prone to violent mean-reversion spikes.
-      if (absChangeFromOpen > 3.0 || absDayChange > 4.5) continue;
+      // Circuit Proximity Guard:
+      // Only skip stocks approaching circuit limits (>= 18.0%) to avoid order rejection or freeze.
+      // True intraday leaders (Top Gainers / Losers like ATGL, POONAWALLA, WELCORP, TATACHEM)
+      // that are up or down 3% to 12% offer the cleanest pullback continuation trends!
+      if (absDayChange >= 18.0 || absChangeFromOpen >= 16.0) continue;
 
-      // Short momentum score (for selloffs/breakdowns like HEROMOTOCO / SHRIRAMFIN)
+      // ── Relative Volume (RVOL) Institutional Participation Gauge ───────────
+      const marketMinutesElapsed = Math.max(5, Math.min(375, istHhmm - (9 * 60 + 15)));
+      const baselineVol = isMarketOpening ? 1000 : Math.max(5000, Math.round(50000 * (marketMinutesElapsed / 375)));
+      const rvol = liveVolume > 0 ? (liveVolume / baselineVol) : 1;
+      const rvolScore = Math.min(250, Math.round(rvol * 35));
+
+      // Short momentum score (for selloffs/breakdowns / Top Losers like TATACHEM, GODIGIT)
       const shortDropFromOpen = Math.max(0, -changeFromOpenPct);
       const shortDropFromPrev = Math.max(0, -dayChangePct);
       const shortScore = Math.round(
-        (shortDropFromOpen * 150) +
-        (shortDropFromPrev * 90) +
-        (moveFromHighPct * 90) +
-        (dayRangePct * 70) +
-        (Math.min(turnoverCr / 2, 50) * 20) +
-        (isOpenHigh ? 180 : 0) // Confluence boost for Open=High
+        (shortDropFromPrev * 160) +          // Heavy weight on Zerodha Top Losers (% change from prev close)
+        (shortDropFromOpen * 150) +          // Intraday continuous selling drive
+        (moveFromHighPct * 90) +             // Rejection from highs
+        (dayRangePct * 80) +                 // Intraday expansion range
+        (Math.min(turnoverCr, 100) * 15) +   // Institutional liquidity
+        rvolScore +                          // Relative Volume surge
+        (isOpenHigh ? 200 : 0)               // Confluence boost for Open=High
       );
 
-      // Long momentum score (for rallies/breakouts, e.g. reversals from day low like DRREDDY)
+      // Long momentum score (for rallies/breakouts / Top Gainers like ATGL, POONAWALLA, WELCORP)
       const longGainFromOpen = Math.max(0, changeFromOpenPct);
       const longGainFromPrev = Math.max(0, dayChangePct);
       const longScore = Math.round(
-        (longGainFromOpen * 150) +
-        (longGainFromPrev * 90) +
-        (moveFromLowPct * 90) +
-        (dayRangePct * 70) +
-        (Math.min(turnoverCr / 2, 50) * 20) +
-        (isOpenLow ? 180 : 0) // Confluence boost for Open=Low
+        (longGainFromPrev * 160) +           // Heavy weight on Zerodha Top Gainers (% change from prev close)
+        (longGainFromOpen * 150) +           // Intraday continuous buying drive
+        (moveFromLowPct * 90) +              // Bounce off lows
+        (dayRangePct * 80) +                 // Intraday expansion range
+        (Math.min(turnoverCr, 100) * 15) +   // Institutional liquidity
+        rvolScore +                          // Relative Volume surge
+        (isOpenLow ? 200 : 0)                // Confluence boost for Open=Low
       );
 
       const trend: 'LONG' | 'SHORT' = longScore >= shortScore ? 'LONG' : 'SHORT';

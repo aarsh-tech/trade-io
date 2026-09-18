@@ -1570,7 +1570,7 @@ export class NiftyOptionsScalperEngine {
       try {
         const kite = client['kite'];
         const exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
-        if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+        if (!exitSafety.safe) {
           this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended short.`);
           this.stopRealtimeMonitor(state);
           state.entryTriggered = null;

@@ -951,7 +951,7 @@ export class StockOptionsBuyingEngine {
         let isManuallyClosed = false;
         try {
           const exitSafety = await isSafeToExit(kite, state.optionSymbol!, 'SELL', this.logger);
-          if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+          if (!exitSafety.safe) {
             isManuallyClosed = true;
             this.log(state, `ℹ [AUTO-SYNC] ${state.optionSymbol} was already closed on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended short.`);
           }

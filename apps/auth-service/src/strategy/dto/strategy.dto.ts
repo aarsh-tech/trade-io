@@ -48,6 +48,7 @@ export interface GammaBlastExpiryConfig {
   targetRs?: number;                   // Target profit in INR
   stopLossPoints?: number;             // Target SL in option points (e.g. 25 pts)
   targetPoints?: number;               // Target profit in option points (e.g. 45 to 50 pts)
+  costLockPoints?: number;             // Quick risk-free cost lock trigger in option points (e.g. 15 pts Sensex, 6 pts Nifty)
   exitExactAtTarget?: boolean;         // Exit immediately at exact target profit (e.g. ₹1,000) and stop loss (e.g. ₹500) without trailing
 }
 

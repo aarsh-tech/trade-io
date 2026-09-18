@@ -28,6 +28,18 @@ interface OptionQuoteInfo {
   close: number;
 }
 
+export interface RangeAnalysis {
+  high: number;
+  low: number;
+  vwap: number;
+  orh: number;
+  orl: number;
+  pdh: number | null;
+  pdl: number | null;
+  avgVolume: number;
+  isOpeningRangeComplete: boolean;
+}
+
 interface GammaStrategyState {
   strategyId: string;
   executionId: string;
@@ -77,6 +89,10 @@ interface GammaStrategyState {
   rangeVwap?: number | null;
   orh?: number | null;
   orl?: number | null;
+  pdh?: number | null;
+  pdl?: number | null;
+  setupType?: 'BULL_TRAP_SNIPER' | 'BEAR_TRAP_SNIPER' | 'ORB_DISPLACEMENT' | 'CHANNEL_BREAKOUT' | 'GAMMA_EXPLOSION' | 'TREND_CONTINUATION' | null;
+  indexInvalidationPrice?: number | null;
   atmPcr?: number | null;
   bias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | null;
   hasLoggedStandby?: boolean;
@@ -210,14 +226,14 @@ export class GammaBlastExpiryEngine {
     });
     state.globalTickerUnsubscribe = globalTickerUnsubscribe;
 
-    const effectiveStartTime = config.startTime || '09:20';
+    const effectiveStartTime = config.startTime || '09:30';
     const effectiveEndTime = config.endTime || '15:25';
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Gamma Blast (Professional Expiry Scalper) Started! Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
+    this.log(state, `▶ Gamma Blast (Smart Money Institutional Scalper) Started! Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
     this.log(state, `🎯 Active Tracking Contract: ${state.futureSymbol ? `${state.futureExchange}:${state.futureSymbol} (Future)` : `${underlying} (${exchange})`} | Lot Size: ${defaultLotSize} (${lots} Lot = ${targetQty} Qty)`);
-    this.log(state, `⏰ Execution Window: ${effectiveStartTime} – ${effectiveEndTime} IST (Continuous Full-Day Scalper: Morning ORB, Midday Consolidation & Afternoon Gamma)`);
-    this.log(state, `💎 Strike Selection: ADAPTIVE (Morning: ATM/1-strike ITM with Delta ~0.50 | Afternoon: Near-OTM High-Gamma Leverage)`);
+    this.log(state, `⏰ Execution Window: ${effectiveStartTime} – ${effectiveEndTime} IST (09:15–09:30 Liquidity Mapping, 15m ORB Sniper Traps, Midday Consolidation & Afternoon Gamma)`);
+    this.log(state, `💎 Strike Selection: BUDGET & SMC AWARE (Anti-Whipsaw Noise Insulation | High-Delta ATM/ITM | Afternoon Gamma Blast)`);
 
     // ── Live Crash / Power Recovery on Startup (Safe Strategy-Owned Only) ──
     if (!strategy.isPaperTrade && strategy.brokerAccount?.accessToken) {
@@ -768,14 +784,14 @@ export class GammaBlastExpiryEngine {
     if (state.tradesPlacedToday >= (state.config.maxTradesPerDay || 2)) return;
 
     // ── 2. Time Window Check (Active between startTime and endTime) ───────────
-    const [startH, startM] = (state.config.startTime || '09:20').split(':').map(Number);
+    const [startH, startM] = (state.config.startTime || '09:30').split(':').map(Number);
     const startHhmm = startH * 60 + startM;
 
     if (hhmm < startHhmm) {
       const minutesLeft = startHhmm - hhmm;
       if (!state.lastTickTime || (Date.now() - state.lastTickTime > 60000)) {
         state.lastTickTime = Date.now();
-        this.log(state, `⏳ [09:15-09:20 OBSERVATION] Initial 5m candle forming baseline. Full Day Scalper active @ 09:20 AM.`);
+        this.log(state, `⏳ [09:15-09:30 OBSERVATION] Establishing Institutional 15m Opening Range (ORH / ORL) & mapping liquidity pools. Scalper active @ ${state.config.startTime || '09:30'} AM.`);
         await this.persistLogs(state);
       }
       return;
@@ -804,13 +820,37 @@ export class GammaBlastExpiryEngine {
     underlying: 'NIFTY' | 'SENSEX',
     config: GammaBlastExpiryConfig,
     now: Date,
-    isExpiryDay: boolean = false
+    isExpiryDay: boolean = false,
+    budgetRiskPts?: number
   ): OptionQuoteInfo | null {
     const strikeStep = underlying === 'NIFTY' ? 50 : 100;
+    const isTightBudget = budgetRiskPts !== undefined && budgetRiskPts > 0 && budgetRiskPts < 35;
+    const hhmm = this.getIstHhmm(now);
+    const isAfternoonExpiry = isExpiryDay && hhmm >= (13 * 60);
 
-    // ── STRICT HIGH-DELTA ATM & ITM ONLY (Zero Cheap Options Policy) ──
-    // Cheap OTM options are completely removed. Focuses exclusively on high-delta ATM (Delta ~0.50)
-    // or 1-strike ITM (Delta ~0.55–0.65) with deep liquidity, tight spreads, and instant 1:1 index tracking.
+    // ── CASE 1: EXPIRY DAY AFTERNOON HERO GAMMA WAVE (Post 13:00 IST) ──
+    // On expiry afternoon, look for explosive strikes priced between ₹30 and ₹130 (Gamma explosion)
+    if (isAfternoonExpiry) {
+      const gammaCandidates = optionQuotes
+        .filter(o => o.type === type && o.ltp >= 30 && o.ltp <= 130)
+        .sort((a, b) => Math.abs(a.strike - atmStrike) - Math.abs(b.strike - atmStrike));
+      if (gammaCandidates.length > 0) return gammaCandidates[0];
+    }
+
+    // ── CASE 2: TIGHT RISK BUDGET (e.g. ₹500 SL with 20 Qty = 25 pts) ──
+    // Avoid buying ₹400–₹500 deep ATM options where 24 pts = 0.06% noise stopout!
+    // Select strikes priced between ₹120 and ₹260 (Delta ~0.35–0.45)
+    // A 25-pt stop on ₹160 is a healthy 15.6% option buffer allowing 70–90 index points of room!
+    if (isTightBudget) {
+      const budgetCandidates = optionQuotes
+        .filter(o => o.type === type && o.ltp >= 110 && o.ltp <= 260 && (o.volume > 0 || o.oi > 0))
+        .sort((a, b) => Math.abs(a.ltp - 175) - Math.abs(b.ltp - 175));
+      if (budgetCandidates.length > 0) {
+        return budgetCandidates[0];
+      }
+    }
+
+    // ── CASE 3: STANDARD HIGH-CONVICTION ATM & ITM SELECTION ──
     const minPremiumThreshold = underlying === 'NIFTY'
       ? (config.minPremiumNifty ?? 30)
       : (config.minPremiumSensex ?? 50);
@@ -819,17 +859,17 @@ export class GammaBlastExpiryEngine {
     const atmCandidate = optionQuotes.find(o => o.type === type && o.strike === atmStrike && o.ltp >= minPremiumThreshold);
     if (atmCandidate) return atmCandidate;
 
-    // 2. Secondary: 1-Strike In-The-Money (ITM) — Higher Delta (0.55–0.65), real intrinsic value, zero theta trap
+    // 2. Secondary: 1-Strike In-The-Money (ITM) — Higher Delta (0.55–0.65), real intrinsic value
     const itmStrike = type === 'CE' ? atmStrike - strikeStep : atmStrike + strikeStep;
     const itmCandidate = optionQuotes.find(o => o.type === type && o.strike === itmStrike && o.ltp >= minPremiumThreshold);
     if (itmCandidate) return itmCandidate;
 
-    // 3. Fallback: 2-Strike In-The-Money (ITM) — Deep In-The-Money (Delta ~0.70)
-    const deepItmStrike = type === 'CE' ? atmStrike - (strikeStep * 2) : atmStrike + (strikeStep * 2);
-    const deepItmCandidate = optionQuotes.find(o => o.type === type && o.strike === deepItmStrike && o.ltp >= minPremiumThreshold);
-    if (deepItmCandidate) return deepItmCandidate;
+    // 3. Fallback: 1-Strike Out-of-the-Money (OTM) with solid liquidity
+    const otmStrike = type === 'CE' ? atmStrike + strikeStep : atmStrike - strikeStep;
+    const otmCandidate = optionQuotes.find(o => o.type === type && o.strike === otmStrike && o.ltp >= minPremiumThreshold);
+    if (otmCandidate) return otmCandidate;
 
-    // 4. Safe Fallback: ATM candidate (never pick cheap OTM)
+    // 4. Safe Fallback: ATM candidate (never pick empty strikes)
     const fallbackAtm = optionQuotes.find(o => o.type === type && o.strike === atmStrike && o.ltp > 0);
     if (fallbackAtm) return fallbackAtm;
 
@@ -874,7 +914,7 @@ export class GammaBlastExpiryEngine {
     }
 
     // Calculate compression range on Future based on configured window
-    const rangeData = this.calculateCompressionRange(candles, now, state.config.startTime || '09:20');
+    const rangeData = this.calculateCompressionRange(candles, now, state.config.startTime || '09:30');
     if (!rangeData) return;
 
     state.rangeHigh = rangeData.high;
@@ -882,6 +922,8 @@ export class GammaBlastExpiryEngine {
     state.rangeVwap = rangeData.vwap;
     state.orh = rangeData.orh;
     state.orl = rangeData.orl;
+    state.pdh = rangeData.pdh;
+    state.pdl = rangeData.pdl;
 
     const currentFuture = candles[candles.length - 1].close;
     const currentFutureHigh = candles[candles.length - 1].high;
@@ -1015,17 +1057,46 @@ export class GammaBlastExpiryEngine {
     if (!state.lastStatusLogTime || (nowMs - state.lastStatusLogTime) >= 60000) {
       state.lastStatusLogTime = nowMs;
       const phaseStr = hhmm < (11 * 60 + 30)
-        ? 'Phase 1: Morning ORB'
+        ? 'Phase 1: Morning ORB & Sniper Traps'
         : (hhmm < (13 * 60 + 30) ? 'Phase 2: Midday Consolidation' : 'Phase 3: Afternoon Momentum');
       const dayTypeStr = isExpiryDay ? 'EXPIRY DAY' : 'DAILY SCALPER';
       this.log(
         state,
-        `🔍 [${dayTypeStr} - ${phaseStr.toUpperCase()}] ${underlying} Fut: ₹${currentFuture.toFixed(2)} (ATM: ${atmStrike}) | VWAP: ₹${rangeData.vwap.toFixed(2)} | 15-EMA: ₹${currentEma.toFixed(2)} | ORH: ₹${rangeData.orh.toFixed(2)} | ORL: ₹${rangeData.orl.toFixed(2)} | Channel [₹${rangeData.low.toFixed(2)} - ₹${rangeData.high.toFixed(2)}] | Bias: ${bias} | PCR: ${state.atmPcr ?? 'N/A'}`
+        `🔍 [${dayTypeStr} - ${phaseStr.toUpperCase()}] ${underlying} Fut: ₹${currentFuture.toFixed(1)} (ATM: ${atmStrike}) | VWAP: ₹${rangeData.vwap.toFixed(1)} | 15-EMA: ₹${currentEma.toFixed(1)} | ORH: ₹${rangeData.orh.toFixed(1)} | ORL: ₹${rangeData.orl.toFixed(1)} | PDH: ₹${rangeData.pdh?.toFixed(1) ?? 'N/A'} | PDL: ₹${rangeData.pdl?.toFixed(1) ?? 'N/A'} | Bias: ${bias} | PCR: ${state.atmPcr ?? 'N/A'}`
       );
       await this.persistLogs(state);
     }
 
-    // ── 5. Multi-Phase Trigger Execution Check (Professional Price Action Scalper) ──
+    // ── 5. Smart Money Concepts (SMC) & Institutional Price Action Scalper ──
+    const effectiveQty = (state.lots || 1) * (state.lotSize || (underlying === 'NIFTY' ? 50 : 20));
+    const budgetRiskPts = (state.config.stopLossRs && effectiveQty > 0)
+      ? (state.config.stopLossRs / effectiveQty)
+      : state.config.stopLossPoints;
+
+    // Completed Candle vs Active Tick Candle
+    const lastIdx = candles.length - 1;
+    const isLastClosed = (Date.now() - candles[lastIdx].date.getTime()) >= 3 * 60 * 1000;
+    const evalIdx = isLastClosed ? lastIdx : Math.max(0, lastIdx - 1);
+    const evalCandle = candles[evalIdx];
+    const liveCandle = candles[lastIdx];
+
+    // Candle Anatomy Metrics on evalCandle
+    const evalRange = Math.max(0.1, evalCandle.high - evalCandle.low);
+    const evalBody = Math.abs(evalCandle.close - evalCandle.open);
+    const bodyRatio = evalBody / evalRange;
+    const upperWick = evalCandle.high - Math.max(evalCandle.open, evalCandle.close);
+    const lowerWick = Math.min(evalCandle.open, evalCandle.close) - evalCandle.low;
+    const upperWickRatio = upperWick / evalRange;
+    const lowerWickRatio = lowerWick / evalRange;
+    const isGreen = evalCandle.close >= evalCandle.open;
+    const isRed = evalCandle.close < evalCandle.open;
+    const rvol = rangeData.avgVolume > 0 ? (evalCandle.volume / rangeData.avgVolume) : 1.0;
+
+    // Key Liquidity Pool Levels
+    const keyResistance = Math.max(rangeData.orh, rangeData.pdh ?? rangeData.orh);
+    const keySupport = Math.min(rangeData.orl, rangeData.pdl ?? rangeData.orl);
+    const bufferPts = underlying === 'NIFTY' ? 6 : 20;
+
     const isPhase1 = hhmm < (11 * 60 + 30);
     const isPhase2 = hhmm >= (11 * 60 + 30) && hhmm < (13 * 60 + 30);
     const isPhase3 = hhmm >= (13 * 60 + 30);
@@ -1033,55 +1104,127 @@ export class GammaBlastExpiryEngine {
     let isCallBreakout = false;
     let isPutBreakout = false;
     let setupReason = '';
+    let setupType: 'BULL_TRAP_SNIPER' | 'BEAR_TRAP_SNIPER' | 'ORB_DISPLACEMENT' | 'CHANNEL_BREAKOUT' | 'GAMMA_EXPLOSION' | 'TREND_CONTINUATION' | null = null;
+    let indexInvalidationPrice: number | null = null;
 
-    if (isPhase1 && state.config.enableOrbMorningTrigger !== false) {
-      if (bias === 'BULLISH' && (currentFutureHigh >= rangeData.orh || currentFutureHigh >= rangeData.high)) {
-        isCallBreakout = true;
-        setupReason = `Morning Opening Drive broke ORH (₹${rangeData.orh.toFixed(2)})`;
-      } else if (bias === 'BEARISH' && (currentFutureLow <= rangeData.orl || currentFutureLow <= rangeData.low)) {
-        isPutBreakout = true;
-        setupReason = `Morning Opening Drive broke ORL (₹${rangeData.orl.toFixed(2)})`;
+    // ── SETUP A: INSTITUTIONAL LIQUIDITY SWEEPS & TRAP TRADING (SNIPER ENTRY) ──
+    // 1. Bull Trap (Buy-side Liquidity Sweep -> Sniper PUT Entry)
+    // Market sweeps above resistance to lure retail breakout buyers, rejects with upper wick, and displaces below VWAP
+    const sweptHigh = Math.max(evalCandle.high, liveCandle.high);
+    const isBullSweep = sweptHigh >= keyResistance;
+    const isBullTrapConfirmed = isBullSweep && (
+      (evalCandle.close <= keyResistance && upperWickRatio >= 0.35) ||
+      (currentFuture < rangeData.vwap && isRed && (currentFuture < currentEma))
+    ) && currentFuture < rangeData.vwap;
+
+    // 2. Bear Trap (Sell-side Liquidity Sweep -> Sniper CALL Entry)
+    // Market dips below support to induce retail breakdown panic, rejects with lower wick, and reclaims VWAP
+    const sweptLow = Math.min(evalCandle.low, liveCandle.low);
+    const isBearSweep = sweptLow <= keySupport;
+    const isBearTrapConfirmed = isBearSweep && (
+      (evalCandle.close >= keySupport && lowerWickRatio >= 0.35) ||
+      (currentFuture > rangeData.vwap && isGreen && (currentFuture > currentEma))
+    ) && currentFuture > rangeData.vwap;
+
+    if (isBullTrapConfirmed) {
+      isPutBreakout = true;
+      setupType = 'BULL_TRAP_SNIPER';
+      indexInvalidationPrice = sweptHigh + bufferPts;
+      setupReason = `🎯 [INSTITUTIONAL BULL TRAP] Liquidity swept above ₹${keyResistance.toFixed(1)} (Peak: ₹${sweptHigh.toFixed(1)}) & rejected! Displacing below VWAP. Invalidation: ₹${indexInvalidationPrice.toFixed(1)}`;
+    } else if (isBearTrapConfirmed) {
+      isCallBreakout = true;
+      setupType = 'BEAR_TRAP_SNIPER';
+      indexInvalidationPrice = sweptLow - bufferPts;
+      setupReason = `🎯 [INSTITUTIONAL BEAR TRAP] Liquidity swept below ₹${keySupport.toFixed(1)} (Trough: ₹${sweptLow.toFixed(1)}) & absorbed! Reclaiming VWAP. Invalidation: ₹${indexInvalidationPrice.toFixed(1)}`;
+    }
+
+    // ── STRICT TRENDING MARKET CONFIRMATION ──
+    if (!isCallBreakout && !isPutBreakout) {
+      const isBullishTrend = currentFuture > rangeData.vwap && currentFuture > currentEma;
+      const isBearishTrend = currentFuture < rangeData.vwap && currentFuture < currentEma;
+
+      // A. Trend Continuation / Springboard Pullback (The cleanest entry in a trending market)
+      const isEmaSupportTest = evalCandle.low <= (currentEma * 1.002) && evalCandle.close > currentEma && isGreen;
+      const isEmaResistanceTest = evalCandle.high >= (currentEma * 0.998) && evalCandle.close < currentEma && isRed;
+
+      if (isBullishTrend) {
+        if (evalCandle.close > rangeData.orh && (rvol >= 1.20 || isGreen)) {
+          isCallBreakout = true;
+          setupType = 'ORB_DISPLACEMENT';
+          indexInvalidationPrice = rangeData.orh - bufferPts;
+          setupReason = `🚀 [TREND BREAKOUT - CALL] SENSEX/NIFTY closed @ ₹${evalCandle.close.toFixed(1)} above ORH (₹${rangeData.orh.toFixed(1)}) | Bullish Trend (Above VWAP & 15-EMA)`;
+        } else if (isEmaSupportTest && evalCandle.close > rangeData.vwap) {
+          isCallBreakout = true;
+          setupType = 'TREND_CONTINUATION';
+          indexInvalidationPrice = currentEma - bufferPts;
+          setupReason = `🚀 [TREND PULLBACK - CALL] Clean bounce off 15-EMA (₹${currentEma.toFixed(1)}) in Bullish Trend | Invalidation: ₹${indexInvalidationPrice.toFixed(1)}`;
+        }
+      } else if (isBearishTrend) {
+        if (evalCandle.close < rangeData.orl && (rvol >= 1.20 || isRed)) {
+          isPutBreakout = true;
+          setupType = 'ORB_DISPLACEMENT';
+          indexInvalidationPrice = rangeData.orl + bufferPts;
+          setupReason = `🚀 [TREND BREAKDOWN - PUT] SENSEX/NIFTY closed @ ₹${evalCandle.close.toFixed(1)} below ORL (₹${rangeData.orl.toFixed(1)}) | Bearish Trend (Below VWAP & 15-EMA)`;
+        } else if (isEmaResistanceTest && evalCandle.close < rangeData.vwap) {
+          isPutBreakout = true;
+          setupType = 'TREND_CONTINUATION';
+          indexInvalidationPrice = currentEma + bufferPts;
+          setupReason = `🚀 [TREND PULLBACK - PUT] Clean rejection off 15-EMA (₹${currentEma.toFixed(1)}) in Bearish Trend | Invalidation: ₹${indexInvalidationPrice.toFixed(1)}`;
+        }
       }
-    } else if (isPhase2 && state.config.enableMiddayBreakout !== false) {
-      if (bias === 'BULLISH' && currentFutureHigh >= rangeData.high) {
-        isCallBreakout = true;
-        setupReason = `Midday Consolidation Channel broke High (₹${rangeData.high.toFixed(2)})`;
-      } else if (bias === 'BEARISH' && currentFutureLow <= rangeData.low) {
-        isPutBreakout = true;
-        setupReason = `Midday Consolidation Channel broke Low (₹${rangeData.low.toFixed(2)})`;
-      }
-    } else if (isPhase3) {
-      if (bias === 'BULLISH' && currentFutureHigh >= rangeData.high) {
-        isCallBreakout = true;
-        setupReason = isExpiryDay
-          ? `Afternoon Gamma Blast broke Range High (₹${rangeData.high.toFixed(2)})`
-          : `Afternoon Momentum Extension broke Range High (₹${rangeData.high.toFixed(2)})`;
-      } else if (bias === 'BEARISH' && currentFutureLow <= rangeData.low) {
-        isPutBreakout = true;
-        setupReason = isExpiryDay
-          ? `Afternoon Gamma Blast broke Range Low (₹${rangeData.low.toFixed(2)})`
-          : `Afternoon Momentum Breakdown broke Range Low (₹${rangeData.low.toFixed(2)})`;
+
+      // B. Midday / Afternoon Channel Breakouts (Only in trend direction)
+      if (!isCallBreakout && !isPutBreakout) {
+        if (isPhase2 && state.config.enableMiddayBreakout !== false) {
+          if (bias === 'BULLISH' && evalCandle.close > rangeData.high && rvol >= 1.20) {
+            isCallBreakout = true;
+            setupType = 'CHANNEL_BREAKOUT';
+            indexInvalidationPrice = rangeData.high - bufferPts;
+            setupReason = `📦 Midday Channel broke High (₹${rangeData.high.toFixed(1)}) | RVOL: ${rvol.toFixed(2)}x`;
+          } else if (bias === 'BEARISH' && evalCandle.close < rangeData.low && rvol >= 1.20) {
+            isPutBreakout = true;
+            setupType = 'CHANNEL_BREAKOUT';
+            indexInvalidationPrice = rangeData.low + bufferPts;
+            setupReason = `📦 Midday Channel broke Low (₹${rangeData.low.toFixed(1)}) | RVOL: ${rvol.toFixed(2)}x`;
+          }
+        } else if (isPhase3) {
+          if (bias === 'BULLISH' && evalCandle.close > rangeData.high) {
+            isCallBreakout = true;
+            setupType = isExpiryDay ? 'GAMMA_EXPLOSION' : 'CHANNEL_BREAKOUT';
+            indexInvalidationPrice = rangeData.high - bufferPts;
+            setupReason = isExpiryDay
+              ? `⚡ Afternoon Gamma Blast broke Range High (₹${rangeData.high.toFixed(1)})`
+              : `📈 Afternoon Momentum Extension broke Range High (₹${rangeData.high.toFixed(1)})`;
+          } else if (bias === 'BEARISH' && evalCandle.close < rangeData.low) {
+            isPutBreakout = true;
+            setupType = isExpiryDay ? 'GAMMA_EXPLOSION' : 'CHANNEL_BREAKOUT';
+            indexInvalidationPrice = rangeData.low + bufferPts;
+            setupReason = isExpiryDay
+              ? `⚡ Afternoon Gamma Blast broke Range Low (₹${rangeData.low.toFixed(1)})`
+              : `📉 Afternoon Momentum Breakdown broke Range Low (₹${rangeData.low.toFixed(1)})`;
+          }
+        }
       }
     }
 
     if (isCallBreakout) {
-      const eligibleCe = this.autoSelectGammaStrike(optionQuotes, 'CE', atmStrike, underlying, state.config, now, isExpiryDay);
+      const eligibleCe = this.autoSelectGammaStrike(optionQuotes, 'CE', atmStrike, underlying, state.config, now, isExpiryDay, budgetRiskPts);
       if (eligibleCe && eligibleCe.ltp > 0) {
         const isHighConviction = (pcr >= 1.05 || totalCallOi < totalPutOi) && (eligibleCe.volume >= 1500 || eligibleCe.oi >= 8000);
         this.log(state, `🚀 [SCALPER SIGNAL - CALL] ${underlying} ${setupReason} @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}${isHighConviction ? ' | High-Conviction A+ Setup' : ''}`);
         this.log(state, `🎯 Auto-Selected Strike: ${eligibleCe.tradingsymbol} @ ₹${eligibleCe.ltp.toFixed(2)} (OI: ${(eligibleCe.oi / 1000).toFixed(0)}k, Vol: ${(eligibleCe.volume / 1000).toFixed(0)}k)`);
-        await this.placeGammaTrade(state, client, kite, eligibleCe.tradingsymbol, eligibleCe.ltp, 'CALL_BLAST', isHighConviction);
+        await this.placeGammaTrade(state, client, kite, eligibleCe.tradingsymbol, eligibleCe.ltp, 'CALL_BLAST', isHighConviction, setupType, indexInvalidationPrice);
         return;
       }
     }
 
     if (isPutBreakout) {
-      const eligiblePe = this.autoSelectGammaStrike(optionQuotes, 'PE', atmStrike, underlying, state.config, now, isExpiryDay);
+      const eligiblePe = this.autoSelectGammaStrike(optionQuotes, 'PE', atmStrike, underlying, state.config, now, isExpiryDay, budgetRiskPts);
       if (eligiblePe && eligiblePe.ltp > 0) {
         const isHighConviction = (pcr <= 0.95 || totalPutOi < totalCallOi) && (eligiblePe.volume >= 1500 || eligiblePe.oi >= 8000);
         this.log(state, `🚀 [SCALPER SIGNAL - PUT] ${underlying} ${setupReason} @ Fut ₹${currentFuture.toFixed(2)} | PCR: ${pcr.toFixed(2)}${isHighConviction ? ' | High-Conviction A+ Setup' : ''}`);
         this.log(state, `🎯 Auto-Selected Strike: ${eligiblePe.tradingsymbol} @ ₹${eligiblePe.ltp.toFixed(2)} (OI: ${(eligiblePe.oi / 1000).toFixed(0)}k, Vol: ${(eligiblePe.volume / 1000).toFixed(0)}k)`);
-        await this.placeGammaTrade(state, client, kite, eligiblePe.tradingsymbol, eligiblePe.ltp, 'PUT_BLAST', isHighConviction);
+        await this.placeGammaTrade(state, client, kite, eligiblePe.tradingsymbol, eligiblePe.ltp, 'PUT_BLAST', isHighConviction, setupType, indexInvalidationPrice);
         return;
       }
     }
@@ -1096,7 +1239,9 @@ export class GammaBlastExpiryEngine {
     symbol: string,
     entryPrice: number,
     type: 'CALL_BLAST' | 'PUT_BLAST',
-    isHighConviction: boolean = false
+    isHighConviction: boolean = false,
+    setupType?: any,
+    indexInvalidationPrice?: number | null
   ) {
     const exchange = state.activeExchange;
     const baseLots = state.lots || state.config.lots || 1;
@@ -1141,10 +1286,13 @@ export class GammaBlastExpiryEngine {
     state.isHighConvictionTrade = shouldBoost && lots > baseLots;
     state.isPartialExited = false;
 
-    // 1. Calculate Stop Loss: User Points (e.g. 25 pts) OR Rupee budget (e.g. ₹500) OR percentage (50%)
-    let slPoints = state.config.stopLossPoints;
-    if (!slPoints && state.config.stopLossRs && state.config.stopLossRs > 0) {
-      slPoints = state.config.stopLossRs / qty;
+    // 1. Calculate Stop Loss: 
+    // SENSEX: Default 18 pts (or user stopLossPoints / stopLossRs)
+    // NIFTY: Default 6 pts (or user stopLossPoints / stopLossRs)
+    const defaultSlPoints = state.activeUnderlying === 'NIFTY' ? 6 : 18;
+    let slPoints = state.config.stopLossPoints || defaultSlPoints;
+    if (state.config.stopLossRs && state.config.stopLossRs > 0) {
+      slPoints = Math.min(slPoints, state.config.stopLossRs / qty);
     }
     const defaultSlPct = state.config.initialSlPct || 50;
     let initialSl = slPoints
@@ -1160,10 +1308,11 @@ export class GammaBlastExpiryEngine {
       }
     }
 
-    // 2. Calculate Target: User Points (e.g. 45-50 pts) OR Rupee Target (e.g. ₹1,000)
-    let tgtPoints = state.config.targetPoints;
-    if (!tgtPoints && state.config.targetRs && state.config.targetRs > 0) {
-      tgtPoints = state.config.targetRs / qty;
+    // 2. Calculate Target: User Points (Default 35 pts for SENSEX, 11 pts for NIFTY) OR Rupee Target
+    const defaultTgtPoints = state.activeUnderlying === 'NIFTY' ? 11 : 35;
+    let tgtPoints = state.config.targetPoints || defaultTgtPoints;
+    if (state.config.targetRs && state.config.targetRs > 0) {
+      tgtPoints = Math.max(tgtPoints, state.config.targetRs / qty);
     }
     if (tgtPoints && tgtPoints > 0) {
       state.targetPrice = this.roundTick(entryPrice + tgtPoints);
@@ -1175,10 +1324,12 @@ export class GammaBlastExpiryEngine {
     const targetMovePts = state.targetPrice ? (state.targetPrice - entryPrice).toFixed(1) : null;
     const targetGainRs = targetMovePts ? (Number(targetMovePts) * qty).toFixed(2) : null;
 
-    if (shouldBoost && lots > baseLots) {
-      this.log(state, `🔥 [HIGH-CONVICTION A+ BOOST] Range Breakout + Volume Surge + OI Confluence verified! Scaled size to ${lots} Lots (${qty} shares)! Initial SL: ₹${initialSl.toFixed(2)} (-${effectiveRiskPts} pts, Max Risk: ₹${maxRiskRs})`);
+    if (setupType?.includes('TRAP')) {
+      this.log(state, `🎯 [SNIPER TRAP ENTRY - ${setupType}] ${symbol} | Qty: ${qty} | Entry: ₹${entryPrice.toFixed(2)} | Index Invalidation: ₹${indexInvalidationPrice?.toFixed(1) ?? 'N/A'} | Initial SL: ₹${initialSl.toFixed(2)} (-${effectiveRiskPts} pts, Max Risk: ₹${maxRiskRs})`);
+    } else if (shouldBoost && lots > baseLots) {
+      this.log(state, `🔥 [HIGH-CONVICTION A+ BOOST] ${setupType || 'Breakout'} + Volume Surge + OI Confluence! Scaled size to ${lots} Lots (${qty} shares)! Initial SL: ₹${initialSl.toFixed(2)} (-${effectiveRiskPts} pts, Max Risk: ₹${maxRiskRs})`);
     } else {
-      this.log(state, `📋 Placing ${lots}-Lot Order: ${exchange}:${symbol} | Qty: ${qty} | Entry: ₹${entryPrice.toFixed(2)} | Initial SL: ₹${initialSl.toFixed(2)} (-${effectiveRiskPts} pts, Max Risk: ₹${maxRiskRs})${state.targetPrice ? ` | Target: ₹${state.targetPrice.toFixed(2)} (+${targetMovePts} pts, Target Gain: ₹${targetGainRs})` : ''}`);
+      this.log(state, `📋 Placing ${lots}-Lot Order: ${exchange}:${symbol} | Setup: ${setupType || 'SCALP'} | Qty: ${qty} | Entry: ₹${entryPrice.toFixed(2)} | Initial SL: ₹${initialSl.toFixed(2)} (-${effectiveRiskPts} pts, Max Risk: ₹${maxRiskRs})${state.targetPrice ? ` | Target: ₹${state.targetPrice.toFixed(2)} (+${targetMovePts} pts, Target Gain: ₹${targetGainRs})` : ''}`);
     }
 
     try {
@@ -1203,6 +1354,8 @@ export class GammaBlastExpiryEngine {
       state.stopLossPrice = initialSl;
       state.peakPrice = entryPrice;
       state.executedQty = qty;
+      state.setupType = setupType;
+      state.indexInvalidationPrice = indexInvalidationPrice;
 
       this.log(state, `✅ Entry Order placed (${entryId}) for ${qty} Qty @ Limit ₹${limitPrice.toFixed(2)}`);
 
@@ -1286,7 +1439,7 @@ export class GammaBlastExpiryEngine {
       const isTargetRsHit = state.config.targetRs && state.config.targetRs > 0 && pnlRs >= state.config.targetRs;
 
       if (isTargetPointsHit || isTargetPriceHit || isTargetRsHit) {
-        if (state.config.exitExactAtTarget || pnlPct >= 100) {
+        if (state.config.exitExactAtTarget !== false || pnlPct >= 100) {
           if (isExiting) return;
           isExiting = true;
           this.log(state, `🎯 [TARGET REACHED] Position achieved target (+${pnlPoints.toFixed(1)} pts | +₹${pnlRs.toFixed(2)})! Booking profit @ ₹${currentPrice.toFixed(2)}.`);
@@ -1315,26 +1468,22 @@ export class GammaBlastExpiryEngine {
 
       // ── Ratchet Trailing Logic ──────────────────────────────────────────────
 
-      // 1. Milestone 1: Breakeven / Cost Lock (Halfway to Target)
-      // Locks SL to Cost when either:
-      //  a) Option reaches 50% of target points (e.g. +25 pts on a 50 pt target)
-      //  b) Position makes 50% of rupee target (e.g. +₹500 on ₹1,000 target)
-      //  c) Option gains +25% or hits costLockMultiple
-      const costMultiple = state.config.costLockMultiple || 1.4;
-      const target50Pts = state.config.targetPoints ? state.config.targetPoints * 0.50 : null;
-      const target50Pct = (state.config.targetRs && state.config.targetRs > 0) ? state.config.targetRs * 0.50 : null;
+      // 1. Milestone 1: Breakeven / Cost Lock (Quick Breakeven Shield)
+      // SENSEX: Locks SL to Cost as soon as option gains +15 points!
+      // NIFTY: Locks SL to Cost as soon as option gains +6 points!
+      const defaultCostLockPts = state.activeUnderlying === 'NIFTY' ? 6 : 15;
+      const costLockPoints = state.config.costLockPoints || defaultCostLockPts;
+      const costMultiple = state.config.costLockMultiple || 1.25;
       const shouldLockCost = !state.isCostLocked && (
-        peak >= entry * costMultiple ||
-        (target50Pts !== null && (peak - entry) >= target50Pts) ||
-        (target50Pct !== null && (state.peakPnlRs || 0) >= target50Pct) ||
-        (peak >= entry * 1.25)
+        (peak - entry) >= costLockPoints ||
+        peak >= entry * costMultiple
       );
 
       if (shouldLockCost) {
         state.isCostLocked = true;
         const newSl = this.roundTick(entry + 0.50);
         state.stopLossPrice = Math.max(state.stopLossPrice || 0, newSl);
-        this.log(state, `🛡 [BREAK-EVEN RISK-FREE] Peak: ₹${peak.toFixed(2)} (+${(peak - entry).toFixed(1)} pts / +₹${(state.peakPnlRs || 0).toFixed(2)} P&L)! Trailing SL locked to Cost (₹${state.stopLossPrice.toFixed(2)}) — Trade is 100% Risk-Free!`);
+        this.log(state, `🛡 [BREAK-EVEN RISK-FREE] Peak reached +${(peak - entry).toFixed(1)} pts (+₹${(state.peakPnlRs || 0).toFixed(2)})! SL locked to Cost (₹${state.stopLossPrice.toFixed(2)}) — Trade is 100% Risk-Free!`);
       }
 
       // 2. Milestone 2: 2x Spike (e.g. ₹18.00 -> ₹36.00) -> Lock SL at +50% Profit (₹27.00)
@@ -1456,6 +1605,29 @@ export class GammaBlastExpiryEngine {
     const entry = state.entryPrice || currentPrice;
     const qty = state.executedQty || state.targetQty;
     const pnlRs = (currentPrice - entry) * qty;
+
+    // 0. Institutional Structure Invalidation Check on Underlying Index Future
+    if (state.indexInvalidationPrice && state.liveFuturePrice) {
+      const isCallInvalidated = state.entryTriggered === 'CALL_BLAST' && state.liveFuturePrice <= state.indexInvalidationPrice;
+      const isPutInvalidated = state.entryTriggered === 'PUT_BLAST' && state.liveFuturePrice >= state.indexInvalidationPrice;
+      if (isCallInvalidated || isPutInvalidated) {
+        this.log(state, `🛑 [INSTITUTIONAL STRUCTURE INVALIDATION] Underlying ${state.activeUnderlying} Fut @ ₹${state.liveFuturePrice.toFixed(1)} violated Invalidation Level (₹${state.indexInvalidationPrice.toFixed(1)}). Exiting safely @ ₹${currentPrice.toFixed(2)} | P&L: ₹${pnlRs.toFixed(2)}`);
+        await this.exitPosition(state, client, currentPrice, 'STRUCTURE_INVALIDATION');
+        await this.persistLogs(state);
+        return;
+      }
+    }
+
+    // 0a. Target Hit Check (Points, Price, or Rupee Target)
+    const isTargetHit = (state.targetPrice && currentPrice >= state.targetPrice) ||
+      (state.config.targetPoints && (currentPrice - entry) >= state.config.targetPoints) ||
+      (state.config.targetRs && state.config.targetRs > 0 && pnlRs >= state.config.targetRs);
+    if (isTargetHit && state.config.exitExactAtTarget !== false) {
+      this.log(state, `🎯 Position Monitor: Target reached @ ₹${currentPrice.toFixed(2)} (Target: ₹${state.targetPrice?.toFixed(2) ?? 'N/A'}) | P&L: +₹${pnlRs.toFixed(2)}. Booking profit.`);
+      await this.exitPosition(state, client, currentPrice, 'TARGET');
+      await this.persistLogs(state);
+      return;
+    }
 
     // 1. Stop Loss Hit Check
     if (currentPrice <= (state.stopLossPrice || 0)) {
@@ -1660,6 +1832,12 @@ export class GammaBlastExpiryEngine {
         this.log(state, `🛑 Daily Max Loss Shield: Realized ₹${state.dailyRealizedPnlRs.toFixed(2)} (<= -₹${state.config.stopLossRs})! Locking strategy for today to protect capital.`);
       }
 
+      // 3. One-and-Done Profit Shield: If trade hit target, lock strategy for the day immediately!
+      if (reason === 'TARGET' || (state.dailyRealizedPnlRs > 0 && state.winningTradesToday >= (state.config.maxTradesPerDay || 1))) {
+        state.dailyTargetLocked = true;
+        this.log(state, `🏁 [DAILY TARGET LOCKED] Goal reached! Realized profit: +₹${state.dailyRealizedPnlRs.toFixed(2)}. Strategy safely locked for the day to preserve profits.`);
+      }
+
       this.log(state, `🎉 Trade Closed (${reason}) @ ₹${exitPrice.toFixed(2)} | P&L: ${tradePnl >= 0 ? '+' : ''}₹${tradePnl.toFixed(2)} | Total Today: ₹${state.dailyRealizedPnlRs.toFixed(2)}`);
 
       this.stopRealtimeMonitor(state);
@@ -1756,28 +1934,45 @@ export class GammaBlastExpiryEngine {
     }
   }
 
-  private calculateCompressionRange(candles: Candle[], now: Date, startTimeStr: string = '09:20'): { high: number; low: number; vwap: number; orh: number; orl: number } | null {
+  private calculateCompressionRange(candles: Candle[], now: Date, startTimeStr: string = '09:30'): RangeAnalysis | null {
     if (candles.length === 0) return null;
 
     const todayStr = this.getIstDateStr(now);
     const todayCandles = candles.filter(c => this.getIstDateStr(c.date) === todayStr);
     const evalCandles = todayCandles.length >= 2 ? todayCandles : candles.slice(-20);
 
-    // 1. Opening Range High / Low (first two 3m candles of session: 09:15 - 09:21)
+    // 1. Previous Day High (PDH) & Previous Day Low (PDL) from multi-day history
+    const allDates = Array.from(new Set(candles.map(c => this.getIstDateStr(c.date)))).sort();
+    const todayIdx = allDates.indexOf(todayStr);
+    let pdh: number | null = null;
+    let pdl: number | null = null;
+    if (todayIdx > 0) {
+      const prevDate = allDates[todayIdx - 1];
+      const prevCandles = candles.filter(c => this.getIstDateStr(c.date) === prevDate);
+      if (prevCandles.length > 0) {
+        pdh = Math.max(...prevCandles.map(c => c.high));
+        pdl = Math.min(...prevCandles.map(c => c.low));
+      }
+    }
+
+    // 2. Institutional 15-Minute Opening Range (09:15 to 09:30 IST)
+    // Completed 3m candles starting at 09:15, 09:18, 09:21, 09:24, 09:27 (close at 09:30)
+    const openingCandles = todayCandles.filter(c => {
+      const hhmm = this.getIstHhmm(c.date);
+      return hhmm >= 9 * 60 + 15 && hhmm < 9 * 60 + 30;
+    });
+    const isOpeningRangeComplete = this.getIstHhmm(now) >= (9 * 60 + 30);
+
     let orh = -Infinity;
     let orl = Infinity;
-    const openingCandles = evalCandles.filter(c => {
-      const hhmm = this.getIstHhmm(c.date);
-      return hhmm >= 9 * 60 + 15 && hhmm <= 9 * 60 + 21;
-    });
-
-    for (const c of (openingCandles.length > 0 ? openingCandles : evalCandles.slice(0, 2))) {
+    for (const c of (openingCandles.length > 0 ? openingCandles : evalCandles.slice(0, 5))) {
       if (c.high > orh) orh = c.high;
       if (c.low < orl) orl = c.low;
     }
 
-    // 2. Rolling compression channel (last 8-10 3m candles = ~25 to 30 mins)
-    const rollingCandles = evalCandles.length >= 8 ? evalCandles.slice(-10) : evalCandles;
+    // 3. Rolling compression channel (last 8-10 completed 3m candles = ~25 to 30 mins)
+    const completedCandles = todayCandles.length >= 2 ? todayCandles.slice(0, -1) : todayCandles;
+    const rollingCandles = completedCandles.length >= 8 ? completedCandles.slice(-10) : completedCandles;
     let high = -Infinity;
     let low = Infinity;
     for (const c of rollingCandles) {
@@ -1785,7 +1980,7 @@ export class GammaBlastExpiryEngine {
       if (c.low < low) low = c.low;
     }
 
-    // 3. Cumulative Session VWAP across all today's candles
+    // 4. Cumulative Session VWAP across all today's candles
     let sumPv = 0;
     let sumV = 0;
     for (const c of evalCandles) {
@@ -1795,12 +1990,22 @@ export class GammaBlastExpiryEngine {
     }
     const vwap = sumV > 0 ? (sumPv / sumV) : evalCandles[evalCandles.length - 1].close;
 
+    // 5. 10-period Average Volume for RVOL calculation
+    const volCandles = completedCandles.slice(-10);
+    const avgVolume = volCandles.length > 0
+      ? (volCandles.reduce((acc, c) => acc + (c.volume || 1), 0) / volCandles.length)
+      : 1000;
+
     return {
       high: high === -Infinity ? evalCandles[evalCandles.length - 1].close : high,
       low: low === Infinity ? evalCandles[evalCandles.length - 1].close : low,
       vwap,
       orh: orh === -Infinity ? high : orh,
       orl: orl === Infinity ? low : orl,
+      pdh,
+      pdl,
+      avgVolume,
+      isOpeningRangeComplete,
     };
   }
 

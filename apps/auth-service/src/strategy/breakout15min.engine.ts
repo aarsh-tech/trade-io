@@ -69,6 +69,7 @@ interface StrategyState {
 
   // Real-Time WebSocket & Ticker Tracking State
   realtimeActive?: boolean;
+  isExiting?: boolean;
   lastTickTime?: number;
   lastPnlLogTime?: number;
   lastEmitTime?: number;
@@ -315,7 +316,9 @@ export class Breakout15MinEngine {
   async squareOff(strategyId: string): Promise<{ success: boolean; message: string }> {
     const state = this.running.get(strategyId);
     if (!state) return { success: false, message: 'Strategy is not running' };
-    if (!state.entryTriggered) return { success: false, message: 'No active open position to square off' };
+    if (!state.entryTriggered || state.isExiting) {
+      return { success: false, message: state.isExiting ? 'Exit order is already in progress' : 'No active open position to square off' };
+    }
 
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
     const client = account?.accessToken ? this.factory.createClient(account) : null;
@@ -1786,6 +1789,12 @@ export class Breakout15MinEngine {
   }
 
   private async exitPosition(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE' | 'EOD') {
+    if (state.isExiting) {
+      this.log(state, `ℹ Exit already in progress for ${state.optionSymbol || state.config.symbol}. Ignoring concurrent exit call (${reason}).`);
+      return;
+    }
+    state.isExiting = true;
+
     const { config } = state;
     const symbol = state.optionSymbol || state.futureSymbol || config.symbol;
     const exchange = state.optionSymbol ? (symbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || config.exchange);
@@ -1799,6 +1808,8 @@ export class Breakout15MinEngine {
     let actualExitPrice = exitPrice;
     let exitOrderId = '';
     let exitOrderType: 'MARKET' | 'LIMIT' | 'SL' = 'MARKET';
+
+    try {
 
     if (state.isPaperTrade) {
       exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
@@ -1867,9 +1878,9 @@ export class Breakout15MinEngine {
         let marketExitQty = remainingQtyToExit;
         try {
           const exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger);
-          if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+          if (!exitSafety.safe) {
             isManuallyClosed = true;
-            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
+            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
           } else if (exitSafety.brokerQty && Math.abs(exitSafety.brokerQty) > 0) {
             marketExitQty = Math.min(remainingQtyToExit, Math.abs(exitSafety.brokerQty));
           }
@@ -1978,6 +1989,11 @@ export class Breakout15MinEngine {
     state.entryPrice = null;
     state.stopLossPrice = null;
     state.targetPrice = null;
+    } catch (e: any) {
+      this.log(state, `❌ Exit execution failed: ${e.message}`);
+    } finally {
+      state.isExiting = false;
+    }
     state.slOrderId = null;
     state.targetOrderId = null;
     state.isBreakevenTrailed = false;

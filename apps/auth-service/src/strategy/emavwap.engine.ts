@@ -83,6 +83,7 @@ interface StrategyState {
   lastBrokerSlModifyTime?: number;
   isProcessingTick?: boolean;
   isPlacingTrade?: boolean;
+  isExiting?: boolean;
   lastAutoScanTime?: number;
 }
 
@@ -396,7 +397,9 @@ export class EmaVwapCrossoverEngine {
   async squareOff(strategyId: string): Promise<{ success: boolean; message: string }> {
     const state = this.running.get(strategyId);
     if (!state) return { success: false, message: 'Strategy is not running' };
-    if (!state.entryTriggered) return { success: false, message: 'No active open position to square off' };
+    if (!state.entryTriggered || state.isExiting) {
+      return { success: false, message: state.isExiting ? 'Exit order is already in progress' : 'No active open position to square off' };
+    }
 
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
     const client = account?.accessToken ? this.factory.createClient(account) : null;
@@ -1702,7 +1705,7 @@ export class EmaVwapCrossoverEngine {
     const unsubscribe = this.tickerService.registerListener(async (ticks) => {
       // Process ticks for our symbol (or exchange prefixed symbol)
       const currentPrice = ticks[symbol] || ticks[`${exchange}:${symbol}`] || ticks[`NSE:${symbol}`];
-      if (!currentPrice || !state.entryTriggered || isExiting) return;
+      if (!currentPrice || !state.entryTriggered || isExiting || state.isExiting) return;
 
       const now = Date.now();
       state.lastTickTime = now;
@@ -1722,13 +1725,35 @@ export class EmaVwapCrossoverEngine {
       // ── 1. 3:05 PM IST Mandatory EOD Cutoff (Exits safely before Zerodha 3:12 PM RMS) ──
       const currentHhmm = this.getIstHhmm(new Date());
       if (currentHhmm >= 15 * 60 + 5 && state.entryTriggered) {
-        if (isExiting) return;
+        if (isExiting || state.isExiting) return;
         isExiting = true;
+        state.isExiting = true;
         this.log(state, `⏰ 3:05 PM Intraday EOD Cutoff reached! Auto-squaring off position (Current P&L: ₹${pnlRs.toFixed(2)}) to avoid Zerodha RMS penalty charges...`);
         this.stopRealtimeMonitor(state);
         await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
         await this.persistLogs(state);
         return;
+      }
+
+      // ── 1.05 35-Minute Intraday Stagnation Exit (Time Stop for Chop Traps like LODHA) ────
+      if (state.entryTime && state.entryTriggered) {
+        const entryDurationMs = now - new Date(state.entryTime).getTime();
+        // If position has been held for >= 35 minutes and has made < 0.25% move (stagnant dead chop)
+        if (entryDurationMs >= 35 * 60 * 1000 && Math.abs(pnlPct) < 0.25) {
+          if (isExiting || state.isExiting) return;
+          isExiting = true;
+          state.isExiting = true;
+          this.log(
+            state,
+            `⏱ [STAGNATION EXIT] ${symbol} has remained flat (< 0.25% move) for 35+ mins. Auto-squaring off near breakeven (P&L: ₹${pnlRs.toFixed(2)}) to liberate margin for active momentum leaders!`
+          );
+          if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
+          state.cooldownSymbols.set(symbol, now + 30 * 60 * 1000); // 30 min cooldown
+          this.stopRealtimeMonitor(state);
+          await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
+          await this.persistLogs(state);
+          return;
+        }
       }
 
       // ── 1.1 EXACT TARGET / STOP LOSS EXIT (Guaranteed Fixed Target Exit) ─────
@@ -2324,10 +2349,19 @@ export class EmaVwapCrossoverEngine {
   }
 
   private async exitPosition(state: StrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE') {
+    if (state.isExiting) {
+      this.log(state, `ℹ Exit already in progress for ${state.activeSymbol || state.config.symbol}. Ignoring duplicate exit call (${reason}).`);
+      return;
+    }
+    state.isExiting = true;
+
     const { config } = state;
     const symbol = state.optionSymbol || state.activeSymbol || config.symbol;
     const exchange = state.optionSymbol ? 'NFO' : (state.futureSymbol ? state.futureExchange : config.exchange);
-    const exitSide = (config.isOptionBuyingOnly && state.optionSymbol) ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
+    const cachedEntryPrice = state.entryPrice || exitPrice;
+    const cachedEntryTriggered = state.entryTriggered;
+    const isLong = (config.isOptionBuyingOnly && state.optionSymbol) || cachedEntryTriggered === 'LONG';
+    const exitSide = (config.isOptionBuyingOnly && state.optionSymbol) ? 'SELL' : (cachedEntryTriggered === 'LONG' ? 'SELL' : 'BUY');
     const qty = state.executedQty || config.qty;
 
     // Stop WebSocket monitoring before exit
@@ -2406,9 +2440,9 @@ export class EmaVwapCrossoverEngine {
           let marketExitQty = remainingQtyToExit;
           try {
             const exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger);
-            if (!exitSafety.safe && reason !== 'FORCE_CLOSE') {
+            if (!exitSafety.safe) {
               isManuallyClosed = true;
-              this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
+              this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
             } else if (exitSafety.brokerQty && Math.abs(exitSafety.brokerQty) > 0) {
               // Strictly exit only what remains at the broker to prevent reversing position
               marketExitQty = Math.min(remainingQtyToExit, Math.abs(exitSafety.brokerQty));
@@ -2469,8 +2503,10 @@ export class EmaVwapCrossoverEngine {
       await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, actualExitPrice, exitOrderId, undefined, exitOrderType);
       state.tradesPlacedToday++;
 
-      const isLong = (config.isOptionBuyingOnly && state.optionSymbol) || state.entryTriggered === 'LONG';
-      const tradePnl = (isLong ? (actualExitPrice - (state.entryPrice || 0)) : ((state.entryPrice || 0) - actualExitPrice)) * qty;
+      let tradePnl = 0;
+      if (cachedEntryPrice && cachedEntryPrice > 0 && actualExitPrice > 0 && cachedEntryTriggered) {
+        tradePnl = (isLong ? (actualExitPrice - cachedEntryPrice) : (cachedEntryPrice - actualExitPrice)) * qty;
+      }
       state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
 
       const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
@@ -2519,6 +2555,8 @@ export class EmaVwapCrossoverEngine {
       });
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
+    } finally {
+      state.isExiting = false;
     }
   }
 
@@ -2537,8 +2575,13 @@ export class EmaVwapCrossoverEngine {
       // Track exit order in DB (Historical catchup does not exhaust live trade cap)
       await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, exitPrice, exitOrderId, timestamp);
 
-      const isLong = (config.isOptionBuyingOnly && state.optionSymbol) || state.entryTriggered === 'LONG';
-      const tradePnl = (isLong ? (exitPrice - (state.entryPrice || 0)) : ((state.entryPrice || 0) - exitPrice)) * qty;
+      const cachedEntryPrice = state.entryPrice || exitPrice;
+      const cachedEntryTriggered = state.entryTriggered;
+      const isLong = (config.isOptionBuyingOnly && state.optionSymbol) || cachedEntryTriggered === 'LONG';
+      let tradePnl = 0;
+      if (cachedEntryPrice && cachedEntryPrice > 0 && exitPrice > 0 && cachedEntryTriggered) {
+        tradePnl = (isLong ? (exitPrice - cachedEntryPrice) : (cachedEntryPrice - exitPrice)) * qty;
+      }
       state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
 
       const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
