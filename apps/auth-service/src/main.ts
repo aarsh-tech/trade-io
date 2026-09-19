@@ -56,8 +56,8 @@ async function bootstrap() {
 
   // Swagger docs
   const config = new DocumentBuilder()
-    .setTitle('TradeIO Auth Service')
-    .setDescription('Authentication and user management API')
+    .setTitle('Tradeio.site API Service')
+    .setDescription('Algorithmic trading and execution engine API')
     .setVersion('1.0')
     .addBearerAuth()
     .build();

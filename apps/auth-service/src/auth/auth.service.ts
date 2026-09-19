@@ -114,8 +114,8 @@ export class AuthService {
 
   async setup2fa(userId: string) {
     const secret = speakeasy.generateSecret({
-      name: `TradeIO (${userId})`,
-      issuer: 'TradeIO',
+      name: `Tradeio.site (${userId})`,
+      issuer: 'Tradeio.site',
     });
 
     await this.users.updateTotpSecret(userId, secret.base32);

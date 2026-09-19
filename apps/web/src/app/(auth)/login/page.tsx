@@ -27,6 +27,9 @@ export default function LoginPage() {
         return;
       }
       setAuth(data.data.user, data.data.accessToken, data.data.refreshToken);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("tradeio_show_risk_disclosure_login", "true");
+      }
       toast.success("Welcome back!", { description: data.data.user.email });
       router.replace("/dashboard");
     } catch (err: any) {
@@ -40,12 +43,8 @@ export default function LoginPage() {
 
   return (
     <AuthLayout
-      title={show2fa ? "Two-factor authentication" : "Login to TradeIO"}
-      footerLink={{
-        text: "Don't have an account?",
-        actionText: "Sign up for free!",
-        href: "/register",
-      }}
+      title={show2fa ? "Two-factor authentication" : "Login to Tradeio.site"}
+      subtitle="Authorized access only. Algorithmic trading terminal."
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {!show2fa ? (

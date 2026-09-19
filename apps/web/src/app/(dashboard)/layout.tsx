@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/topbar";
 import { MobileBottomNav } from "@/components/layout/mobile-nav";
 import { AuthGuard } from "@/components/auth-guard";
+import { RiskDisclosureModal } from "@/components/shared/risk-disclosure-modal";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -18,6 +19,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <MobileBottomNav />
         </div>
       </div>
+      <RiskDisclosureModal />
     </AuthGuard>
   );
 }

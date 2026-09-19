@@ -100,7 +100,7 @@ Target 1: ₹${fmt(r.target1)}
 Target 2: ₹${fmt(r.target2)}
 
 Qty: ${qty} | Capital: ₹${Math.round(capital).toLocaleString("en-IN")}
-_Powered by TradeIO Intelligence_`;
+_Powered by Tradeio.site Intelligence_`;
     navigator.clipboard.writeText(text);
     toast.success("Setup copied to clipboard!");
   };

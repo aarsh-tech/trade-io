@@ -12,13 +12,20 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "TradeIO” Algorithmic Trading Platform",
-    template: "%s | TradeIO",
+    default: "Tradeio.site - Algorithmic Trading Platform",
+    template: "%s | Tradeio.site",
   },
   description:
     "Professional algorithmic trading platform. Build, backtest, and deploy trading strategies across multiple brokers.",
   keywords: ["algo trading", "zerodha", "backtesting", "EMA crossover", "breakout strategy"],
-  metadataBase: new URL("https://tradeio.io"),
+  metadataBase: new URL("https://tradeio.site"),
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

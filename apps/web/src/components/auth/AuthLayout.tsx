@@ -26,7 +26,7 @@ export function AuthLayout({
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#fbfbfb] text-[#444444] font-sans py-12 px-4 selection:bg-blue-600 selection:text-white">
       {/* Centered White Card (Kite Dimensions & Clean Minimalist Box) */}
       <div className="w-full max-w-[390px] bg-white border border-[#e8e8e8] rounded-[4px] shadow-[0_2px_8px_rgba(0,0,0,0.05)] p-8 sm:p-10 pt-10 pb-9">
-        {/* Top Logo - TradeIO Blue Brand */}
+        {/* Top Logo - Tradeio.site Blue Brand */}
         <div className="flex justify-center mb-6">
           <Link href="/" className="inline-flex items-center justify-center group">
             <div className="h-12 w-12 rounded-xl bg-blue-600 flex items-center justify-center shadow-xs group-hover:bg-blue-700 transition-colors">
@@ -60,7 +60,7 @@ export function AuthLayout({
         {/* Brand Text */}
         <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-[#888888] tracking-widest uppercase">
           <Zap className="h-3.5 w-3.5 text-blue-600 fill-blue-600" />
-          <span>TradeIO</span>
+          <span>Tradeio.site</span>
         </div>
 
         {/* Dynamic Context Link */}

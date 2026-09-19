@@ -122,7 +122,7 @@ export default function ResetPasswordPage() {
       title="Set new password"
       footerLink={{
         text: "Remember your password?",
-        actionText: "Login to TradeIO",
+        actionText: "Login to Tradeio.site",
         href: "/login",
       }}
     >

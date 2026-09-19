@@ -295,7 +295,7 @@ export default function StrategyDetailPage() {
           setTestLotSize(res.data.lotSize);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => { isMounted = false; };
   }, [testSymbol, strategy?.brokerAccountId]);
 
@@ -979,16 +979,16 @@ export default function StrategyDetailPage() {
                   : isGammaBlast
                     ? `${cfg.lots || 1} Lot${(cfg.lots || 1) > 1 ? "s" : ""}`
                     : isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
-                    ? "Auto NFO Lots"
-                    : is15Min
-                    ? "Risk-Based (5x)"
-                    : isEmaVwap && cfg.symbol === "AUTO"
-                      ? "Risk-Based (5x)"
-                      : cfg.symbol === "AUTO"
-                        ? "Auto (5x MIS)"
-                        : cfg.qty
-                          ? `${cfg.qty} Qty`
-                          : "Dynamic"}
+                      ? "Auto NFO Lots"
+                      : is15Min
+                        ? "Risk-Based (5x)"
+                        : isEmaVwap && cfg.symbol === "AUTO"
+                          ? "Risk-Based (5x)"
+                          : cfg.symbol === "AUTO"
+                            ? "Auto (5x MIS)"
+                            : cfg.qty
+                              ? `${cfg.qty} Qty`
+                              : "Dynamic"}
               </span>
               <span className="text-[10px] text-muted-foreground">
                 {isNiftyScalper
@@ -1024,14 +1024,14 @@ export default function StrategyDetailPage() {
                   : isGammaBlast
                     ? (cfg.stopLossPoints ? `-${cfg.stopLossPoints} Pts (₹${cfg.stopLossRs ?? 500})` : `₹${cfg.stopLossRs ?? 500} (${cfg.initialSlPct || 50}%)`)
                     : isNiftyScalper
-                    ? "-7 Points"
-                    : isStockOptions
-                      ? "Mother Low / Trail"
-                      : is15Min
-                      ? "Candle SL"
-                      : isEmaVwap
-                        ? "Candle Low"
-                        : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
+                      ? "-7 Points"
+                      : isStockOptions
+                        ? "Mother Low / Trail"
+                        : is15Min
+                          ? "Candle SL"
+                          : isEmaVwap
+                            ? "Candle Low"
+                            : `₹${cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
                 {cfg.exitExactAtTarget
@@ -1069,14 +1069,14 @@ export default function StrategyDetailPage() {
                   : isGammaBlast
                     ? (cfg.targetPoints ? `+${cfg.targetPoints} Pts (₹${cfg.targetRs ?? 1000})` : `₹${cfg.targetRs ?? 1500}`)
                     : isNiftyScalper
-                    ? "+10 Pts + Trail"
-                    : isStockOptions
-                      ? "1:1.5 & 1:3 RR"
-                      : is15Min
-                      ? "1:2 RR + Trail"
-                      : isEmaVwap
-                        ? "15-EMA / VWAP"
-                        : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
+                      ? "+10 Pts + Trail"
+                      : isStockOptions
+                        ? "1:1.5 & 1:3 RR"
+                        : is15Min
+                          ? "1:2 RR + Trail"
+                          : isEmaVwap
+                            ? "15-EMA / VWAP"
+                            : `₹${cfg.targetRs ?? cfg.dailyTargetRs ?? "500"}`}
               </span>
               <span className="text-[10px] text-muted-foreground">
                 {cfg.exitExactAtTarget
@@ -1531,7 +1531,7 @@ export default function StrategyDetailPage() {
                   className="h-72 overflow-y-auto bg-slate-950 p-4 font-mono text-xs text-emerald-400 space-y-1 select-text scrollbar-thin"
                 >
                   {displayedLogs.length === 0 ? (
-                    <p className="text-slate-500 italic py-4">
+                    <p className="text-slate-500 italic py-4 text-sm">
                       {strategy.isActive
                         ? "Engine running. Awaiting real-time market ticks and crossover signals..."
                         : "Start the engine to view live execution logs."}
@@ -1541,7 +1541,7 @@ export default function StrategyDetailPage() {
                       <div
                         key={i}
                         className={cn(
-                          "leading-relaxed py-0.5",
+                          "leading-relaxed py-0.5 text-sm",
                           line.includes("📊 [LIVE P&L]") &&
                           "text-cyan-300 font-semibold bg-cyan-950/40 px-2 py-0.5 rounded border-l-2 border-cyan-400 my-0.5",
                           line.includes("⏰") &&
@@ -2172,7 +2172,7 @@ function ExecutionRow({ execution: ex }: { execution: Execution }) {
               View Logs
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-3xl p-6 rounded-2xl max-h-[85vh] flex flex-col">
+          <DialogContent className="!max-w-7xl p-6 rounded-2xl max-h-[85vh] flex flex-col">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base font-mono">
                 <Terminal className="h-4 w-4 text-emerald-500" />

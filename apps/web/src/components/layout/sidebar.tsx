@@ -18,6 +18,7 @@ import {
   Activity,
   BookOpen,
   ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
@@ -25,6 +26,7 @@ import { authApi } from "@/lib/api";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { openRiskDisclosure } from "@/components/shared/risk-disclosure-modal";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -79,7 +81,7 @@ export function Sidebar() {
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
                 <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
               </div>
-              <span className="font-bold text-lg bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-indigo-400">TradeIO</span>
+              <span className="font-bold text-lg bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-indigo-400">Tradeio.site</span>
             </Link>
           )}
           {sidebarCollapsed && (
@@ -196,6 +198,19 @@ export function Sidebar() {
               <p className="text-[10px] text-muted-foreground truncate uppercase tracking-wider">{user.email}</p>
             </div>
           )}
+          <button
+            type="button"
+            onClick={openRiskDisclosure}
+            className={cn(
+              "flex w-full items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium text-amber-800 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-300/40 transition-all mb-2 cursor-pointer shadow-2xs",
+              sidebarCollapsed && "justify-center px-0 bg-transparent border-none text-amber-600"
+            )}
+            title={sidebarCollapsed ? "SEBI Risk Disclosure" : undefined}
+          >
+            <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+            {!sidebarCollapsed && <span>Risk Disclosure</span>}
+          </button>
+
           <button
             onClick={() => setShowLogoutConfirm(true)}
             className={cn(

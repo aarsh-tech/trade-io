@@ -145,7 +145,7 @@ export function MobileBottomNav() {
                   <Zap className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
                 </div>
                 <div>
-                  <span className="font-bold text-sm text-slate-900">TradeIO Hub</span>
+                  <span className="font-bold text-sm text-slate-900">Tradeio.site Hub</span>
                   <p className="text-[10px] text-slate-400 font-medium">All Tools & Features</p>
                 </div>
               </div>
@@ -263,7 +263,7 @@ export function MobileBottomNav() {
         onOpenChange={setShowLogoutConfirm}
         onConfirm={handleLogout}
         title="Confirm Logout"
-        description="Are you sure you want to log out of your TradeIO account?"
+        description="Are you sure you want to log out of your Tradeio.site account?"
         confirmText="Logout"
         cancelText="Cancel"
         variant="destructive"
