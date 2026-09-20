@@ -409,15 +409,19 @@ export default function SwingScannerPage() {
   const [targetRs, setTargetRs] = useState(500);
   const [tradeStock, setTradeStock] = useState<QuickTradeStock | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isScanning, setIsScanning] = useState(false);
 
   const loadLast = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     try {
       const res = await swingApi.last({ pageSize: 1000 });
       if (res.data?.data) {
-        const { results, ...meta } = res.data.data as ScanRun;
+        const { results, isScanning: serverScanning, ...meta } = res.data.data as any;
         setAllResults(results ?? []);
         setScanMeta(meta);
+        if (typeof serverScanning === "boolean") {
+          setIsScanning(serverScanning);
+        }
       } else {
         setAllResults([]);
         setScanMeta(null);
@@ -435,20 +439,30 @@ export default function SwingScannerPage() {
     loadLast();
   }, [loadLast]);
 
+  // Auto-poll while background scan is running
+  useEffect(() => {
+    if (!isScanning) return;
+    const interval = setInterval(() => {
+      loadLast(true);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isScanning, loadLast]);
+
   useEffect(() => {
     setPage(1);
   }, [filter, sortBy, searchQuery]);
 
   async function runScan() {
-    setLoading(true);
-    toast.info("Scanning Nifty 500 stocks… this takes ~2 minutes");
+    setIsScanning(true);
+    toast.info("Swing scan initiated! Analyzing Nifty universe in background…");
     try {
-      await swingApi.run();
-      toast.success("Scan initiated! Refreshing in 3 seconds...");
-      setTimeout(() => loadLast(true), 3000);
+      const res = await swingApi.run();
+      toast.success(res.data?.data?.message || res.data?.message || "Scan started! Setups will auto-update.");
+      setTimeout(() => loadLast(true), 2500);
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Scan failed — check broker session");
-      setLoading(false);
+      setIsScanning(false);
+      const msg = err?.response?.data?.message || err?.message || "Failed to start market scan. Please try again.";
+      toast.error(msg);
     }
   }
 
@@ -510,14 +524,32 @@ export default function SwingScannerPage() {
 
           <Button
             onClick={runScan}
-            disabled={loading}
+            disabled={loading || isScanning}
             className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
           >
-            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
-            {loading ? "Scanning Universe..." : "Run Swing Scan"}
+            {loading || isScanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+            {loading || isScanning ? "Scanning Universe..." : "Run Swing Scan"}
           </Button>
         </div>
       </div>
+
+      {/* ── Active Background Scan Banner ── */}
+      {isScanning && (
+        <div className="bg-blue-50/80 border border-blue-200/80 rounded-2xl p-3.5 sm:p-4 flex items-center justify-between gap-3 text-blue-900 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+            <div>
+              <p className="text-xs font-bold">Market Scan Running in Background</p>
+              <p className="text-[11px] text-blue-700">Analyzing stocks on NSE. Setups and charts will refresh automatically as results arrive.</p>
+            </div>
+          </div>
+          <span className="hidden sm:inline-flex text-[11px] font-mono bg-blue-100 text-blue-800 px-2.5 py-1 rounded-full font-semibold shrink-0">
+            Auto-sync Active
+          </span>
+        </div>
+      )}
 
       {/* ── 2. Stat Summary Bar ── */}
       {scan && (
@@ -676,10 +708,11 @@ export default function SwingScannerPage() {
             </p>
             <Button
               onClick={runScan}
-              disabled={loading}
+              disabled={loading || isScanning}
               className="mt-2 h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold gap-1.5 shadow-sm"
             >
-              <RefreshCcw className="h-3.5 w-3.5" /> Start Swing Scan
+              {loading || isScanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+              {loading || isScanning ? "Scanning Universe..." : "Start Swing Scan"}
             </Button>
           </CardContent>
         </Card>

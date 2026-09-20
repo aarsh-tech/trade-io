@@ -45,6 +45,14 @@ export class SwingScannerService {
   private readonly logger = new Logger(SwingScannerService.name);
   // Cache last run per user
   private cache = new Map<string, ScanRun>();
+  // Active running scans per user
+  private activeScans = new Map<string, {
+    status: 'running' | 'completed' | 'error';
+    startedAt: string;
+    scanned: number;
+    total: number;
+    error?: string;
+  }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -53,7 +61,7 @@ export class SwingScannerService {
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
-  async runScan(userId: string): Promise<ScanRun> {
+  async runScan(userId: string): Promise<{ success: boolean; message: string; isScanning: boolean }> {
     const account = await this.prisma.brokerAccount.findFirst({
       where: { userId, isActive: true, accessToken: { not: null } },
     });
@@ -62,6 +70,42 @@ export class SwingScannerService {
       throw new BadRequestException('No active broker session found. Please connect and login to Zerodha first.');
     }
 
+    const current = this.activeScans.get(userId);
+    if (current && current.status === 'running') {
+      return {
+        success: true,
+        message: 'Swing scan is already running in background',
+        isScanning: true,
+      };
+    }
+
+    this.activeScans.set(userId, {
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      scanned: 0,
+      total: 500,
+    });
+
+    // Run in background without blocking HTTP request
+    this.executeScan(userId, account).catch(err => {
+      this.logger.error(`Background scan failed for user ${userId}: ${err.message}`);
+      this.activeScans.set(userId, {
+        status: 'error',
+        startedAt: new Date().toISOString(),
+        scanned: 0,
+        total: 500,
+        error: err.message,
+      });
+    });
+
+    return {
+      success: true,
+      message: 'Swing scan initiated in background',
+      isScanning: true,
+    };
+  }
+
+  private async executeScan(userId: string, account: any): Promise<ScanRun> {
     const client = this.factory.createClient(account);
     const kite   = client['kite'];
 
@@ -232,6 +276,13 @@ export class SwingScannerService {
       this.logger.warn(`Failed to persist scan results: ${e.message}`),
     );
 
+    this.activeScans.set(userId, {
+      status: 'completed',
+      startedAt: new Date().toISOString(),
+      scanned,
+      total: scanned,
+    });
+
     this.logger.log(`Scan complete — ${results.length} setups found from ${scanned} stocks`);
     return run;
   }
@@ -240,6 +291,9 @@ export class SwingScannerService {
     const { page = 1, pageSize = 30, pattern, sortBy = 'score' } = query;
     const skip = (page - 1) * pageSize;
 
+    const active = this.activeScans.get(userId);
+    const isScanning = active?.status === 'running';
+
     // 1. Find the latest scan timestamp for this user
     const lastResult = await (this.prisma as any).swingScan.findFirst({
       where: { userId },
@@ -247,7 +301,19 @@ export class SwingScannerService {
       select: { scannedAt: true },
     }).catch(() => null);
 
-    if (!lastResult) return null;
+    if (!lastResult) {
+      return {
+        id: null,
+        scannedAt: null,
+        totalScanned: 0,
+        totalResults: 0,
+        page: 1,
+        pageSize,
+        totalPages: 0,
+        results: [],
+        isScanning,
+      };
+    }
     const scanDate = lastResult.scannedAt;
 
     // 2. Build where clause
@@ -284,6 +350,7 @@ export class SwingScannerService {
       page,
       pageSize,
       totalPages: Math.ceil(totalCount / pageSize),
+      isScanning,
       results: rows.map((r: any, i: number) => ({
         rank: skip + i + 1,
         symbol: r.symbol,
