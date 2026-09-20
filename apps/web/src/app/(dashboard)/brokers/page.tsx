@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -203,6 +203,8 @@ export default function BrokersPage() {
       {/* Connect modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
         <DialogContent className="p-0 border-slate-100 overflow-hidden w-[calc(100%-2rem)] sm:max-w-[440px] rounded-2xl max-h-[90vh] overflow-y-auto gap-0">
+          <DialogTitle className="sr-only">Connect Broker Account</DialogTitle>
+          <DialogDescription className="sr-only">Link your trading account securely</DialogDescription>
           {selectedBroker && (
             <>
               {/* Header */}

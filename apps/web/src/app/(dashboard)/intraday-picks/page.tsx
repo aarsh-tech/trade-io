@@ -274,14 +274,15 @@ _Powered by Tradeio.site Intelligence_`;
             })
           }
           className={cn(
-            "w-full h-9 text-xs font-bold uppercase tracking-wider rounded-lg shadow-2xs gap-1.5",
+            "w-full min-w-0 h-9 px-3 text-xs font-bold uppercase tracking-wider rounded-lg shadow-2xs gap-1.5 flex items-center justify-center overflow-hidden",
             isLong
               ? "bg-emerald-600 hover:bg-emerald-700 text-white"
               : "bg-rose-600 hover:bg-rose-700 text-white"
           )}
         >
-          <Zap className="h-3.5 w-3.5" />
-          {isLong ? `Buy ${r.symbol} (MIS)` : `Short ${r.symbol} (MIS)`}
+          <Zap className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{isLong ? "Buy" : "Short"} {r.symbol}</span>
+          <span className="hidden sm:inline text-[10px] opacity-80 shrink-0">(MIS)</span>
         </Button>
 
         {/* Expand Notes */}

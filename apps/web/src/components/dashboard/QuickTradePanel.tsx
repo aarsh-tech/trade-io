@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { brokerApi } from "@/lib/api";
 import { useBrokers } from "@/hooks/useBrokers";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface QuickTradeStock {
@@ -338,6 +338,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
     <Dialog open={stock !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent hideClose className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden p-0 border-none max-h-[95vh] sm:max-h-[90vh] flex flex-col gap-0">
         <DialogTitle className="sr-only">Quick Trade Setup for {activeStock.symbol}</DialogTitle>
+        <DialogDescription className="sr-only">Quick Trade execution setup and parameters</DialogDescription>
         
         {/* ── Header ────────────────────────────────────────────────────── */}
         <div

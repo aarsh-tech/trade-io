@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   ShieldCheck,
@@ -389,9 +389,9 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                       Hardware Guard
                     </Badge>
                   </div>
-                  <p className="text-xs text-slate-300 mt-1">
+                  <DialogDescription className="text-xs text-slate-300 mt-1">
                     Hard execution guardrails enforced server-side before orders reach broker APIs.
-                  </p>
+                  </DialogDescription>
                 </div>
               </div>
             </div>

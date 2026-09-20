@@ -1047,7 +1047,7 @@ function StrategyCard({
           </Button>
 
           {/* Execution Logs & Monitor */}
-          <Link href={`/strategies/${s.id}`}>
+          <Link href={`/strategies/${s.id}`} prefetch={false}>
             <Button
               variant="outline"
               size="icon"
@@ -1059,7 +1059,7 @@ function StrategyCard({
           </Link>
 
           {/* Settings / Edit */}
-          <Link href={`/strategies/${s.id}/edit`}>
+          <Link href={`/strategies/${s.id}/edit`} prefetch={false}>
             <Button
               variant="outline"
               size="icon"

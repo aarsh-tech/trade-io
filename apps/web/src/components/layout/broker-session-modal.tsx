@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -186,9 +187,9 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
             <DialogTitle className="text-base sm:text-lg font-bold text-slate-900 mt-1">
               Kite Daily Session &amp; API Manager
             </DialogTitle>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <DialogDescription className="text-xs text-slate-500 mt-0.5">
               Authenticate your daily Zerodha access token and configure developer console settings.
-            </p>
+            </DialogDescription>
           </div>
         </div>
 
