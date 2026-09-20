@@ -22,4 +22,5 @@ scripts/*
 !scripts/db-cleanup.js
 !scripts/nginx-tradeio.conf
 !scripts/setup-server.sh
+!scripts/deploy-backend.sh
 
