@@ -23,4 +23,5 @@ scripts/*
 !scripts/nginx-tradeio.conf
 !scripts/setup-server.sh
 !scripts/deploy-backend.sh
+!scripts/setup-nginx.sh
 
