@@ -21,4 +21,5 @@ scripts/*
 !scripts/seed-admin.js
 !scripts/db-cleanup.js
 !scripts/nginx-tradeio.conf
+!scripts/setup-server.sh
 
