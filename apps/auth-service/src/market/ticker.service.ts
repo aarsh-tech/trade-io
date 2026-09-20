@@ -242,14 +242,14 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // OPTIMIZATION 5: 5-minute cooldown on failed/disconnected accounts
+    // Resilient retry: 15-second cooldown on failed accounts instead of 5 minutes
     const failedInfo = this.failedAccounts.get(accountId);
     if (failedInfo) {
       if (failedInfo.accessToken !== account.accessToken) {
         // Token was refreshed/updated! Clear cooldown and reconnect immediately
         this.failedAccounts.delete(accountId);
-      } else if (Date.now() - failedInfo.timestamp < 300000) {
-        // 5-minute cooldown before retrying
+      } else if (Date.now() - failedInfo.timestamp < 15000) {
+        // 15-second cooldown before retrying transient failure
         return;
       } else {
         this.failedAccounts.delete(accountId);
@@ -365,6 +365,11 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         access_token: account.accessToken,
       });
 
+      // Enable aggressive native auto-reconnection: up to 100 retries with 3s backoff
+      if (typeof ticker.autoReconnect === 'function') {
+        ticker.autoReconnect(true, 100, 3);
+      }
+
       ticker.on('ticks', (ticks: any[]) => {
         const mappedTicks: Record<string, number> = {};
         ticks.forEach((tick) => {
@@ -402,14 +407,31 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
             ? JSON.stringify(err)
             : String(err || 'Unknown connection error'));
         this.logger.error(`Zerodha Ticker error for account ${account.clientId}: ${errMsg}`);
-        this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
-        try {
-          if (typeof ticker.autoReconnect === 'function') {
-            ticker.autoReconnect(false);
-          }
-          ticker.disconnect();
-        } catch (_) {}
-        this.tickers.delete(account.id);
+
+        const isAuthError =
+          errMsg.includes('403') ||
+          errMsg.includes('TokenException') ||
+          errMsg.includes('Session') ||
+          errMsg.includes('expired') ||
+          errMsg.includes('invalid');
+
+        if (isAuthError) {
+          // Unrecoverable token expiration: stop auto-reconnect and flag account
+          this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
+          try {
+            if (typeof ticker.autoReconnect === 'function') {
+              ticker.autoReconnect(false);
+            }
+            ticker.disconnect();
+          } catch (_) {}
+          this.tickers.delete(account.id);
+          this.prisma.brokerAccount
+            .update({ where: { id: account.id }, data: { tokenHealth: 'EXPIRED' } })
+            .catch(() => {});
+        } else {
+          // Transient network error: allow native auto-reconnect to seamlessly restore ticks
+          this.logger.warn(`Transient ticker error for ${account.clientId}; KiteTicker auto-reconnect will re-establish stream.`);
+        }
       });
 
       ticker.on('disconnect', (error: any) => {
@@ -418,25 +440,17 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           error?.reason ||
           (typeof error === 'object' && Object.keys(error).length > 0
             ? JSON.stringify(error)
-            : 'Connection closed / Session inactive');
-        this.logger.warn(`Zerodha Ticker disconnected for account ${account.clientId}: ${errDetail}`);
-        // Immediately set cooldown so we don't spam reconnect loops
-        this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
-        try {
-          if (typeof ticker.autoReconnect === 'function') {
-            ticker.autoReconnect(false);
-          }
-          ticker.disconnect();
-        } catch (_) {}
-        this.tickers.delete(account.id);
+            : 'Connection closed / Stream interrupted');
+        this.logger.warn(`Zerodha Ticker disconnected for account ${account.clientId}: ${errDetail}. Auto-reconnecting in background...`);
+        // Note: We do NOT disconnect or delete the ticker here! KiteTicker native autoReconnect will reconnect in seconds.
       });
 
       ticker.on('reconnect', (reconnectCount: number, reconnectInterval: number) => {
-        this.logger.log(`Zerodha Ticker reconnecting for account ${account.clientId}: attempt ${reconnectCount}, interval ${reconnectInterval}ms`);
+        this.logger.log(`Zerodha Ticker reconnecting for account ${account.clientId}: attempt #${reconnectCount} (${reconnectInterval}ms interval)`);
       });
 
       ticker.on('noreconnect', () => {
-        this.logger.error(`Zerodha Ticker reconnection failed for account ${account.clientId}. Cleaning up ticker instance.`);
+        this.logger.error(`Zerodha Ticker reconnection attempts exhausted for account ${account.clientId}. Cleaning up ticker instance.`);
         this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
         this.tickers.delete(account.id);
       });

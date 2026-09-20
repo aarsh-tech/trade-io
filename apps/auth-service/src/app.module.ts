@@ -11,6 +11,7 @@ import { SwingScannerModule } from './swing-scanner/swing-scanner.module';
 import { OrdersModule } from './orders/orders.module';
 import { AdminModule } from './admin/admin.module';
 import { RiskModule } from './risk/risk.module';
+import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RiskModule } from './risk/risk.module';
     OrdersModule,
     RiskModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}
 

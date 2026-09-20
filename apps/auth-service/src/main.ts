@@ -90,6 +90,9 @@ async function bootstrap() {
     SwaggerModule.setup('docs', app, document);
   }
 
+  // Enable graceful shutdown hooks for zero-downtime PM2 restarts
+  app.enableShutdownHooks();
+
   const port = process.env.PORT || 3002;
   const server = await app.listen(port, '0.0.0.0');
   const httpServer = app.getHttpServer();
