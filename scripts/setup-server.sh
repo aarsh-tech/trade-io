@@ -22,12 +22,12 @@ else
 fi
 
 echo ""
-echo "📦 [2/5] Updating Packages & Installing System Dependencies..."
+echo "📦 [2/6] Updating Packages & Installing System Dependencies..."
 sudo apt update -y
-sudo apt install -y curl wget git build-essential nginx postgresql postgresql-contrib certbot python3-certbot-nginx
+sudo apt install -y curl wget git build-essential nginx postgresql postgresql-contrib certbot python3-certbot-nginx fail2ban ufw
 
 echo ""
-echo "⚡ [3/5] Installing Node.js 20 LTS, pnpm & pm2..."
+echo "⚡ [3/6] Installing Node.js 20 LTS, pnpm & pm2..."
 if ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
     sudo apt install -y nodejs
@@ -36,17 +36,54 @@ fi
 sudo npm install -g pnpm pm2
 
 echo ""
-echo "🗄️ [4/5] Starting & Enabling PostgreSQL Service..."
+echo "🗄️ [4/6] Starting & Enabling PostgreSQL Service..."
 sudo systemctl enable postgresql
 sudo systemctl start postgresql
 
 echo ""
-echo "🎉 [5/5] Server Memory & Swap Status:"
+echo "🛡️ [5/6] Hardening Server Security (UFW Firewall & Fail2ban)..."
+# 1. Configure UFW Firewall (Only expose SSH, HTTP, and HTTPS; DB 5432 & Node 3002 remain locked)
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp comment 'SSH'
+sudo ufw allow 80/tcp comment 'HTTP'
+sudo ufw allow 443/tcp comment 'HTTPS'
+echo "y" | sudo ufw enable
+
+# 2. Configure Fail2ban (Auto-bans IPs with 5 failed attempts or scanning for exploits)
+sudo tee /etc/fail2ban/jail.local > /dev/null <<EOF
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled = true
+port    = 22
+mode    = aggressive
+
+[nginx-http-auth]
+enabled = true
+
+[nginx-botsearch]
+enabled  = true
+port     = http,https
+logpath  = %(nginx_error_log)s
+maxretry = 3
+EOF
+
+sudo systemctl enable fail2ban
+sudo systemctl restart fail2ban
+echo "  ✅ UFW Firewall & Fail2ban active (Port 5432 & 3002 isolated internally)"
+
+echo ""
+echo "🎉 [6/6] Server Memory & Hardware Status:"
 free -h
 
 echo ""
 echo "=============================================================================="
-echo "✅ Server Initialization Complete!"
+echo "✅ Server Initialization & Security Hardening Complete!"
 echo "Node: $(node -v) | pnpm: $(pnpm -v) | pm2: $(pm2 -v)"
+echo "Firewall: UFW active (22, 80, 443) | Protection: Fail2ban active"
 echo "Next Step: Configure PostgreSQL and run pnpm db:push"
 echo "=============================================================================="
