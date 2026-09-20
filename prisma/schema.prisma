@@ -31,6 +31,13 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // RMS & Trading Safety Settings
+  maxDailyLoss          Float?    @default(5000)
+  maxOrderValue         Float?    @default(200000)
+  maxOrderQty           Int?      @default(1800)
+  killSwitchActive      Boolean   @default(false)
+  killSwitchTriggeredAt DateTime?
+
   brokerAccounts    BrokerAccount[]
   strategies        Strategy[]
   orders            Order[]
@@ -64,6 +71,8 @@ model BrokerAccount {
   clientId     String?
   accessToken  String?
   tokenExpiry  DateTime?
+  tokenHealth  String     @default("UNKNOWN") // "HEALTHY" | "EXPIRED" | "UNKNOWN"
+  lastHealthCheckAt DateTime?
   isActive     Boolean    @default(true)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt

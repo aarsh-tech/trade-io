@@ -129,6 +129,14 @@ export class BrokersService {
   }
 
   async placeOrder(userId: string, accountId: string, orderData: any) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { killSwitchActive: true },
+    });
+    if (user?.killSwitchActive) {
+      throw new BadRequestException('🛑 [RMS KILL SWITCH ACTIVE] Trading is locked for today. Orders are suspended.');
+    }
+
     const acc = await this.prisma.brokerAccount.findUnique({
       where: { id: accountId },
     });

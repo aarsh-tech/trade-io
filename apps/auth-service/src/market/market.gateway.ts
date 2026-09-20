@@ -12,7 +12,8 @@ import { Logger } from '@nestjs/common';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => callback(null, true),
+    credentials: true,
   },
   namespace: 'market',
 })

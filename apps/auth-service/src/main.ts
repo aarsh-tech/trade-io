@@ -23,13 +23,33 @@ async function bootstrap() {
       if (!origin) return callback(null, true);
 
       const frontendUrl = process.env.FRONTEND_URL;
-      if (frontendUrl && origin === frontendUrl) {
-        return callback(null, true);
+      if (frontendUrl) {
+        // Support comma-separated origins (e.g. "https://tradeio.site,https://www.tradeio.site,http://localhost:3000")
+        const allowed = frontendUrl.split(',').map((s) => s.trim().replace(/\/$/, ''));
+        const cleanOrigin = origin.replace(/\/$/, '');
+
+        if (allowed.includes(cleanOrigin)) {
+          return callback(null, true);
+        }
+
+        // Allow main domain and all its subdomains (e.g. *.tradeio.site)
+        try {
+          const originHost = new URL(cleanOrigin).hostname;
+          const matches = allowed.some((allowedUrl) => {
+            try {
+              const allowedHost = new URL(allowedUrl).hostname;
+              return originHost === allowedHost || originHost.endsWith(`.${allowedHost}`);
+            } catch {
+              return false;
+            }
+          });
+          if (matches) return callback(null, true);
+        } catch {}
       }
 
       // Check localhost, 127.0.0.1, or private LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
       const isLocalOrLan =
-        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
+        /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
           origin,
         );
 
@@ -54,16 +74,21 @@ async function bootstrap() {
     }),
   );
 
-  // Swagger docs
-  const config = new DocumentBuilder()
-    .setTitle('Tradeio.site API Service')
-    .setDescription('Algorithmic trading and execution engine API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  // Swagger docs (Disabled in production unless explicitly enabled)
+  const isProduction = process.env.NODE_ENV === 'production';
+  const enableSwagger = process.env.ENABLE_SWAGGER === 'true';
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, document);
+  if (!isProduction || enableSwagger) {
+    const config = new DocumentBuilder()
+      .setTitle('Tradeio.site API Service')
+      .setDescription('Algorithmic trading and execution engine API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('docs', app, document);
+  }
 
   const port = process.env.PORT || 3002;
   const server = await app.listen(port, '0.0.0.0');
@@ -73,7 +98,11 @@ async function bootstrap() {
     httpServer.headersTimeout = 66000;
   }
   console.log(`Auth Service running on http://localhost:${port}`);
-  console.log(`Swagger: http://localhost:${port}/docs`);
+  if (!isProduction || enableSwagger) {
+    console.log(`Swagger: http://localhost:${port}/docs`);
+  } else {
+    console.log(`Swagger documentation is disabled in production.`);
+  }
 }
 
 bootstrap();

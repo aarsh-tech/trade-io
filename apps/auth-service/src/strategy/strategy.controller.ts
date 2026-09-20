@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Delete,
-  Body, Param, Request, UseGuards,
+  Body, Param, Request, UseGuards, BadRequestException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -12,6 +12,7 @@ import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
 import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
+import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('Strategies')
 @Controller('strategies')
@@ -26,6 +27,7 @@ export class StrategyController {
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
     private readonly gammaBlastEngine: GammaBlastExpiryEngine,
     private readonly scheduler: MarketSchedulerService,
+    private readonly prisma: PrismaService,
   ) { }
 
   @Get()
@@ -70,6 +72,14 @@ export class StrategyController {
   @Post(':id/start')
   @ApiOperation({ summary: 'Start executing a strategy' })
   async start(@Request() req, @Param('id') id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { killSwitchActive: true },
+    });
+    if (user?.killSwitchActive) {
+      throw new BadRequestException('🛑 [RMS KILL SWITCH ACTIVE] Trading is locked for today. Manual strategy start is disabled.');
+    }
+
     const strategy = await this.strategyService.get(req.user.id, id);
     const engine = this.getEngine(strategy.type);
     const result = await engine.start(id);

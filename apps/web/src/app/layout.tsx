@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     template: "%s | Tradeio.site",
   },
   description:
-    "Professional algorithmic trading platform. Build, backtest, and deploy trading strategies across multiple brokers.",
+    "Professional algorithmic trading platform. Build, and deploy trading strategies.",
   keywords: ["algo trading", "zerodha", "backtesting", "EMA crossover", "breakout strategy"],
   metadataBase: new URL("https://tradeio.site"),
   icons: {

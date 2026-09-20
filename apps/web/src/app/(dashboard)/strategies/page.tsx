@@ -36,6 +36,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { strategyApi, brokerApi } from "@/lib/api";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { RmsSafetyCard } from "@/components/rms/rms-safety-card";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -378,6 +379,9 @@ export default function StrategiesPage() {
           </Link>
         </div>
       </div>
+
+      {/* ─── RMS Safety Control Center & Kill Switch ─── */}
+      <RmsSafetyCard />
 
       {/* ─── KPI Metrics Stat Ribbon ─── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { Breakout15MinEngine } from './breakout15min.engine';
@@ -6,6 +6,7 @@ import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
 import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
+import { RiskService } from '../risk/risk.service';
 
 /**
  * MarketSchedulerService
@@ -38,6 +39,16 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   private lastEodMinute: number = -1;
 
   /**
+   * Tracks the IST date string of the last 08:30 AM pre-market broker health check.
+   */
+  private lastPreMarketCheckDate: string | null = null;
+
+  /**
+   * Timestamp of the last RMS daily loss check.
+   */
+  private lastLossCheckTime: number = 0;
+
+  /**
    * Strategy IDs that the user explicitly stopped during the current
    * server session.  The scheduler will not restart these until the
    * next calendar day (i.e. the next auto-start cycle).
@@ -52,6 +63,8 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
     private readonly niftyOptionsScalperEngine: NiftyOptionsScalperEngine,
     private readonly gammaBlastEngine: GammaBlastExpiryEngine,
+    @Inject(forwardRef(() => RiskService))
+    private readonly riskService: RiskService,
   ) { }
 
   onModuleInit() {
@@ -96,6 +109,25 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
     const MARKET_OPEN = 9 * 60 + 15; // 09:15
     const MARKET_CLOSE = 15 * 60 + 30; // 15:30
+
+    // ── 08:30 AM IST Pre-Market Broker Token Health Check ────────────────────────
+    const isPreMarketCheckTime = (h === 8 && m === 30) || (h === 8 && m > 30 && this.lastPreMarketCheckDate === null);
+    if (isPreMarketCheckTime) {
+      const todayKey = ist.toDateString();
+      if (this.lastPreMarketCheckDate !== todayKey) {
+        this.lastPreMarketCheckDate = todayKey;
+        this.logger.log('🌅 [Pre-Market 08:30 AM IST] Executing automated broker session health check...');
+        this.riskService.checkBrokerSessionHealth().catch((e) => this.logger.error(`Broker health check error: ${e?.message}`));
+      }
+    }
+
+    // ── Continuous RMS Daily Loss Watchdog (Every 15s during market hours) ─────────
+    if (hhmm >= MARKET_OPEN && hhmm <= MARKET_CLOSE) {
+      if (now.getTime() - this.lastLossCheckTime > 15_000) {
+        this.lastLossCheckTime = now.getTime();
+        this.monitorDailyLosses().catch((e) => this.logger.error(`RMS loss monitor error: ${e?.message}`));
+      }
+    }
 
     // ── Auto-start at exactly 09:15:01 IST (or boot mid-session during market hours) ──
     const isExactAutoStartTime = (h === 9 && m === 15 && s >= 1) || (h === 9 && m === 16);
@@ -165,6 +197,22 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
         if (!account?.accessToken) {
           this.logger.warn(`Auto-start: ${strategy.name} — no active broker session, skipping`);
+          continue;
+        }
+
+        if (account.tokenHealth === 'EXPIRED') {
+          this.logger.warn(`Auto-start: ${strategy.name} — broker session token is EXPIRED. Re-login required before trading.`);
+          continue;
+        }
+
+        // Verify that the user's Kill Switch is NOT active
+        const user = await this.prisma.user.findUnique({
+          where: { id: strategy.userId },
+          select: { killSwitchActive: true },
+        });
+
+        if (user?.killSwitchActive) {
+          this.logger.warn(`Auto-start: ${strategy.name} — Kill Switch is ACTIVE for user ${strategy.userId}. Skipped for safety.`);
           continue;
         }
 
@@ -315,6 +363,22 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.error(`Auto-stop error: ${err.message}`);
+    }
+  }
+
+  // ── RMS Daily Loss Watchdog Helper ──────────────────────────────────────────
+  private async monitorDailyLosses() {
+    try {
+      const activeStrats = await this.prisma.strategy.findMany({
+        where: { isActive: true },
+        select: { userId: true },
+      });
+      const uniqueUserIds = Array.from(new Set(activeStrats.map((s) => s.userId)));
+      for (const uid of uniqueUserIds) {
+        await this.riskService.checkAndEnforceDailyLoss(uid);
+      }
+    } catch (err: any) {
+      this.logger.debug(`RMS monitorDailyLosses notice: ${err?.message}`);
     }
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Zap, Menu, ShieldAlert, Key, Server } from "lucide-react";
+import { Bell, Zap, Menu, ShieldAlert, Key, Server, ShieldCheck, AlertOctagon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
 import { usePathname } from "next/navigation";
@@ -9,12 +9,26 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { openRiskDisclosure } from "@/components/shared/risk-disclosure-modal";
 import { useBrokers } from "@/hooks/useBrokers";
 import { BrokerSessionModal } from "@/components/layout/broker-session-modal";
+import { riskApi } from "@/lib/api";
 
 export function TopBar() {
   const pathname = usePathname();
   const { user } = useAuthStore();
   const { brokers } = useBrokers();
   const [showBrokerModal, setShowBrokerModal] = useState(false);
+  const [isKillActive, setIsKillActive] = useState(false);
+
+  useEffect(() => {
+    async function checkRms() {
+      try {
+        const res = await riskApi.getStatus();
+        setIsKillActive(Boolean(res.data?.data?.killSwitchActive));
+      } catch {}
+    }
+    checkRms();
+    const interval = setInterval(checkRms, 20_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const zerodhaAccount = brokers.find((b: any) => b.broker === "ZERODHA");
   const isKiteActive = Boolean(
@@ -55,6 +69,27 @@ export function TopBar() {
             <ShieldAlert className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-amber-600 group-hover:scale-110 transition-transform" />
             <span>Risk Disclosure</span>
           </button>
+
+          {/* Live RMS Status / Kill Switch Indicator */}
+          {isKillActive ? (
+            <Link
+              href="/strategies"
+              title="RMS Kill Switch is ACTIVE - Click to manage"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white transition-colors text-[10px] sm:text-[11px] font-bold cursor-pointer shadow-xs animate-pulse"
+            >
+              <AlertOctagon className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+              <span>KILL SWITCH ON</span>
+            </Link>
+          ) : (
+            <Link
+              href="/strategies"
+              title="RMS Risk Management System Active & Protected"
+              className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 transition-colors text-[10px] sm:text-[11px] font-medium"
+            >
+              <ShieldCheck className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-emerald-600" />
+              <span>RMS Active</span>
+            </Link>
+          )}
         </div>
 
         {/* Right: User Profile & Actions */}

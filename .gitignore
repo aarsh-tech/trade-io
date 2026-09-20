@@ -20,4 +20,5 @@ scripts/*
 !scripts/clean-cache.js
 !scripts/seed-admin.js
 !scripts/db-cleanup.js
+!scripts/nginx-tradeio.conf
 

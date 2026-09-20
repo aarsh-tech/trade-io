@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { StrategyController } from './strategy.controller';
 import { StrategyService } from './strategy.service';
 import { StrategyGateway } from './strategy.gateway';
@@ -13,9 +13,16 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { SwingScannerModule } from '../swing-scanner/swing-scanner.module';
 import { MarketModule } from '../market/market.module';
 import { AuthModule } from '../auth/auth.module';
+import { RiskModule } from '../risk/risk.module';
 
 @Module({
-  imports: [PrismaModule, BrokersModule, MarketModule, AuthModule],
+  imports: [
+    PrismaModule,
+    BrokersModule,
+    MarketModule,
+    AuthModule,
+    forwardRef(() => RiskModule),
+  ],
   controllers: [StrategyController],
   providers: [
     StrategyService,

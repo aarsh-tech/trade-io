@@ -75,6 +75,9 @@ const instrumentsCache = new Map<string, { data: any[]; timestamp: number }>();
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 class ZerodhaClient implements IBrokerClient {
+  private static recentOrderDedup = new Map<string, number>();
+  private static orderRateMap = new Map<string, number[]>();
+
   private kite: any;
   private apiKey: string;
   private accessToken: string | null;
@@ -172,6 +175,62 @@ class ZerodhaClient implements IBrokerClient {
 
   async placeOrder(params: OrderParams): Promise<string> {
     try {
+      // ── Safety Guard 1: Quantity & Exchange Freeze Limit Clamp ──
+      const upperSym = (params.symbol || '').toUpperCase().trim();
+      let freezeLimit = 1800; // default ceiling
+      if (upperSym.includes('BANKNIFTY')) freezeLimit = 900;
+      else if (upperSym.includes('SENSEX')) freezeLimit = 500;
+      else if (upperSym.includes('FINNIFTY')) freezeLimit = 1800;
+      else if (upperSym.includes('MIDCPNIFTY')) freezeLimit = 2800;
+      else if (upperSym.includes('NIFTY')) freezeLimit = 1800;
+
+      const requestedQty = Number(params.qty);
+      if (requestedQty <= 0) {
+        throw new Error(`🛑 [SAFETY GUARD] Invalid order quantity: ${requestedQty}`);
+      }
+      if (requestedQty > freezeLimit) {
+        throw new Error(`🛑 [SAFETY GUARD] Order quantity ${requestedQty} exceeds exchange freeze limit of ${freezeLimit} for ${params.symbol}. Order blocked.`);
+      }
+
+      // ── Safety Guard 2: Max Order Rupee Value (Fat-Finger Guard) ──
+      const estPrice = Number(params.price) || Number(params.triggerPrice) || 0;
+      const MAX_ORDER_VALUE_CAP = 250000; // ₹2.5 Lakh hard limit per order
+      if (estPrice > 0 && requestedQty * estPrice > MAX_ORDER_VALUE_CAP) {
+        throw new Error(`🛑 [FAT-FINGER GUARD] Order value ₹${(requestedQty * estPrice).toLocaleString('en-IN')} exceeds safety cap of ₹${MAX_ORDER_VALUE_CAP.toLocaleString('en-IN')}.`);
+      }
+
+      // ── Safety Guard 3: Rate Limiting & Idempotency Dedup (Entries ONLY) ──
+      const isExitOrSl = Boolean(
+        params.tag?.toUpperCase().includes('EXIT') ||
+        params.tag?.toUpperCase().includes('SL') ||
+        params.tag?.toUpperCase().includes('TARGET') ||
+        params.tag?.toUpperCase().includes('SQUARE') ||
+        params.orderType === 'SL' ||
+        params.orderType === 'SL-M'
+      );
+
+      // Exits and Stop-Loss orders are NEVER rate-limited to guarantee capital safety
+      if (!isExitOrSl) {
+        const now = Date.now();
+        const dedupKey = `${upperSym}:${params.side}:${requestedQty}:${params.orderType}:${params.price || 0}`;
+        const lastOrderTime = ZerodhaClient.recentOrderDedup.get(dedupKey) || 0;
+        if (now - lastOrderTime < 2000) {
+          throw new Error(`🛑 [DEDUP GUARD] Duplicate entry order detected within 2s for ${params.symbol}. Blocked to prevent double execution.`);
+        }
+        ZerodhaClient.recentOrderDedup.set(dedupKey, now);
+
+        // 60-second sliding rate limiter (max 10 entry orders/min per symbol to prevent runaway loops)
+        const rateList = (ZerodhaClient.orderRateMap.get(upperSym) || []).filter(t => now - t < 60000);
+        if (rateList.length >= 10) {
+          throw new Error(`🛑 [RATE LIMIT GUARD] Too many entry orders placed for ${params.symbol} within 60s (limit: 10/min). Runaway loop blocked.`);
+        }
+        rateList.push(now);
+        ZerodhaClient.orderRateMap.set(upperSym, rateList);
+
+        if (ZerodhaClient.recentOrderDedup.size > 1000) ZerodhaClient.recentOrderDedup.clear();
+        if (ZerodhaClient.orderRateMap.size > 500) ZerodhaClient.orderRateMap.clear();
+      }
+
       const variety = (params.variety || "regular").toLowerCase();
       console.log('Placing Zerodha Order:', {
         variety,
@@ -255,6 +314,15 @@ class ZerodhaClient implements IBrokerClient {
       return await this.kite.getMargins();
     } catch (err: any) {
       console.error('Zerodha getMargins Error:', err?.message || err);
+      throw err;
+    }
+  }
+
+  async getProfile(): Promise<any> {
+    try {
+      return await this.kite.getProfile();
+    } catch (err: any) {
+      console.error('Zerodha getProfile Error:', err?.message || err);
       throw err;
     }
   }

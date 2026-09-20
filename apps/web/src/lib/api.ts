@@ -3,23 +3,33 @@ import { useAuthStore } from "@/store";
 
 export function getApiBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
   }
   if (typeof window !== "undefined" && window.location.hostname) {
-    return `http://${window.location.hostname}:3002/v1`;
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (isLocal) {
+      return `http://${window.location.hostname}:3002/v1`;
+    }
+    const protocol = window.location.protocol;
+    return `${protocol}//${window.location.hostname}:3002/v1`;
   }
   return "http://127.0.0.1:3002/v1";
 }
 
 export function getSocketBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_WS_URL) {
-    return process.env.NEXT_PUBLIC_WS_URL;
+    return process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
   }
   if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL.replace(/\/v1\/?$/, "");
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/v1\/?$/, "").replace(/\/$/, "");
   }
   if (typeof window !== "undefined" && window.location.hostname) {
-    return `http://${window.location.hostname}:3002`;
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (isLocal) {
+      return `http://${window.location.hostname}:3002`;
+    }
+    const protocol = window.location.protocol;
+    return `${protocol}//${window.location.hostname}:3002`;
   }
   return "http://127.0.0.1:3002";
 }
@@ -254,6 +264,16 @@ export const adminApi = {
     api.post(`/admin/users/${userId}/revoke-sessions`),
   deleteUser: (userId: string) =>
     api.delete(`/admin/users/${userId}`),
+};
+
+// ─── Risk Management System (RMS) ─────────────────────────────────────────────
+export const riskApi = {
+  getStatus: () => api.get("/risk/status"),
+  triggerKillSwitch: (reason?: string) => api.post("/risk/kill-switch", { reason }),
+  resetKillSwitch: () => api.post("/risk/reset-kill-switch"),
+  updateSettings: (dto: { maxDailyLoss?: number; maxOrderValue?: number; maxOrderQty?: number }) =>
+    api.patch("/risk/settings", dto),
+  checkBrokerHealth: () => api.get("/risk/broker-health"),
 };
 
 
