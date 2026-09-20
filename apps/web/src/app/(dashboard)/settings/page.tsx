@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/store";
-import { Lock, User, Shield, Key } from "lucide-react";
+import { Lock, User, Shield, Key, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useUser, use2FA } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
@@ -16,15 +16,32 @@ export default function SettingsPage() {
   const { setup2FA, isSettingUp, verify2FA, isVerifying, disable2FA, isDisabling } = use2FA();
 
   const [activeTab, setActiveTab] = useState<"profile" | "security">("profile");
-  const [profileForm, setProfileForm] = useState({ name: user?.name || "", email: user?.email || "" });
+  const [profileForm, setProfileForm] = useState({ name: user?.name || "" });
+
+  useEffect(() => {
+    if (user?.name) {
+      setProfileForm({ name: user.name });
+    }
+  }, [user?.name]);
+
   const [passwordForm, setPasswordForm] = useState({ current: "", newPassword: "", confirm: "" });
+  const [showPasswords, setShowPasswords] = useState({
+    current: false,
+    newPassword: false,
+    confirm: false,
+  });
+
+  const toggleShowPassword = (field: "current" | "newPassword" | "confirm") => {
+    setShowPasswords((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [setup2faCode, setSetup2faCode] = useState("");
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await updateProfile(profileForm);
+      await updateProfile({ name: profileForm.name });
     } catch {
       // error handled in hook
     }
@@ -42,6 +59,7 @@ export default function SettingsPage() {
         newPassword: passwordForm.newPassword,
       });
       setPasswordForm({ current: "", newPassword: "", confirm: "" });
+      setShowPasswords({ current: false, newPassword: false, confirm: false });
     } catch {
       // error handled in hook
     }
@@ -112,13 +130,20 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">Email Address</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-semibold text-slate-700">Email Address</label>
+                      <span className="text-xs text-slate-400 flex items-center gap-1 font-medium">
+                        <Lock className="h-3 w-3 text-slate-400" /> Locked
+                      </span>
+                    </div>
                     <input
                       type="email"
-                      value={profileForm.email}
-                      onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
-                      className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={user?.email || ""}
+                      disabled
+                      readOnly
+                      className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-slate-100/90 text-slate-500 font-mono text-sm cursor-not-allowed select-none focus:outline-none"
                     />
+                    <p className="text-xs text-slate-400">Your account email address cannot be changed.</p>
                   </div>
                   <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isUpdatingProfile}>
                     {isUpdatingProfile ? "Saving..." : "Save Changes"}
@@ -139,34 +164,76 @@ export default function SettingsPage() {
                   <form onSubmit={handlePasswordUpdate} className="space-y-4">
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Current Password</label>
-                      <input
-                        type="password"
-                        value={passwordForm.current}
-                        onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
-                        className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        required
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-sm font-semibold text-slate-700">New Password</label>
+                      <div className="relative">
                         <input
-                          type="password"
-                          value={passwordForm.newPassword}
-                          onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                          className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          type={showPasswords.current ? "text" : "password"}
+                          value={passwordForm.current}
+                          onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
+                          className="w-full h-10 pl-3 pr-10 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           required
                         />
+                        <button
+                          type="button"
+                          onClick={() => toggleShowPassword("current")}
+                          className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
+                          aria-label={showPasswords.current ? "Hide current password" : "Show current password"}
+                        >
+                          {showPasswords.current ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-semibold text-slate-700">New Password</label>
+                        <div className="relative">
+                          <input
+                            type={showPasswords.newPassword ? "text" : "password"}
+                            value={passwordForm.newPassword}
+                            onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            required
+                          />
+                          <button
+                            type="button"
+                            onClick={() => toggleShowPassword("newPassword")}
+                            className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
+                            aria-label={showPasswords.newPassword ? "Hide new password" : "Show new password"}
+                          >
+                            {showPasswords.newPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-1.5">
                         <label className="text-sm font-semibold text-slate-700">Confirm Password</label>
-                        <input
-                          type="password"
-                          value={passwordForm.confirm}
-                          onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
-                          className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          required
-                        />
+                        <div className="relative">
+                          <input
+                            type={showPasswords.confirm ? "text" : "password"}
+                            value={passwordForm.confirm}
+                            onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
+                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            required
+                          />
+                          <button
+                            type="button"
+                            onClick={() => toggleShowPassword("confirm")}
+                            className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
+                            aria-label={showPasswords.confirm ? "Hide confirm password" : "Show confirm password"}
+                          >
+                            {showPasswords.confirm ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <Button type="submit" variant="outline" className="border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold" disabled={isChangingPassword}>
