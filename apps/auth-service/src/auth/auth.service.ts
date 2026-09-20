@@ -186,7 +186,8 @@ export class AuthService {
     });
 
     // In production, send email here. For now, log it.
-    console.log(` Password reset link: http://localhost:3000/reset-password?token=${token}`);
+    const frontendBase = (process.env.FRONTEND_URL?.split(',')[0] || 'https://tradeio.site').replace(/\/$/, '');
+    console.log(` Password reset link: ${frontendBase}/reset-password?token=${token}`);
 
     return { success: true, message: 'If an account exists, a reset link has been sent' };
   }
