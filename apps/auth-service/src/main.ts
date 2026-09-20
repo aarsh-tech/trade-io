@@ -94,7 +94,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const port = process.env.PORT || 3002;
-  const server = await app.listen(port, '0.0.0.0');
+  await app.listen(port, '0.0.0.0');
   const httpServer = app.getHttpServer();
   if (httpServer && httpServer.keepAliveTimeout !== undefined) {
     httpServer.keepAliveTimeout = 65000;
