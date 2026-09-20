@@ -324,7 +324,7 @@ export default function BrokersPage() {
                       </div>
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
-                          <span>Server Static IP (IP Whitelisting):</span>
+                          <span>IP Whitelist For Kite:</span>
                           <button
                             type="button"
                             onClick={() => {

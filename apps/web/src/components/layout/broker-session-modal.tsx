@@ -372,7 +372,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
             {/* Field 3: Server Static IP */}
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
-                <span>AWS Server Static IP:</span>
+                <span>IP Whitelist For Kite:</span>
                 <span className="text-[10px] text-emerald-600 font-semibold">For IP Whitelisting</span>
               </div>
               <div className="flex items-center gap-1.5">
