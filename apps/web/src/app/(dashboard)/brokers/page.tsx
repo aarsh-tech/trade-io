@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plug, Plus, X, CheckCircle2, RefreshCcw, Trash2 } from "lucide-react";
+import { Plug, Plus, X, CheckCircle2, RefreshCcw, Trash2, ExternalLink, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -289,6 +289,59 @@ export default function BrokersPage() {
                       </>
                     )}
                   </div>
+
+                  {selectedBroker.key === 'ZERODHA' && (
+                    <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200/80 text-xs space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-blue-900">Kite Developer App Settings:</span>
+                        <a
+                          href="https://developers.kite.trade/apps"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] font-semibold text-blue-600 hover:underline inline-flex items-center gap-1"
+                        >
+                          <span>Open Console</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
+                          <span>Redirect URL:</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText("https://api.tradeio.site/v1/brokers/callback/zerodha");
+                              toast.success("Copied Redirect URL!");
+                            }}
+                            className="text-blue-600 hover:underline font-bold text-[11px] cursor-pointer"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p className="font-mono text-[11px] bg-white p-2 rounded-lg border border-slate-200 truncate select-all text-slate-800">
+                          https://api.tradeio.site/v1/brokers/callback/zerodha
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
+                          <span>Server Static IP (IP Whitelisting):</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText("15.135.45.92");
+                              toast.success("Copied Static IP: 15.135.45.92!");
+                            }}
+                            className="text-blue-600 hover:underline font-bold text-[11px] cursor-pointer"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p className="font-mono text-[11px] bg-white p-2 rounded-lg border border-slate-200 truncate select-all text-slate-800">
+                          15.135.45.92
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex items-start gap-3 p-4 rounded-xl bg-slate-50 border border-slate-100">
                     <div className="pt-0.5 text-slate-400">🔒</div>

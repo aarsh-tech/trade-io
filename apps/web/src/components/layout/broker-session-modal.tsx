@@ -42,14 +42,15 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
     getLoginUrl,
   } = usePortfolio(zerodhaAccount?.id);
 
+  const DEFAULT_LIGHTSAIL_IP = "15.135.45.92";
   const [requestToken, setRequestToken] = useState("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [serverIp, setServerIp] = useState<string>("");
+  const [serverIp, setServerIp] = useState<string>(DEFAULT_LIGHTSAIL_IP);
 
   // Load saved Lightsail server IP if stored
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const savedIp = localStorage.getItem("tradeio_lightsail_ip") || "";
+      const savedIp = localStorage.getItem("tradeio_lightsail_ip");
       if (savedIp) setServerIp(savedIp);
     }
   }, []);
@@ -372,24 +373,20 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
                 <span>AWS Server Static IP:</span>
-                <span className="text-[10px] text-slate-400">For API Whitelisting</span>
+                <span className="text-[10px] text-emerald-600 font-semibold">For IP Whitelisting</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <Input
-                  value={serverIp}
-                  onChange={(e) => handleSaveIp(e.target.value)}
-                  placeholder="e.g. 13.235.xxx.xxx (Saved locally)"
-                  className="h-9 text-xs font-mono bg-white border-slate-200 focus:border-blue-500"
-                />
+                <div className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 truncate select-all">
+                  {serverIp || DEFAULT_LIGHTSAIL_IP}
+                </div>
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={!serverIp.trim()}
-                  onClick={() => copyToClipboard(serverIp, "Server IP")}
-                  className="h-9 px-3 shrink-0 cursor-pointer hover:bg-slate-100 disabled:opacity-50"
+                  onClick={() => copyToClipboard(serverIp || DEFAULT_LIGHTSAIL_IP, "Static IP")}
+                  className="h-9 px-3 shrink-0 cursor-pointer hover:bg-slate-100"
                 >
-                  {copiedField === "Server IP" ? (
+                  {copiedField === "Static IP" ? (
                     <Check className="h-3.5 w-3.5 text-emerald-600" />
                   ) : (
                     <Copy className="h-3.5 w-3.5 text-slate-600" />
