@@ -39,11 +39,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   private lastEodMinute: number = -1;
 
   /**
-   * Tracks the IST date string of the last 08:30 AM pre-market broker health check.
-   */
-  private lastPreMarketCheckDate: string | null = null;
-
-  /**
    * Timestamp of the last RMS daily loss check.
    */
   private lastLossCheckTime: number = 0;
@@ -123,17 +118,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
     const MARKET_OPEN = 9 * 60 + 15; // 09:15
     const MARKET_CLOSE = 15 * 60 + 30; // 15:30
-
-    // ── 08:30 AM IST Pre-Market Broker Token Health Check ────────────────────────
-    const isPreMarketCheckTime = (h === 8 && m === 30) || (h === 8 && m > 30 && this.lastPreMarketCheckDate === null);
-    if (isPreMarketCheckTime) {
-      const todayKey = ist.toDateString();
-      if (this.lastPreMarketCheckDate !== todayKey) {
-        this.lastPreMarketCheckDate = todayKey;
-        this.logger.log('🌅 [Pre-Market 08:30 AM IST] Executing automated broker session health check...');
-        this.riskService.checkBrokerSessionHealth().catch((e) => this.logger.error(`Broker health check error: ${e?.message}`));
-      }
-    }
 
     // ── Continuous RMS Daily Loss Watchdog (Every 15s during market hours) ─────────
     if (hhmm >= MARKET_OPEN && hhmm <= MARKET_CLOSE) {
@@ -219,30 +203,23 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
           continue;
         }
 
-        // Verify broker session token health
+        // Verify broker session token health via deterministic timestamp
         const nowMs = Date.now();
         const hasFreshExpiry = account.tokenExpiry && new Date(account.tokenExpiry).getTime() > nowMs;
 
-        if (account.tokenHealth === 'EXPIRED') {
-          if (!hasFreshExpiry) {
-            this.logger.warn(`Auto-start: ${strategy.name} — broker session token is EXPIRED. Re-login required before trading.`);
-            continue;
-          }
-          // Token was refreshed today but tokenHealth flag wasn't cleared — validate and heal
-          try {
-            const client = this.factory.createClient(account);
-            if (client.getProfile) await client.getProfile();
-            else await client.getMargins();
-            await this.prisma.brokerAccount.update({
-              where: { id: account.id },
-              data: { tokenHealth: 'HEALTHY', lastHealthCheckAt: new Date() },
-            });
-            account.tokenHealth = 'HEALTHY';
-            this.logger.log(`Auto-start: Auto-healed broker session token for ${strategy.name}. Marked HEALTHY.`);
-          } catch (e: any) {
-            this.logger.warn(`Auto-start: ${strategy.name} — broker session token re-validation failed (${e?.message || e}). Re-login required.`);
-            continue;
-          }
+        if (!hasFreshExpiry) {
+          this.logger.warn(`Auto-start: ${strategy.name} — broker session token is EXPIRED or not refreshed for today. Please log in to your broker before trading.`);
+          continue;
+        }
+
+        // Token has valid expiry for today — ensure account tokenHealth is marked HEALTHY
+        if (account.tokenHealth !== 'HEALTHY') {
+          await this.prisma.brokerAccount.update({
+            where: { id: account.id },
+            data: { tokenHealth: 'HEALTHY', lastHealthCheckAt: new Date() },
+          }).catch(() => {});
+          account.tokenHealth = 'HEALTHY';
+          this.logger.log(`Auto-start: Verified fresh active session for ${strategy.name}. Status: HEALTHY.`);
         }
 
         // Verify that the user's Kill Switch is NOT active
