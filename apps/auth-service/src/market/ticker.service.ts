@@ -295,15 +295,20 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       const client = this.brokerFactory.createClient(account);
 
-      // Fetch instruments in parallel to map symbol <-> token faster
-      const [instruments, bseInstruments, nfoInstruments, bfoInstruments] = await Promise.all([
+      // Always fetch core exchanges (NSE for all Equities, NFO for all Nifty/BankNifty/FinNifty/Stock Options)
+      // BSE and BFO are fetched on-demand if a symbol specifically requires BSE or Sensex F&O.
+      const hasBse = symbols.some(s => s.startsWith('BSE') || s.includes('SENSEX'));
+      const hasBfo = symbols.some(s => s.startsWith('BFO') || s.includes('SENSEX'));
+
+      const fetches: Promise<any[]>[] = [
         client.getInstruments('NSE').catch(() => []),
-        client.getInstruments('BSE').catch(() => []),
         client.getInstruments('NFO').catch(() => []),
-        client.getInstruments('BFO').catch(() => []),
-      ]);
-      
-      const allInst = [...instruments, ...bseInstruments, ...nfoInstruments, ...bfoInstruments];
+      ];
+      if (hasBse) fetches.push(client.getInstruments('BSE').catch(() => []));
+      if (hasBfo) fetches.push(client.getInstruments('BFO').catch(() => []));
+
+      const instrumentArrays = await Promise.all(fetches);
+      const allInst = instrumentArrays.flat();
       const tokenToSymbol = new Map<number, string>();
       const symbolToToken = new Map<string, number>();
       
@@ -330,15 +335,6 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         tokenToSymbol.set(tok, sym);
         symbolToToken.set(sym, tok);
         symbolToToken.set(`${exch}:${sym}`, tok);
-        if (exch === 'NSE') {
-          symbolToToken.set(`NSE:${sym}`, tok);
-        } else if (exch === 'BSE') {
-          symbolToToken.set(`BSE:${sym}`, tok);
-        } else if (exch === 'NFO') {
-          symbolToToken.set(`NFO:${sym}`, tok);
-        } else if (exch === 'BFO') {
-          symbolToToken.set(`BFO:${sym}`, tok);
-        }
       });
 
       const resolveToken = (sym: string): number | undefined => {
