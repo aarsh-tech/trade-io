@@ -194,10 +194,10 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
 
   useEffect(() => {
     loadStrategies();
-    // Poll strategies every 15s instead of 3s to prevent network spam & broker rate limits
+    // Poll strategies every 30s instead of 15s to prevent network spam & broker rate limits
     const interval = setInterval(() => {
       loadStrategies();
-    }, 15000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [loadStrategies]);
 

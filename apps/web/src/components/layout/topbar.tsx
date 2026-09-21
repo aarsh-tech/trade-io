@@ -26,7 +26,7 @@ export function TopBar() {
       } catch {}
     }
     checkRms();
-    const interval = setInterval(checkRms, 20_000);
+    const interval = setInterval(checkRms, 60_000);
     return () => clearInterval(interval);
   }, []);
 

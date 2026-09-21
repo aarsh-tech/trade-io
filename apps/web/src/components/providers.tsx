@@ -12,6 +12,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           queries: {
             staleTime: 30 * 1000,
             retry: 1,
+            refetchOnWindowFocus: false, // Prevents request storm on tab switch / window click
+            refetchOnReconnect: false,   // Prevents sudden simultaneous barrage on network reconnect
           },
         },
       })

@@ -19,8 +19,9 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       restart_delay: 2000,
-      // Generous memory ceiling: Prevents unintended mid-session restarts during 9:15 AM - 3:30 PM IST
-      max_memory_restart: '1500M',
+      // Strict V8 memory limit: Forces aggressive garbage collection at 256MB to keep server RAM < 500MB
+      node_args: '--max-old-space-size=256',
+      max_memory_restart: '320M',
       watch: false,
       env_production: {
         NODE_ENV: 'production',
@@ -40,7 +41,9 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
-      max_memory_restart: '800M',
+      // Strict V8 memory limit for Next.js SSR process
+      node_args: '--max-old-space-size=180',
+      max_memory_restart: '220M',
       watch: false,
       env_production: {
         NODE_ENV: 'production',
