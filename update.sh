@@ -58,8 +58,8 @@ node apps/auth-service/scripts/verify-all-fixes.js
 
 echo -e "\n${GREEN}${BOLD}🎉 ALL PRE-FLIGHT TESTS PASSED! Safely restarting PM2...${NC}"
 
-# Restart PM2 process
-pm2 restart algo-backend
+# Restart PM2 process using updated ecosystem config & env
+pm2 restart ecosystem.config.js --only algo-backend --update-env
 
 # Brief pause to allow process initialization
 sleep 2
