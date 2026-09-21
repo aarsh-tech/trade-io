@@ -435,12 +435,16 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       ticker.on('disconnect', (error: any) => {
-        const errDetail =
-          error?.message ||
-          error?.reason ||
-          (typeof error === 'object' && Object.keys(error).length > 0
-            ? JSON.stringify(error)
-            : 'Connection closed / Stream interrupted');
+        let errDetail = 'Connection closed / Stream interrupted';
+        if (typeof error === 'string') {
+          errDetail = error;
+        } else if (error?.message) {
+          errDetail = error.message;
+        } else if (error?.reason) {
+          errDetail = error.reason;
+        } else if (error?.code) {
+          errDetail = `Code: ${error.code}`;
+        }
         this.logger.warn(`Zerodha Ticker disconnected for account ${account.clientId}: ${errDetail}. Auto-reconnecting in background...`);
         // Note: We do NOT disconnect or delete the ticker here! KiteTicker native autoReconnect will reconnect in seconds.
       });

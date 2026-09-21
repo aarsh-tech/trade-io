@@ -224,7 +224,13 @@ export class BrokersService {
 
     const updatedAcc = await this.prisma.brokerAccount.update({
       where: { id: accountId },
-      data: { accessToken: session.access_token, tokenExpiry: expiry, isActive: true },
+      data: {
+        accessToken: session.access_token,
+        tokenExpiry: expiry,
+        isActive: true,
+        tokenHealth: 'HEALTHY',
+        lastHealthCheckAt: new Date(),
+      },
     });
 
     // 1. Invalidate client factory instance

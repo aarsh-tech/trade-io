@@ -86,7 +86,7 @@ class ZerodhaClient implements IBrokerClient {
     this.apiKey = apiKey;
     this.accessToken = accessToken;
     const { KiteConnect } = require('kiteconnect');
-    this.kite = new KiteConnect({ api_key: apiKey, timeout: 5000 });
+    this.kite = new KiteConnect({ api_key: apiKey, timeout: 15000 });
     if (this.kite.requestInstance?.defaults) {
       this.kite.requestInstance.defaults.httpsAgent = keepAliveHttpsAgent;
       this.kite.requestInstance.defaults.httpAgent = keepAliveHttpAgent;
@@ -130,7 +130,20 @@ class ZerodhaClient implements IBrokerClient {
 
   async getPositions(): Promise<Position[]> {
     try {
-      const positions = await this.kite.getPositions();
+      let positions: any = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          positions = await this.kite.getPositions();
+          break;
+        } catch (err: any) {
+          const isTimeout = err?.code === 'ECONNABORTED' || err?.message?.includes('ECONNABORTED') || err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET';
+          if (isTimeout && attempt === 0) {
+            await new Promise(r => setTimeout(r, 600));
+            continue;
+          }
+          throw err;
+        }
+      }
       return (positions?.net || []).map((p: any) => ({
         symbol: p.tradingsymbol,
         qty: p.quantity,
@@ -504,7 +517,20 @@ class ZerodhaClient implements IBrokerClient {
 
       if (!token) throw new Error(`Instrument token not found for ${symbol}`);
 
-      const data = await this.kite.getHistoricalData(token, interval, from, to, false);
+      let data: any[] | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          data = await this.kite.getHistoricalData(token, interval, from, to, false);
+          break;
+        } catch (err: any) {
+          const isTimeout = err?.code === 'ECONNABORTED' || err?.message?.includes('ECONNABORTED') || err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET';
+          if (isTimeout && attempt === 0) {
+            await new Promise(r => setTimeout(r, 600));
+            continue;
+          }
+          throw err;
+        }
+      }
       return data || [];
     } catch (err) {
       console.error('Zerodha getHistoricalData Error:', err);

@@ -49,6 +49,11 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   private lastLossCheckTime: number = 0;
 
   /**
+   * Timestamp of the last auto-start check during market hours.
+   */
+  private lastAutoStartCheckTime: number = 0;
+
+  /**
    * Strategy IDs that the user explicitly stopped during the current
    * server session.  The scheduler will not restart these until the
    * next calendar day (i.e. the next auto-start cycle).
@@ -86,6 +91,15 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   notifyManualStop(strategyId: string) {
     this.manuallyStoppedToday.add(strategyId);
     this.logger.log(`Scheduler: strategy ${strategyId} marked as manually stopped — will not auto-restart today`);
+  }
+
+  /**
+   * Called whenever a user connects or renews their broker session so any armed
+   * strategies are started immediately without waiting for the next check tick.
+   */
+  async triggerImmediateAutoStart() {
+    this.logger.log('MarketScheduler: Immediate auto-start requested (broker session updated)');
+    await this.autoStartStrategies();
   }
 
   // ── Core scheduler loop ──────────────────────────────────────────────────────
@@ -129,16 +143,21 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // ── Auto-start at exactly 09:15:01 IST (or boot mid-session during market hours) ──
-    const isExactAutoStartTime = (h === 9 && m === 15 && s >= 1) || (h === 9 && m === 16);
-    const isMidSessionStart = hhmm > MARKET_OPEN && hhmm < MARKET_CLOSE && this.lastAutoStartDate === null;
-
-    if (isExactAutoStartTime || isMidSessionStart) {
+    // ── Auto-start Check during Market Hours (09:15:00 to 15:00:00 IST) ──
+    // Fires sharply at 09:15:01 IST, and continuously monitors every 10s so any armed strategy
+    // whose broker session was logged in or renewed will auto-start immediately!
+    if (hhmm >= MARKET_OPEN && hhmm < (15 * 60 + 5)) {
       const todayKey = ist.toDateString();
       if (this.lastAutoStartDate !== todayKey) {
         this.lastAutoStartDate = todayKey;
-        // Reset the manual-stop exclusion list for the new trading day
         this.manuallyStoppedToday.clear();
+      }
+
+      const isExactOpenTick = (h === 9 && m === 15 && s <= 5);
+      const isPeriodicCheckTime = (now.getTime() - this.lastAutoStartCheckTime >= 10_000);
+
+      if (isExactOpenTick || isPeriodicCheckTime) {
+        this.lastAutoStartCheckTime = now.getTime();
         await this.autoStartStrategies();
       }
     }
@@ -200,9 +219,30 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
           continue;
         }
 
+        // Verify broker session token health
+        const nowMs = Date.now();
+        const hasFreshExpiry = account.tokenExpiry && new Date(account.tokenExpiry).getTime() > nowMs;
+
         if (account.tokenHealth === 'EXPIRED') {
-          this.logger.warn(`Auto-start: ${strategy.name} — broker session token is EXPIRED. Re-login required before trading.`);
-          continue;
+          if (!hasFreshExpiry) {
+            this.logger.warn(`Auto-start: ${strategy.name} — broker session token is EXPIRED. Re-login required before trading.`);
+            continue;
+          }
+          // Token was refreshed today but tokenHealth flag wasn't cleared — validate and heal
+          try {
+            const client = this.factory.createClient(account);
+            if (client.getProfile) await client.getProfile();
+            else await client.getMargins();
+            await this.prisma.brokerAccount.update({
+              where: { id: account.id },
+              data: { tokenHealth: 'HEALTHY', lastHealthCheckAt: new Date() },
+            });
+            account.tokenHealth = 'HEALTHY';
+            this.logger.log(`Auto-start: Auto-healed broker session token for ${strategy.name}. Marked HEALTHY.`);
+          } catch (e: any) {
+            this.logger.warn(`Auto-start: ${strategy.name} — broker session token re-validation failed (${e?.message || e}). Re-login required.`);
+            continue;
+          }
         }
 
         // Verify that the user's Kill Switch is NOT active
