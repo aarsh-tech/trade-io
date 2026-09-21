@@ -308,7 +308,7 @@ async function runAllTests() {
 
     assert(setup !== null, 'Setup MUST NOT be null for OFSS! (Was previously rejected by >3% move filter)');
     assert.strictEqual(setup.trend, 'SHORT', 'Setup trend must be SHORT');
-    assert(setup.setupType === 'TREND_BREAKDOWN' || setup.setupType === 'PULLBACK_REJECTION', `Setup type should be a valid short entry type, got: ${setup.setupType}`);
+    assert(['TREND_BREAKDOWN', 'PULLBACK_REJECTION', 'OPEN_HIGH_DRIVE'].includes(setup.setupType), `Setup type should be a valid short entry type, got: ${setup.setupType}`);
     assert(setup.triggerLow !== null && setup.triggerLow <= 11050, `Trigger low should be at or below 11050, got: ${setup.triggerLow}`);
     assert(setup.slPrice > 11050, `Protective SL price (${setup.slPrice}) must be above entry/trigger price (11050)`);
     console.log(`   🎯 Detected Setup: ${setup.description}`);
@@ -353,11 +353,58 @@ async function runAllTests() {
 
     assert(setup !== null, 'Pattern 5 setup MUST trigger for strong trend continuation!');
     assert.strictEqual(setup.trend, 'SHORT');
-    assert.strictEqual(setup.setupType, 'TREND_BREAKDOWN', `Expected TREND_BREAKDOWN, got: ${setup.setupType}`);
+    assert(['TREND_BREAKDOWN', 'OPEN_HIGH_DRIVE'].includes(setup.setupType), `Expected valid breakdown, got: ${setup.setupType}`);
     assert(setup.triggerLow !== null && setup.triggerLow <= 11050);
     assert(setup.slPrice > 11050);
     console.log(`   🎯 Detected Pattern 5: ${setup.description}`);
     console.log(`   🎯 Trigger Low: ₹${setup.triggerLow} | SL: ₹${setup.slPrice}`);
+  });
+
+  syncTest('evaluateStockSetup triggers SHORT on closing of 09:20 Candle (OFSS Opening Range & VWAP Breakdown)', () => {
+    const { EmaVwapCrossoverEngine } = require('../dist/strategy/emavwap.engine');
+    const engine = new EmaVwapCrossoverEngine({}, {}, {});
+
+    const today = new Date();
+    const makeCandle = (minuteOffset, open, high, low, close, vol) => {
+      const d = new Date(today);
+      d.setHours(9, 15 + minuteOffset, 0, 0);
+      return { date: d, open, high, low, close, volume: vol };
+    };
+
+    // Exactly matching today's OFSS chart:
+    // Candle 1 (09:15-09:20): Spikes to 11,787.00
+    // Candle 2 (09:20-09:25): Giant red candle plunging through VWAP (11,620) & 15-EMA (11,635), closing at 11,480
+    const candles = [
+      makeCandle(0, 11640, 11787, 11600, 11630, 45000), // 09:15 candle (High: 11,787, Low: 11,600)
+      makeCandle(5, 11630, 11640, 11460, 11480, 75000), // 09:20 candle (Closes at 09:25 below VWAP & EMA)
+    ];
+
+    // Notice: Because Candle 1 spiked, 15-EMA (11,635) is still ABOVE VWAP (11,620) at 09:25!
+    // Previously, currEma < currVwap BLOCKED this entire trade!
+    const emas = [11625, 11635];
+    const vwaps = [11610, 11620];
+
+    const config = {
+      symbol: 'OFSS',
+      exchange: 'NSE',
+      timeframe: 5,
+      maxTradesPerDay: 2,
+      enableProfitFloor: true
+    };
+
+    const now = new Date(today);
+    now.setHours(9, 25, 1, 0); // 09:25:01 AM IST - exact moment the 09:20 candle closed!
+
+    const setup = engine['evaluateStockSetup'](candles, emas, vwaps, now, config, 'OFSS');
+
+    assert(setup !== null, 'Setup MUST trigger on closing of 09:20 candle for OFSS!');
+    assert.strictEqual(setup.trend, 'SHORT', 'Must trigger SHORT entry!');
+    assert.strictEqual(setup.setupType, 'OPEN_HIGH_DRIVE', 'Must be OPEN_HIGH_DRIVE / Opening Breakdown setup');
+    assert(setup.triggerLow !== null && setup.triggerLow <= 11480, `Trigger low should be <= 11480, got ${setup.triggerLow}`);
+    assert(setup.slPrice >= 11600, `SL (${setup.slPrice}) should be protected above candle/VWAP high`);
+    assert(setup.scoreBoost >= 500, `Score boost must be >= 500, got ${setup.scoreBoost}`);
+    console.log(`   🎯 Detected 09:20 Candle Trade: ${setup.description}`);
+    console.log(`   🎯 Trigger Low: ₹${setup.triggerLow} | SL: ₹${setup.slPrice} (${setup.slNote}) | Boost: +${setup.scoreBoost}`);
   });
 
 

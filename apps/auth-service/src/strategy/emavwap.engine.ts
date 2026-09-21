@@ -3127,9 +3127,67 @@ export class EmaVwapCrossoverEngine {
       };
     }
 
-    // ── 2. Pattern 2 (TOP PRIORITY): VWAP / 15-EMA Pullback Rejection (Best Systematic Entry with Tight SL) ──
-    const isDowntrend = currEma < currVwap && currCandle.close <= currVwap && currCandle.close <= currEma;
-    const isUptrend = currEma > currVwap && currCandle.close >= currVwap && currCandle.close >= currEma;
+    // ── 2. Pattern 2 (TOP PRIORITY AT OPEN): Opening 5M Range & VWAP Breakdown / Breakout (The 09:20 Candle Setup) ──
+    // Triggers at 09:25 AM (closing of the 09:20 candle) when price breaks the opening 5m candle range
+    // and closes firmly across both VWAP & 15-EMA (e.g. OFSS morning waterfall breakdown).
+    if (todayCandles.length >= 2 && todayCandles.length <= 8) {
+      const orh = firstDayCandle.high;
+      const orl = firstDayCandle.low;
+
+      // Opening Range Breakdown (Bearish)
+      if (currCandle.close < currCandle.open && currCandle.close <= currVwap && currCandle.close <= currEma) {
+        const brokeOpeningLow = currCandle.low <= orl * 1.002 || currCandle.close < orl;
+        const rejectedFromHigh = dayHigh > 0 && ((dayHigh - currCandle.close) / dayHigh) >= 0.015;
+        const distFromEmaPct = ((currEma - currCandle.close) / currCandle.close) * 100;
+        const notOverExtended = distFromEmaPct <= Math.max(3.0, dynamicMaxEmaDistPct * 1.6) && Math.abs(moveFromOpenPct) <= 5.5;
+
+        if ((brokeOpeningLow || rejectedFromHigh) && notOverExtended) {
+          const tightSl = getSwingShelfSl('SHORT', Math.max(currCandle.high, currVwap));
+          return {
+            trend: 'SHORT',
+            setupType: 'OPEN_HIGH_DRIVE',
+            triggerHigh: null,
+            triggerLow: currCandle.low,
+            slPrice: tightSl,
+            invalidationPrice: tightSl,
+            slNote: 'Opening Range Breakdown High SL',
+            candleTime: currCandle.date,
+            candleIdx: lastIdx,
+            scoreBoost: 520, // Top priority: early session leader setup
+            description: `Opening 5m Range & VWAP Breakdown below ₹${currCandle.low.toFixed(2)} (ORH: ₹${orh.toFixed(2)}, ORL: ₹${orl.toFixed(2)})`
+          };
+        }
+      }
+
+      // Opening Range Breakout (Bullish)
+      if (currCandle.close > currCandle.open && currCandle.close >= currVwap && currCandle.close >= currEma) {
+        const brokeOpeningHigh = currCandle.high >= orh * 0.998 || currCandle.close > orh;
+        const bouncedFromLow = dayLow > 0 && ((currCandle.close - dayLow) / dayLow) >= 0.015;
+        const distFromEmaPct = ((currCandle.close - currEma) / currCandle.close) * 100;
+        const notOverExtended = distFromEmaPct <= Math.max(3.0, dynamicMaxEmaDistPct * 1.6) && moveFromOpenPct <= 5.5;
+
+        if ((brokeOpeningHigh || bouncedFromLow) && notOverExtended) {
+          const tightSl = getSwingShelfSl('LONG', Math.min(currCandle.low, currVwap));
+          return {
+            trend: 'LONG',
+            setupType: 'OPEN_LOW_DRIVE',
+            triggerHigh: currCandle.high,
+            triggerLow: null,
+            slPrice: tightSl,
+            invalidationPrice: tightSl,
+            slNote: 'Opening Range Breakout Low SL',
+            candleTime: currCandle.date,
+            candleIdx: lastIdx,
+            scoreBoost: 520, // Top priority: early session leader setup
+            description: `Opening 5m Range & VWAP Breakout above ₹${currCandle.high.toFixed(2)} (ORH: ₹${orh.toFixed(2)}, ORL: ₹${orl.toFixed(2)})`
+          };
+        }
+      }
+    }
+
+    // ── 3. Pattern 3 (TOP PRIORITY): VWAP / 15-EMA Pullback Rejection (Best Systematic Entry with Tight SL) ──
+    const isDowntrend = (currEma < currVwap || currCandle.close < currVwap) && currCandle.close <= currVwap && currCandle.close <= currEma;
+    const isUptrend = (currEma > currVwap || currCandle.close > currVwap) && currCandle.close >= currVwap && currCandle.close >= currEma;
 
     if (isDowntrend && todayCandles.length >= 3) {
       const touchedEma = prevCandle.high >= prevEma * 0.998 || currCandle.high >= currEma * 0.998;
@@ -3505,7 +3563,7 @@ export class EmaVwapCrossoverEngine {
       }
       if (firstDayCandle && firstDayCandle.open > 0) {
         const moveFromOpenPct = (Math.abs(currentCandle.close - firstDayCandle.open) / firstDayCandle.open) * 100;
-        if (moveFromOpenPct > 3.0) {
+        if (moveFromOpenPct > 5.5) {
           return null; // Move is exhausted; avoid entering at extreme extended prices
         }
       }
