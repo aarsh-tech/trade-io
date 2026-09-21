@@ -96,15 +96,15 @@ export function TopBar() {
 
         {/* Right: User Profile & Actions */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* Server Static IP & Kite API Setup (Desktop) */}
+          {/* Kite API Setup (Desktop) */}
           <button
             type="button"
             onClick={() => setShowBrokerModal(true)}
             className="hidden md:flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-slate-100/90 hover:bg-slate-200/80 border border-slate-200/80 text-slate-700 transition-all cursor-pointer shadow-2xs group shrink-0 whitespace-nowrap"
-            title="Zerodha Kite API Settings & Server Static IP Whitelist"
+            title="Zerodha Kite API Settings & App Setup"
           >
             <Server className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-blue-600 group-hover:scale-110 transition-transform shrink-0" />
-            <span>Kite API &amp; IP</span>
+            <span>Kite API Setup</span>
           </button>
 
           {/* Zerodha Kite Quick Session & Daily Login Status Button */}

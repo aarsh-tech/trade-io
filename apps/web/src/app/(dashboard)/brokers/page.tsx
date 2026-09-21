@@ -322,22 +322,13 @@ export default function BrokersPage() {
                           https://api.tradeio.site/v1/brokers/callback/zerodha
                         </p>
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
-                          <span>IP Whitelist For Kite:</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText("15.135.45.92");
-                              toast.success("Copied Static IP: 15.135.45.92!");
-                            }}
-                            className="text-blue-600 hover:underline font-bold text-[11px] cursor-pointer"
-                          >
-                            Copy
-                          </button>
+                      <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3 space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-blue-900">
+                          <span>Static IP in Kite Developer Console:</span>
+                          <span className="text-[10px] text-blue-600 font-medium">Mandatory by Zerodha</span>
                         </div>
-                        <p className="font-mono text-[11px] bg-white p-2 rounded-lg border border-slate-200 truncate select-all text-slate-800">
-                          15.135.45.92
+                        <p className="text-[11.5px] leading-relaxed text-blue-950/85">
+                          Zerodha requires each developer app to have a unique IP. Enter your designated / assigned <strong>Static IP</strong> in your Kite Connect App settings.
                         </p>
                       </div>
                     </div>

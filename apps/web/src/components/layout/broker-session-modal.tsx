@@ -42,25 +42,8 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
     getLoginUrl,
   } = usePortfolio(zerodhaAccount?.id);
 
-  const DEFAULT_LIGHTSAIL_IP = "15.135.45.92";
   const [requestToken, setRequestToken] = useState("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [serverIp, setServerIp] = useState<string>(DEFAULT_LIGHTSAIL_IP);
-
-  // Load saved Lightsail server IP if stored
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedIp = localStorage.getItem("tradeio_lightsail_ip");
-      if (savedIp) setServerIp(savedIp);
-    }
-  }, []);
-
-  const handleSaveIp = (val: string) => {
-    setServerIp(val);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("tradeio_lightsail_ip", val.trim());
-    }
-  };
 
   const copyToClipboard = (text: string, fieldName: string) => {
     if (navigator?.clipboard?.writeText) {
@@ -369,31 +352,15 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
               </div>
             </div>
 
-            {/* Field 3: Server Static IP */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
-                <span>IP Whitelist For Kite:</span>
-                <span className="text-[10px] text-emerald-600 font-semibold">For IP Whitelisting</span>
+            {/* Field 3: Kite Developer Static IP Notice */}
+            <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3 space-y-1">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-blue-900">
+                <span>Static IP in Kite Developer Console:</span>
+                <span className="text-[10px] text-blue-600 font-medium">Mandatory by Zerodha</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <div className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 truncate select-all">
-                  {serverIp || DEFAULT_LIGHTSAIL_IP}
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => copyToClipboard(serverIp || DEFAULT_LIGHTSAIL_IP, "Static IP")}
-                  className="h-9 px-3 shrink-0 cursor-pointer hover:bg-slate-100"
-                >
-                  {copiedField === "Static IP" ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5 text-slate-600" />
-                  )}
-                  <span className="ml-1 text-xs">Copy</span>
-                </Button>
-              </div>
+              <p className="text-[11.5px] leading-relaxed text-blue-950/85">
+                Zerodha requires each developer app to have a unique IP. Enter your designated / assigned <strong>Static IP</strong> in your Kite Connect App settings.
+              </p>
             </div>
           </div>
         </div>
