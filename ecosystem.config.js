@@ -25,6 +25,7 @@ module.exports = {
       env_production: {
         NODE_ENV: 'production',
         PORT: 3002,
+        TZ: 'Asia/Kolkata',
       },
       error_file: '../../logs/pm2-backend-error.log',
       out_file: '../../logs/pm2-backend-out.log',
@@ -44,6 +45,7 @@ module.exports = {
       env_production: {
         NODE_ENV: 'production',
         PORT: 3000,
+        TZ: 'Asia/Kolkata',
       },
       error_file: '../../logs/pm2-frontend-error.log',
       out_file: '../../logs/pm2-frontend-out.log',
