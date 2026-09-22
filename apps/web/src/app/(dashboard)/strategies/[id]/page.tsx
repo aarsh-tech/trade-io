@@ -349,7 +349,13 @@ export default function StrategyDetailPage() {
       (payload: { logs?: string[]; state?: any; orders?: any[] }) => {
         if (payload.logs) setLiveLogs(payload.logs);
         if (payload.state !== undefined) setLiveState(payload.state);
-        if (payload.orders) setActiveOrders(payload.orders);
+        if (payload.orders) {
+          if (payload.orders.length > 0) {
+            setActiveOrders(payload.orders);
+          } else {
+            setActiveOrders((prev) => (prev.length > 0 ? prev : []));
+          }
+        }
       }
     );
 
@@ -367,21 +373,28 @@ export default function StrategyDetailPage() {
     };
   }, [id]);
 
-  // Fallback status poll ONLY when WebSocket is NOT connected (every 10s) while strategy is actively running
+  // Periodic status & strategy synchronization to guarantee state and trades started from mobile are synced on desktop
   useEffect(() => {
-    if (!strategy?.isActive || isWsConnected) return;
     const interval = setInterval(async () => {
       try {
-        const statusRes = await strategyApi.status(id);
+        const [statusRes, stratRes] = await Promise.all([
+          strategyApi.status(id),
+          strategyApi.get(id),
+        ]);
+        if (stratRes.data?.data) {
+          setStrategy((prev) => (prev ? { ...prev, ...stratRes.data.data } : stratRes.data.data));
+        }
         if (statusRes.data?.data) {
           if (statusRes.data.data.logs) setLiveLogs(statusRes.data.data.logs);
           if (statusRes.data.data.state !== undefined) setLiveState(statusRes.data.data.state);
-          if (statusRes.data.data.orders) setActiveOrders(statusRes.data.data.orders);
+          if (statusRes.data.data.orders && statusRes.data.data.orders.length > 0) {
+            setActiveOrders(statusRes.data.data.orders);
+          }
         }
       } catch { }
-    }, 10000);
+    }, isWsConnected ? 20000 : 10000);
     return () => clearInterval(interval);
-  }, [id, strategy?.isActive, isWsConnected]);
+  }, [id, isWsConnected]);
 
   useEffect(() => {
     if (logsRef.current && showLogs) {

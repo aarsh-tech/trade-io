@@ -107,7 +107,8 @@ export default function OrdersPage() {
       const res = await orderApi.list();
       return (res.data?.data || []) as Order[];
     },
-    staleTime: 30_000,
+    staleTime: 10_000,
+    refetchInterval: 10_000,
   });
 
   const syncMutation = useMutation({
@@ -297,9 +298,16 @@ export default function OrdersPage() {
       accessorKey: "productType",
       header: "Product",
       cell: ({ row }) => (
-        <Badge variant="outline" className="text-[10.5px] font-bold bg-muted/30">
-          {row.original.productType || "MIS"}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className="text-[10.5px] font-bold bg-muted/30">
+            {row.original.productType || "MIS"}
+          </Badge>
+          {row.original.isPaperTrade && (
+            <Badge variant="outline" className="text-[9.5px] font-bold border-amber-500/40 text-amber-600 bg-amber-500/10">
+              PAPER
+            </Badge>
+          )}
+        </div>
       ),
     },
     {
