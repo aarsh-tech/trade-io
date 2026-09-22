@@ -87,8 +87,16 @@ export class AuthService {
         throw new UnauthorizedException('Refresh token expired or invalid');
       }
 
-      // Use deleteMany with catch to safely handle race condition where another concurrent refresh already deleted it
-      await this.prisma.refreshToken.deleteMany({ where: { token } }).catch(() => {});
+      // Allow a 60-second grace period on the rotated refresh token so concurrent requests across tabs/sessions don't get kicked out
+      await this.prisma.refreshToken.updateMany({
+        where: { token },
+        data: { expiresAt: new Date(Date.now() + 60_000) },
+      }).catch(() => {});
+
+      // Purge truly expired tokens asynchronously
+      this.prisma.refreshToken.deleteMany({
+        where: { expiresAt: { lt: new Date() } },
+      }).catch(() => {});
 
       const user = await this.users.findById(stored.userId);
       if (!user || user.isActive === false) {
