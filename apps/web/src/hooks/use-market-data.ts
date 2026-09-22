@@ -54,9 +54,6 @@ export function useMarketData(symbols: string[]) {
         ...prev,
         [tick.symbol]: tick.ltp,
         [rawSym]: tick.ltp,
-        [`NSE:${rawSym}`]: tick.ltp,
-        [`BSE:${rawSym}`]: tick.ltp,
-        [`NFO:${rawSym}`]: tick.ltp,
       }));
     });
 

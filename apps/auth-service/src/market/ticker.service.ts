@@ -48,13 +48,14 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           }
           if (match?.instrument_token) {
             token = match.instrument_token;
+            const matchExchange = match.exchange || match.segment || primaryExchange;
             tickerData.symbolToToken.set(symbol, token);
-            tickerData.symbolToToken.set(`${match.segment || primaryExchange}:${symbol}`, token);
+            tickerData.symbolToToken.set(`${matchExchange}:${symbol}`, token);
             tickerData.symbolToToken.set(`BFO:${symbol}`, token);
             tickerData.symbolToToken.set(`BSE:${symbol}`, token);
             tickerData.symbolToToken.set(`NSE:${symbol}`, token);
             tickerData.symbolToToken.set(`NFO:${symbol}`, token);
-            tickerData.tokenToSymbol.set(token, symbol);
+            tickerData.tokenToSymbol.set(token, { symbol, exchange: matchExchange });
           }
         }
       } catch (err: any) {
@@ -323,21 +324,23 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       const instrumentArrays = await Promise.all(fetches);
       const allInst = instrumentArrays.flat();
-      const tokenToSymbol = new Map<number, string>();
+      const tokenToSymbol = new Map<number, { symbol: string; exchange: string }>();
       const symbolToToken = new Map<string, number>();
       
-      // Standard index tokens
-      const indexMap: Record<string, number> = {
-        'NIFTY 50': 256265, 'NSE:NIFTY 50': 256265,
-        'NIFTY BANK': 260105, 'BANKNIFTY': 260105, 'NSE:BANKNIFTY': 260105,
-        'SENSEX': 265, 'BSE:SENSEX': 265,
-        'FINNIFTY': 257801, 'NSE:FINNIFTY': 257801,
-        'MIDCPNIFTY': 288009, 'NSE:MIDCPNIFTY': 288009,
-        'NIFTY IT': 257545, 'NSE:NIFTY IT': 257545,
-      };
-      Object.entries(indexMap).forEach(([sym, tok]) => {
-         tokenToSymbol.set(tok, sym);
-         symbolToToken.set(sym, tok);
+      // Standard index tokens — each token maps to ONE canonical {symbol, exchange}
+      // Per Kite docs, index instruments have unique tokens per exchange.
+      const indexEntries: Array<{ symbol: string; exchange: string; token: number; aliases: string[] }> = [
+        { symbol: 'NIFTY 50', exchange: 'NSE', token: 256265, aliases: ['NSE:NIFTY 50'] },
+        { symbol: 'NIFTY BANK', exchange: 'NSE', token: 260105, aliases: ['BANKNIFTY', 'NSE:BANKNIFTY'] },
+        { symbol: 'SENSEX', exchange: 'BSE', token: 265, aliases: ['BSE:SENSEX'] },
+        { symbol: 'FINNIFTY', exchange: 'NSE', token: 257801, aliases: ['NSE:FINNIFTY'] },
+        { symbol: 'MIDCPNIFTY', exchange: 'NSE', token: 288009, aliases: ['NSE:MIDCPNIFTY'] },
+        { symbol: 'NIFTY IT', exchange: 'NSE', token: 257545, aliases: ['NSE:NIFTY IT'] },
+      ];
+      indexEntries.forEach(({ symbol, exchange, token, aliases }) => {
+        tokenToSymbol.set(token, { symbol, exchange });
+        symbolToToken.set(symbol, token);
+        aliases.forEach((alias) => symbolToToken.set(alias, token));
       });
 
       allInst.forEach((i: any) => {
@@ -346,7 +349,11 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         if (!tok || isNaN(tok)) return;
         const exch = i.exchange || 'NSE';
         
-        tokenToSymbol.set(tok, sym);
+        // Only set tokenToSymbol if this token is NOT already claimed by an index entry
+        // (prevents instrument dump from overwriting hardcoded index tokens like SENSEX=265)
+        if (!tokenToSymbol.has(tok)) {
+          tokenToSymbol.set(tok, { symbol: sym, exchange: exch });
+        }
         symbolToToken.set(sym, tok);
         symbolToToken.set(`${exch}:${sym}`, tok);
       });
@@ -383,13 +390,13 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       ticker.on('ticks', (ticks: any[]) => {
         const mappedTicks: Record<string, number> = {};
         ticks.forEach((tick) => {
-          const sym = tokenToSymbol.get(tick.instrument_token);
-          if (sym && tick.last_price) {
-            mappedTicks[sym] = tick.last_price;
-            mappedTicks[`NSE:${sym}`] = tick.last_price;
-            mappedTicks[`NFO:${sym}`] = tick.last_price;
-            mappedTicks[`BFO:${sym}`] = tick.last_price;
-            mappedTicks[`BSE:${sym}`] = tick.last_price;
+          const info = tokenToSymbol.get(tick.instrument_token);
+          if (info && tick.last_price) {
+            // Only emit under the raw symbol AND its correct exchange prefix
+            // This prevents cross-exchange contamination (e.g. BSE:SENSEX index
+            // polluting NFO:SENSEX which could match SENSEX options)
+            mappedTicks[info.symbol] = tick.last_price;
+            mappedTicks[`${info.exchange}:${info.symbol}`] = tick.last_price;
           }
         });
         if (Object.keys(mappedTicks).length > 0) {

@@ -60,7 +60,14 @@ export default function PositionsPage() {
   // Calculate dynamic live positions with real-time LTP & live P&L overrides
   const livePositions = useMemo(() => {
     return (positions as Position[]).map((pos) => {
-      const livePrice = getPrice(pos.symbol) ?? pos.ltp;
+      const rawLivePrice = getPrice(pos.symbol);
+      const brokerLtp = pos.ltp || pos.avgPrice;
+      // Sanity guard: discard WebSocket LTP if it deviates >50% from broker API value
+      // This prevents cross-exchange tick contamination from causing absurd P&L
+      const isSane = typeof rawLivePrice === "number" && brokerLtp > 0
+        ? Math.abs(rawLivePrice - brokerLtp) / brokerLtp < 0.5
+        : true;
+      const livePrice = (typeof rawLivePrice === "number" && isSane) ? rawLivePrice : brokerLtp;
       const isLong = pos.qty > 0;
       const livePnl = (pos.qty !== 0 && livePrice && pos.avgPrice)
         ? (isLong ? (livePrice - pos.avgPrice) * pos.qty : (pos.avgPrice - livePrice) * Math.abs(pos.qty))

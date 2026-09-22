@@ -229,7 +229,13 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
   const livePositions = useMemo(() => {
     return allPositions.map((pos) => {
       const liveLtp = getPrice(pos.symbol);
-      const currentPrice = typeof liveLtp === "number" ? liveLtp : Number(pos.ltp || pos.avgPrice);
+      const brokerLtp = Number(pos.ltp || pos.avgPrice);
+      // Sanity guard: discard WebSocket LTP if it deviates >50% from broker API value
+      // This prevents cross-exchange tick contamination from causing absurd P&L
+      const isSane = typeof liveLtp === "number" && brokerLtp > 0
+        ? Math.abs(liveLtp - brokerLtp) / brokerLtp < 0.5
+        : true;
+      const currentPrice = (typeof liveLtp === "number" && isSane) ? liveLtp : brokerLtp;
       const quantity = Number(pos.qty);
       const avgPrice = Number(pos.avgPrice);
 
