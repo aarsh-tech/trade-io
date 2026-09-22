@@ -28,7 +28,6 @@ export function useTokenRefresh() {
 
     const refreshToken = typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
     if (!refreshToken) {
-      clearAuth();
       return;
     }
 

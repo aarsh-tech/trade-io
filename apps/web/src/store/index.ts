@@ -30,14 +30,18 @@ export const useAuthStore = create<AuthStore>()(
       isAuthenticated: false,
 
       setAuth: (user, accessToken, refreshToken) => {
-        localStorage.setItem("accessToken", accessToken);
-        localStorage.setItem("refreshToken", refreshToken);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("accessToken", accessToken);
+          localStorage.setItem("refreshToken", refreshToken);
+        }
         set({ user, accessToken, refreshToken, isAuthenticated: true });
       },
 
       clearAuth: () => {
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("accessToken");
+          localStorage.removeItem("refreshToken");
+        }
         set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
       },
 
@@ -50,13 +54,21 @@ export const useAuthStore = create<AuthStore>()(
       name: "algo-trade-auth",
       partialize: (state) => ({
         user: state.user,
+        accessToken: state.accessToken,
+        refreshToken: state.refreshToken,
         isAuthenticated: state.isAuthenticated,
       }),
       onRehydrateStorage: () => (state) => {
         if (typeof window !== "undefined") {
           const access = localStorage.getItem("accessToken");
           const refresh = localStorage.getItem("refreshToken");
-          if (!access && !refresh) {
+          if (access || refresh) {
+            if (state) {
+              state.isAuthenticated = true;
+              if (access) state.accessToken = access;
+              if (refresh) state.refreshToken = refresh;
+            }
+          } else {
             state?.clearAuth();
           }
         }

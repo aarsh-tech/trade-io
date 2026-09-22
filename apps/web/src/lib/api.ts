@@ -100,8 +100,9 @@ export async function requestTokenRefresh(): Promise<string | null> {
       return newAccess;
     } catch (err: any) {
       const status = err?.response?.status;
-      // If 401 or 403 or invalid refresh token, force logout immediately
-      if (status === 401 || status === 403 || !err?.response) {
+      // Only force logout if the server explicitly rejected the refresh token (401 or 403)
+      // Never log out on network disconnects, aborted requests, or 5xx server errors
+      if (status === 401 || status === 403) {
         handleForceLogout();
       }
       throw err;
