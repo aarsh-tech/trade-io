@@ -285,7 +285,7 @@ export class NiftyOptionsScalperEngine {
         data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
       });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
   }
 
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
@@ -301,7 +301,7 @@ export class NiftyOptionsScalperEngine {
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
       });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
   }
 
   isRunning(strategyId: string): boolean {

@@ -5,7 +5,7 @@ import { TickerService } from '../market/ticker.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
 import { getInstrumentTickSize, getTopCandidateStocks, roundToInstrumentTick } from './smart-stock-picker';
-import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
+import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
 interface Candle {
   date: Date;
@@ -159,6 +159,61 @@ export class EmaVwapCrossoverEngine {
     }
     (config as any).maxCapital = detectedCapital;
 
+    // ── Recover today's executed trades and realized P&L from DB ──────────
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+
+    const todayOrders = await this.prisma.order.findMany({
+      where: {
+        strategyId,
+        createdAt: { gte: todayMidnight },
+        status: 'COMPLETE',
+      },
+      orderBy: { createdAt: 'asc' },
+    }).catch(() => []);
+
+    const symbolOrders: Record<string, any[]> = {};
+    for (const o of todayOrders) {
+      if (!symbolOrders[o.symbol]) symbolOrders[o.symbol] = [];
+      symbolOrders[o.symbol].push(o);
+    }
+
+    let recoveredTradesToday = 0;
+    let recoveredRealizedPnlRs = 0;
+
+    for (const sym of Object.keys(symbolOrders)) {
+      const symList = symbolOrders[sym];
+      let pos = 0;
+      let cost = 0;
+
+      for (const o of symList) {
+        const p = o.price || o.avgPrice || 0;
+        if (pos === 0) {
+          recoveredTradesToday++;
+        }
+        if (o.side === 'BUY') {
+          pos += o.qty;
+          cost -= p * o.qty;
+        } else {
+          pos -= o.qty;
+          cost += p * o.qty;
+        }
+        if (pos === 0) {
+          recoveredRealizedPnlRs += cost;
+          cost = 0;
+        }
+      }
+    }
+
+    const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
+    const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : (targetThresholdRs * 1.5);
+    let recoveredDailyTargetLocked = false;
+    if (config.enableDailyPnLLock !== false) {
+      if (recoveredRealizedPnlRs >= targetThresholdRs || recoveredRealizedPnlRs <= -maxRiskRs) {
+        recoveredDailyTargetLocked = true;
+      }
+    }
+
     const state: StrategyState = {
       strategyId,
       executionId: execution.id,
@@ -181,9 +236,9 @@ export class EmaVwapCrossoverEngine {
       targetOrderId: null,
       entryTriggered: null,
       optionSymbol: null,
-      tradesPlacedToday: 0,
-      dailyRealizedPnlRs: 0,
-      dailyTargetLocked: false,
+      tradesPlacedToday: recoveredTradesToday,
+      dailyRealizedPnlRs: recoveredRealizedPnlRs,
+      dailyTargetLocked: recoveredDailyTargetLocked,
       logs: [],
       lastProcessedTimestamp: 0,
       isAutoMode: config.symbol === 'AUTO' || config.symbol?.startsWith('AUTO'),
@@ -196,6 +251,25 @@ export class EmaVwapCrossoverEngine {
     this.running.set(strategyId, state);
     this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange} | Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
     this.log(state, `💰 Detected Trading Capital: ₹${detectedCapital.toLocaleString('en-IN')}${liveMarginDetected ? ' (Live Zerodha Margin)' : (strategy.isPaperTrade ? ' [Paper Trading Mode]' : ' [Default / Configured]')}`);
+
+    if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
+      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}${recoveredDailyTargetLocked ? ' (Daily Limit Locked)' : ''}`);
+    }
+
+    // If max trades already reached or daily limit locked, immediately stop and do NOT trade
+    if (recoveredTradesToday >= config.maxTradesPerDay) {
+      this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) already reached for today. Strategy completed.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
+      return { executionId: execution.id };
+    }
+
+    if (recoveredDailyTargetLocked) {
+      this.log(state, `🔒 Daily Profit/Loss limit already reached today (₹${recoveredRealizedPnlRs.toFixed(2)}). Strategy completed.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `🔒 Auto-Stopped: Daily limit locked`);
+      return { executionId: execution.id };
+    }
 
     // ── Live Position Recovery after power cut or server restart ─────────────
     if (!strategy.isPaperTrade && strategy.brokerAccount?.accessToken) {
@@ -320,8 +394,13 @@ export class EmaVwapCrossoverEngine {
         where: { id: state.executionId },
         data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
       });
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
   }
 
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
@@ -348,8 +427,13 @@ export class EmaVwapCrossoverEngine {
         where: { id: state.executionId },
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
       });
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
   }
 
   isRunning(strategyId: string): boolean {
@@ -876,6 +960,58 @@ export class EmaVwapCrossoverEngine {
               await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId], this.logger);
               this.stopRealtimeMonitor(state);
 
+              const isOptionTrade = !!(config.isOptionBuyingOnly && state.optionSymbol);
+              const exitSide: 'BUY' | 'SELL' = isOptionTrade ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
+              const exitDetails = await getCompletedBrokerExitDetails(kite, symbolToMonitor, state.slOrderId, state.targetOrderId, exitSide, this.logger);
+
+              let actualExitPrice = exitDetails.exitPrice;
+              if (!actualExitPrice || actualExitPrice <= 0) {
+                actualExitPrice = state.stopLossPrice || state.entryPrice || 0;
+              }
+              const exitOrderId = exitDetails.orderId;
+              const exitQty = exitDetails.filledQty > 0 ? exitDetails.filledQty : (state.executedQty || config.qty);
+
+              // 1. Record exit order in DB
+              await this.trackOrderInDB(state, exitSide, symbolToMonitor, config.exchange, exitQty, actualExitPrice, exitOrderId, undefined, (exitDetails.orderType as any) || 'SL');
+
+              // 2. Compute trade PnL
+              const isLong = isOptionTrade || state.entryTriggered === 'LONG';
+              let tradePnl = 0;
+              if (state.entryPrice && state.entryPrice > 0 && actualExitPrice > 0) {
+                tradePnl = (isLong ? (actualExitPrice - state.entryPrice) : (state.entryPrice - actualExitPrice)) * exitQty;
+              }
+              state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
+
+              this.log(state, `🛑 [BROKER EXIT CONFIRMED] ${symbolToMonitor} exit on Zerodha via ${exitDetails.orderType} (${exitOrderId}) @ ₹${actualExitPrice.toFixed(2)} | Trade P&L: ₹${tradePnl.toFixed(2)} | Today Realized: ₹${state.dailyRealizedPnlRs.toFixed(2)} (Trade ${state.tradesPlacedToday}/${config.maxTradesPerDay})`);
+
+              // 3. Put symbol on cooldown for at least 45 minutes
+              if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
+              state.cooldownSymbols.set(symbolToMonitor, Date.now() + 45 * 60 * 1000);
+
+              // 4. Check One-and-Done daily PnL and trade limits
+              const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
+              const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : (targetThresholdRs * 1.5);
+
+              let shouldStopStrategy = false;
+              let stopReason = '';
+
+              if (config.enableDailyPnLLock !== false) {
+                if (state.dailyRealizedPnlRs >= targetThresholdRs) {
+                  state.dailyTargetLocked = true;
+                  shouldStopStrategy = true;
+                  stopReason = `🎯 Daily Profit Target Reached (+₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day.`;
+                } else if (state.dailyRealizedPnlRs <= -maxRiskRs) {
+                  state.dailyTargetLocked = true;
+                  shouldStopStrategy = true;
+                  stopReason = `🛑 Daily Max Loss Limit Reached (₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day to preserve capital.`;
+                }
+              }
+
+              if (!shouldStopStrategy && state.tradesPlacedToday >= config.maxTradesPerDay) {
+                shouldStopStrategy = true;
+                stopReason = `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached. Auto-stopping strategy for today.`;
+              }
+
               state.entryTriggered = null;
               state.optionSymbol = null;
               state.entryPrice = null;
@@ -902,6 +1038,12 @@ export class EmaVwapCrossoverEngine {
                 state: this.getState(state.strategyId),
               });
               await this.persistLogs(state);
+
+              if (shouldStopStrategy) {
+                this.log(state, stopReason);
+                await this.persistLogs(state);
+                await this.stopWithStatus(state.strategyId, 'COMPLETED', stopReason);
+              }
               return;
             }
           } catch (syncErr: any) {
@@ -1300,6 +1442,10 @@ export class EmaVwapCrossoverEngine {
 
   private async placeTrade(state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date, motherLow?: number, motherHigh?: number) {
     const { config } = state;
+    if (!this.running.has(state.strategyId)) {
+      this.logger.warn(`[ABORT] Strategy ${state.strategyId} has been stopped. Aborting trade placement.`);
+      return;
+    }
     if (state.entryTriggered || state.isPlacingTrade) {
       this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping 2nd trade.`);
       return;
@@ -1307,12 +1453,16 @@ export class EmaVwapCrossoverEngine {
     state.isPlacingTrade = true;
 
     try {
+      if (!this.running.has(state.strategyId)) {
+        this.logger.warn(`[ABORT] Strategy ${state.strategyId} has been stopped. Aborting trade placement.`);
+        return;
+      }
       if (state.dailyTargetLocked && config.enableDailyPnLLock !== false) {
         this.log(state, `🔒 Daily Trading Lock active (Realized P&L: ₹${(state.dailyRealizedPnlRs || 0).toFixed(2)}). Skipping trade placement.`);
         return;
       }
       if (state.tradesPlacedToday >= config.maxTradesPerDay) {
-        this.log(state, `⛔ Daily trade limit reached (${state.tradesPlacedToday}/${config.maxTradesPerDay}). Skipping 2nd trade.`);
+        this.log(state, `⛔ Daily trade limit reached (${state.tradesPlacedToday}/${config.maxTradesPerDay}). Skipping trade.`);
         return;
       }
 
@@ -1550,6 +1700,10 @@ export class EmaVwapCrossoverEngine {
       }
 
       this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}${config.exitExactAtTarget ? ' (Fixed Exact Target Mode)' : ''}`);
+      if (!this.running.has(state.strategyId)) {
+        this.log(state, `🛑 Engine stopped prior to order dispatch. Aborting entry order for ${symbol}.`);
+        return;
+      }
       const limitPrice = finalSide === 'BUY'
         ? this.roundTick(entry + symTickSize * 2, symbol)
         : this.roundTick(entry - symTickSize * 2, symbol);
@@ -1558,6 +1712,8 @@ export class EmaVwapCrossoverEngine {
         : await client.placeOrder({ symbol, exchange, product, qty: config.qty, side: finalSide, orderType: 'LIMIT', price: limitPrice });
       this.log(state, `✅ Entry Order (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
       state.entryOrderId = entryId;
+      state.tradesPlacedToday++;
+      this.log(state, `📊 Trade count updated: ${state.tradesPlacedToday}/${config.maxTradesPerDay} trades placed today.`);
 
       let executedQty = config.qty;
       let actualEntryPrice = entry;
@@ -1579,6 +1735,7 @@ export class EmaVwapCrossoverEngine {
               this.log(state, `📊 Broker Entry Status: ${status} | Executed: ${executedQty}/${config.qty} shares @ Avg ₹${actualEntryPrice.toFixed(2)}`);
             } else if (status === 'REJECTED' || status === 'CANCELLED') {
               this.log(state, `❌ Entry order ${entryId} was ${status}: ${entryOrder.status_message || 'Order rejected by broker'}`);
+              state.tradesPlacedToday = Math.max(0, state.tradesPlacedToday - 1);
               return;
             } else {
               this.log(state, `⏳ Entry order ${entryId} is ${status} (0 filled so far). Monitoring for fills...`);
@@ -2525,7 +2682,6 @@ export class EmaVwapCrossoverEngine {
       }
 
       await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, actualExitPrice, exitOrderId, undefined, exitOrderType);
-      state.tradesPlacedToday++;
 
       let tradePnl = 0;
       if (cachedEntryPrice && cachedEntryPrice > 0 && actualExitPrice > 0 && cachedEntryTriggered) {
@@ -2533,20 +2689,37 @@ export class EmaVwapCrossoverEngine {
       }
       state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
 
+      // Cooldown symbol for at least 45 minutes to prevent rapid re-entry
+      if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
+      state.cooldownSymbols.set(symbol, Date.now() + 45 * 60 * 1000);
+
       const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
       const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : (targetThresholdRs * 1.5);
+
+      let shouldStopStrategy = false;
+      let stopReason = '';
 
       if (config.enableDailyPnLLock !== false) {
         if (state.dailyRealizedPnlRs >= targetThresholdRs) {
           state.dailyTargetLocked = true;
-          this.log(state, `🎯 Daily Profit Target Reached (+₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day to protect profits.`);
+          shouldStopStrategy = true;
+          stopReason = `🎯 Daily Profit Target Reached (+₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day to protect profits.`;
+          this.log(state, stopReason);
         } else if (state.dailyRealizedPnlRs <= -maxRiskRs) {
           state.dailyTargetLocked = true;
-          this.log(state, `🛑 Daily Max Loss Limit Reached (₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day to preserve capital.`);
+          shouldStopStrategy = true;
+          stopReason = `🛑 Daily Max Loss Limit Reached (₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day to preserve capital.`;
+          this.log(state, stopReason);
         }
       }
 
-      if (config.enableTrendReEntry !== false && (state.reEntryCountToday || 0) < 1 && (reason === 'TARGET' || state.isTrailingEma)) {
+      if (!shouldStopStrategy && state.tradesPlacedToday >= config.maxTradesPerDay) {
+        shouldStopStrategy = true;
+        stopReason = `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached. Auto-stopping strategy for today.`;
+        this.log(state, stopReason);
+      }
+
+      if (config.enableTrendReEntry !== false && !shouldStopStrategy && (state.reEntryCountToday || 0) < 1 && (reason === 'TARGET' || state.isTrailingEma)) {
         state.reEntryEligible = true;
         state.reEntrySwingPrice = state.currentLtp || actualExitPrice;
         this.log(state, `🔁 [RE-ENTRY ARMED] ${symbol} exited trend trail. If price reclaims 15-EMA and breaks swing high (₹${(state.reEntrySwingPrice || 0).toFixed(2)}) with VWAP support, Leg 2 Re-Entry will execute!`);
@@ -2577,6 +2750,11 @@ export class EmaVwapCrossoverEngine {
         logs: state.logs,
         state: this.getState(state.strategyId),
       });
+
+      if (shouldStopStrategy) {
+        await this.persistLogs(state);
+        await this.stopWithStatus(state.strategyId, 'COMPLETED', stopReason);
+      }
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
     } finally {

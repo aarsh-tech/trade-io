@@ -5,7 +5,7 @@ import { Breakout15MinConfig } from './dto/strategy.dto';
 import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
-import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
+import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
 interface Candle {
   date: Date;
@@ -158,6 +158,52 @@ export class Breakout15MinEngine {
 
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
+    // ── Recover today's executed trades and realized P&L from DB ──────────
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+
+    const todayOrders = await this.prisma.order.findMany({
+      where: {
+        strategyId,
+        createdAt: { gte: todayMidnight },
+        status: 'COMPLETE',
+      },
+      orderBy: { createdAt: 'asc' },
+    }).catch(() => []);
+
+    const symbolOrders: Record<string, any[]> = {};
+    for (const o of todayOrders) {
+      if (!symbolOrders[o.symbol]) symbolOrders[o.symbol] = [];
+      symbolOrders[o.symbol].push(o);
+    }
+
+    let recoveredTradesToday = 0;
+    let recoveredRealizedPnlRs = 0;
+
+    for (const sym of Object.keys(symbolOrders)) {
+      const symList = symbolOrders[sym];
+      let pos = 0;
+      let cost = 0;
+
+      for (const o of symList) {
+        const p = o.price || o.avgPrice || 0;
+        if (pos === 0) {
+          recoveredTradesToday++;
+        }
+        if (o.side === 'BUY') {
+          pos += o.qty;
+          cost -= p * o.qty;
+        } else {
+          pos -= o.qty;
+          cost += p * o.qty;
+        }
+        if (pos === 0) {
+          recoveredRealizedPnlRs += cost;
+          cost = 0;
+        }
+      }
+    }
+
     const state: StrategyState = {
       strategyId,
       executionId: execution.id,
@@ -175,12 +221,12 @@ export class Breakout15MinEngine {
       slOrderId: null,
       targetOrderId: null,
       setupTimestamp: null,
-      tradesPlacedToday: 0,
+      tradesPlacedToday: recoveredTradesToday,
       logs: [],
       isBreakevenTrailed: false,
       isProfitLockTrailed: false,
       isDynamicTrailingActive: false,
-      dailyRealizedPnlRs: 0,
+      dailyRealizedPnlRs: recoveredRealizedPnlRs,
       lastBreakoutAttempt: null,
       isReversalTrade: false,
       lastEma: null,
@@ -197,6 +243,31 @@ export class Breakout15MinEngine {
 
     this.running.set(strategyId, state);
     this.log(state, `▶ Dynamic 15-Min Breakout Strategy started — Symbol: ${config.symbol}:${config.exchange} | Mode: ${state.isPaperTrade ? 'PAPER' : 'LIVE'} | Entry TF: ${config.entryTimeframe ?? '3min'} | Trailing: ${config.enableEmaVwapTrailing !== false ? `${config.trailingEmaPeriod ?? 9}-EMA & VWAP` : 'Ratchet'} | Moneyness: ${config.moneyness ?? 'ITM'} | Dynamic ATR: ${config.enableDynamicAtr !== false ? 'ON' : 'OFF'} | Traps: ${config.enableTrapReversal !== false ? 'ACTIVE' : 'OFF'}`);
+
+    if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
+      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}`);
+    }
+
+    if (recoveredTradesToday >= config.maxTradesPerDay) {
+      this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) already reached for today. Strategy completed.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
+      return { executionId: execution.id };
+    }
+
+    if (config.targetRs && recoveredRealizedPnlRs >= config.targetRs) {
+      this.log(state, `🎯 Daily target achieved (+₹${recoveredRealizedPnlRs.toFixed(2)}). Strategy completed.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `🎯 Auto-Stopped: Daily target reached`);
+      return { executionId: execution.id };
+    }
+
+    if (config.stopLossRs && recoveredRealizedPnlRs <= -config.stopLossRs) {
+      this.log(state, `🛑 Daily max loss limit reached (-₹${Math.abs(recoveredRealizedPnlRs).toFixed(2)}). Strategy completed.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `🛑 Auto-Stopped: Daily loss limit reached`);
+      return { executionId: execution.id };
+    }
     await this.persistLogs(state);
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
@@ -236,7 +307,7 @@ export class Breakout15MinEngine {
         data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-500)) },
       });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
   }
 
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
@@ -265,7 +336,7 @@ export class Breakout15MinEngine {
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-500)) },
       });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
   }
 
   isRunning(strategyId: string): boolean {
@@ -985,6 +1056,53 @@ export class Breakout15MinEngine {
             await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId], this.logger);
             this.stopRealtimeMonitor(state);
 
+            const isOption = !!state.optionSymbol;
+            const exitSide: 'BUY' | 'SELL' = (isOption || state.entryTriggered === 'LONG') ? 'SELL' : 'BUY';
+            const exitDetails = await getCompletedBrokerExitDetails(kite, symToMonitor, state.slOrderId, state.targetOrderId, exitSide, this.logger);
+
+            let actualExitPrice = exitDetails.exitPrice;
+            if (!actualExitPrice || actualExitPrice <= 0) {
+              actualExitPrice = state.stopLossPrice || state.entryPrice || 0;
+            }
+            const exitOrderId = exitDetails.orderId;
+            const exitQty = exitDetails.filledQty > 0 ? exitDetails.filledQty : (state.executedQty || config.qty);
+
+            // Record exit order in DB
+            await this.trackOrder(state, account, state.executionId, {
+              symbol: symToMonitor,
+              exchange: state.futureExchange || config.exchange,
+              side: exitSide,
+              orderType: (exitDetails.orderType as any) || 'SL',
+              product: config.product,
+              qty: exitQty,
+              price: actualExitPrice,
+            }, exitOrderId, state.strategyId);
+
+            const isLong = isOption || state.entryTriggered === 'LONG';
+            let tradePnl = 0;
+            if (state.entryPrice && state.entryPrice > 0 && actualExitPrice > 0) {
+              tradePnl = (isLong ? (actualExitPrice - state.entryPrice) : (state.entryPrice - actualExitPrice)) * exitQty;
+            }
+            state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
+
+            this.log(state, `🛑 [BROKER EXIT CONFIRMED] ${symToMonitor} exit on Zerodha via ${exitDetails.orderType} (${exitOrderId}) @ ₹${actualExitPrice.toFixed(2)} | Trade P&L: ₹${tradePnl.toFixed(2)} | Today Realized: ₹${state.dailyRealizedPnlRs.toFixed(2)} (Trade ${state.tradesPlacedToday}/${config.maxTradesPerDay})`);
+
+            let shouldStop = false;
+            let stopReason = '';
+
+            if (config.targetRs && state.dailyRealizedPnlRs >= config.targetRs) {
+              shouldStop = true;
+              stopReason = `Daily Profit Target achieved (+₹${state.dailyRealizedPnlRs.toFixed(2)})`;
+            } else if (config.stopLossRs && state.dailyRealizedPnlRs <= -config.stopLossRs) {
+              shouldStop = true;
+              stopReason = `Daily Max Loss limit reached (-₹${Math.abs(state.dailyRealizedPnlRs).toFixed(2)})`;
+            }
+
+            if (!shouldStop && state.tradesPlacedToday >= config.maxTradesPerDay) {
+              shouldStop = true;
+              stopReason = `⛔ Auto-Stopped: Max daily trade cap reached`;
+            }
+
             state.entryTriggered = null;
             state.entryFilled = false;
             state.entryPrice = null;
@@ -1003,6 +1121,12 @@ export class Breakout15MinEngine {
               state: this.getState(state.strategyId),
             });
             await this.persistLogs(state);
+
+            if (shouldStop) {
+              this.log(state, stopReason);
+              await this.persistLogs(state);
+              await this.stopWithStatus(state.strategyId, 'COMPLETED', stopReason);
+            }
             return;
           }
         } catch (syncErr: any) {
@@ -2519,6 +2643,10 @@ export class Breakout15MinEngine {
     }
 
     // LIVE ORDER EXECUTION:
+    if (!this.running.has(strategyId)) {
+      this.log(state, `🛑 Engine stopped prior to order dispatch. Aborting entry order for ${symbol}.`);
+      return;
+    }
     const limitPrice = side === 'BUY' ? this.roundTick(entry + symTickSize * 3, symTickSize) : this.roundTick(entry - symTickSize * 3, symTickSize);
     const entryId = await client.placeOrder({ symbol, exchange, side, orderType: 'LIMIT', product: config.product ?? 'MIS', qty: config.qty, price: limitPrice });
     state.entryOrderId = entryId;
@@ -2548,6 +2676,7 @@ export class Breakout15MinEngine {
             this.log(state, `❌ Entry order ${entryId} was ${status}: ${entryOrder.status_message || 'Order rejected by broker'}`);
             state.entryTriggered = null;
             state.entryOrderId = null;
+            state.tradesPlacedToday = Math.max(0, state.tradesPlacedToday - 1);
             return;
           } else {
             this.log(state, `⏳ Entry order ${entryId} is ${status} (0 filled so far). Monitoring for fill confirmation...`);

@@ -165,6 +165,65 @@ export class GammaBlastExpiryEngine {
     const lots = config.lots || 1;
     const targetQty = lots * defaultLotSize;
 
+    // ── Recover today's executed trades and realized P&L from DB ──────────
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+
+    const todayOrders = await this.prisma.order.findMany({
+      where: {
+        strategyId,
+        createdAt: { gte: todayMidnight },
+        status: 'COMPLETE',
+      },
+      orderBy: { createdAt: 'asc' },
+    }).catch(() => []);
+
+    const symbolOrders: Record<string, any[]> = {};
+    for (const o of todayOrders) {
+      if (!symbolOrders[o.symbol]) symbolOrders[o.symbol] = [];
+      symbolOrders[o.symbol].push(o);
+    }
+
+    let recoveredTradesToday = 0;
+    let recoveredWinningTradesToday = 0;
+    let recoveredRealizedPnlRs = 0;
+
+    for (const sym of Object.keys(symbolOrders)) {
+      const symList = symbolOrders[sym];
+      let pos = 0;
+      let cost = 0;
+
+      for (const o of symList) {
+        const p = o.price || o.avgPrice || 0;
+        if (pos === 0) {
+          recoveredTradesToday++;
+        }
+        if (o.side === 'BUY') {
+          pos += o.qty;
+          cost -= p * o.qty;
+        } else {
+          pos -= o.qty;
+          cost += p * o.qty;
+        }
+        if (pos === 0) {
+          recoveredRealizedPnlRs += cost;
+          if (cost > 0) recoveredWinningTradesToday++;
+          cost = 0;
+        }
+      }
+    }
+
+    let recoveredDailyTargetLocked = false;
+    if (recoveredWinningTradesToday >= (config.maxWinsPerDay || 1)) {
+      recoveredDailyTargetLocked = true;
+    }
+    if (config.targetRs && recoveredRealizedPnlRs >= config.targetRs) {
+      recoveredDailyTargetLocked = true;
+    }
+    if (config.stopLossRs && recoveredRealizedPnlRs <= -Math.abs(config.stopLossRs)) {
+      recoveredDailyTargetLocked = true;
+    }
+
     const state: GammaStrategyState = {
       strategyId,
       executionId: execution.id,
@@ -177,10 +236,10 @@ export class GammaBlastExpiryEngine {
       lots,
       targetQty,
       executedQty: 0,
-      tradesPlacedToday: 0,
-      winningTradesToday: 0,
-      dailyRealizedPnlRs: 0,
-      dailyTargetLocked: false,
+      tradesPlacedToday: recoveredTradesToday,
+      winningTradesToday: recoveredWinningTradesToday,
+      dailyRealizedPnlRs: recoveredRealizedPnlRs,
+      dailyTargetLocked: recoveredDailyTargetLocked,
       logs: [],
       peakPrice: 0,
       peakPnlRs: 0,
@@ -193,6 +252,26 @@ export class GammaBlastExpiryEngine {
     };
 
     state.spotSymbol = underlying === 'SENSEX' ? 'BSE:SENSEX' : 'NSE:NIFTY 50';
+
+    this.running.set(strategyId, state);
+
+    if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
+      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay || 2} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}${recoveredDailyTargetLocked ? ' (Daily Limit Locked)' : ''}`);
+    }
+
+    if (recoveredTradesToday >= (config.maxTradesPerDay || 2)) {
+      this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay || 2}) already reached for today. Strategy completed.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
+      return { executionId: execution.id };
+    }
+
+    if (recoveredDailyTargetLocked) {
+      this.log(state, `🔒 Daily Profit/Loss limit already reached today (₹${recoveredRealizedPnlRs.toFixed(2)}). Strategy completed.`);
+      await this.persistLogs(state);
+      await this.stopWithStatus(strategyId, 'COMPLETED', `🔒 Auto-Stopped: Daily limit locked`);
+      return { executionId: execution.id };
+    }
 
     if (strategy.brokerAccount?.accessToken) {
       try {
@@ -308,6 +387,10 @@ export class GammaBlastExpiryEngine {
   }
 
   async stop(strategyId: string): Promise<void> {
+    await this.stopWithStatus(strategyId, 'STOPPED', '⏹ Gamma Blast Strategy stopped by user');
+  }
+
+  private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
       this.stopRealtimeMonitor(state);
@@ -318,24 +401,41 @@ export class GammaBlastExpiryEngine {
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
-      this.log(state, '⏹ Gamma Blast Strategy stopped by user');
+      this.log(state, logReason);
 
-      if (!state.isPaperTrade && state.slOrderId) {
+      if (!state.isPaperTrade && (state.slOrderId || state.entryOrderId)) {
         try {
           const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
           if (account?.accessToken) {
             const client = this.factory.createClient(account);
-            await client.cancelOrder(state.slOrderId).catch(() => { });
+            if (state.slOrderId) await client.cancelOrder(state.slOrderId).catch(() => { });
+            if (state.entryOrderId) await client.cancelOrder(state.entryOrderId).catch(() => { });
           }
         } catch { }
       }
 
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
       });
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
+      });
+    } else {
+      const latestExecution = await this.prisma.strategyExecution.findFirst({
+        where: { strategyId, status: 'RUNNING' },
+        orderBy: { startedAt: 'desc' },
+      });
+      if (latestExecution) {
+        await this.prisma.strategyExecution.update({
+          where: { id: latestExecution.id },
+          data: { status, stoppedAt: new Date() },
+        });
+      }
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false } });
+    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
   }
 
   isRunning(strategyId: string): boolean {

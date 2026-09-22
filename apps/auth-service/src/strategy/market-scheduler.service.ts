@@ -43,10 +43,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
    */
   private lastLossCheckTime: number = 0;
 
-  /**
-   * Timestamp of the last auto-start check during market hours.
-   */
-  private lastAutoStartCheckTime: number = 0;
 
   /**
    * Strategy IDs that the user explicitly stopped during the current
@@ -127,21 +123,15 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // ── Auto-start Check during Market Hours (09:15:00 to 15:00:00 IST) ──
-    // Fires sharply at 09:15:01 IST, and continuously monitors every 10s so any armed strategy
-    // whose broker session was logged in or renewed will auto-start immediately!
-    if (hhmm >= MARKET_OPEN && hhmm < (15 * 60 + 5)) {
+    // ── Auto-start at Market Open (09:15:00 to 09:16:00 IST) ───────────────────
+    // Fires once per day at 09:15 IST sharp for all strategies configured with autoStart=true.
+    // The 10-second daytime periodic check has been completely removed to prevent zombie restarts.
+    if (hhmm >= MARKET_OPEN && hhmm <= MARKET_OPEN + 1) {
       const todayKey = ist.toDateString();
       if (this.lastAutoStartDate !== todayKey) {
         this.lastAutoStartDate = todayKey;
         this.manuallyStoppedToday.clear();
-      }
-
-      const isExactOpenTick = (h === 9 && m === 15 && s <= 5);
-      const isPeriodicCheckTime = (now.getTime() - this.lastAutoStartCheckTime >= 10_000);
-
-      if (isExactOpenTick || isPeriodicCheckTime) {
-        this.lastAutoStartCheckTime = now.getTime();
+        this.logger.log('🔔 09:15 IST Market Open — Auto-starting configured strategies for today...');
         await this.autoStartStrategies();
       }
     }
@@ -190,6 +180,50 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
         // Skip strategies that the user manually stopped this session
         if (this.manuallyStoppedToday.has(strategy.id)) {
           this.logger.log(`Auto-start: ${strategy.name} was manually stopped today — skipped`);
+          continue;
+        }
+
+        // Check today's latest execution status from DB
+        const todayMidnight = new Date();
+        todayMidnight.setHours(0, 0, 0, 0);
+
+        const latestExecToday = await this.prisma.strategyExecution.findFirst({
+          where: {
+            strategyId: strategy.id,
+            startedAt: { gte: todayMidnight },
+          },
+          orderBy: { startedAt: 'desc' },
+        }).catch(() => null);
+
+        if (latestExecToday) {
+          if (latestExecToday.status === 'COMPLETED') {
+            this.logger.log(`Auto-start: ${strategy.name} was marked COMPLETED today (target/trade limit reached) — skipping auto-start`);
+            continue;
+          }
+          if (latestExecToday.status === 'STOPPED') {
+            this.logger.log(`Auto-start: ${strategy.name} was marked STOPPED today — skipping auto-start`);
+            continue;
+          }
+        }
+
+        // Check if strategy's maxTradesPerDay was already reached in DB today
+        let maxTrades = 1;
+        try {
+          const cfg = JSON.parse(strategy.config || '{}');
+          if (cfg.maxTradesPerDay) maxTrades = Number(cfg.maxTradesPerDay);
+        } catch { }
+
+        const todayCompletedOrdersCount = await this.prisma.order.count({
+          where: {
+            strategyId: strategy.id,
+            createdAt: { gte: todayMidnight },
+            status: 'COMPLETE',
+            side: 'BUY',
+          },
+        }).catch(() => 0);
+
+        if (todayCompletedOrdersCount >= maxTrades) {
+          this.logger.log(`Auto-start: ${strategy.name} already executed ${todayCompletedOrdersCount}/${maxTrades} trades today — skipping auto-start`);
           continue;
         }
 
