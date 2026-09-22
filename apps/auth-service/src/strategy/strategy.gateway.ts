@@ -118,17 +118,31 @@ export class StrategyGateway implements OnGatewayConnection, OnGatewayDisconnect
           }
 
           const strategyService = this.moduleRef.get(StrategyService, { strict: false });
-          if (strategyService && strategy.isActive) {
-            const currentExec = await strategyService.getLatestExecution(data.strategyId);
-            if (currentExec) {
-              orders = await strategyService.getExecutionOrders(currentExec.id);
+          const currentExec = strategyService ? await strategyService.getLatestExecution(data.strategyId) : null;
+
+          if ((!logs || logs.length === 0) && currentExec?.logs) {
+            try {
+              logs = JSON.parse(currentExec.logs);
+            } catch {
+              logs = [currentExec.logs];
             }
           }
 
+          if (strategyService && currentExec) {
+            orders = await strategyService.getExecutionOrders(currentExec.id);
+          }
+          if (!orders || orders.length === 0) {
+            orders = await this.prisma.order.findMany({
+              where: { strategyId: data.strategyId },
+              orderBy: { createdAt: 'desc' },
+              take: 50,
+            });
+          }
+
           client.emit('strategy-event', {
-            logs,
+            logs: logs ?? [],
             state,
-            orders,
+            orders: orders ?? [],
           });
         }
       } catch (err: any) {

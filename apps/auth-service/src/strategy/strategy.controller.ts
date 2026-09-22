@@ -34,13 +34,31 @@ export class StrategyController {
   @ApiOperation({ summary: 'List all strategies for the user' })
   async list(@Request() req) {
     const data = await this.strategyService.list(req.user.id);
-    return { success: true, data };
+    const enriched = data.map((s) => {
+      try {
+        const engine = this.getEngine(s.type);
+        const running = engine ? engine.isRunning(s.id) : false;
+        return {
+          ...s,
+          isActive: running || s.isActive,
+        };
+      } catch {
+        return s;
+      }
+    });
+    return { success: true, data: enriched };
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single strategy' })
   async get(@Request() req, @Param('id') id: string) {
     const data = await this.strategyService.get(req.user.id, id);
+    try {
+      const engine = this.getEngine(data.type);
+      if (engine && engine.isRunning(id)) {
+        data.isActive = true;
+      }
+    } catch {}
     return { success: true, data };
   }
 
@@ -125,20 +143,41 @@ export class StrategyController {
   async status(@Request() req, @Param('id') id: string) {
     const strategy = await this.strategyService.get(req.user.id, id);
     const engine = this.getEngine(strategy.type);
-    const statusData: any = {
-      running: engine.isRunning(id),
-      autoStart: (strategy as any).autoStart ?? false,
-      logs: engine.getLogs(id),
-      state: (engine as any).getState ? (engine as any).getState(id) : null,
-    };
+    const isRunning = engine ? engine.isRunning(id) : false;
+    let logs = engine ? engine.getLogs(id) : [];
+    let state = (engine as any)?.getState ? (engine as any).getState(id) : null;
 
-    if (statusData.running) {
-      // Find current execution
-      const currentExec = await this.strategyService.getLatestExecution(id);
-      if (currentExec) {
-        statusData.orders = await this.strategyService.getExecutionOrders(currentExec.id);
+    const currentExec = await this.strategyService.getLatestExecution(id);
+
+    // If memory logs are empty (e.g. fresh startup or engine restarted/stopped), retrieve latest execution logs from DB
+    if ((!logs || logs.length === 0) && currentExec?.logs) {
+      try {
+        logs = JSON.parse(currentExec.logs);
+      } catch {
+        logs = [currentExec.logs];
       }
     }
+
+    // Always fetch orders: from current execution, or fallback to strategy orders
+    let orders: any[] = [];
+    if (currentExec) {
+      orders = await this.strategyService.getExecutionOrders(currentExec.id);
+    }
+    if (!orders || orders.length === 0) {
+      orders = await this.prisma.order.findMany({
+        where: { strategyId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+    }
+
+    const statusData: any = {
+      running: isRunning,
+      autoStart: (strategy as any).autoStart ?? false,
+      logs: logs ?? [],
+      state,
+      orders: orders ?? [],
+    };
 
     return {
       success: true,

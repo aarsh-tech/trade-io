@@ -199,27 +199,23 @@ export class OrdersService {
   private lastSyncByUser = new Map<string, number>();
 
   /**
-   * Retrieves all orders for the user, triggering a background sync if not synced recently
+   * Retrieves all orders for the user, triggering a sync if not synced recently
    */
   async getUserOrders(userId: string) {
     const lastSync = this.lastSyncByUser.get(userId) || 0;
-    // Auto-sync from broker in background at most once every 60 seconds
+    // Auto-sync from broker with a 2.5s race timeout so first load has fresh broker orders
     if (Date.now() - lastSync > 60_000) {
       this.lastSyncByUser.set(userId, Date.now());
-      this.syncBrokerOrders(userId).catch(() => {});
+      await Promise.race([
+        this.syncBrokerOrders(userId).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]);
     }
 
-    // Fetch and return all genuine Zerodha broker orders sorted by createdAt desc
+    // Return all orders for the user (both Live and Paper), so algo trades started from mobile are ALWAYS visible on desktop
     return this.prisma.order.findMany({
       where: {
         userId,
-        isPaperTrade: false,
-        brokerOrderId: {
-          not: null,
-        },
-        NOT: {
-          brokerOrderId: { startsWith: 'PAPER_' },
-        },
       },
       orderBy: { createdAt: 'desc' },
       include: {
