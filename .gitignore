@@ -25,4 +25,5 @@ scripts/*
 !scripts/deploy-backend.sh
 !scripts/setup-nginx.sh
 !scripts/update-server.sh
+!scripts/verify-all-fixes.js
 
