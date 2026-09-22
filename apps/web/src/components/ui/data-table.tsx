@@ -44,39 +44,97 @@ interface DataTableColumnHeaderProps<TData, TValue>
   extends React.HTMLAttributes<HTMLDivElement> {
   column: Column<TData, TValue>;
   title: string;
+  align?: "left" | "center" | "right";
 }
 
 export function DataTableColumnHeader<TData, TValue>({
   column,
   title,
+  align,
   className,
 }: DataTableColumnHeaderProps<TData, TValue>) {
+  const isRight = align === "right" || className?.includes("justify-end") || className?.includes("text-right");
+  const isCenter = align === "center" || className?.includes("justify-center") || className?.includes("text-center");
+
   if (!column.getCanSort()) {
-    return <div className={cn("text-xs font-semibold text-muted-foreground", className)}>{title}</div>;
+    return (
+      <div
+        className={cn(
+          "text-xs font-semibold text-muted-foreground",
+          isRight ? "text-right" : isCenter ? "text-center" : "text-left",
+          className
+        )}
+      >
+        {title}
+      </div>
+    );
   }
 
   const isSorted = column.getIsSorted();
 
   return (
-    <button
-      type="button"
-      onClick={() => column.toggleSorting(isSorted === "asc")}
-      className={cn(
-        "flex items-center gap-1 -ml-1.5 px-1.5 py-1 rounded hover:bg-muted text-xs font-semibold text-muted-foreground transition-colors group cursor-pointer",
-        isSorted && "text-foreground font-bold",
-        className
-      )}
-    >
-      <span>{title}</span>
-      {isSorted === "desc" ? (
-        <ArrowDown className="h-3 w-3 text-blue-600" />
-      ) : isSorted === "asc" ? (
-        <ArrowUp className="h-3 w-3 text-blue-600" />
-      ) : (
-        <ArrowUpDown className="h-3 w-3 opacity-40 group-hover:opacity-100 transition-opacity" />
-      )}
-    </button>
+    <div className={cn("flex items-center w-full", isRight ? "justify-end" : isCenter ? "justify-center" : "justify-start")}>
+      <button
+        type="button"
+        onClick={() => column.toggleSorting(isSorted === "asc")}
+        className={cn(
+          "inline-flex items-center gap-1.5 py-1 px-1.5 rounded hover:bg-muted text-xs font-semibold text-muted-foreground transition-colors group cursor-pointer select-none",
+          !isRight && !isCenter && "-ml-1.5",
+          isRight && "-mr-1.5",
+          isSorted && "text-foreground font-bold",
+          className
+        )}
+      >
+        <span>{title}</span>
+        {isSorted === "desc" ? (
+          <ArrowDown className="h-3 w-3 text-blue-600 shrink-0" />
+        ) : isSorted === "asc" ? (
+          <ArrowUp className="h-3 w-3 text-blue-600 shrink-0" />
+        ) : (
+          <ArrowUpDown className="h-3 w-3 opacity-40 group-hover:opacity-100 transition-opacity shrink-0" />
+        )}
+      </button>
+    </div>
   );
+}
+
+// ─── Column Title Normalizer ───────────────────────────────────────────────
+const COLUMN_LABEL_MAP: Record<string, string> = {
+  symbol: "Instrument",
+  product: "Product",
+  qty: "Quantity",
+  avgPrice: "Avg. Price",
+  ltp: "LTP",
+  pnl: "Current P&L",
+  pnlPct: "Change %",
+  action: "Action",
+  createdAt: "Time (IST)",
+  side: "Side",
+  productType: "Product",
+  orderType: "Order Type",
+  price: "Price / Trigger",
+  status: "Status",
+  name: "User Details",
+  role: "Role",
+  isActive: "Account Status",
+  hasActiveSession: "Live Session",
+};
+
+function getColumnTitle(column: Column<any, any>): string {
+  if ((column.columnDef.meta as any)?.title) {
+    return (column.columnDef.meta as any).title;
+  }
+  if (typeof column.columnDef.header === "string") {
+    return column.columnDef.header;
+  }
+  if (COLUMN_LABEL_MAP[column.id]) {
+    return COLUMN_LABEL_MAP[column.id];
+  }
+  // Convert camelCase to title case
+  return column.id
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (str) => str.toUpperCase())
+    .trim();
 }
 
 // ─── Reusable DataTable Component ───────────────────────────────────────────
@@ -139,15 +197,24 @@ export function DataTable<TData, TValue>({
 
   const columnMenuRef = React.useRef<HTMLDivElement>(null);
 
-  // Close column dropdown on outside click
+  // Close column dropdown on outside click or Escape
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (columnMenuRef.current && !columnMenuRef.current.contains(event.target as Node)) {
         setShowColumnMenu(false);
       }
     }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowColumnMenu(false);
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   return (
@@ -188,36 +255,58 @@ export function DataTable<TData, TValue>({
               variant="outline"
               size="sm"
               onClick={() => setShowColumnMenu((prev) => !prev)}
-              className="h-9 gap-1.5 text-xs text-muted-foreground hover:text-foreground border-border bg-background shadow-2xs"
+              className="h-9 gap-1.5 text-xs text-muted-foreground hover:text-foreground border-border bg-card shadow-2xs"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
               <span>Columns</span>
             </Button>
 
             {showColumnMenu && (
-              <div className="absolute right-0 mt-1.5 w-48 rounded-xl border border-border bg-card p-2 shadow-xl z-30 space-y-1 animate-in fade-in-50 zoom-in-95">
-                <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border/50">
-                  Toggle Columns
+              <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2 shadow-2xl z-50 animate-in fade-in-50 zoom-in-95 space-y-1">
+                <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+                  <span>Toggle Columns</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      table.getAllColumns().forEach((col) => {
+                        if (col.getCanHide()) col.toggleVisibility(true);
+                      });
+                    }}
+                    className="text-[10px] text-blue-600 hover:underline font-semibold cursor-pointer lowercase first-letter:uppercase"
+                  >
+                    Reset
+                  </button>
                 </div>
-                <div className="max-h-56 overflow-y-auto pt-1 space-y-0.5">
+                <div className="max-h-56 overflow-y-auto pt-1 space-y-0.5 custom-scrollbar">
                   {table
                     .getAllColumns()
                     .filter((column) => typeof column.accessorFn !== "undefined" && column.getCanHide())
                     .map((column) => {
                       const isVisible = column.getIsVisible();
+                      const title = getColumnTitle(column);
                       return (
                         <button
                           key={column.id}
                           type="button"
                           onClick={() => column.toggleVisibility(!isVisible)}
-                          className="w-full flex items-center justify-between px-2 py-1.5 text-xs text-left rounded-md hover:bg-muted transition-colors"
+                          className={cn(
+                            "w-full flex items-center justify-between px-2.5 py-1.5 text-xs text-left rounded-md transition-colors cursor-pointer",
+                            isVisible
+                              ? "text-foreground font-medium hover:bg-muted"
+                              : "text-muted-foreground hover:bg-muted/50"
+                          )}
                         >
-                          <span className="capitalize text-foreground font-medium">
-                            {typeof column.columnDef.header === "string"
-                              ? column.columnDef.header
-                              : column.id}
-                          </span>
-                          {isVisible && <Check className="h-3.5 w-3.5 text-blue-600" />}
+                          <span className="truncate pr-2">{title}</span>
+                          <div
+                            className={cn(
+                              "h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                              isVisible
+                                ? "bg-blue-600 border-blue-600 text-white"
+                                : "border-slate-300 dark:border-slate-700 bg-transparent"
+                            )}
+                          >
+                            {isVisible && <Check className="h-3 w-3 stroke-[3]" />}
+                          </div>
                         </button>
                       );
                     })}

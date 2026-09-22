@@ -168,6 +168,7 @@ export default function PositionsPage() {
   const columns = useMemo<ColumnDef<typeof livePositions[0]>[]>(() => [
     {
       accessorKey: "product",
+      meta: { title: "Product" },
       header: "Product",
       cell: ({ row }) => (
         <Badge variant="secondary" className="text-[11px] font-bold">
@@ -177,7 +178,8 @@ export default function PositionsPage() {
     },
     {
       accessorKey: "symbol",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
+      meta: { title: "Instrument" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" align="left" />,
       cell: ({ row }) => (
         <span className="font-semibold text-foreground">
           {row.original.symbol}
@@ -186,7 +188,8 @@ export default function PositionsPage() {
     },
     {
       accessorKey: "qty",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Qty" className="justify-end" />,
+      meta: { title: "Quantity" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Qty" align="right" />,
       cell: ({ row }) => {
         const isLong = row.original.qty > 0;
         return (
@@ -201,7 +204,8 @@ export default function PositionsPage() {
     },
     {
       accessorKey: "avgPrice",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Avg. Price" className="justify-end" />,
+      meta: { title: "Avg. Price" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Avg. Price" align="right" />,
       cell: ({ row }) => (
         <div className="text-right font-mono text-foreground">
           ₹{row.original.avgPrice?.toFixed(2) || "0.00"}
@@ -210,7 +214,8 @@ export default function PositionsPage() {
     },
     {
       accessorKey: "ltp",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="LTP" className="justify-end" />,
+      meta: { title: "LTP" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="LTP" align="right" />,
       cell: ({ row }) => (
         <div className="text-right font-mono font-semibold text-foreground">
           ₹{row.original.ltp?.toFixed(2) || "0.00"}
@@ -219,7 +224,8 @@ export default function PositionsPage() {
     },
     {
       accessorKey: "pnl",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Current P&L" className="justify-end" />,
+      meta: { title: "Current P&L" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Current P&L" align="right" />,
       cell: ({ row }) => {
         const pnl = row.original.pnl || 0;
         return (
@@ -234,7 +240,8 @@ export default function PositionsPage() {
     },
     {
       accessorKey: "pnlPct",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Change %" className="justify-end" />,
+      meta: { title: "Change %" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Change %" align="right" />,
       cell: ({ row }) => {
         const pct = row.original.pnlPct || 0;
         return (
@@ -250,6 +257,7 @@ export default function PositionsPage() {
     {
       id: "action",
       header: () => <div className="text-center text-xs font-semibold text-muted-foreground">Action</div>,
+      enableHiding: false,
       cell: ({ row }) => (
         <div className="text-center">
           <Button

@@ -233,7 +233,8 @@ export default function OrdersPage() {
   const columns = useMemo<ColumnDef<Order>[]>(() => [
     {
       accessorKey: "createdAt",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Time (IST)" />,
+      meta: { title: "Time (IST)" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Time (IST)" align="left" />,
       cell: ({ row }) => {
         const { date, time } = formatDateTime(row.original.createdAt);
         return (
@@ -246,7 +247,8 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "side",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Side" />,
+      meta: { title: "Side" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Side" align="left" />,
       cell: ({ row }) => {
         const isBuy = row.original.side === "BUY";
         return (
@@ -263,7 +265,8 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "symbol",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
+      meta: { title: "Instrument" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" align="left" />,
       cell: ({ row }) => {
         const formatted = formatTradingSymbol(row.original.symbol);
         return (
@@ -296,6 +299,7 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "productType",
+      meta: { title: "Product" },
       header: "Product",
       cell: ({ row }) => (
         <div className="flex items-center gap-1.5">
@@ -312,6 +316,7 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "orderType",
+      meta: { title: "Order Type" },
       header: "Type",
       cell: ({ row }) => (
         <span className="font-mono text-xs text-muted-foreground">
@@ -321,7 +326,8 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "qty",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Qty" className="justify-end" />,
+      meta: { title: "Quantity" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Qty" align="right" />,
       cell: ({ row }) => {
         const { filledQty, qty } = row.original;
         return (
@@ -340,7 +346,8 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "price",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Price / Trigger" className="justify-end" />,
+      meta: { title: "Price / Trigger" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Price / Trigger" align="right" />,
       cell: ({ row }) => {
         const { price, triggerPrice } = row.original;
         return (
@@ -359,7 +366,8 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "avgPrice",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Avg. Executed" className="justify-end" />,
+      meta: { title: "Avg. Executed" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Avg. Executed" align="right" />,
       cell: ({ row }) => (
         <div className="text-right font-mono font-semibold text-foreground">
           {row.original.avgPrice && row.original.avgPrice > 0 ? (
@@ -372,7 +380,8 @@ export default function OrdersPage() {
     },
     {
       accessorKey: "status",
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Status" className="justify-center" />,
+      meta: { title: "Status" },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Status" align="center" />,
       cell: ({ row }) => {
         const { status } = row.original;
         const isOpen = status === "OPEN" || status === "PENDING";
