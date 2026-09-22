@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectBrokerDto } from './dto/broker.dto';
 import { encrypt, decrypt } from '../common/utils/crypto';
@@ -8,12 +8,39 @@ import { BrokerType } from '@prisma/client';
 
 @Injectable()
 export class BrokersService {
+  private readonly logger = new Logger(BrokersService.name);
   private cache = new Map<string, { data: any; expiresAt: number }>();
 
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
   ) { }
+
+  private isTokenExpiredError(err: any): boolean {
+    const msg = String(err?.message || '').toLowerCase();
+    const errType = String(err?.error_type || '').toLowerCase();
+    const status = err?.status || err?.response?.status;
+    return (
+      msg.includes('access_token') ||
+      msg.includes('api_key') ||
+      msg.includes('token') ||
+      msg.includes('forbidden') ||
+      errType.includes('tokenexception') ||
+      status === 403
+    );
+  }
+
+  private async markTokenExpired(accountId: string) {
+    try {
+      await this.prisma.brokerAccount.update({
+        where: { id: accountId },
+        data: { tokenHealth: 'EXPIRED', lastHealthCheckAt: new Date() },
+      });
+      this.logger.warn(`Broker ${accountId} access token has expired or is invalid. Flagged tokenHealth=EXPIRED.`);
+    } catch {
+      // Ignore update error
+    }
+  }
 
   private getFromCache<T>(key: string): T | null {
     const entry = this.cache.get(key);
@@ -51,14 +78,18 @@ export class BrokersService {
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
-    if (!acc.accessToken) return [];
+    if (!acc.accessToken || acc.tokenHealth === 'EXPIRED') return [];
 
     const client = this.factory.createClient(acc);
     try {
       const result = await client.getHoldings();
-      return this.setInCache(cacheKey, result, 30_000); // 30s cache for successful fetches
+      return this.setInCache(cacheKey, result, 10_000); // 10s cache
     } catch (err: any) {
-      console.warn(`Failed to fetch holdings for broker ${accountId}: ${err?.message || err}`);
+      if (this.isTokenExpiredError(err)) {
+        await this.markTokenExpired(accountId);
+        return this.setInCache(cacheKey, [], 60_000);
+      }
+      this.logger.warn(`Failed to fetch holdings for broker ${accountId}: ${err?.message || err}`);
       return [];
     }
   }
@@ -72,14 +103,18 @@ export class BrokersService {
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
-    if (!acc.accessToken) return [];
+    if (!acc.accessToken || acc.tokenHealth === 'EXPIRED') return [];
 
     const client = this.factory.createClient(acc);
     try {
       const result = await client.getPositions();
       return this.setInCache(cacheKey, result, 3_000); // 3s cache
     } catch (err: any) {
-      console.warn(`Failed to fetch positions for broker ${accountId}: ${err?.message || err}`);
+      if (this.isTokenExpiredError(err)) {
+        await this.markTokenExpired(accountId);
+        return this.setInCache(cacheKey, [], 60_000);
+      }
+      this.logger.warn(`Failed to fetch positions for broker ${accountId}: ${err?.message || err}`);
       return [];
     }
   }
@@ -93,7 +128,7 @@ export class BrokersService {
       where: { id: accountId },
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
-    if (!acc.accessToken) return null;
+    if (!acc.accessToken || acc.tokenHealth === 'EXPIRED') return null;
 
     const client = this.factory.createClient(acc);
     try {
@@ -103,7 +138,11 @@ export class BrokersService {
       }
       return null;
     } catch (err: any) {
-      console.warn(`Failed to fetch margins for broker ${accountId}: ${err?.message || err}`);
+      if (this.isTokenExpiredError(err)) {
+        await this.markTokenExpired(accountId);
+        return this.setInCache(cacheKey, null, 60_000);
+      }
+      this.logger.warn(`Failed to fetch margins for broker ${accountId}: ${err?.message || err}`);
       return null;
     }
   }
@@ -294,6 +333,7 @@ export class BrokersService {
         clientId: true,
         isActive: true,
         tokenExpiry: true,
+        tokenHealth: true,
         createdAt: true,
       },
     });

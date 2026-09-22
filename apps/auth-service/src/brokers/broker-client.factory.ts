@@ -123,7 +123,12 @@ class ZerodhaClient implements IBrokerClient {
         pnlPct: parseFloat(((h.pnl / (h.average_price * h.quantity)) * 100).toFixed(2)),
       }));
     } catch (err: any) {
-      console.error('Zerodha Holdings Error:', err?.message || err);
+      const isAuth = err?.message?.includes('access_token') || err?.message?.includes('api_key') || err?.status === 403;
+      if (isAuth) {
+        console.warn(`Zerodha Holdings notice: ${err?.message || 'Token expired or invalid'}`);
+      } else {
+        console.error('Zerodha Holdings Error:', err?.message || err);
+      }
       throw err;
     }
   }
@@ -154,7 +159,12 @@ class ZerodhaClient implements IBrokerClient {
         product: p.product,
       }));
     } catch (err: any) {
-      console.error('Zerodha Positions Error:', err?.message || err);
+      const isAuth = err?.message?.includes('access_token') || err?.message?.includes('api_key') || err?.status === 403;
+      if (isAuth) {
+        console.warn(`Zerodha Positions notice: ${err?.message || 'Token expired or invalid'}`);
+      } else {
+        console.error('Zerodha Positions Error:', err?.message || err);
+      }
       throw err;
     }
   }
@@ -326,7 +336,12 @@ class ZerodhaClient implements IBrokerClient {
     try {
       return await this.kite.getMargins();
     } catch (err: any) {
-      console.error('Zerodha getMargins Error:', err?.message || err);
+      const isAuth = err?.message?.includes('access_token') || err?.message?.includes('api_key') || err?.status === 403;
+      if (isAuth) {
+        console.warn(`Zerodha getMargins notice: ${err?.message || 'Token expired or invalid'}`);
+      } else {
+        console.error('Zerodha getMargins Error:', err?.message || err);
+      }
       throw err;
     }
   }
