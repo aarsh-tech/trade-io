@@ -1,5 +1,7 @@
 "use client";
 
+export const runtime = "edge";
+
 import { useEffect, useState, useMemo } from "react";
 import { useAuthStore } from "@/store";
 import { adminApi } from "@/lib/api";

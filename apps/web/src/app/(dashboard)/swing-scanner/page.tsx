@@ -1,5 +1,7 @@
 "use client";
 
+export const runtime = "edge";
+
 import { useCallback, useEffect, useState } from "react";
 import { swingApi } from "@/lib/api";
 import { toast } from "sonner";

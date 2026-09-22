@@ -1,5 +1,7 @@
 "use client";
 
+export const runtime = "edge";
+
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { QuickTradePanel, type QuickTradeStock } from "@/components/dashboard/QuickTradePanel";
 import { swingApi } from "@/lib/api";
