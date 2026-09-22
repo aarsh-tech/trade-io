@@ -1,7 +1,5 @@
 "use client";
 
-export const runtime = "edge";
-
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/topbar";
 import { MobileBottomNav } from "@/components/layout/mobile-nav";

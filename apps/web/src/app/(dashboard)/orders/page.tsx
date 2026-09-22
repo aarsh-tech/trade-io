@@ -1,34 +1,25 @@
 "use client";
 
-export const runtime = "edge";
-
-import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useState, useMemo } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DataTable, DataTableColumnHeader } from "@/components/ui/data-table";
-import { useBrokers } from "@/hooks/useBrokers";
-import { brokerApi, orderApi } from "@/lib/api";
-import { queryKeys } from "@/lib/query-keys";
-import { cn } from "@/lib/utils";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ColumnDef } from "@tanstack/react-table";
 import {
-  Ban,
-  BookOpen,
-  Calendar,
-  CheckCircle2,
-  ClipboardList,
-  Clock,
-  Loader2,
-  RefreshCcw,
-  Search,
-  ShieldCheck,
-  XCircle
+  ClipboardList, RefreshCcw, CheckCircle2, XCircle, Clock,
+  AlertCircle, ArrowUpRight, ArrowDownRight, Ban, Filter,
+  Layers, Search, Loader2, BookOpen, ShieldCheck, Sparkles,
+  Calendar, Check, ShieldAlert
 } from "lucide-react";
-import Link from "next/link";
-import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable, DataTableColumnHeader } from "@/components/ui/data-table";
+import { queryKeys } from "@/lib/query-keys";
+import { orderApi, brokerApi } from "@/lib/api";
+import { useBrokers } from "@/hooks/useBrokers";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import Link from "next/link";
 
 interface Order {
   id: string;
@@ -182,18 +173,18 @@ export default function OrdersPage() {
         filterStatus === "ALL"
           ? true
           : filterStatus === "OPEN"
-            ? o.status === "OPEN" || o.status === "PENDING"
-            : o.status === filterStatus;
+          ? o.status === "OPEN" || o.status === "PENDING"
+          : o.status === filterStatus;
 
       const formatted = formatTradingSymbol(o.symbol);
       const matchesSearch =
         searchQuery.trim() === ""
           ? true
           : o.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          formatted.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          o.brokerOrderId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          o.execution?.strategy?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          o.exchange?.toLowerCase().includes(searchQuery.toLowerCase());
+            formatted.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            o.brokerOrderId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            o.execution?.strategy?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            o.exchange?.toLowerCase().includes(searchQuery.toLowerCase());
 
       return matchesStatus && matchesSearch;
     });
@@ -394,8 +385,8 @@ export default function OrdersPage() {
                 status === "COMPLETE"
                   ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/10"
                   : isOpen
-                    ? "border-amber-500/30 text-amber-600 bg-amber-500/10"
-                    : "border-rose-500/30 text-rose-600 bg-rose-500/10"
+                  ? "border-amber-500/30 text-amber-600 bg-amber-500/10"
+                  : "border-rose-500/30 text-rose-600 bg-rose-500/10"
               )}
             >
               {status === "COMPLETE" && <CheckCircle2 className="h-3 w-3" />}
@@ -660,8 +651,8 @@ export default function OrdersPage() {
                 {searchQuery || filterStatus !== "ALL"
                   ? "No orders match your current filter criteria."
                   : dateScope === "TODAY"
-                    ? "No orders found in today's Zerodha session. Switch to 'All Time Records' to view past days."
-                    : "No orders found in the database. Click 'Sync Broker Orders' to fetch fresh records."}
+                  ? "No orders found in today's Zerodha session. Switch to 'All Time Records' to view past days."
+                  : "No orders found in the database. Click 'Sync Broker Orders' to fetch fresh records."}
               </p>
               <div className="flex items-center justify-center gap-3">
                 {dateScope === "TODAY" && (
@@ -717,8 +708,8 @@ export default function OrdersPage() {
                               ord.status === "COMPLETE"
                                 ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/10"
                                 : isOpen
-                                  ? "border-amber-500/30 text-amber-600 bg-amber-500/10"
-                                  : "border-rose-500/30 text-rose-600 bg-rose-500/10"
+                                ? "border-amber-500/30 text-amber-600 bg-amber-500/10"
+                                : "border-rose-500/30 text-rose-600 bg-rose-500/10"
                             )}
                           >
                             {ord.status === "COMPLETE" && <CheckCircle2 className="h-3 w-3" />}

@@ -1,7 +1,5 @@
 "use client";
 
-export const runtime = "edge";
-
 import { QuickTradePanel, QuickTradeStock } from "@/components/dashboard/QuickTradePanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

@@ -4,8 +4,6 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 import { Toaster } from "sonner";
 
-export const runtime = "edge";
-
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",

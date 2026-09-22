@@ -1,7 +1,5 @@
 "use client";
 
-export const runtime = "edge";
-
 import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import { LiveAlgoPositionsCard } from "@/components/dashboard/LiveAlgoPositionsCard";
 import { Badge } from "@/components/ui/badge";
