@@ -57,6 +57,8 @@ interface StrategyState {
   winsToday?: number;
   lossesToday?: number;
   partialBooked?: boolean;
+  isProcessingTick?: boolean;
+  isPlacingTrade?: boolean;
   initialQty?: number;
   logs: string[];
   currentLtp?: number;
@@ -247,8 +249,11 @@ export class StockOptionsBuyingEngine {
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
+    if (state.isProcessingTick) return;
+    state.isProcessingTick = true;
 
-    // Resolve AUTO symbol mode
+    try {
+      // Resolve AUTO symbol mode
     if (state.config.symbol === 'AUTO' || state.config.symbol === 'auto') {
       state.isAutoMode = true;
     }
@@ -362,6 +367,9 @@ export class StockOptionsBuyingEngine {
     }
 
     await this.persistLogs(state);
+    } finally {
+      state.isProcessingTick = false;
+    }
   }
 
   // ─── Upgrade 1: Multi-Filter Signal Scanning (RVOL + Volume SMA) ────────────
@@ -576,6 +584,13 @@ export class StockOptionsBuyingEngine {
     targetSymbol?: string,
     isHistorical?: boolean,
   ) {
+    if (!this.running.has(state.strategyId)) return;
+    if (state.stateType !== 'SCANNING' || state.isPlacingTrade) {
+      this.log(state, `⛔ Strategy already in ${state.stateType} or trade in-flight. Skipping duplicate trade.`);
+      return;
+    }
+    state.isPlacingTrade = true;
+
     try {
       const activeSym = targetSymbol || state.config.symbol;
       const activeExchange = state.config.exchange || 'NSE';
@@ -728,8 +743,10 @@ export class StockOptionsBuyingEngine {
       }
 
       await this.trackOrder(state, entryPrice, 'OPEN');
-    } catch (e) {
+    } catch (e: any) {
       this.log(state, `❌ Setup trigger error: ${e.message}`);
+    } finally {
+      state.isPlacingTrade = false;
     }
   }
 

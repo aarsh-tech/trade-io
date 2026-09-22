@@ -70,6 +70,8 @@ interface StrategyState {
   // Real-Time WebSocket & Ticker Tracking State
   realtimeActive?: boolean;
   isExiting?: boolean;
+  isProcessingTick?: boolean;
+  isPlacingTrade?: boolean;
   lastTickTime?: number;
   lastPnlLogTime?: number;
   lastEmitTime?: number;
@@ -899,9 +901,12 @@ export class Breakout15MinEngine {
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
+    if (state.isProcessingTick) return;
+    state.isProcessingTick = true;
 
-    const now = new Date();
-    const hhmm = this.getIstHhmm(now);
+    try {
+      const now = new Date();
+      const hhmm = this.getIstHhmm(now);
 
     if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) {
       if (hhmm < 9 * 60 + 15) this.resetDailyState(state);
@@ -1504,6 +1509,9 @@ export class Breakout15MinEngine {
     } catch (err: any) { this.log(state, `❌ Tick error: ${err.message}`); }
 
     await this.persistLogs(state);
+    } finally {
+      state.isProcessingTick = false;
+    }
   }
 
   // ─── Real-Time WebSocket Position Monitoring (Sub-Second Ticks) ────────────
@@ -2407,9 +2415,20 @@ export class Breakout15MinEngine {
   }
 
   private async placeBreakoutTrade(strategyId: string, state: StrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, refLow?: number, refHigh?: number, breakoutCandle?: Candle) {
-    const { config } = state;
-    const kite = client['kite'] || client;
-    let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
+    if (!this.running.has(strategyId)) {
+      this.logger.warn(`[ABORT] Strategy ${strategyId} has been stopped. Aborting trade placement.`);
+      return;
+    }
+    if (state.entryTriggered || state.isPlacingTrade) {
+      this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping duplicate trade.`);
+      return;
+    }
+    state.isPlacingTrade = true;
+
+    try {
+      const { config } = state;
+      const kite = client['kite'] || client;
+      let symbol = config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
 
     const stopLow = refLow ?? state.refLow;
     const stopHigh = refHigh ?? state.refHigh;
@@ -2596,6 +2615,9 @@ export class Breakout15MinEngine {
       this.log(state, `⚠ Falling back to ${symbol} (Spot/Future) as no suitable option was found.`);
     }
     await this.executeOrders(strategyId, state, client, account, symbol, exchange, side, entry, sl, tgt, triggerTime);
+    } finally {
+      state.isPlacingTrade = false;
+    }
   }
 
   private async executeOrders(strategyId: string, state: StrategyState, client: any, account: any, symbol: string, exchange: string, side: 'BUY' | 'SELL', entry: number, sl: number, tgt: number, triggerTime?: Date) {

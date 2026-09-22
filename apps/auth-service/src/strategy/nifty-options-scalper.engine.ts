@@ -48,6 +48,8 @@ interface ScalperStrategyState {
   lastProcessedTimestamp?: number;
   tickerUnsubscribe?: () => void;
   realtimeActive?: boolean;
+  isProcessingTick?: boolean;
+  isPlacingTrade?: boolean;
   lastPnlLogTime?: number;
   lastTickTime?: number;
   lastExitTimestamp?: number;
@@ -702,8 +704,12 @@ export class NiftyOptionsScalperEngine {
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
-    const now = new Date();
-    const hhmm = this.getIstHhmm(now);
+    if (state.isProcessingTick) return;
+    state.isProcessingTick = true;
+
+    try {
+      const now = new Date();
+      const hhmm = this.getIstHhmm(now);
     if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) return;
 
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
@@ -995,15 +1001,25 @@ export class NiftyOptionsScalperEngine {
           this.log(state, `👀 Scanned ${intervalMinutes}-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | StochRSI: ${kStr}/${dStr} (No crossover signal)`);
         }
       }
-    } catch (err) { this.log(state, `❌ Tick error: ${err.message}`); }
+    } catch (err: any) { this.log(state, `❌ Tick error: ${err.message}`); }
     await this.persistLogs(state);
+    } finally {
+      state.isProcessingTick = false;
+    }
   }
 
   private async placeTrade(state: ScalperStrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date, motherLow?: number, motherHigh?: number) {
     const { config } = state;
-    if (state.entryTriggered) return;
-    const kite = client['kite'];
-    const type = side === 'BUY' ? 'CE' : 'PE';
+    if (!this.running.has(state.strategyId)) return;
+    if (state.entryTriggered || state.isPlacingTrade) {
+      this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping duplicate trade.`);
+      return;
+    }
+    state.isPlacingTrade = true;
+
+    try {
+      const kite = client['kite'];
+      const type = side === 'BUY' ? 'CE' : 'PE';
 
     const optSym = await this.findOptionSymbol(client, state, triggerPrice, type, triggerTime);
     if (!optSym) {
@@ -1081,8 +1097,7 @@ export class NiftyOptionsScalperEngine {
     this.log(state, `📋 Placed Option Trade: ${exch}:${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+${params.targetPoints} pts): ₹${tgt.toFixed(2)} | Initial SL (-${params.stopLossPoints} pts): ₹${sl.toFixed(2)} | Qty: ${tradeQty} (${dynamicLots} lots, ₹${(tradeQty * entry).toLocaleString('en-IN')} deployed)`);
 
     const tStart = performance.now();
-    try {
-      const orderId = (state.isPaperTrade || isHistorical)
+    const orderId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
         : await client.placeOrder({ symbol: optSym, exchange: exch, product: config.product, qty: tradeQty, side: 'BUY', orderType: 'MARKET' });
 
@@ -1116,8 +1131,10 @@ export class NiftyOptionsScalperEngine {
       if (!isHistorical) {
         await this.startRealtimeMonitor(state, client);
       }
-    } catch (e) {
+    } catch (e: any) {
       this.log(state, `❌ Trade placement failed: ${e.message}`);
+    } finally {
+      state.isPlacingTrade = false;
     }
   }
 

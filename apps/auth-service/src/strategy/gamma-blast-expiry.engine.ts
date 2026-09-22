@@ -71,6 +71,8 @@ interface GammaStrategyState {
   lastProcessedTimestamp?: number;
   tickerUnsubscribe?: () => void;
   realtimeActive?: boolean;
+  isProcessingTick?: boolean;
+  isPlacingTrade?: boolean;
   lastPnlLogTime?: number;
   lastTickTime?: number;
   lastEmitTime?: number;
@@ -792,8 +794,11 @@ export class GammaBlastExpiryEngine {
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
     if (!state) return;
+    if (state.isProcessingTick) return;
+    state.isProcessingTick = true;
 
-    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+    try {
+      const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
     if (!account || !account.accessToken) {
       if (!state.lastTickTime || (Date.now() - state.lastTickTime > 60000)) {
         state.lastTickTime = Date.now();
@@ -908,6 +913,9 @@ export class GammaBlastExpiryEngine {
       await this.persistLogs(state);
     } catch (e: any) {
       this.logger.error(`Gamma evaluation error: ${e.message}`);
+    }
+    } finally {
+      state.isProcessingTick = false;
     }
   }
 
@@ -1343,8 +1351,16 @@ export class GammaBlastExpiryEngine {
     setupType?: any,
     indexInvalidationPrice?: number | null
   ) {
-    const exchange = state.activeExchange;
-    const baseLots = state.lots || state.config.lots || 1;
+    if (!this.running.has(state.strategyId)) return;
+    if (state.entryTriggered || state.isPlacingTrade) {
+      this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping duplicate trade.`);
+      return;
+    }
+    state.isPlacingTrade = true;
+
+    try {
+      const exchange = state.activeExchange;
+      const baseLots = state.lots || state.config.lots || 1;
     const maxConvictionLots = state.config.maxConvictionLots || 3;
     const shouldBoost = isHighConviction && state.config.enableHighConvictionBoost !== false;
     let targetLots = shouldBoost ? Math.max(baseLots, maxConvictionLots) : baseLots;
@@ -1432,8 +1448,7 @@ export class GammaBlastExpiryEngine {
       this.log(state, `📋 Placing ${lots}-Lot Order: ${exchange}:${symbol} | Setup: ${setupType || 'SCALP'} | Qty: ${qty} | Entry: ₹${entryPrice.toFixed(2)} | Initial SL: ₹${initialSl.toFixed(2)} (-${effectiveRiskPts} pts, Max Risk: ₹${maxRiskRs})${state.targetPrice ? ` | Target: ₹${state.targetPrice.toFixed(2)} (+${targetMovePts} pts, Target Gain: ₹${targetGainRs})` : ''}`);
     }
 
-    try {
-      const limitPrice = this.roundTick(entryPrice + 0.50);
+    const limitPrice = this.roundTick(entryPrice + 0.50);
       const entryId = state.isPaperTrade
         ? `PAPER_GAMMA_${Math.random().toString(36).substring(7).toUpperCase()}`
         : await client.placeOrder({
@@ -1487,6 +1502,8 @@ export class GammaBlastExpiryEngine {
       await this.startRealtimeMonitor(state, client);
     } catch (err: any) {
       this.log(state, `❌ Gamma Trade Placement failed: ${err.message}`);
+    } finally {
+      state.isPlacingTrade = false;
     }
   }
 
