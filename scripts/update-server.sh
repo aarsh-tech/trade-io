@@ -52,25 +52,14 @@ echo -e "\n${CYAN}[5/6] Building backend with pnpm...${NC}"
 pnpm --filter @algo-trade/auth-service build
 echo -e "      ${GREEN}✅ NestJS backend build successful.${NC}"
 
-# Optional Frontend Build if registered in PM2
-if command -v pm2 &> /dev/null && pm2 list | grep -q "algo-frontend"; then
-  echo -e "\n${CYAN}Building Next.js frontend with pnpm...${NC}"
-  pnpm --filter web build
-  echo -e "      ${GREEN}✅ Next.js frontend build successful.${NC}"
-fi
-
 # 6. Run Pre-Restart Automated Verification Tests
 echo -e "\n${CYAN}[6/6] Running 12-point automated safety & logic verification suite...${NC}"
 node apps/auth-service/scripts/verify-all-fixes.js
 
 echo -e "\n${GREEN}${BOLD}🎉 ALL PRE-FLIGHT TESTS PASSED! Safely restarting PM2...${NC}"
 
-# Restart PM2 processes
-if command -v pm2 &> /dev/null && pm2 list | grep -q "algo-frontend"; then
-  pm2 restart algo-backend algo-frontend
-else
-  pm2 restart algo-backend
-fi
+# Restart Backend PM2 process
+pm2 restart algo-backend
 
 # Brief pause to allow process initialization
 sleep 2
@@ -84,5 +73,5 @@ pm2 status
 
 # Show recent PM2 logs
 echo -e "\n${CYAN}--- Recent Backend Startup Logs ---${NC}"
-pm2 logs algo-backend --lines 20 --nostream
+pm2 logs algo-backend --lines 200 --nostream
 echo -e "${CYAN}-----------------------------------${NC}\n"
