@@ -46,7 +46,8 @@ import {
   TrendingUp,
   X,
   Zap,
-  Settings2
+  Settings2,
+  Trash2
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -408,6 +409,7 @@ export default function StrategyDetailPage() {
     try {
       if (strategy.isActive) {
         await strategyApi.stop(id);
+        setLiveLogs([]);
         toast.success(`"${strategy.name}" stopped`);
       } else {
         await strategyApi.start(id);
@@ -815,9 +817,8 @@ export default function StrategyDetailPage() {
                       onChange={(e) => setTestProduct(e.target.value)}
                       className="flex h-9 w-full rounded-lg border border-border bg-secondary/30 px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
                     >
-                      <option value="MIS">MIS (Intraday 5x)</option>
-                      <option value="CNC">CNC (Delivery)</option>
-                      <option value="NRML">NRML (Margin)</option>
+                      <option value="MIS">MIS (Intraday)</option>
+                      <option value="NRML">NRML (Delivery)</option>
                     </select>
                   </div>
 
@@ -1527,6 +1528,19 @@ export default function StrategyDetailPage() {
                 >
                   <Copy className="h-3 w-3" />
                   <span className="hidden sm:inline">Copy Logs</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setLiveLogs([]);
+                    toast.success("Terminal logs cleared");
+                  }}
+                  className="h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-rose-500"
+                  title="Clear live terminal logs"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span className="hidden sm:inline">Clear</span>
                 </Button>
                 <Button
                   variant="ghost"

@@ -214,7 +214,7 @@ export interface StockOptionsBuyingConfig {
   triggerOffset: number;        // default 0.50 (points above option mother high)
   protectionBufferPct: number;  // default 10 (%)
   stopLossRs?: number;          // Maximum allowed loss in rupees (default: 500)
-  
+
   // High Accuracy & 100% ROI Upgrades
   minRvol?: number;             // Relative Volume multiplier (default: 1.5)
   moneyness?: 'ATM' | 'ITM';    // Option Strike type (default: 'ATM')

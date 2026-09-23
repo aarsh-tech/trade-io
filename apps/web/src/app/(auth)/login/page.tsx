@@ -21,6 +21,10 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("accessToken");
+        localStorage.removeItem("refreshToken");
+      }
       const { data } = await login(form);
       if (data.data.requireTotp) {
         setShow2fa(true);

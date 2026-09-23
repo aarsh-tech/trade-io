@@ -3,7 +3,7 @@ import { NIFTY_500_UNIVERSE, FO_STOCKS_LIST } from '../market/market.constants';
 
 // ─── Minimal Filter for Pure Penny / Illiquid / Extreme High-Price Symbols ───────────────────
 const BLACKLISTED_SLOW_STOCKS = new Set([
-  'IDEA', 'VODAFONE', 'JISLJALEQS', 'YESBANK', 'SUZLON', 'IFCI', 'NIACL'
+  'IDEA', 'VODAFONE', 'JISLJALEQS', 'YESBANK', 'SUZLON', 'NIACL'
 ]);
 
 export const globalTickSizeMap = new Map<string, number>();
@@ -13,6 +13,7 @@ let cachedDynamicStocks: { symbols: string[]; tokenMap: Map<string, number>; tic
 let cachedDynamicStocksTime = 0;
 let cachedFnoSymbolsList: string[] = [];
 let cachedFnoSymbolsTime = 0;
+const pdhPdlCache = new Map<string, { pdh: number; pdl: number; prevClose: number; dateStr: string }>();
 
 export function getInstrumentTickSize(symbol: string, ltp?: number): number {
   const cleanSym = (symbol || '').replace('NSE:', '').replace('NFO:', '').trim().toUpperCase();
@@ -101,7 +102,7 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
   }
 
   // 3. Build Full Dynamic NSE Scanner Universe:
-  // Order: F&O symbols first, then NIFTY 500, then all other active NSE equities (GABRIEL, MEESHO, JAINREC, CEMPRO, etc.)
+  // Order: F&O symbols first, then NIFTY 500 (covers all Zerodha top gainers & losers)
   const combinedSet = new Set<string>();
   const liquidSymbols: string[] = [];
 
@@ -113,7 +114,7 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
     }
   }
 
-  // Priority 2: NIFTY 500 universe
+  // Priority 2: NIFTY 500 universe (all top institutional market runners)
   for (const sym of (NIFTY_500_UNIVERSE || [])) {
     if (allNseSymbols.has(sym) && !BLACKLISTED_SLOW_STOCKS.has(sym) && !combinedSet.has(sym)) {
       combinedSet.add(sym);
@@ -121,15 +122,7 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
     }
   }
 
-  // Priority 3: All remaining active NSE liquid equities (ensures no intraday runner is missed)
-  for (const sym of allNseSymbols) {
-    if (!BLACKLISTED_SLOW_STOCKS.has(sym) && !combinedSet.has(sym)) {
-      combinedSet.add(sym);
-      liquidSymbols.push(sym);
-    }
-  }
-
-  logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} active NSE equity stocks (F&O + NIFTY 500 + Full NSE Equities)`);
+  logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} active NSE equity stocks (F&O + NIFTY 500 Universe)`);
   cachedDynamicStocks = { symbols: liquidSymbols, tokenMap, tickSizeMap };
   cachedDynamicStocksTime = Date.now();
   return cachedDynamicStocks;
@@ -222,7 +215,7 @@ export async function getTopCandidateStocks(
   maxCapital?: number,
   limit: number = 20,
   excludedSymbols?: Set<string>,
-  minStockPrice: number = 50,
+  minStockPrice: number = 30,
 ): Promise<CandidateStock[]> {
   const result: CandidateStock[] = [];
 
@@ -274,8 +267,8 @@ export async function getTopCandidateStocks(
       const ltp = quote.last_price;
 
       // ── 1. Capital-Constrained Price Filter ────────────────────────────────
-      // Allows active institutional stocks (MEESHO ₹236, SWIGGY ₹279, ENGINEERSIN ₹295, etc.) down to ₹50
-      const effectiveMinPrice = Math.max(50, minStockPrice ?? 50);
+      // Allows active institutional stocks (MEESHO ₹236, SWIGGY ₹279, SAIL ₹185, OLAELEC ₹41.87) down to ₹30
+      const effectiveMinPrice = Math.max(30, minStockPrice ?? 30);
       if (ltp < effectiveMinPrice || ltp > maxBuyingPower) continue;
 
       const prevClose = quote.ohlc.close;
@@ -284,18 +277,18 @@ export async function getTopCandidateStocks(
       const todayLow = quote.ohlc.low || ltp;
       const liveVolume = quote.volume || 0;
 
-      // Filter out extreme overnight gap (>8.0%) — event/earnings binary risk
+      // Filter out extreme overnight gap (>15.0%) — allows real runners like Whirlpool/Elecon to be captured
       const gapPct = Math.abs((todayOpen - prevClose) / prevClose) * 100;
-      if (gapPct > 8.0) continue;
+      if (gapPct > 15.0) continue;
 
       const changeFromOpenPct = ((ltp - todayOpen) / todayOpen) * 100;
       const dayChangePct = ((ltp - prevClose) / prevClose) * 100;
       const dayRangePct = todayOpen > 0 ? ((todayHigh - todayLow) / todayOpen) * 100 : 0;
       const turnoverCr = (liveVolume * ltp) / 10000000; // Rupee Turnover in Crores
 
-      // Scaled liquidity filter: During 09:15-09:20 AM opening, accept turnover >= 0.05 Cr so fast movers are not skipped
-      const minTurnoverCr = isMarketOpening ? 0.05 : 0.30;
-      const minVolume = isMarketOpening ? 500 : 5000;
+      // Scaled liquidity filter: Ensures stock has genuine trading interest without skipping opening runners
+      const minTurnoverCr = isMarketOpening ? 0.10 : 0.30;
+      const minVolume = isMarketOpening ? 1000 : 5000;
       if (turnoverCr < minTurnoverCr && liveVolume < minVolume) continue;
 
       const diffOpenLowPct = todayOpen > 0 ? Math.abs(todayOpen - todayLow) / todayOpen : 1;
@@ -305,20 +298,26 @@ export async function getTopCandidateStocks(
       const isOpenHigh = (diffOpenHighPct <= 0.0025) && (ltp < todayOpen) && (changeFromOpenPct <= -0.20);
 
       // ── 2. Multi-Factor Directional Momentum Scoring ────────────────────────
-      // Measures real trending velocity (e.g. fresh 0.5% - 2.5% move from open)
       const absChangeFromOpen = Math.abs(changeFromOpenPct);
       const absDayChange = Math.abs(dayChangePct);
 
-      // Minimum move filter to skip flat/dormant stocks (e.g. rangebound chop)
+      // Minimum move filter to skip flat/dormant stocks
       const moveFromLowPct = todayLow > 0 ? ((ltp - todayLow) / todayLow) * 100 : 0;
       const moveFromHighPct = todayHigh > 0 ? ((todayHigh - ltp) / todayHigh) * 100 : 0;
       if (absChangeFromOpen < 0.20 && absDayChange < 0.50 && dayRangePct < 0.6 && !isOpenLow && !isOpenHigh) continue;
 
-      // Circuit Proximity Guard:
-      // Only skip stocks approaching circuit limits (>= 18.0%) to avoid order rejection or freeze.
-      // True intraday leaders (Top Gainers / Losers like GABRIEL, MEESHO, POONAWALLA, WELCORP)
-      // that are up or down 3% to 14% offer the cleanest pullback continuation trends!
-      if (absDayChange >= 18.0 || absChangeFromOpen >= 16.0) continue;
+      // Dynamic Exchange Circuit Proximity Guard: Protect against ANY circuit band (5%, 10%, 20%)
+      const upperCircuit = Number(quote.upper_circuit_limit);
+      const lowerCircuit = Number(quote.lower_circuit_limit);
+      if (upperCircuit && upperCircuit > 0 && ltp > 0) {
+        const distToUpperCircuitPct = ((upperCircuit - ltp) / ltp) * 100;
+        if (distToUpperCircuitPct <= 0.8) continue; // Skip if within 0.8% of upper circuit
+      }
+      if (lowerCircuit && lowerCircuit > 0 && ltp > 0) {
+        const distToLowerCircuitPct = ((ltp - lowerCircuit) / ltp) * 100;
+        if (distToLowerCircuitPct <= 0.8) continue; // Skip if within 0.8% of lower circuit
+      }
+      if (absDayChange >= 19.0 || absChangeFromOpen >= 17.0) continue;
 
       // ── Relative Volume (RVOL) Institutional Participation Gauge ───────────
       const marketMinutesElapsed = Math.max(5, Math.min(375, istHhmm - (9 * 60 + 15)));
@@ -330,26 +329,26 @@ export async function getTopCandidateStocks(
       const shortDropFromOpen = Math.max(0, -changeFromOpenPct);
       const shortDropFromPrev = Math.max(0, -dayChangePct);
       const shortScore = Math.round(
-        (shortDropFromPrev * 160) +          // Heavy weight on Zerodha Top Losers (% change from prev close)
-        (shortDropFromOpen * 150) +          // Intraday continuous selling drive
+        (shortDropFromPrev * 220) +          // Heavy weight on Zerodha Top Losers (% change from prev close)
+        (shortDropFromOpen * 180) +          // Intraday continuous selling drive
         (moveFromHighPct * 90) +             // Rejection from highs
         (dayRangePct * 80) +                 // Intraday expansion range
-        (Math.min(turnoverCr, 100) * 15) +   // Institutional liquidity
+        (Math.min(turnoverCr, 200) * 20) +   // Institutional liquidity weight
         rvolScore +                          // Relative Volume surge
-        (isOpenHigh ? 200 : 0)               // Confluence boost for Open=High
+        (isOpenHigh ? 250 : 0)               // Confluence boost for Open=High
       );
 
       // Long momentum score (for rallies/breakouts / Top Gainers)
       const longGainFromOpen = Math.max(0, changeFromOpenPct);
       const longGainFromPrev = Math.max(0, dayChangePct);
       const longScore = Math.round(
-        (longGainFromPrev * 160) +           // Heavy weight on Zerodha Top Gainers (% change from prev close)
-        (longGainFromOpen * 150) +           // Intraday continuous buying drive
+        (longGainFromPrev * 220) +           // Heavy weight on Zerodha Top Gainers (% change from prev close)
+        (longGainFromOpen * 180) +           // Intraday continuous buying drive
         (moveFromLowPct * 90) +              // Bounce off lows
         (dayRangePct * 80) +                 // Intraday expansion range
-        (Math.min(turnoverCr, 100) * 15) +   // Institutional liquidity
+        (Math.min(turnoverCr, 200) * 20) +   // Institutional liquidity weight
         rvolScore +                          // Relative Volume surge
-        (isOpenLow ? 200 : 0)                // Confluence boost for Open=Low
+        (isOpenLow ? 250 : 0)                // Confluence boost for Open=Low
       );
 
       const trend: 'LONG' | 'SHORT' = longScore >= shortScore ? 'LONG' : 'SHORT';
@@ -379,6 +378,7 @@ export async function getTopCandidateStocks(
         low: todayLow,
         isOpenLow,
         isOpenHigh,
+        prevClose,
       });
     }
   }
@@ -387,59 +387,81 @@ export async function getTopCandidateStocks(
   result.sort((a, b) => b.score - a.score);
 
   // ── 4. Enrich Top Candidates with Previous Day High (PDH) & Low (PDL) ─────
-  // High Conviction: Cleared PDH/PDL (+400 pts). Resistance Gate: Trapped under PDH (-500 pts).
   const topCandidates = result.slice(0, Math.max(limit, 12));
   const now = new Date();
   const from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const istDateStr = new Date(now.getTime() + 330 * 60000 + now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 
   for (const cand of topCandidates) {
-    const token = tokenMap?.get(cand.symbol);
-    if (!token) continue;
-    try {
-      const dailyCandles = await kite.getHistoricalData(token, 'day', from, now, false).catch(() => null);
-      if (Array.isArray(dailyCandles) && dailyCandles.length >= 2) {
-        const pastCandles = dailyCandles.filter((c: any) => {
-          const cDate = new Date(c.date);
-          const cStr = new Date(cDate.getTime() + 330 * 60000 + cDate.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-          return cStr !== istDateStr;
-        });
-        if (pastCandles.length > 0) {
-          const prevDay = pastCandles[pastCandles.length - 1];
-          cand.pdh = Number(prevDay.high);
-          cand.pdl = Number(prevDay.low);
-          cand.prevClose = Number(prevDay.close);
+    // 1. Check in-memory session cache first to eliminate redundant historical data calls
+    const cachedDaily = pdhPdlCache.get(cand.symbol);
+    if (cachedDaily && cachedDaily.dateStr === istDateStr) {
+      cand.pdh = cachedDaily.pdh;
+      cand.pdl = cachedDaily.pdl;
+      cand.prevClose = cachedDaily.prevClose;
+    } else {
+      const token = tokenMap?.get(cand.symbol);
+      if (token) {
+        try {
+          const dailyCandles = await Promise.race([
+            kite.getHistoricalData(token, 'day', from, now, false),
+            new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500))
+          ]).catch(() => null);
 
-          // ── Support / Resistance Confirmation Scoring ──
-          if (cand.trend === 'LONG' && cand.pdh > 0) {
-            if (cand.ltp >= cand.pdh) {
-              cand.isAbovePdh = true;
-              cand.score += 400; // High conviction boost: PDH flipped into strong support floor
-              logger?.log(`🔥 [High Conviction] ${cand.symbol}: Price ₹${cand.ltp.toFixed(2)} cleared Previous Day High (₹${cand.pdh.toFixed(2)}). PDH is active SUPPORT! (+400 score)`);
-            } else {
-              cand.distToPdhPct = ((cand.pdh - cand.ltp) / cand.ltp) * 100;
-              if (cand.distToPdhPct < 0.8) {
-                cand.score -= 500; // Heavy penalty: trapped right under PDH resistance ceiling
-                logger?.warn(`⛔ [PDH Resistance Hurdle] ${cand.symbol}: Long setup @ ₹${cand.ltp.toFixed(2)} is only ${cand.distToPdhPct.toFixed(2)}% below PDH (₹${cand.pdh.toFixed(2)}). Penalizing to avoid false breakout trap.`);
-              }
-            }
-          } else if (cand.trend === 'SHORT' && cand.pdl > 0) {
-            if (cand.ltp <= cand.pdl) {
-              cand.isBelowPdl = true;
-              cand.score += 400; // High conviction boost: PDL flipped into resistance ceiling
-              logger?.log(`🔥 [High Conviction] ${cand.symbol}: Price ₹${cand.ltp.toFixed(2)} cleared Previous Day Low (₹${cand.pdl.toFixed(2)}). PDL is active RESISTANCE! (+400 score)`);
-            } else {
-              cand.distToPdlPct = ((cand.ltp - cand.pdl) / cand.ltp) * 100;
-              if (cand.distToPdlPct < 0.8) {
-                cand.score -= 500; // Heavy penalty: trapped right above PDL support floor
-                logger?.warn(`⛔ [PDL Support Hurdle] ${cand.symbol}: Short setup @ ₹${cand.ltp.toFixed(2)} is only ${cand.distToPdlPct.toFixed(2)}% above PDL (₹${cand.pdl.toFixed(2)}). Penalizing to avoid floor bounce trap.`);
-              }
+          if (Array.isArray(dailyCandles) && dailyCandles.length >= 2) {
+            const pastCandles = dailyCandles.filter((c: any) => {
+              const cDate = new Date(c.date);
+              const cStr = new Date(cDate.getTime() + 330 * 60000 + cDate.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+              return cStr !== istDateStr;
+            });
+            if (pastCandles.length > 0) {
+              const prevDay = pastCandles[pastCandles.length - 1];
+              cand.pdh = Number(prevDay.high);
+              cand.pdl = Number(prevDay.low);
+              cand.prevClose = Number(prevDay.close);
+              pdhPdlCache.set(cand.symbol, {
+                pdh: cand.pdh,
+                pdl: cand.pdl,
+                prevClose: cand.prevClose,
+                dateStr: istDateStr
+              });
             }
           }
+        } catch { }
+      }
+    }
+
+    // ── Support / Resistance Confirmation Scoring ──
+    if (cand.trend === 'LONG' && cand.pdh && cand.pdh > 0) {
+      if (cand.ltp >= cand.pdh) {
+        cand.isAbovePdh = true;
+        cand.score += 400; // High conviction boost: PDH flipped into strong support floor
+      } else {
+        cand.distToPdhPct = ((cand.pdh - cand.ltp) / cand.ltp) * 100;
+        if (cand.distToPdhPct < 0.8) {
+          cand.score -= 500; // Heavy penalty: trapped right under PDH resistance ceiling
         }
       }
-    } catch {
-      // Historical data unavailable; keep baseline score
+    } else if (cand.trend === 'SHORT' && cand.pdl && cand.pdl > 0) {
+      if (cand.ltp <= cand.pdl) {
+        cand.isBelowPdl = true;
+        cand.score += 400; // High conviction boost: PDL flipped into resistance ceiling
+      } else {
+        cand.distToPdlPct = ((cand.ltp - cand.pdl) / cand.ltp) * 100;
+        if (cand.distToPdlPct < 0.8) {
+          cand.score -= 500; // Heavy penalty: trapped right above PDL support floor
+        }
+      }
+    }
+
+    // ── PDC (Previous Day Close) Daily Sentiment Alignment ──
+    const pdc = cand.prevClose;
+    if (pdc && pdc > 0) {
+      if (cand.trend === 'LONG' && cand.ltp > pdc) {
+        cand.score += 200; // Bullish confirmation: holding above PDC pivot
+      } else if (cand.trend === 'SHORT' && cand.ltp < pdc) {
+        cand.score += 200; // Bearish confirmation: holding below PDC pivot
+      }
     }
   }
 

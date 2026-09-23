@@ -19,7 +19,7 @@ export function usePortfolio(brokerId?: string | null) {
       return res.data.data;
     },
     enabled: !!brokerId,
-    // Holdings are long-term CNC delivery assets; refresh lazily every 60s or on manual sync
+    // Holdings are long-term delivery assets; refresh lazily every 60s or on manual sync
     refetchInterval: 60000,
     staleTime: 30000,
   });

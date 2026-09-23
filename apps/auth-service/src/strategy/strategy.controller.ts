@@ -149,13 +149,18 @@ export class StrategyController {
 
     const currentExec = await this.strategyService.getLatestExecution(id);
 
-    // If memory logs are empty (e.g. fresh startup or engine restarted/stopped), retrieve latest execution logs from DB
-    if ((!logs || logs.length === 0) && currentExec?.logs) {
-      try {
-        logs = JSON.parse(currentExec.logs);
-      } catch {
-        logs = [currentExec.logs];
+    // Only retrieve logs from DB if the strategy execution is currently active/running (e.g. reconnecting to active run)
+    // If strategy is STOPPED, COMPLETED, or inactive, return empty logs so the live terminal is clean
+    if (isRunning || currentExec?.status === 'RUNNING') {
+      if ((!logs || logs.length === 0) && currentExec?.logs) {
+        try {
+          logs = JSON.parse(currentExec.logs);
+        } catch {
+          logs = [currentExec.logs];
+        }
       }
+    } else {
+      logs = [];
     }
 
     // Always fetch orders: from current execution, or fallback to strategy orders

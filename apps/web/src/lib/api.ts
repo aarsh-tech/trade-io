@@ -11,7 +11,7 @@ export function getApiBaseUrl(): string {
       return `http://${window.location.hostname}:3002/v1`;
     }
     const protocol = window.location.protocol;
-    return `${protocol}//${window.location.hostname}:3002/v1`;
+    return `${protocol}//${window.location.host}/v1`;
   }
   return "http://127.0.0.1:3002/v1";
 }
@@ -29,7 +29,7 @@ export function getSocketBaseUrl(): string {
       return `http://${window.location.hostname}:3002`;
     }
     const protocol = window.location.protocol;
-    return `${protocol}//${window.location.hostname}:3002`;
+    return `${protocol}//${window.location.host}`;
   }
   return "http://127.0.0.1:3002";
 }
@@ -37,6 +37,7 @@ export function getSocketBaseUrl(): string {
 export const api = axios.create({
   baseURL: getApiBaseUrl(),
   withCredentials: true,
+  timeout: 15000,
   headers: { "Content-Type": "application/json" },
 });
 

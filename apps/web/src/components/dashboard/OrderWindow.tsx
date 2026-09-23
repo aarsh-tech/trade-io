@@ -26,12 +26,12 @@ interface OrderWindowProps {
 }
 
 export type TabType = 'Regular' | 'Cover' | 'AMO' | 'Iceberg';
-export type ProductType = 'MIS' | 'CNC';
+export type ProductType = 'MIS' | 'NRML';
 export type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SL-M';
 export type ValidityType = 'DAY' | 'IOC' | 'TTL';
 
 export const orderFormSchema = z.object({
-  product: z.enum(['MIS', 'CNC']),
+  product: z.enum(['MIS', 'NRML']),
   orderType: z.enum(['MARKET', 'LIMIT', 'SL', 'SL-M']),
   exchange: z.enum(['NSE', 'BSE']),
   qty: z.coerce.number().int().min(1, "Quantity must be at least 1"),
@@ -338,7 +338,7 @@ export function OrderWindow({
                           className="w-full border rounded-lg px-2 py-1 bg-slate-50 text-xs"
                         >
                           <option value="MIS">Intraday (MIS)</option>
-                          <option value="CNC">Longterm (CNC)</option>
+                          <option value="NRML">Delivery (NRML)</option>
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -391,22 +391,22 @@ export function OrderWindow({
                   </span>
                 </label>
 
-                {/* Longterm CNC */}
+                {/* Delivery NRML */}
                 <label
                   className="flex items-center gap-2 cursor-pointer group"
-                  onClick={() => setValue("product", "CNC")}
+                  onClick={() => setValue("product", "NRML")}
                 >
                   <div
                     className={cn(
                       "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                      product === 'CNC' ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
+                      product === 'NRML' ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
                     )}
                     style={{
-                      borderColor: product === 'CNC' ? themeColor : undefined,
-                      borderWidth: product === 'CNC' ? '2px' : '1px',
+                      borderColor: product === 'NRML' ? themeColor : undefined,
+                      borderWidth: product === 'NRML' ? '2px' : '1px',
                     }}
                   >
-                    {product === 'CNC' && (
+                    {product === 'NRML' && (
                       <div
                         className="h-2 w-2 rounded-full"
                         style={{ backgroundColor: themeColor }}
@@ -414,7 +414,7 @@ export function OrderWindow({
                     )}
                   </div>
                   <span className="text-xs sm:text-[13px] font-medium text-slate-800">
-                    Longterm <span className="text-[10px] sm:text-[11px] text-slate-400 uppercase font-normal ml-0.5">CNC</span>
+                    Delivery <span className="text-[10px] sm:text-[11px] text-slate-400 uppercase font-normal ml-0.5">NRML</span>
                   </span>
                 </label>
               </div>
