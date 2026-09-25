@@ -241,7 +241,16 @@ export const orderApi = {
   list: (params?: { limit?: number; page?: number }) =>
     api.get("/orders", { params }),
   sync: () => api.post("/orders/sync"),
-  ledger: (params?: { month?: number; year?: number }) =>
+  ledger: (params?: {
+    month?: number;
+    year?: number;
+    page?: number;
+    pageSize?: number;
+    status?: "ALL" | "PROFIT" | "LOSS";
+    segment?: "ALL" | "EQUITY" | "FNO";
+    date?: string;
+    q?: string;
+  }) =>
     api.get("/orders/ledger", { params }),
 };
 

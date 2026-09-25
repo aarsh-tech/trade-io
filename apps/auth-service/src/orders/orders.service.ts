@@ -7,41 +7,47 @@ import { TickerService } from '../market/ticker.service';
 import { OrderUpdateEvent } from '../market/market-tick';
 import { isTradingDay, istParts } from '../market/market-calendar';
 import { parseKiteTime } from './kite-time';
+import { isFnoSymbol, orderBrokerage, segmentOf } from './charges';
+import { ClosedTrade, Fill, istDate, matchFills, tradeStatus } from './ledger';
 
 const EOD_SYNC_MINUTE = 15 * 60 + 40;
 const EOD_CHECK_INTERVAL_MS = 60_000;
 
-export interface ClosedTrade {
-  id: string;
-  symbol: string;
-  exchange: string;
-  product: string;
-  side: 'LONG' | 'SHORT';
-  qty: number;
-  entryPrice: number;
-  exitPrice: number;
-  entryTime: string;
-  exitTime: string;
-  date: string; // 'YYYY-MM-DD'
-  holdingDuration: string;
-  realizedPnl: number;
-  pnlPct: number;
-  status: 'PROFIT' | 'LOSS' | 'BREAKEVEN';
-  strategyName?: string;
-}
+export type { ClosedTrade };
 
 export interface DailyLedgerItem {
-  date: string; // 'YYYY-MM-DD'
+  date: string; // 'YYYY-MM-DD' (IST)
   formattedDate: string;
   dayOfWeek: string;
   tradesCount: number;
-  pnl: number;
+  pnl: number; // net of charges
+  grossPnl: number;
+  charges: number;
+  algoPnl: number;
+  manualPnl: number;
   wins: number;
   losses: number;
   winRate: number;
   status: 'PROFIT' | 'LOSS' | 'BREAKEVEN';
   cumulativePnl: number;
-  trades: ClosedTrade[];
+}
+
+export interface LedgerQuery {
+  month?: number;
+  year?: number;
+  page?: number;
+  pageSize?: number;
+  status?: 'ALL' | 'PROFIT' | 'LOSS';
+  segment?: 'ALL' | 'EQUITY' | 'FNO';
+  /** IST day, YYYY-MM-DD. */
+  date?: string;
+  q?: string;
+}
+
+interface SourceSummary {
+  pnl: number;
+  trades: number;
+  wins: number;
 }
 
 export interface MonthlyLedgerResponse {
@@ -50,7 +56,10 @@ export interface MonthlyLedgerResponse {
   selectedYear: number;
   availableMonths: Array<{ month: number; year: number; label: string }>;
   summary: {
+    /** Net of charges. */
     totalRealizedPnl: number;
+    totalGrossPnl: number;
+    totalCharges: number;
     totalTrades: number;
     winningTrades: number;
     losingTrades: number;
@@ -69,11 +78,21 @@ export interface MonthlyLedgerResponse {
     avgLoss: number;
     bestTrade: ClosedTrade | null;
     worstTrade: ClosedTrade | null;
+    algo: SourceSummary;
+    manual: SourceSummary;
   };
   chartSeries: Array<{ date: string; dailyPnl: number; cumulativePnl: number }>;
   dailyLedger: DailyLedgerItem[];
+  /** One page of the (filtered) trade journal, newest first. */
   closedTrades: ClosedTrade[];
+  counts: {
+    segment: { all: number; equity: number; fno: number };
+    status: { all: number; wins: number; losses: number };
+  };
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }
+
+const round2 = (n: number) => Number(n.toFixed(2));
 
 @Injectable()
 export class OrdersService implements OnModuleInit, OnModuleDestroy {
@@ -370,292 +389,236 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Computes monthly P&L Ledger by matching completed BUY and SELL executions (FIFO matching)
+   * Every real fill for the user up to `before`: broker trades where we have them, otherwise the order's own
+   * average price (history from before the `trades` table existed). Paper orders are never included.
    */
-  async getMonthlyLedger(userId: string, monthParam?: number, yearParam?: number): Promise<MonthlyLedgerResponse> {
-    // 1. Sync latest orders from broker
-    await this.syncBrokerOrders(userId).catch(() => {});
-
-    // 2. Fetch all genuine COMPLETE orders for the user
-    const orders = await this.prisma.order.findMany({
-      where: {
-        userId,
-        status: OrderStatus.COMPLETE,
-        filledQty: { gt: 0 },
-        isPaperTrade: false,
-        brokerOrderId: {
-          not: null,
+  private async loadFills(userId: string, before: Date): Promise<Fill[]> {
+    const [trades, orders] = await Promise.all([
+      this.prisma.trade.findMany({ where: { userId, filledAt: { lt: before } }, orderBy: { filledAt: 'asc' } }),
+      this.prisma.order.findMany({
+        where: {
+          userId,
+          isPaperTrade: false,
+          filledQty: { gt: 0 },
+          createdAt: { lt: before },
+          brokerOrderId: { not: null },
+          NOT: { brokerOrderId: { startsWith: 'PAPER_' } },
         },
-        NOT: {
-          brokerOrderId: { startsWith: 'PAPER_' },
+        select: {
+          brokerAccountId: true,
+          brokerOrderId: true,
+          symbol: true,
+          exchange: true,
+          side: true,
+          productType: true,
+          status: true,
+          filledQty: true,
+          avgPrice: true,
+          price: true,
+          strategyId: true,
+          executionId: true,
+          createdAt: true,
+          execution: { select: { strategy: { select: { name: true } } } },
         },
-      },
-      orderBy: { createdAt: 'asc' }, // FIFO chronological order
-      include: {
-        execution: {
-          include: {
-            strategy: {
-              select: { name: true },
-            },
-          },
-        },
-      },
-    });
+      }),
+    ]);
 
-    // 3. FIFO Match BUY & SELL orders per symbol
-    const closedTrades: ClosedTrade[] = [];
-    const openLotsBySymbol = new Map<string, Array<{
-      orderId: string;
-      side: OrderSide;
-      qty: number;
-      price: number;
-      createdAt: Date;
-      exchange: string;
-      product: string;
-      strategyName?: string;
-    }>>();
-
-    for (const order of orders) {
-      const sym = order.symbol;
-      const fillPrice = order.avgPrice || order.price || 0;
-      let remainingQty = order.filledQty || order.qty;
-      const exchange = order.exchange || 'NSE';
-      const product = order.productType || 'MIS';
-      const strategyName = order.execution?.strategy?.name || 'Intraday Algo';
-
-      if (!openLotsBySymbol.has(sym)) {
-        openLotsBySymbol.set(sym, []);
-      }
-
-      const lots = openLotsBySymbol.get(sym)!;
-
-      while (remainingQty > 0 && lots.length > 0 && lots[0].side !== order.side) {
-        const opposingLot = lots[0];
-        const matchQty = Math.min(remainingQty, opposingLot.qty);
-
-        let realizedPnl = 0;
-        let pnlPct = 0;
-        let side: 'LONG' | 'SHORT' = 'LONG';
-        let entryPrice = 0;
-        let exitPrice = 0;
-        let entryTime = opposingLot.createdAt;
-        let exitTime = order.createdAt;
-
-        if (opposingLot.side === OrderSide.BUY && order.side === OrderSide.SELL) {
-          // LONG trade closed
-          side = 'LONG';
-          entryPrice = opposingLot.price;
-          exitPrice = fillPrice;
-          realizedPnl = (exitPrice - entryPrice) * matchQty;
-          pnlPct = entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 : 0;
-        } else {
-          // SHORT trade closed
-          side = 'SHORT';
-          entryPrice = opposingLot.price;
-          exitPrice = fillPrice;
-          realizedPnl = (entryPrice - exitPrice) * matchQty;
-          pnlPct = entryPrice > 0 ? ((entryPrice - exitPrice) / entryPrice) * 100 : 0;
-        }
-
-        // Format holding duration
-        const durationMs = Math.max(0, exitTime.getTime() - entryTime.getTime());
-        const durationMins = Math.round(durationMs / 60000);
-        let holdingDuration = `${durationMins}m`;
-        if (durationMins >= 60) {
-          const hrs = Math.floor(durationMins / 60);
-          const mins = durationMins % 60;
-          holdingDuration = `${hrs}h ${mins}m`;
-        }
-
-        const exitDateStr = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Kolkata',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(exitTime);
-
-        closedTrades.push({
-          id: `${opposingLot.orderId}_${order.id}_${closedTrades.length}`,
-          symbol: sym,
-          exchange,
-          product,
-          side,
-          qty: matchQty,
-          entryPrice: Number(entryPrice.toFixed(2)),
-          exitPrice: Number(exitPrice.toFixed(2)),
-          entryTime: entryTime.toISOString(),
-          exitTime: exitTime.toISOString(),
-          date: exitDateStr,
-          holdingDuration,
-          realizedPnl: Number(realizedPnl.toFixed(2)),
-          pnlPct: Number(pnlPct.toFixed(2)),
-          status: realizedPnl > 0.5 ? 'PROFIT' : realizedPnl < -0.5 ? 'LOSS' : 'BREAKEVEN',
-          strategyName: opposingLot.strategyName || strategyName,
-        });
-
-        opposingLot.qty -= matchQty;
-        remainingQty -= matchQty;
-
-        if (opposingLot.qty <= 0) {
-          lots.shift();
-        }
-      }
-
-      if (remainingQty > 0) {
-        lots.push({
-          orderId: order.id,
-          side: order.side,
-          qty: remainingQty,
-          price: fillPrice,
-          createdAt: order.createdAt,
-          exchange,
-          product,
-          strategyName,
-        });
-      }
+    const keyOf = (accountId: string | null, orderId: string | null) => `${accountId ?? '-'}|${orderId}`;
+    const attribution = new Map<string, { algo: boolean; strategyName?: string }>();
+    for (const o of orders) {
+      attribution.set(keyOf(o.brokerAccountId, o.brokerOrderId), {
+        algo: !!(o.strategyId || o.executionId),
+        strategyName: o.execution?.strategy?.name,
+      });
     }
 
-    // 4. Determine available months from closed trades
-    const availableMonthsMap = new Map<string, { month: number; year: number; label: string }>();
-    const now = new Date();
-    const currentMonth = now.getMonth() + 1;
-    const currentYear = now.getFullYear();
+    // Brokerage is charged per executed order, so spread each order's brokerage over its filled units.
+    const orderTotals = new Map<string, { qty: number; value: number }>();
+    for (const t of trades) {
+      const k = keyOf(t.brokerAccountId, t.brokerOrderId);
+      const cur = orderTotals.get(k) || { qty: 0, value: 0 };
+      orderTotals.set(k, { qty: cur.qty + t.qty, value: cur.value + t.qty * t.price });
+    }
 
-    // Default current month
-    const defaultKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+    const fills: Fill[] = [];
+    for (const t of trades) {
+      const k = keyOf(t.brokerAccountId, t.brokerOrderId);
+      const total = orderTotals.get(k)!;
+      const segment = segmentOf(t.exchange, t.symbol, t.productType);
+      const attr = attribution.get(k);
+      fills.push({
+        accountId: t.brokerAccountId,
+        orderId: t.brokerOrderId,
+        symbol: t.symbol,
+        exchange: t.exchange,
+        product: t.productType,
+        side: t.side,
+        qty: t.qty,
+        price: t.price,
+        at: t.filledAt,
+        brokeragePerUnit: total.qty > 0 ? orderBrokerage(segment, total.value) / total.qty : 0,
+        algo: attr?.algo ?? false,
+        strategyName: attr?.strategyName,
+      });
+    }
+
+    for (const o of orders) {
+      const k = keyOf(o.brokerAccountId, o.brokerOrderId);
+      if (orderTotals.has(k) || o.status !== OrderStatus.COMPLETE) continue;
+      const price = o.avgPrice || o.price || 0;
+      const segment = segmentOf(o.exchange, o.symbol, o.productType);
+      const attr = attribution.get(k);
+      fills.push({
+        accountId: o.brokerAccountId,
+        orderId: o.brokerOrderId!,
+        symbol: o.symbol,
+        exchange: o.exchange || 'NSE',
+        product: o.productType,
+        side: o.side,
+        qty: o.filledQty,
+        price,
+        at: o.createdAt,
+        brokeragePerUnit: o.filledQty > 0 ? orderBrokerage(segment, o.filledQty * price) / o.filledQty : 0,
+        algo: attr?.algo ?? false,
+        strategyName: attr?.strategyName,
+      });
+    }
+    return fills;
+  }
+
+  /** Months (IST) in which the user has any fill, newest first, for the month picker. */
+  private async fillMonths(userId: string): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<Array<{ m: string }>>`
+      SELECT DISTINCT to_char(("filledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM') AS m
+        FROM "trades" WHERE "userId" = ${userId}
+      UNION
+      SELECT DISTINCT to_char(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM')
+        FROM "orders" WHERE "userId" = ${userId} AND "isPaperTrade" = false AND "filledQty" > 0
+      ORDER BY m DESC`;
+    return rows.map((r) => r.m);
+  }
+
+  /**
+   * Monthly realized P&L from real fills: FIFO round trips, net of charges, bucketed by IST day/month, split into
+   * algo vs manual, with a paginated/filterable trade journal. Reads only the DB (no broker call); the DB is kept
+   * current by order_update events, the manual sync and the 15:40 IST job.
+   */
+  async getMonthlyLedger(userId: string, query: LedgerQuery = {}): Promise<MonthlyLedgerResponse> {
+    const nowIst = istDate(new Date());
+    const currentYear = Number(nowIst.slice(0, 4));
+    const currentMonth = Number(nowIst.slice(5, 7));
+    const selectedMonth = query.month && query.month >= 1 && query.month <= 12 ? query.month : currentMonth;
+    const selectedYear = query.year && query.year >= 2000 && query.year <= 2100 ? query.year : currentYear;
+    const monthKey = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const nextMonthStartIst = new Date(
+      `${selectedMonth === 12 ? selectedYear + 1 : selectedYear}-${String(selectedMonth === 12 ? 1 : selectedMonth + 1).padStart(2, '0')}-01T00:00:00+05:30`,
+    );
+
+    const [fills, monthKeys] = await Promise.all([this.loadFills(userId, nextMonthStartIst), this.fillMonths(userId)]);
+    const monthTrades = matchFills(fills).filter((t) => t.date.startsWith(monthKey));
+
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    availableMonthsMap.set(defaultKey, {
-      month: currentMonth,
-      year: currentYear,
-      label: `${monthNames[currentMonth - 1]} ${currentYear}`,
-    });
+    const labelled = new Set([...monthKeys, `${currentYear}-${String(currentMonth).padStart(2, '0')}`, monthKey]);
+    const availableMonths = Array.from(labelled)
+      .sort()
+      .reverse()
+      .map((k) => {
+        const year = Number(k.slice(0, 4));
+        const month = Number(k.slice(5, 7));
+        return { month, year, label: `${monthNames[month - 1]} ${year}` };
+      });
 
-    closedTrades.forEach((t) => {
-      const d = new Date(t.exitTime);
-      const m = d.getMonth() + 1;
-      const y = d.getFullYear();
-      const k = `${y}-${String(m).padStart(2, '0')}`;
-      if (!availableMonthsMap.has(k)) {
-        availableMonthsMap.set(k, {
-          month: m,
-          year: y,
-          label: `${monthNames[m - 1]} ${y}`,
-        });
-      }
-    });
+    // ── Aggregates over the whole month (never affected by journal filters/pages) ──
+    const byDay = new Map<string, ClosedTrade[]>();
+    for (const t of monthTrades) {
+      const list = byDay.get(t.date);
+      if (list) list.push(t);
+      else byDay.set(t.date, [t]);
+    }
 
-    const availableMonths = Array.from(availableMonthsMap.values()).sort((a, b) => {
-      if (a.year !== b.year) return b.year - a.year;
-      return b.month - a.month;
-    });
-
-    const selectedMonth = monthParam || currentMonth;
-    const selectedYear = yearParam || currentYear;
-
-    // 5. Filter trades for the selected month/year
-    const filteredTrades = closedTrades.filter((t) => {
-      const d = new Date(t.exitTime);
-      return (d.getMonth() + 1) === selectedMonth && d.getFullYear() === selectedYear;
-    });
-
-    // 6. Aggregate by day
-    const dailyMap = new Map<string, ClosedTrade[]>();
-    filteredTrades.forEach((t) => {
-      if (!dailyMap.has(t.date)) {
-        dailyMap.set(t.date, []);
-      }
-      dailyMap.get(t.date)!.push(t);
-    });
-
-    // Sort days ascending to calculate cumulative curve
-    const sortedDates = Array.from(dailyMap.keys()).sort();
-    let runningCumulativePnl = 0;
-    const chartSeries: Array<{ date: string; dailyPnl: number; cumulativePnl: number }> = [];
-    const dailyLedgerAsc: DailyLedgerItem[] = [];
-
-    let totalGrossProfit = 0;
-    let totalGrossLoss = 0;
-    let winningTrades = 0;
-    let losingTrades = 0;
-    let breakevenTrades = 0;
-
+    const sumPnl = (list: ClosedTrade[]) => round2(list.reduce((a, t) => a + t.realizedPnl, 0));
+    const chartSeries: MonthlyLedgerResponse['chartSeries'] = [];
+    const dailyAsc: DailyLedgerItem[] = [];
+    let cumulative = 0;
     let profitableDays = 0;
     let lossDays = 0;
     let breakevenDays = 0;
 
-    let bestTrade: ClosedTrade | null = null;
-    let worstTrade: ClosedTrade | null = null;
-
-    filteredTrades.forEach((t) => {
-      if (t.realizedPnl > 0.5) {
-        winningTrades++;
-        totalGrossProfit += t.realizedPnl;
-      } else if (t.realizedPnl < -0.5) {
-        losingTrades++;
-        totalGrossLoss += Math.abs(t.realizedPnl);
-      } else {
-        breakevenTrades++;
-      }
-
-      if (!bestTrade || t.realizedPnl > bestTrade.realizedPnl) bestTrade = t;
-      if (!worstTrade || t.realizedPnl < worstTrade.realizedPnl) worstTrade = t;
-    });
-
-    sortedDates.forEach((dateStr) => {
-      const dayTrades = dailyMap.get(dateStr)!;
-      const dayPnl = Number(dayTrades.reduce((acc, t) => acc + t.realizedPnl, 0).toFixed(2));
-      const dayWins = dayTrades.filter((t) => t.realizedPnl > 0.5).length;
-      const dayLosses = dayTrades.filter((t) => t.realizedPnl < -0.5).length;
-      const dayWinRate = dayTrades.length > 0 ? Number(((dayWins / dayTrades.length) * 100).toFixed(1)) : 0;
-
-      runningCumulativePnl = Number((runningCumulativePnl + dayPnl).toFixed(2));
-      chartSeries.push({
-        date: dateStr,
-        dailyPnl: dayPnl,
-        cumulativePnl: runningCumulativePnl,
-      });
-
-      if (dayPnl > 0.5) profitableDays++;
-      else if (dayPnl < -0.5) lossDays++;
+    for (const date of Array.from(byDay.keys()).sort()) {
+      const trades = byDay.get(date)!;
+      const pnl = sumPnl(trades);
+      const wins = trades.filter((t) => t.status === 'PROFIT').length;
+      const losses = trades.filter((t) => t.status === 'LOSS').length;
+      cumulative = round2(cumulative + pnl);
+      chartSeries.push({ date, dailyPnl: pnl, cumulativePnl: cumulative });
+      const status = tradeStatus(pnl);
+      if (status === 'PROFIT') profitableDays++;
+      else if (status === 'LOSS') lossDays++;
       else breakevenDays++;
 
-      const dateObj = new Date(`${dateStr}T12:00:00.000+05:30`);
-      const formattedDate = new Intl.DateTimeFormat('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      }).format(dateObj);
-
-      const dayOfWeek = new Intl.DateTimeFormat('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        weekday: 'short',
-      }).format(dateObj);
-
-      dailyLedgerAsc.push({
-        date: dateStr,
-        formattedDate,
-        dayOfWeek,
-        tradesCount: dayTrades.length,
-        pnl: dayPnl,
-        wins: dayWins,
-        losses: dayLosses,
-        winRate: dayWinRate,
-        status: dayPnl > 0.5 ? 'PROFIT' : dayPnl < -0.5 ? 'LOSS' : 'BREAKEVEN',
-        cumulativePnl: runningCumulativePnl,
-        trades: dayTrades.sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime()),
+      const dateObj = new Date(`${date}T12:00:00.000+05:30`);
+      dailyAsc.push({
+        date,
+        formattedDate: new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }).format(dateObj),
+        dayOfWeek: new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short' }).format(dateObj),
+        tradesCount: trades.length,
+        pnl,
+        grossPnl: round2(trades.reduce((a, t) => a + t.grossPnl, 0)),
+        charges: round2(trades.reduce((a, t) => a + t.charges, 0)),
+        algoPnl: sumPnl(trades.filter((t) => t.source === 'ALGO')),
+        manualPnl: sumPnl(trades.filter((t) => t.source === 'MANUAL')),
+        wins,
+        losses,
+        winRate: trades.length > 0 ? Number(((wins / trades.length) * 100).toFixed(1)) : 0,
+        status,
+        cumulativePnl: cumulative,
       });
-    });
+    }
 
-    const totalRealizedPnl = Number(filteredTrades.reduce((acc, t) => acc + t.realizedPnl, 0).toFixed(2));
-    const totalTrades = filteredTrades.length;
-    const winRate = totalTrades > 0 ? Number(((winningTrades / totalTrades) * 100).toFixed(1)) : 0;
-    const profitFactor = totalGrossLoss > 0 ? Number((totalGrossProfit / totalGrossLoss).toFixed(2)) : totalGrossProfit > 0 ? 99.9 : 0;
-    const tradingDaysCount = sortedDates.length;
-    const avgDailyPnl = tradingDaysCount > 0 ? Number((totalRealizedPnl / tradingDaysCount).toFixed(2)) : 0;
-    const avgTradePnl = totalTrades > 0 ? Number((totalRealizedPnl / totalTrades).toFixed(2)) : 0;
-    const avgWin = winningTrades > 0 ? Number((totalGrossProfit / winningTrades).toFixed(2)) : 0;
-    const avgLoss = losingTrades > 0 ? Number((totalGrossLoss / losingTrades).toFixed(2)) : 0;
+    const winners = monthTrades.filter((t) => t.status === 'PROFIT');
+    const losers = monthTrades.filter((t) => t.status === 'LOSS');
+    const grossProfit = winners.reduce((a, t) => a + t.realizedPnl, 0);
+    const grossLoss = Math.abs(losers.reduce((a, t) => a + t.realizedPnl, 0));
+    const totalRealizedPnl = sumPnl(monthTrades);
+    const totalTrades = monthTrades.length;
+    const tradingDaysCount = byDay.size;
+    const bucket = (source: ClosedTrade['source']) => {
+      const list = monthTrades.filter((t) => t.source === source);
+      return { pnl: sumPnl(list), trades: list.length, wins: list.filter((t) => t.status === 'PROFIT').length };
+    };
+    let bestTrade: ClosedTrade | null = null;
+    let worstTrade: ClosedTrade | null = null;
+    for (const t of monthTrades) {
+      if (!bestTrade || t.realizedPnl > bestTrade.realizedPnl) bestTrade = t;
+      if (!worstTrade || t.realizedPnl < worstTrade.realizedPnl) worstTrade = t;
+    }
+
+    // ── Journal: filters + pagination ──
+    const search = (query.q || '').trim().toLowerCase();
+    const inScope = monthTrades.filter((t) => !query.date || t.date === query.date);
+    const counts = {
+      segment: {
+        all: inScope.length,
+        equity: inScope.filter((t) => !isFnoSymbol(t.exchange, t.symbol)).length,
+        fno: inScope.filter((t) => isFnoSymbol(t.exchange, t.symbol)).length,
+      },
+      status: {
+        all: inScope.filter((t) => t.status !== 'BREAKEVEN').length,
+        wins: inScope.filter((t) => t.status === 'PROFIT').length,
+        losses: inScope.filter((t) => t.status === 'LOSS').length,
+      },
+    };
+    const journal = inScope
+      .filter((t) => !query.status || query.status === 'ALL' || t.status === query.status)
+      .filter((t) => {
+        if (!query.segment || query.segment === 'ALL') return true;
+        return isFnoSymbol(t.exchange, t.symbol) === (query.segment === 'FNO');
+      })
+      .filter((t) => !search || t.symbol.toLowerCase().includes(search) || (t.strategyName || '').toLowerCase().includes(search))
+      .sort((a, b) => b.exitTime.localeCompare(a.exitTime));
+    const pageSize = Math.min(Math.max(query.pageSize || 100, 1), 1000);
+    const totalPages = Math.max(1, Math.ceil(journal.length / pageSize));
+    const page = Math.min(Math.max(query.page || 1, 1), totalPages);
 
     return {
       success: true,
@@ -664,28 +627,34 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       availableMonths,
       summary: {
         totalRealizedPnl,
+        totalGrossPnl: round2(monthTrades.reduce((a, t) => a + t.grossPnl, 0)),
+        totalCharges: round2(monthTrades.reduce((a, t) => a + t.charges, 0)),
         totalTrades,
-        winningTrades,
-        losingTrades,
-        breakevenTrades,
-        winRate,
-        totalGrossProfit: Number(totalGrossProfit.toFixed(2)),
-        totalGrossLoss: Number(totalGrossLoss.toFixed(2)),
-        profitFactor,
+        winningTrades: winners.length,
+        losingTrades: losers.length,
+        breakevenTrades: totalTrades - winners.length - losers.length,
+        winRate: totalTrades > 0 ? Number(((winners.length / totalTrades) * 100).toFixed(1)) : 0,
+        totalGrossProfit: round2(grossProfit),
+        totalGrossLoss: round2(grossLoss),
+        profitFactor: grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(2)) : grossProfit > 0 ? 99.9 : 0,
         tradingDaysCount,
         profitableDays,
         lossDays,
         breakevenDays,
-        avgDailyPnl,
-        avgTradePnl,
-        avgWin,
-        avgLoss,
+        avgDailyPnl: tradingDaysCount > 0 ? round2(totalRealizedPnl / tradingDaysCount) : 0,
+        avgTradePnl: totalTrades > 0 ? round2(totalRealizedPnl / totalTrades) : 0,
+        avgWin: winners.length > 0 ? round2(grossProfit / winners.length) : 0,
+        avgLoss: losers.length > 0 ? round2(grossLoss / losers.length) : 0,
         bestTrade,
         worstTrade,
+        algo: bucket('ALGO'),
+        manual: bucket('MANUAL'),
       },
       chartSeries,
-      dailyLedger: dailyLedgerAsc.reverse(), // Show latest day on top
-      closedTrades: filteredTrades.sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime()),
+      dailyLedger: dailyAsc.reverse(),
+      closedTrades: journal.slice((page - 1) * pageSize, page * pageSize),
+      counts,
+      pagination: { page, pageSize, total: journal.length, totalPages },
     };
   }
 }

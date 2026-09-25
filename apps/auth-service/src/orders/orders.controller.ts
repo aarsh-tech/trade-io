@@ -25,17 +25,37 @@ export class OrdersController {
   }
 
   @Get('ledger')
-  @ApiOperation({ summary: 'Get monthly realized P&L ledger with daily breakdowns and closed trade journal' })
+  @ApiOperation({ summary: 'Monthly realized P&L ledger (net of charges, algo vs manual) with a paginated trade journal' })
   @ApiQuery({ name: 'month', required: false, type: Number })
   @ApiQuery({ name: 'year', required: false, type: Number })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, enum: ['ALL', 'PROFIT', 'LOSS'] })
+  @ApiQuery({ name: 'segment', required: false, enum: ['ALL', 'EQUITY', 'FNO'] })
+  @ApiQuery({ name: 'date', required: false, type: String, description: 'IST day, YYYY-MM-DD' })
+  @ApiQuery({ name: 'q', required: false, type: String })
   async ledger(
     @Request() req,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('status') status?: string,
+    @Query('segment') segment?: string,
+    @Query('date') date?: string,
+    @Query('q') q?: string,
   ) {
-    const monthNum = month ? parseInt(month, 10) : undefined;
-    const yearNum = year ? parseInt(year, 10) : undefined;
-    const ledger = await this.ordersService.getMonthlyLedger(req.user.id, monthNum, yearNum);
+    const num = (v?: string) => (v && Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : undefined);
+    const ledger = await this.ordersService.getMonthlyLedger(req.user.id, {
+      month: num(month),
+      year: num(year),
+      page: num(page),
+      pageSize: num(pageSize),
+      status: status === 'PROFIT' || status === 'LOSS' ? status : 'ALL',
+      segment: segment === 'EQUITY' || segment === 'FNO' ? segment : 'ALL',
+      date: date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined,
+      q: q?.slice(0, 60),
+    });
     return { success: true, data: ledger };
   }
 }

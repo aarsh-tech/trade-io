@@ -26,7 +26,7 @@ import {
   TrendingUp,
   XCircle
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 interface ClosedTrade {
@@ -42,9 +42,13 @@ interface ClosedTrade {
   exitTime: string;
   date: string;
   holdingDuration: string;
+  grossPnl: number;
+  charges: number;
+  /** Net of charges. */
   realizedPnl: number;
   pnlPct: number;
   status: "PROFIT" | "LOSS" | "BREAKEVEN";
+  source: "ALGO" | "MANUAL";
   strategyName?: string;
 }
 
@@ -54,12 +58,15 @@ interface DailyLedgerItem {
   dayOfWeek: string;
   tradesCount: number;
   pnl: number;
+  grossPnl: number;
+  charges: number;
+  algoPnl: number;
+  manualPnl: number;
   wins: number;
   losses: number;
   winRate: number;
   status: "PROFIT" | "LOSS" | "BREAKEVEN";
   cumulativePnl: number;
-  trades: ClosedTrade[];
 }
 
 interface MonthlyLedgerData {
@@ -68,6 +75,10 @@ interface MonthlyLedgerData {
   availableMonths: Array<{ month: number; year: number; label: string }>;
   summary: {
     totalRealizedPnl: number;
+    totalGrossPnl: number;
+    totalCharges: number;
+    algo: { pnl: number; trades: number; wins: number };
+    manual: { pnl: number; trades: number; wins: number };
     totalTrades: number;
     winningTrades: number;
     losingTrades: number;
@@ -90,7 +101,14 @@ interface MonthlyLedgerData {
   chartSeries: Array<{ date: string; dailyPnl: number; cumulativePnl: number }>;
   dailyLedger: DailyLedgerItem[];
   closedTrades: ClosedTrade[];
+  counts: {
+    segment: { all: number; equity: number; fno: number };
+    status: { all: number; wins: number; losses: number };
+  };
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }
+
+const JOURNAL_PAGE_SIZE = 100;
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -152,12 +170,35 @@ export default function MonthlyLedgerPage() {
   const [searchSymbol, setSearchSymbol] = useState("");
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
 
+  const [page, setPage] = useState(1);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(searchSymbol.trim()), 300);
+    return () => clearTimeout(id);
+  }, [searchSymbol]);
+
+  // Any change to what the journal shows starts it back at page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [selectedMonth, selectedYear, tradeFilter, segmentFilter, selectedDateFilter, debouncedSearch]);
+
+  const journalParams = {
+    month: selectedMonth,
+    year: selectedYear,
+    status: tradeFilter,
+    segment: segmentFilter,
+    date: selectedDateFilter ?? undefined,
+    q: debouncedSearch || undefined,
+  };
+
   const { data: ledgerResponse, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ["ledger", selectedMonth, selectedYear],
+    queryKey: ["ledger", journalParams, page],
     queryFn: async () => {
-      const res = await orderApi.ledger({ month: selectedMonth, year: selectedYear });
+      const res = await orderApi.ledger({ ...journalParams, page, pageSize: JOURNAL_PAGE_SIZE });
       return res.data?.data as MonthlyLedgerData;
     },
+    placeholderData: (previous) => previous,
   });
 
   const syncMutation = useMutation({
@@ -177,6 +218,10 @@ export default function MonthlyLedgerPage() {
 
   const summary = ledgerResponse?.summary || {
     totalRealizedPnl: 0,
+    totalGrossPnl: 0,
+    totalCharges: 0,
+    algo: { pnl: 0, trades: 0, wins: 0 },
+    manual: { pnl: 0, trades: 0, wins: 0 },
     totalTrades: 0,
     winningTrades: 0,
     losingTrades: 0,
@@ -227,54 +272,11 @@ export default function MonthlyLedgerPage() {
     setSelectedYear(currentDate.getFullYear());
   };
 
-  // Filtered Closed Trades
-  const filteredTrades = useMemo(() => {
-    return closedTrades.filter((t) => {
-      const matchesStatus =
-        tradeFilter === "ALL" ? true : t.status === tradeFilter;
-      const matchesDate =
-        selectedDateFilter === null ? true : t.date === selectedDateFilter;
-
-      const isFno = t.exchange === "NFO" || t.symbol.includes("CE") || t.symbol.includes("PE") || t.symbol.includes("FUT");
-      const matchesSegment =
-        segmentFilter === "ALL" ? true : segmentFilter === "FNO" ? isFno : !isFno;
-
-      const formatted = formatOptionSymbol(t.symbol);
-      const matchesSearch =
-        searchSymbol.trim() === ""
-          ? true
-          : t.symbol.toLowerCase().includes(searchSymbol.toLowerCase()) ||
-          formatted.displayName.toLowerCase().includes(searchSymbol.toLowerCase()) ||
-          t.strategyName?.toLowerCase().includes(searchSymbol.toLowerCase());
-
-      return matchesStatus && matchesDate && matchesSegment && matchesSearch;
-    });
-  }, [closedTrades, tradeFilter, segmentFilter, selectedDateFilter, searchSymbol]);
-
-  // Segment counts based on current month / selected date
-  const segmentCounts = useMemo(() => {
-    let equity = 0;
-    let fno = 0;
-    closedTrades.forEach((t) => {
-      if (selectedDateFilter && t.date !== selectedDateFilter) return;
-      const isFno = t.exchange === "NFO" || t.symbol.includes("CE") || t.symbol.includes("PE") || t.symbol.includes("FUT");
-      if (isFno) fno++;
-      else equity++;
-    });
-    return { all: equity + fno, equity, fno };
-  }, [closedTrades, selectedDateFilter]);
-
-  // Status counts based on current month / selected date
-  const statusCounts = useMemo(() => {
-    let wins = 0;
-    let losses = 0;
-    closedTrades.forEach((t) => {
-      if (selectedDateFilter && t.date !== selectedDateFilter) return;
-      if (t.status === "PROFIT") wins++;
-      else if (t.status === "LOSS") losses++;
-    });
-    return { all: wins + losses, wins, losses };
-  }, [closedTrades, selectedDateFilter]);
+  // The server filters and paginates the journal; these are one page of it.
+  const filteredTrades = closedTrades;
+  const pagination = ledgerResponse?.pagination ?? { page: 1, pageSize: JOURNAL_PAGE_SIZE, total: 0, totalPages: 1 };
+  const segmentCounts = ledgerResponse?.counts.segment ?? { all: 0, equity: 0, fno: 0 };
+  const statusCounts = ledgerResponse?.counts.status ?? { all: 0, wins: 0, losses: 0 };
 
   // Calendar Day Map
   const dailyPnlMap = useMemo(() => {
@@ -325,15 +327,23 @@ export default function MonthlyLedgerPage() {
 
   const isNetProfit = summary.totalRealizedPnl >= 0;
 
-  // CSV Export Handler
-  const handleExportCSV = () => {
-    if (closedTrades.length === 0) {
+  // CSV Export Handler (exports every trade matching the current filters, not just the visible page)
+  const handleExportCSV = async () => {
+    let exportTrades: ClosedTrade[] = [];
+    try {
+      const res = await orderApi.ledger({ ...journalParams, page: 1, pageSize: 1000 });
+      exportTrades = (res.data?.data as MonthlyLedgerData).closedTrades;
+    } catch {
+      toast.error("Could not load trades to export");
+      return;
+    }
+    if (exportTrades.length === 0) {
       toast.error("No trades available to export for this month");
       return;
     }
 
-    const headers = ["Date", "Time", "Symbol", "Exchange", "Product", "Side", "Qty", "Entry Price", "Exit Price", "Duration", "Realized PnL (INR)", "PnL %", "Status", "Strategy"];
-    const rows = closedTrades.map((t) => [
+    const headers = ["Date", "Time", "Symbol", "Exchange", "Product", "Side", "Qty", "Entry Price", "Exit Price", "Duration", "Gross PnL (INR)", "Charges (INR)", "Net PnL (INR)", "PnL %", "Status", "Source", "Strategy"];
+    const rows = exportTrades.map((t) => [
       t.date,
       new Date(t.exitTime).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }),
       t.symbol,
@@ -344,9 +354,12 @@ export default function MonthlyLedgerPage() {
       t.entryPrice,
       t.exitPrice,
       t.holdingDuration,
+      t.grossPnl,
+      t.charges,
       t.realizedPnl,
       t.pnlPct,
       t.status,
+      t.source,
       `"${t.strategyName || "Intraday Algo"}"`
     ]);
 
@@ -451,7 +464,7 @@ export default function MonthlyLedgerPage() {
               variant="outline"
               size="sm"
               onClick={handleExportCSV}
-              disabled={closedTrades.length === 0}
+              disabled={summary.totalTrades === 0}
               className="gap-1.5 text-xs h-9"
             >
               <Download className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -512,6 +525,15 @@ export default function MonthlyLedgerPage() {
               <span>Gross Profit: <span className="text-emerald-500 font-mono font-semibold">+₹{summary.totalGrossProfit.toFixed(0)}</span></span>
               <span>•</span>
               <span>Loss: <span className="text-rose-500 font-mono font-semibold">-₹{summary.totalGrossLoss.toFixed(0)}</span></span>
+            </div>
+            <div className="flex items-center gap-2 mt-1 text-[11px] sm:text-xs text-muted-foreground flex-wrap">
+              <span>Gross: <span className="font-mono font-semibold">₹{summary.totalGrossPnl.toFixed(0)}</span></span>
+              <span>•</span>
+              <span>Charges: <span className="text-amber-500 font-mono font-semibold">-₹{summary.totalCharges.toFixed(0)}</span></span>
+              <span>•</span>
+              <span>Algo: <span className="font-mono font-semibold">₹{summary.algo.pnl.toFixed(0)}</span> ({summary.algo.trades})</span>
+              <span>•</span>
+              <span>Manual: <span className="font-mono font-semibold">₹{summary.manual.pnl.toFixed(0)}</span> ({summary.manual.trades})</span>
             </div>
           </CardContent>
         </Card>
@@ -741,7 +763,7 @@ export default function MonthlyLedgerPage() {
             </div>
             <div>
               <CardTitle className="text-sm font-bold text-foreground">
-                Round-Trip Closed Trades Journal ({filteredTrades.length})
+                Round-Trip Closed Trades Journal ({pagination.total})
               </CardTitle>
               <p className="text-[11px] text-muted-foreground">
                 Detailed lifecycle execution matching: Entry price, Exit price, timestamps, and realized P&L
@@ -1120,6 +1142,21 @@ export default function MonthlyLedgerPage() {
                   </tbody>
                 </table>
               </div>
+              {pagination.totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-t border-border text-xs text-muted-foreground">
+                  <span>
+                    Page {pagination.page} of {pagination.totalPages} · {pagination.total} trades
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={pagination.page <= 1 || isFetching} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                      Previous
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={pagination.page >= pagination.totalPages || isFetching} onClick={() => setPage((p) => p + 1)}>
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </CardContent>
