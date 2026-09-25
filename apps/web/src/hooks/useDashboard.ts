@@ -5,7 +5,6 @@ import { io, Socket } from "socket.io-client";
 
 export const DASHBOARD_KEYS = {
   overview: ["dashboard", "overview"] as const,
-  stats: ["dashboard", "stats"] as const,
 };
 
 export function useDashboard() {
@@ -21,18 +20,6 @@ export function useDashboard() {
     // 30s automatic polling fallback (WebSocket streams real-time LTP ticks)
     refetchInterval: 30000,
     staleTime: 15000,
-  });
-
-  const statsQuery = useQuery({
-    queryKey: DASHBOARD_KEYS.stats,
-    queryFn: async () => {
-      return {
-        portfolioValue: 165800,
-        todayPnl: 3650,
-        pnlChange: 2.25,
-        winRate: 68.4,
-      };
-    },
   });
 
   // WebSocket Setup
@@ -111,12 +98,10 @@ export function useDashboard() {
   return {
     market: marketOverviewQuery.data || { indices: [], stocks: [] },
     movers: moversQuery.data || { topGainers: [], topLosers: [] },
-    stats: statsQuery.data || { portfolioValue: 0, todayPnl: 0, pnlChange: 0, winRate: 0 },
-    isLoading: marketOverviewQuery.isLoading || statsQuery.isLoading || moversQuery.isLoading,
+    isLoading: marketOverviewQuery.isLoading || moversQuery.isLoading,
     refresh: () => {
       marketOverviewQuery.refetch();
       moversQuery.refetch();
-      statsQuery.refetch();
     },
   };
 }

@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
-import { TICKER_SYMBOLS, NIFTY_500_UNIVERSE, FO_STOCKS_LIST } from './market.constants';
+import { PrismaService } from '../prisma/prisma.service';
+import { FO_STOCKS_LIST, NIFTY_500_UNIVERSE, TICKER_SYMBOLS } from './market.constants';
 
-export { TICKER_SYMBOLS, NIFTY_500_UNIVERSE, FO_STOCKS_LIST };
+export { FO_STOCKS_LIST, NIFTY_500_UNIVERSE, TICKER_SYMBOLS };
 
 @Injectable()
 export class MarketService {
@@ -114,7 +114,8 @@ export class MarketService {
       const kite = (client as any)['kite'];
 
       const keys = TICKER_SYMBOLS.map(s => s.key);
-      const quotes = await kite.getLTP(keys);
+      // getLTP has no previous close; getOHLC does, so change is real
+      const quotes = await kite.getOHLC(keys);
 
       const tickers = TICKER_SYMBOLS.map(s => {
         const q = quotes[s.key];
@@ -123,16 +124,16 @@ export class MarketService {
           symbol: s.symbol,
           exchange: s.exchange,
           price: q.last_price ?? 0,
-          change: (q.last_price ?? 0) - (q.close_price ?? q.last_price ?? 0),
-          changePct: q.close_price
-            ? (((q.last_price - q.close_price) / q.close_price) * 100)
+          change: q.ohlc?.close ? (q.last_price ?? 0) - q.ohlc.close : 0,
+          changePct: q.ohlc?.close
+            ? (((q.last_price - q.ohlc.close) / q.ohlc.close) * 100)
             : 0,
         };
       }).filter(Boolean);
 
       return { connected: true, tickers: tickers as any };
     } catch (e) {
-      this.logger.warn(`getLivePrices failed: ${e.message}`);
+      this.logger.warn(`getLivePrices failed: ${e instanceof Error ? e.message : e}`);
       return { connected: false, tickers: [] };
     }
   }
@@ -156,19 +157,19 @@ export class MarketService {
         const client = this.factory.createClient(account);
         const kite = (client as any)['kite'];
         const indexKeys = ['NSE:NIFTY 50', 'BSE:SENSEX', 'NSE:BANKNIFTY'];
-        const quotes = await kite.getLTP(indexKeys).catch(() => ({}));
+        const quotes = await kite.getOHLC(indexKeys).catch(() => ({}));
 
         indices = indexKeys.map(key => {
           const symbol = key.split(':')[1];
           const q = quotes[key];
           const price = q?.last_price ?? 0;
-          const prev = q?.close_price ?? price;
+          const prev = q?.ohlc?.close ?? price;
           const changeAbs = price - prev;
           const change = prev ? (changeAbs / prev) * 100 : 0;
           return { symbol, price, change, changeAbs };
         });
       } catch (e) {
-        this.logger.warn(`Failed to fetch indices: ${e.message}`);
+        this.logger.warn(`Failed to fetch indices: ${e instanceof Error ? e.message : e}`);
       }
     }
 
@@ -200,19 +201,19 @@ export class MarketService {
       try {
         const client = this.factory.createClient(account);
         const kite = (client as any)['kite'];
-        const quotes = await kite.getLTP(watchSymbols).catch(() => ({}));
+        const quotes = await kite.getOHLC(watchSymbols).catch(() => ({}));
 
         stocks.forEach(stock => {
           const key = `${stock.exchange}:${stock.symbol}`;
           const q = quotes[key];
           if (q) {
             stock.price = q.last_price;
-            const prev = q.close_price || q.last_price;
+            const prev = q.ohlc?.close || q.last_price;
             stock.change = prev ? ((q.last_price - prev) / prev) * 100 : 0;
           }
         });
       } catch (e) {
-        this.logger.warn(`Failed to fetch initial stock prices: ${e.message}`);
+        this.logger.warn(`Failed to fetch initial stock prices: ${e instanceof Error ? e.message : e}`);
       }
     }
 
@@ -320,7 +321,7 @@ export class MarketService {
           }
         } catch {}
       } catch (e: any) {
-        this.logger.warn(`Failed to fetch live quotes for F&O stocks: ${e.message}`);
+        this.logger.warn(`Failed to fetch live quotes for F&O stocks: ${e instanceof Error ? e.message : e}`);
       }
     }
 
@@ -387,7 +388,7 @@ export class MarketService {
           }
         }
       } catch (e) {
-        this.logger.warn(`Zerodha getOHLC failed: ${e.message}`);
+        this.logger.warn(`Zerodha getOHLC failed: ${e instanceof Error ? e.message : e}`);
       }
     }
 

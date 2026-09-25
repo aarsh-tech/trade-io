@@ -382,39 +382,31 @@ export class BrokersService {
     });
 
     if (!account || !account.accessToken) {
-      return {
-        connected: false,
-        indices: [
-          { symbol: 'NIFTY 50', price: 22419.55, change: 0.85, changeAbs: 189.4 },
-          { symbol: 'NIFTY BANK', price: 48494.95, change: -0.12, changeAbs: -58.2 },
-        ],
-        stocks: []
-      };
+      return { connected: false, indices: [], stocks: [] };
     }
 
     try {
       const client = this.factory.createClient(account);
-      const symbols = [
-        'NSE:NIFTY 50', 'NSE:NIFTY BANK', 'BSE:SENSEX',
-        'NSE:RELIANCE', 'NSE:TCS', 'NSE:HDFCBANK', 'NSE:INFY'
-      ];
-      const ltp = await client.getLTP(symbols);
+      const indexKeys = ['NSE:NIFTY 50', 'NSE:NIFTY BANK', 'BSE:SENSEX'];
+      const stockKeys = ['NSE:RELIANCE', 'NSE:TCS', 'NSE:HDFCBANK', 'NSE:INFY'];
+      // OHLC carries the previous close, so change figures are real rather than invented
+      const kite = (client as any)['kite'];
+      const quotes = await kite.getOHLC([...indexKeys, ...stockKeys]);
 
-      // Mock changes for now as Kite LTP API only gives current price
-      // In a real app, we would fetch quotes to get prev close
+      const toRow = (key: string) => {
+        const q = quotes?.[key];
+        if (!q) return null;
+        const price = q.last_price;
+        const prev = q.ohlc?.close;
+        const changeAbs = prev ? price - prev : 0;
+        const change = prev ? (changeAbs / prev) * 100 : 0;
+        return { symbol: key.split(':')[1], price, change, changeAbs };
+      };
+
       const overviewData = {
         connected: true,
-        indices: [
-          { symbol: 'NIFTY 50', price: ltp['NSE:NIFTY 50'] || 0, change: 0.45, changeAbs: 102.5 },
-          { symbol: 'NIFTY BANK', price: ltp['NSE:NIFTY BANK'] || 0, change: -0.22, changeAbs: -108.3 },
-          { symbol: 'SENSEX', price: ltp['BSE:SENSEX'] || 0, change: 0.38, changeAbs: 284.1 },
-        ],
-        stocks: [
-          { symbol: 'RELIANCE', price: ltp['NSE:RELIANCE'] || 0, change: 1.2 },
-          { symbol: 'TCS', price: ltp['NSE:TCS'] || 0, change: -0.5 },
-          { symbol: 'HDFCBANK', price: ltp['NSE:HDFCBANK'] || 0, change: 0.8 },
-          { symbol: 'INFY', price: ltp['NSE:INFY'] || 0, change: 1.5 },
-        ]
+        indices: indexKeys.map(toRow).filter(Boolean),
+        stocks: stockKeys.map(toRow).filter(Boolean),
       };
       return this.setInCache(cacheKey, overviewData, 10_000); // 10s cache
     } catch (err: any) {
@@ -427,7 +419,7 @@ export class BrokersService {
         });
       }
       console.error('Market Overview Error:', err.message || err);
-      return { connected: false, error: 'Session expired. Please login again.' };
+      return { connected: false, indices: [], stocks: [], error: 'Session expired. Please login again.' };
     }
   }
 }
