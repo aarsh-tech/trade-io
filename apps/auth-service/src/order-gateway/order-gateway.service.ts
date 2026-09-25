@@ -18,6 +18,29 @@ export interface OrderContext {
   estimatedPrice?: number;
 }
 
+/** An order an engine wants reflected in the DB (its own view of a paper or live order). */
+export interface EngineOrderRecord {
+  userId: string;
+  accountId?: string | null;
+  strategyId?: string | null;
+  executionId?: string | null;
+  symbol: string;
+  exchange: string;
+  side: 'BUY' | 'SELL';
+  orderType: string;
+  product: string;
+  qty: number;
+  price?: number | null;
+  triggerPrice?: number | null;
+  brokerOrderId?: string | null;
+  status: 'OPEN' | 'COMPLETE';
+  isPaper: boolean;
+  createdAt?: Date;
+}
+
+/** Engine placeholders (PAPER_*, ORDER_*) are not broker order ids. */
+const isBrokerOrderId = (id?: string | null): id is string => !!id && !/^(PAPER_|ORDER_)/i.test(id);
+
 export interface PlacedOrder {
   orderId: string;
   tag?: string;
@@ -336,6 +359,61 @@ export class OrderGateway {
       for (const [key, list] of this.entryTimestamps) {
         if (!list.some((t) => now - t < RATE_WINDOW_MS)) this.entryTimestamps.delete(key);
       }
+    }
+  }
+
+  /**
+   * The single way engines write their own order rows. Never a plain `create`:
+   * - Live orders are keyed on the real (brokerAccountId, brokerOrderId), the same key the gateway and broker sync
+   *   use. If the row exists it only gets attribution; status, fills and prices stay owned by the broker (sync /
+   *   order_update). A live record without a real broker order id is skipped, since the gateway already saved the
+   *   real order and a second row would be counted twice in P&L.
+   * - Paper orders get a unique PAPER_ id and are always isPaperTrade, so they can never look like real fills.
+   * Never throws: a DB problem must not disturb order handling.
+   */
+  async recordEngineOrder(o: EngineOrderRecord): Promise<void> {
+    try {
+      const base = {
+        userId: o.userId,
+        strategyId: o.strategyId ?? null,
+        executionId: o.executionId ?? null,
+        symbol: o.symbol,
+        exchange: o.exchange,
+        side: o.side,
+        orderType: mapOrderTypeToDb(o.orderType),
+        productType: o.product as any,
+        qty: Math.max(1, Math.round(o.qty)),
+        price: o.price ?? null,
+        triggerPrice: o.triggerPrice ?? null,
+        status: o.status,
+        filledQty: o.status === 'COMPLETE' ? Math.max(1, Math.round(o.qty)) : 0,
+        avgPrice: o.status === 'COMPLETE' ? (o.price ?? null) : null,
+        ...(o.createdAt ? { createdAt: o.createdAt } : {}),
+      };
+
+      if (o.isPaper) {
+        // Engines encode meaning in paper ids (e.g. ..._TARGET, ..._SL), so keep a supplied id as it is.
+        const brokerOrderId = o.brokerOrderId || `PAPER_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
+        await this.prisma.order.create({
+          data: { ...base, brokerAccountId: o.accountId ?? null, brokerOrderId, isPaperTrade: true },
+        });
+        return;
+      }
+
+      if (!o.accountId || !isBrokerOrderId(o.brokerOrderId)) {
+        this.logger.warn(`Live order record for ${o.symbol} skipped: no broker order id (gateway/broker sync holds the real row)`);
+        return;
+      }
+      await this.prisma.order.upsert({
+        where: { brokerAccountId_brokerOrderId: { brokerAccountId: o.accountId, brokerOrderId: o.brokerOrderId } },
+        create: { ...base, brokerAccountId: o.accountId, brokerOrderId: o.brokerOrderId, isPaperTrade: false },
+        update: {
+          ...(o.strategyId && { strategyId: o.strategyId }),
+          ...(o.executionId && { executionId: o.executionId }),
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Could not record ${o.isPaper ? 'paper' : 'live'} order ${o.brokerOrderId ?? ''} (${o.symbol}): ${err?.message}`);
     }
   }
 

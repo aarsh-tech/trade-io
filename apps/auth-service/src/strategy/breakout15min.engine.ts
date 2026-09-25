@@ -3183,25 +3183,23 @@ export class Breakout15MinEngine {
   private async trackOrder(state: StrategyState, account: any, executionId: string, params: any, brokerOrderId: string, strategyId: string, createdAt?: Date) {
     try {
       const isEntry = !brokerOrderId.includes('SL') && !brokerOrderId.includes('TARGET');
-      await this.prisma.order.create({
-        data: {
-          userId: account.userId,
-          brokerAccountId: account.id,
-          strategyId,
-          executionId,
-          symbol: params.symbol,
-          exchange: params.exchange,
-          side: params.side,
-          orderType: params.orderType,
-          productType: params.product,
-          qty: params.qty,
-          price: params.price ?? null,
-          triggerPrice: params.triggerPrice ?? null,
-          brokerOrderId,
-          status: state.isPaperTrade ? (isEntry ? 'COMPLETE' : 'OPEN') : 'OPEN',
-          isPaperTrade: state.isPaperTrade,
-          ...(createdAt ? { createdAt } : {})
-        } as any
+      await this.orderGateway.recordEngineOrder({
+        userId: account.userId,
+        accountId: account.id,
+        strategyId,
+        executionId,
+        symbol: params.symbol,
+        exchange: params.exchange,
+        side: params.side,
+        orderType: params.orderType,
+        product: params.product,
+        qty: params.qty,
+        price: params.price ?? null,
+        triggerPrice: params.triggerPrice ?? null,
+        brokerOrderId,
+        status: state.isPaperTrade ? (isEntry ? 'COMPLETE' : 'OPEN') : 'OPEN',
+        isPaper: state.isPaperTrade,
+        createdAt,
       });
     } catch (err: any) { this.log(state, `⚠ DB track failed: ${err.message}`); }
   }

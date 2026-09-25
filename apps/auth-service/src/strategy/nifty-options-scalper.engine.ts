@@ -1799,26 +1799,22 @@ export class NiftyOptionsScalperEngine {
       });
       if (!exec) return;
 
-      await this.prisma.order.create({
-        data: {
-          userId: exec.strategy.userId,
-          brokerAccountId: state.brokerAccountId,
-          strategyId: exec.strategyId,
-          executionId: state.executionId,
-          symbol,
-          exchange,
-          side: side as any,
-          orderType: orderType as any,
-          productType: state.config.product,
-          qty,
-          filledQty: qty,
-          price,
-          avgPrice: price,
-          status: 'COMPLETE',
-          brokerOrderId: orderId,
-          isPaperTrade: state.isPaperTrade,
-          ...(createdAt ? { createdAt } : {}),
-        } as any
+      await this.orderGateway.recordEngineOrder({
+        userId: exec.strategy.userId,
+        accountId: state.brokerAccountId,
+        strategyId: exec.strategyId,
+        executionId: state.executionId,
+        symbol,
+        exchange,
+        side,
+        orderType,
+        product: state.config.product,
+        qty,
+        price,
+        brokerOrderId: orderId,
+        status: 'COMPLETE',
+        isPaper: state.isPaperTrade,
+        createdAt,
       });
     } catch (e) {
       this.logger.error(`Failed to track order in DB: ${e.message}`);

@@ -1080,23 +1080,24 @@ export class StockOptionsBuyingEngine {
           include: { strategy: true },
         });
         if (exec?.strategy?.userId) {
-          await this.prisma.order.create({
-            data: {
+          // Live exits are placed through the gateway (which saved the real row); only paper exits are recorded here.
+          if (state.isPaperTrade) {
+            await this.orderGateway.recordEngineOrder({
               userId: exec.strategy.userId,
-              brokerAccountId: state.brokerAccountId,
+              accountId: state.brokerAccountId,
               strategyId: state.strategyId,
               executionId: state.executionId,
               symbol: state.optionSymbol || state.config.symbol || 'OPTION',
               exchange: 'NFO',
               side: 'SELL',
               orderType: 'LIMIT',
-              productType: state.config.product as any ?? 'MIS',
+              product: (state.config.product as any) ?? 'MIS',
               qty: Math.max(1, state.positionQty || 1),
               price: actualExitPrice || 0.05,
               status: 'COMPLETE',
-              isPaperTrade: state.isPaperTrade,
-            } as any,
-          });
+              isPaper: true,
+            });
+          }
         }
       } catch (dbErr) {
         this.log(state, `⚠ DB order log skipped: ${dbErr.message}`);
@@ -1636,23 +1637,21 @@ export class StockOptionsBuyingEngine {
       });
       if (!exec?.strategy?.userId) return;
 
-      await this.prisma.order.create({
-        data: {
-          userId: exec.strategy.userId,
-          brokerAccountId: state.brokerAccountId,
-          strategyId: state.strategyId,
-          executionId: state.executionId,
-          symbol: state.optionSymbol || state.config.symbol || 'OPTION',
-          exchange: 'NFO',
-          side: 'BUY',
-          orderType: 'SL',
-          productType: state.config.product as any ?? 'MIS',
-          qty: Math.max(1, state.positionQty || 1),
-          price: price || 0,
-          brokerOrderId: state.entryOrderId || `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`,
-          status: state.isPaperTrade ? 'COMPLETE' : status,
-          isPaperTrade: state.isPaperTrade,
-        } as any,
+      await this.orderGateway.recordEngineOrder({
+        userId: exec.strategy.userId,
+        accountId: state.brokerAccountId,
+        strategyId: state.strategyId,
+        executionId: state.executionId,
+        symbol: state.optionSymbol || state.config.symbol || 'OPTION',
+        exchange: 'NFO',
+        side: 'BUY',
+        orderType: 'SL',
+        product: (state.config.product as any) ?? 'MIS',
+        qty: Math.max(1, state.positionQty || 1),
+        price: price || 0,
+        brokerOrderId: state.entryOrderId,
+        status: state.isPaperTrade ? 'COMPLETE' : status,
+        isPaper: state.isPaperTrade,
       });
     } catch (e) {
       this.logger.warn(`Failed to track order in DB: ${e.message}`);
