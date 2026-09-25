@@ -4,7 +4,7 @@ import { useMarketData } from "@/hooks/use-market-data";
 import { brokerApi, getSocketBaseUrl, marketApi, strategyApi } from "@/lib/api";
 import {  } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { io } from "socket.io-client";
 import { toast } from "sonner";
 import type { Strategy } from "./types";
@@ -19,15 +19,8 @@ export function useStrategyDetail(id: string) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [showLogs, setShowLogs] = useState(true);
-  const [hidePnlLogs, setHidePnlLogs] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [activeTab, setActiveTab] = useState<"LIVE" | "CONFIG" | "ANALYTICS" | "HISTORY">("LIVE");
-
-  const displayedLogs = useMemo(() => {
-    if (!hidePnlLogs) return liveLogs;
-    return liveLogs.filter((l) => !l.includes("[LIVE P&L]"));
-  }, [liveLogs, hidePnlLogs]);
 
   // Real-time market data subscription (clean dummy symbols like AUTO, map index aliases)
   const symbolsToSubscribe = useMemo(() => {
@@ -122,7 +115,6 @@ export function useStrategyDetail(id: string) {
   const displayLtp = currentLtp || liveState?.currentLtp || liveState?.entryPrice || 0;
 
   const [editConfig, setEditConfig] = useState<Record<string, any>>({});
-  const logsRef = useRef<HTMLDivElement>(null);
 
   // Test Order Modal state
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
@@ -269,12 +261,6 @@ export function useStrategyDetail(id: string) {
     return () => clearInterval(interval);
   }, [id, isWsConnected]);
 
-  useEffect(() => {
-    if (logsRef.current && showLogs) {
-      logsRef.current.scrollTop = logsRef.current.scrollHeight;
-    }
-  }, [displayedLogs, showLogs]);
-
   async function toggleEngine() {
     if (!strategy) return;
     setBusy(true);
@@ -412,12 +398,6 @@ export function useStrategyDetail(id: string) {
     }
   }
 
-  function copyLogsToClipboard() {
-    if (displayedLogs.length === 0) return;
-    navigator.clipboard.writeText(displayedLogs.join("\n"));
-    toast.success("Console logs copied to clipboard");
-  }
-
 
   return {
     id,
@@ -436,15 +416,10 @@ export function useStrategyDetail(id: string) {
     setBusy,
     editing,
     setEditing,
-    showLogs,
-    setShowLogs,
-    hidePnlLogs,
-    setHidePnlLogs,
     showHistory,
     setShowHistory,
     activeTab,
     setActiveTab,
-    displayedLogs,
     symbolsToSubscribe,
     getPrice,
     isMarketDataConnected,
@@ -466,7 +441,6 @@ export function useStrategyDetail(id: string) {
     displayLtp,
     editConfig,
     setEditConfig,
-    logsRef,
     isTestModalOpen,
     setIsTestModalOpen,
     testOrderLots,
@@ -510,7 +484,6 @@ export function useStrategyDetail(id: string) {
     handleTestSymbolSearch,
     selectTestInstrument,
     handleTestOrder,
-    copyLogsToClipboard,
   };
 }
 

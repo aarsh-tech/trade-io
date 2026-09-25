@@ -1,20 +1,22 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { Activity, ChevronDown, ChevronUp, Copy, Filter, Radio, ShoppingCart, Terminal, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { Activity, Radio, ShoppingCart } from "lucide-react";
+import { EngineConsole } from "./EngineConsole";
+import { EngineSnapshot } from "./EngineSnapshot";
 import type { DetailCtx } from "./useStrategyDetail";
 
 export function LiveTab({ ctx }: { ctx: DetailCtx }) {
-  const { strategy, setLiveLogs, liveState, activeOrders, showLogs, setShowLogs, hidePnlLogs, setHidePnlLogs, activeTab, displayedLogs, logsRef, copyLogsToClipboard, is15Min } = ctx;
+  const { strategy, liveState, activeOrders, activeTab, is15Min } = ctx;
   return (
     <>
       {/* ─── TAB 1: LIVE ENGINE & TELEMETRY ─── */}
       {activeTab === "LIVE" && (
         <div className="space-y-6">
+          <EngineSnapshot ctx={ctx} />
+
           {/* Live Engine Status Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="border-border/60 bg-card/60 shadow-xs">
@@ -185,102 +187,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
             </Card>
           </div>
 
-          {/* ── Live Streaming Console ── */}
-          <Card className="border-border/60 bg-card shadow-sm overflow-hidden rounded-2xl">
-            <CardHeader className="p-4 bg-muted/30 border-b border-border/60 flex flex-row items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Terminal className="h-4 w-4 text-emerald-500" />
-                <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
-                  Live Engine Terminal Console
-                </CardTitle>
-                {strategy.isActive && (
-                  <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={hidePnlLogs ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setHidePnlLogs((v) => !v)}
-                  className="h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
-                  title={hidePnlLogs ? "Switch to show all logs" : "Hide repetitive P&L ticks to view trade signals and executions only"}
-                >
-                  <Filter className="h-3 w-3" />
-                  <span className="hidden sm:inline">{hidePnlLogs ? "Events Only" : "All Logs"}</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={copyLogsToClipboard}
-                  className="h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
-                >
-                  <Copy className="h-3 w-3" />
-                  <span className="hidden sm:inline">Copy Logs</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setLiveLogs([]);
-                    toast.success("Terminal logs cleared");
-                  }}
-                  className="h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-rose-500"
-                  title="Clear live terminal logs"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  <span className="hidden sm:inline">Clear</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowLogs((v) => !v)}
-                  className="h-7 w-7 p-0"
-                >
-                  {showLogs ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </Button>
-              </div>
-            </CardHeader>
-
-            {showLogs && (
-              <CardContent className="p-0">
-                <div
-                  ref={logsRef}
-                  className="h-72 overflow-y-auto bg-slate-950 p-4 font-mono text-xs text-emerald-400 space-y-1 select-text scrollbar-thin"
-                >
-                  {displayedLogs.length === 0 ? (
-                    <p className="text-slate-500 italic py-4 text-sm">
-                      {strategy.isActive
-                        ? "Engine running. Awaiting real-time market ticks and crossover signals..."
-                        : "Start the engine to view live execution logs."}
-                    </p>
-                  ) : (
-                    displayedLogs.map((line, i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          "leading-relaxed py-0.5 text-sm",
-                          line.includes("📊 [LIVE P&L]") &&
-                          "text-cyan-300 font-semibold bg-cyan-950/40 px-2 py-0.5 rounded border-l-2 border-cyan-400 my-0.5",
-                          line.includes("⏰") &&
-                          "text-amber-300 font-bold bg-amber-950/30 px-1.5 rounded border-l-2 border-amber-400",
-                          line.includes("❌") && "text-rose-400",
-                          line.includes("⚠") && "text-amber-400",
-                          line.includes("🟢") && "text-emerald-300 font-bold",
-                          line.includes("🔴") && "text-rose-300 font-bold",
-                          line.includes("✅") && "text-emerald-400 font-medium",
-                          line.includes("⚡") && "text-purple-300 font-medium",
-                          line.includes("🎯") && "text-emerald-300 font-bold"
-                        )}
-                      >
-                        {line}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </CardContent>
-            )}
-          </Card>
+          <EngineConsole ctx={ctx} />
         </div>
       )}
 
