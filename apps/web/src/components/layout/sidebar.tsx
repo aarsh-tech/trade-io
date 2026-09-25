@@ -114,13 +114,13 @@ export function Sidebar() {
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative",
                   active
                     ? "bg-blue-600/5 text-blue-600 border border-blue-600/10 shadow-[0_2px_10px_rgba(37,99,235,0.05)]"
-                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-900 border border-transparent",
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent",
                   sidebarCollapsed && "justify-center px-0"
                 )}
                 title={sidebarCollapsed ? label : undefined}
               >
                 <Icon
-                  className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-blue-600" : "group-hover:text-slate-900")}
+                  className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-blue-600" : "group-hover:text-foreground")}
                 />
                 {!sidebarCollapsed && <span className="truncate">{label}</span>}
                 {!sidebarCollapsed && badge && (
@@ -138,7 +138,7 @@ export function Sidebar() {
 
           {/* Admin Navigation */}
           {user?.role === "ADMIN" && (
-            <div className="pt-3 mt-3 border-t border-slate-100">
+            <div className="pt-3 mt-3 border-t border-border">
               {!sidebarCollapsed && (
                 <div className="px-3 pb-1.5 flex items-center justify-between">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">
@@ -159,7 +159,7 @@ export function Sidebar() {
                       "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative",
                       active
                         ? "bg-purple-50 text-purple-700 border border-purple-200/80 shadow-[0_2px_10px_rgba(147,51,234,0.08)]"
-                        : "text-slate-600 hover:bg-purple-50/60 hover:text-purple-700 border border-transparent",
+                        : "text-foreground/75 hover:bg-purple-50/60 hover:text-purple-700 border border-transparent",
                       sidebarCollapsed && "justify-center px-0"
                     )}
                     title={sidebarCollapsed ? label : undefined}

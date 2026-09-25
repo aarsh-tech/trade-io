@@ -8,7 +8,7 @@ const LABEL = { connected: "Live", stale: "Delayed", closed: "Market closed" } a
 const TONE = {
   connected: "bg-emerald-50 text-emerald-700 border-emerald-200",
   stale: "bg-amber-50 text-amber-700 border-amber-200",
-  closed: "bg-slate-50 text-slate-500 border-slate-200",
+  closed: "bg-muted/50 text-muted-foreground border-border",
 } as const;
 
 const DOT = { connected: "bg-emerald-500", stale: "bg-amber-500 animate-pulse", closed: "bg-slate-400" } as const;

@@ -104,7 +104,7 @@ export function RiskDisclosureModal() {
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogContent
         hideClose={true}
-        className="w-[calc(100%-1.5rem)] sm:max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden border border-slate-200/90 shadow-2xl rounded-2xl bg-white"
+        className="w-[calc(100%-1.5rem)] sm:max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden border border-border/90 shadow-2xl rounded-2xl bg-card"
       >
         {/* Top Header Banner */}
         <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 px-5 sm:px-6 pt-5 pb-4 border-b border-amber-200/60 flex items-start gap-3.5">
@@ -116,21 +116,21 @@ export function RiskDisclosureModal() {
               <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-amber-800 bg-amber-100/90 border border-amber-300/80 px-2 py-0.5 rounded-full">
                 SEBI Mandated Disclosure
               </span>
-              <span className="text-[10px] text-slate-400 font-medium">
+              <span className="text-[10px] text-muted-foreground font-medium">
                 Kite / Exchange Standard
               </span>
             </div>
-            <DialogTitle className="text-base sm:text-lg font-bold text-slate-900 mt-1 leading-snug">
+            <DialogTitle className="text-base sm:text-lg font-bold text-foreground mt-1 leading-snug">
               Risk disclosures on derivatives
             </DialogTitle>
-            <DialogDescription className="text-xs sm:text-sm text-slate-500 mt-0.5">
+            <DialogDescription className="text-xs sm:text-sm text-muted-foreground mt-0.5">
               Mandatory risk disclosure as prescribed by Securities and Exchange Board of India (SEBI)
             </DialogDescription>
           </div>
         </div>
 
         {/* Scrollable Content Body */}
-        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4 text-slate-700">
+        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4 text-foreground/75">
           {/* Key Stat Badges Grid */}
           <div className="grid grid-cols-3 gap-2.5">
             <div className="bg-rose-50/70 border border-rose-200/80 rounded-xl p-2.5 sm:p-3 text-center">
@@ -173,38 +173,38 @@ export function RiskDisclosureModal() {
           </div>
 
           {/* Official SEBI Findings Section */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 sm:p-4 space-y-2.5">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 uppercase tracking-wide">
+          <div className="bg-muted/50 border border-border rounded-xl p-3.5 sm:p-4 space-y-2.5">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground uppercase tracking-wide">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
               Official SEBI Study Findings
             </div>
-            <ul className="space-y-2 text-xs sm:text-[13px] text-slate-700 leading-relaxed list-none pl-0">
+            <ul className="space-y-2 text-xs sm:text-[13px] text-foreground/75 leading-relaxed list-none pl-0">
               <li className="flex items-start gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-rose-500 mt-2 shrink-0" />
                 <span>
-                  <strong className="text-slate-900 font-semibold">9 out of 10 individual traders</strong> in equity Futures and Options (F&O) Segment incurred net losses.
+                  <strong className="text-foreground font-semibold">9 out of 10 individual traders</strong> in equity Futures and Options (F&O) Segment incurred net losses.
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-500 mt-2 shrink-0" />
                 <span>
-                  <strong className="text-slate-900 font-semibold">On an average, loss makers registered net trading loss close to ₹50,000.</strong> Over 3-year aggregated SEBI data, average net loss per individual trader exceeded ₹1,10,000.
+                  <strong className="text-foreground font-semibold">On an average, loss makers registered net trading loss close to ₹50,000.</strong> Over 3-year aggregated SEBI data, average net loss per individual trader exceeded ₹1,10,000.
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-blue-500 mt-2 shrink-0" />
                 <span>
-                  <strong className="text-slate-900 font-semibold">Over and above the net trading losses incurred</strong>, loss makers expended an additional <strong className="text-slate-900 font-semibold">28% of net trading losses</strong> as transaction costs (brokerage, exchange turnover charges, and STT).
+                  <strong className="text-foreground font-semibold">Over and above the net trading losses incurred</strong>, loss makers expended an additional <strong className="text-foreground font-semibold">28% of net trading losses</strong> as transaction costs (brokerage, exchange turnover charges, and STT).
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 mt-2 shrink-0" />
                 <span>
-                  <strong className="text-slate-900 font-semibold">Those making net trading profits</strong> incurred between <strong className="text-slate-900 font-semibold">15% to 50%</strong> of such profits as transaction costs.
+                  <strong className="text-foreground font-semibold">Those making net trading profits</strong> incurred between <strong className="text-foreground font-semibold">15% to 50%</strong> of such profits as transaction costs.
                 </span>
               </li>
             </ul>
-            <p className="text-[10px] text-slate-400 italic pt-1 border-t border-slate-200/60 flex items-center gap-1">
+            <p className="text-[10px] text-muted-foreground italic pt-1 border-t border-border/60 flex items-center gap-1">
               <span>Source: SEBI study on &quot;Analysis of Profit and Loss of Individual Traders dealing in equity Futures and Options (F&O) Segment&quot;.</span>
             </p>
           </div>
@@ -230,24 +230,24 @@ export function RiskDisclosureModal() {
 
           {/* Consent Checkboxes */}
           <div className="pt-1 space-y-2">
-            <label className="flex items-start gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+            <label className="flex items-start gap-2.5 text-xs text-foreground/75 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={agreeChecked}
                 onChange={(e) => setAgreeChecked(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer accent-blue-600"
+                className="mt-0.5 h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer accent-blue-600"
               />
               <span>
                 I have read and understood the <strong>SEBI risk disclosures on derivatives</strong> and agree that algorithmic trading involves financial market risks.
               </span>
             </label>
 
-            <label className="flex items-center gap-2.5 text-xs text-slate-500 cursor-pointer select-none">
+            <label className="flex items-center gap-2.5 text-xs text-muted-foreground cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={dontShowToday}
                 onChange={(e) => setDontShowToday(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer accent-blue-600"
+                className="h-3.5 w-3.5 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer accent-blue-600"
               />
               <span>Don&apos;t show this popup again today (re-appears tomorrow or upon new session login)</span>
             </label>
@@ -255,8 +255,8 @@ export function RiskDisclosureModal() {
         </div>
 
         {/* Modal Action Footer */}
-        <div className="px-5 sm:px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-          <span className="text-[11px] text-slate-400 hidden sm:inline">
+        <div className="px-5 sm:px-6 py-3.5 bg-muted/50 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          <span className="text-[11px] text-muted-foreground hidden sm:inline">
             Mandatory acknowledgment pursuant to SEBI circulars
           </span>
           <Button

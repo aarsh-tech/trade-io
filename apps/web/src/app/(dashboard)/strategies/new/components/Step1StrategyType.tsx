@@ -124,17 +124,17 @@ export function Step1StrategyType({ form, set }: Step1Props) {
   return (
     <div className="space-y-5">
       {/* ─── Strategy Identifier Name Card ─── */}
-      <div className="rounded-2xl border-2 border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
+      <div className="rounded-2xl border-2 border-border bg-card p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-blue-100 text-blue-800 border border-blue-300 shrink-0">
               <Bot className="h-5 w-5" />
             </div>
             <div>
-              <label htmlFor="strategy-name" className="text-xs sm:text-sm font-extrabold text-slate-950 block">
+              <label htmlFor="strategy-name" className="text-xs sm:text-sm font-extrabold text-foreground block">
                 Strategy Identifier Name
               </label>
-              <p className="text-xs text-slate-700 font-medium mt-0.5">
+              <p className="text-xs text-foreground/75 font-medium mt-0.5">
                 Customize your strategy name or use the auto-generated algorithm title
               </p>
             </div>
@@ -145,7 +145,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
               placeholder="e.g. Stock Options Hunter"
-              className="h-10 text-xs font-bold bg-white border-2 border-slate-300 focus:border-blue-600 rounded-xl text-slate-950 placeholder:text-slate-400 shadow-xs"
+              className="h-10 text-xs font-bold bg-card border-2 border-border focus:border-blue-600 rounded-xl text-foreground placeholder:text-muted-foreground shadow-xs"
             />
           </div>
         </div>
@@ -154,10 +154,10 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       {/* ─── Strategy Algorithm Cards Grid ─── */}
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-extrabold uppercase tracking-wider text-slate-900 block">
+          <label className="text-xs font-extrabold uppercase tracking-wider text-foreground block">
             Select Strategy Algorithm
           </label>
-          <span className="text-xs font-semibold text-slate-700">
+          <span className="text-xs font-semibold text-foreground/75">
             Click a preset card to configure parameters
           </span>
         </div>
@@ -259,10 +259,10 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                     }
                   }}
                   className={cn(
-                    "relative overflow-hidden rounded-2xl border-2 p-5 flex flex-col justify-between gap-3.5 transition-all duration-200 text-left cursor-pointer group bg-white shadow-xs",
+                    "relative overflow-hidden rounded-2xl border-2 p-5 flex flex-col justify-between gap-3.5 transition-all duration-200 text-left cursor-pointer group bg-card shadow-xs",
                     isSelected
                       ? "border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/30"
-                      : "border-slate-200 hover:border-blue-400 hover:bg-slate-50/80"
+                      : "border-border hover:border-blue-400 hover:bg-muted/40"
                   )}
                 >
                   {/* Top Ambient Bar when selected */}
@@ -284,9 +284,9 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                         </Badge>
                         <Badge
                           variant="outline"
-                          className="text-[10px] font-bold border-slate-300 text-slate-800 bg-slate-100 gap-1 py-0.5"
+                          className="text-[10px] font-bold border-border text-foreground bg-muted gap-1 py-0.5"
                         >
-                          <Clock className="h-3 w-3 text-slate-700" />
+                          <Clock className="h-3 w-3 text-foreground/75" />
                           {timing}
                         </Badge>
                       </div>
@@ -319,17 +319,17 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                         <Icon className="h-5 w-5" />
                       </div>
                       <div className="min-w-0">
-                        <p className="font-extrabold text-sm sm:text-base text-slate-950 leading-snug group-hover:text-blue-700 transition-colors">
+                        <p className="font-extrabold text-sm sm:text-base text-foreground leading-snug group-hover:text-blue-700 transition-colors">
                           {label}
                         </p>
-                        <p className="text-xs text-slate-800 leading-relaxed mt-1 font-medium line-clamp-3">
+                        <p className="text-xs text-foreground leading-relaxed mt-1 font-medium line-clamp-3">
                           {desc}
                         </p>
                       </div>
                     </div>
 
                     {/* Features List */}
-                    <div className="pt-3 border-t border-slate-200 grid grid-cols-2 gap-2 text-xs text-slate-900 font-semibold">
+                    <div className="pt-3 border-t border-border grid grid-cols-2 gap-2 text-xs text-foreground font-semibold">
                       {features.map((feat, idx) => (
                         <span key={idx} className="flex items-center gap-1.5 truncate">
                           <CheckCircle2
@@ -338,7 +338,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                               isSelected ? "text-blue-700" : "text-emerald-700"
                             )}
                           />
-                          <span className="truncate text-slate-900 font-semibold">{feat}</span>
+                          <span className="truncate text-foreground font-semibold">{feat}</span>
                         </span>
                       ))}
                     </div>

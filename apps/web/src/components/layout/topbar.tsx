@@ -10,6 +10,7 @@ import { openRiskDisclosure } from "@/components/shared/risk-disclosure-modal";
 import { useBrokers } from "@/hooks/useBrokers";
 import { BrokerSessionModal } from "@/components/layout/broker-session-modal";
 import { riskApi } from "@/lib/api";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export function TopBar() {
   const pathname = usePathname();
@@ -39,7 +40,7 @@ export function TopBar() {
 
   return (
     <>
-      <header className="h-14 sm:h-16 bg-white/95 backdrop-blur-md border-b border-slate-100 flex items-center justify-between px-2.5 sm:px-6 sticky top-0 z-30 shrink-0 shadow-2xs gap-1.5 sm:gap-4 overflow-x-hidden">
+      <header className="h-14 sm:h-16 bg-card/95 backdrop-blur-md border-b border-border flex items-center justify-between px-2.5 sm:px-6 sticky top-0 z-30 shrink-0 shadow-2xs gap-1.5 sm:gap-4 overflow-x-hidden">
         {/* Left: Mobile Brand & Page Indicator */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 shrink">
           <Link href="/dashboard" className="flex items-center gap-1.5 md:hidden shrink-0">
@@ -86,7 +87,7 @@ export function TopBar() {
             <Link
               href="/strategies"
               title="RMS Risk Management System Active & Protected"
-              className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 transition-colors text-[10px] sm:text-[11px] font-medium shrink-0 whitespace-nowrap"
+              className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-muted hover:bg-border/80 border border-border text-foreground/75 transition-colors text-[10px] sm:text-[11px] font-medium shrink-0 whitespace-nowrap"
             >
               <ShieldCheck className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-emerald-600 shrink-0" />
               <span>RMS Active</span>
@@ -100,7 +101,7 @@ export function TopBar() {
           <button
             type="button"
             onClick={() => setShowBrokerModal(true)}
-            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-slate-100/90 hover:bg-slate-200/80 border border-slate-200/80 text-slate-700 transition-all cursor-pointer shadow-2xs group shrink-0 whitespace-nowrap"
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-muted/90 hover:bg-border/80 border border-border/80 text-foreground/75 transition-all cursor-pointer shadow-2xs group shrink-0 whitespace-nowrap"
             title="Zerodha Kite API Settings & App Setup"
           >
             <Server className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-blue-600 group-hover:scale-110 transition-transform shrink-0" />
@@ -133,12 +134,14 @@ export function TopBar() {
             </span>
           </button>
 
+          <ThemeToggle />
+
           <Link
             href="/settings"
-            className="flex items-center gap-2 p-1 sm:p-1.5 rounded-lg hover:bg-slate-50 transition-colors group shrink-0"
+            className="flex items-center gap-2 p-1 sm:p-1.5 rounded-lg hover:bg-muted/50 transition-colors group shrink-0"
           >
             <div className="hidden sm:flex flex-col items-end">
-              <span className="text-xs sm:text-sm font-bold text-slate-700 group-hover:text-blue-600 transition-colors truncate max-w-[140px]">
+              <span className="text-xs sm:text-sm font-bold text-foreground/75 group-hover:text-blue-600 transition-colors truncate max-w-[140px]">
                 {user?.name || "User"}
               </span>
               {user?.role === "ADMIN" ? (
@@ -146,7 +149,7 @@ export function TopBar() {
                   Administrator
                 </span>
               ) : (
-                <span className="text-[9px] text-slate-400 font-medium">Standard Account</span>
+                <span className="text-[9px] text-muted-foreground font-medium">Standard Account</span>
               )}
             </div>
             <div

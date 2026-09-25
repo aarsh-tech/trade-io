@@ -140,7 +140,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100%-1.5rem)] sm:max-w-xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden border border-slate-200/90 shadow-2xl rounded-2xl bg-white">
+      <DialogContent className="w-[calc(100%-1.5rem)] sm:max-w-xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden border border-border/90 shadow-2xl rounded-2xl bg-card">
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600/10 via-indigo-500/10 to-blue-600/5 px-5 sm:px-6 pt-5 pb-4 border-b border-blue-200/60 flex items-start gap-3.5">
           <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 text-white shadow-xs">
@@ -168,32 +168,32 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                 {isSessionValid ? "Session Active" : "Daily Login Needed"}
               </span>
             </div>
-            <DialogTitle className="text-base sm:text-lg font-bold text-slate-900 mt-1">
+            <DialogTitle className="text-base sm:text-lg font-bold text-foreground mt-1">
               Kite Daily Session &amp; API Manager
             </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500 mt-0.5">
+            <DialogDescription className="text-xs text-muted-foreground mt-0.5">
               Authenticate your daily Zerodha access token and configure developer console settings.
             </DialogDescription>
           </div>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-5 text-slate-700">
+        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-5 text-foreground/75">
           {/* Section 1: Daily Login & Token Activation */}
-          <div className="bg-slate-50/90 border border-slate-200 rounded-xl p-4 space-y-3.5">
+          <div className="bg-muted/40 border border-border rounded-xl p-4 space-y-3.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5 text-blue-600" />
                 Step 1: Daily Kite Authentication
               </span>
               {zerodhaAccount?.clientId && (
-                <span className="text-xs font-mono font-medium text-slate-500 bg-slate-200/70 px-2 py-0.5 rounded">
+                <span className="text-xs font-mono font-medium text-muted-foreground bg-border/70 px-2 py-0.5 rounded">
                   Client ID: {zerodhaAccount.clientId}
                 </span>
               )}
             </div>
 
-            <p className="text-xs text-slate-500 leading-relaxed">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               Zerodha Kite access tokens expire daily at 6:00 AM IST. Log in once each morning to enable live order execution and WebSocket tick feeds.
             </p>
 
@@ -207,9 +207,9 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
             </Button>
 
             {/* Token Input Form */}
-            <form onSubmit={handleActivateSession} className="space-y-2.5 pt-1 border-t border-slate-200">
+            <form onSubmit={handleActivateSession} className="space-y-2.5 pt-1 border-t border-border">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-slate-700">
+                <label className="text-[11px] font-semibold text-foreground/75">
                   Paste Request Token or Full Redirected URL:
                 </label>
                 <button
@@ -227,7 +227,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                   value={requestToken}
                   onChange={(e) => setRequestToken(e.target.value)}
                   placeholder="e.g. 8pM9x... or https://tradeio.site/dashboard?request_token=..."
-                  className="h-10 text-xs font-mono bg-white border-slate-200 focus:border-blue-500"
+                  className="h-10 text-xs font-mono bg-card border-border focus:border-blue-500"
                 />
                 <Button
                   type="submit"
@@ -261,7 +261,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                     className={cn(
                       "px-2 py-0.5 rounded-md transition-all cursor-pointer",
                       envMode === "production"
-                        ? "bg-white text-blue-700 shadow-2xs font-bold"
+                        ? "bg-card text-blue-700 shadow-2xs font-bold"
                         : "text-amber-900/70 hover:text-amber-950"
                     )}
                   >
@@ -273,7 +273,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                     className={cn(
                       "px-2 py-0.5 rounded-md transition-all cursor-pointer",
                       envMode === "local"
-                        ? "bg-white text-blue-700 shadow-2xs font-bold"
+                        ? "bg-card text-blue-700 shadow-2xs font-bold"
                         : "text-amber-900/70 hover:text-amber-950"
                     )}
                   >
@@ -300,12 +300,12 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
 
             {/* Field 1: Primary Callback URL */}
             <div className="space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
+              <div className="flex items-center justify-between text-[11px] font-medium text-foreground/75">
                 <span>Redirect URL (Primary):</span>
                 <span className="text-[10px] text-emerald-600 font-semibold">Recommended</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <div className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 truncate select-all">
+                <div className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-xs font-mono text-foreground truncate select-all">
                   {primaryCallbackUrl}
                 </div>
                 <Button
@@ -313,12 +313,12 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                   size="sm"
                   variant="outline"
                   onClick={() => copyToClipboard(primaryCallbackUrl, "Redirect URL")}
-                  className="h-9 px-3 shrink-0 cursor-pointer hover:bg-slate-100"
+                  className="h-9 px-3 shrink-0 cursor-pointer hover:bg-muted"
                 >
                   {copiedField === "Redirect URL" ? (
                     <Check className="h-3.5 w-3.5 text-emerald-600" />
                   ) : (
-                    <Copy className="h-3.5 w-3.5 text-slate-600" />
+                    <Copy className="h-3.5 w-3.5 text-foreground/75" />
                   )}
                   <span className="ml-1 text-xs">Copy</span>
                 </Button>
@@ -327,12 +327,12 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
 
             {/* Field 2: Alternative Direct Dashboard URL */}
             <div className="space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
+              <div className="flex items-center justify-between text-[11px] font-medium text-foreground/75">
                 <span>Alternative Redirect URL:</span>
-                <span className="text-[10px] text-slate-400">Direct Dashboard</span>
+                <span className="text-[10px] text-muted-foreground">Direct Dashboard</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <div className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 truncate select-all">
+                <div className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-xs font-mono text-foreground truncate select-all">
                   {alternativeDashboardUrl}
                 </div>
                 <Button
@@ -340,12 +340,12 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                   size="sm"
                   variant="outline"
                   onClick={() => copyToClipboard(alternativeDashboardUrl, "Dashboard URL")}
-                  className="h-9 px-3 shrink-0 cursor-pointer hover:bg-slate-100"
+                  className="h-9 px-3 shrink-0 cursor-pointer hover:bg-muted"
                 >
                   {copiedField === "Dashboard URL" ? (
                     <Check className="h-3.5 w-3.5 text-emerald-600" />
                   ) : (
-                    <Copy className="h-3.5 w-3.5 text-slate-600" />
+                    <Copy className="h-3.5 w-3.5 text-foreground/75" />
                   )}
                   <span className="ml-1 text-xs">Copy</span>
                 </Button>
@@ -366,8 +366,8 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
         </div>
 
         {/* Footer */}
-        <div className="px-5 sm:px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-          <p className="text-[11px] text-slate-400">
+        <div className="px-5 sm:px-6 py-3 bg-muted/50 border-t border-border flex items-center justify-between">
+          <p className="text-[11px] text-muted-foreground">
             Session data is securely encrypted in your database.
           </p>
           <Button

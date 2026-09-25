@@ -99,15 +99,15 @@ function CallbackContent() {
 
   return (
     <div className="min-h-[75vh] flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg border-slate-200 shadow-xl rounded-2xl overflow-hidden bg-white">
-        <CardHeader className="bg-slate-50 border-b border-slate-100 text-center pb-5">
+      <Card className="w-full max-w-lg border-border shadow-xl rounded-2xl overflow-hidden bg-card">
+        <CardHeader className="bg-muted/50 border-b border-border text-center pb-5">
           <div className="mx-auto h-12 w-12 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm mb-3">
             <Key className="h-6 w-6" />
           </div>
-          <CardTitle className="text-xl font-bold text-slate-900">
+          <CardTitle className="text-xl font-bold text-foreground">
             Zerodha Kite Session Gateway
           </CardTitle>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Automatic Request Token Verification &amp; Session Activation
           </p>
         </CardHeader>
@@ -118,10 +118,10 @@ function CallbackContent() {
             <div className="py-8 text-center space-y-4">
               <RefreshCw className="h-10 w-10 text-blue-600 animate-spin mx-auto" />
               <div>
-                <h3 className="text-base font-semibold text-slate-900">
+                <h3 className="text-base font-semibold text-foreground">
                   Verifying Token with Zerodha...
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Exchanging request token for live access credentials.
                 </p>
               </div>
@@ -135,13 +135,13 @@ function CallbackContent() {
                 <CheckCircle2 className="h-8 w-8" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-900">
+                <h3 className="text-lg font-bold text-foreground">
                   Authentication Successful!
                 </h3>
                 <p className="text-xs text-emerald-700 font-medium mt-1">
                   Your Zerodha broker account is now live and synchronized.
                 </p>
-                <p className="text-[11px] text-slate-400 mt-2">
+                <p className="text-[11px] text-muted-foreground mt-2">
                   Redirecting to your trading dashboard...
                 </p>
               </div>
@@ -168,11 +168,11 @@ function CallbackContent() {
               )}
 
               <div className="space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-700">
+                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-foreground/75">
                   <Sparkles className="h-3.5 w-3.5 text-blue-600" />
                   Manual Request Token Activation
                 </div>
-                <p className="text-xs text-slate-500 leading-relaxed">
+                <p className="text-xs text-muted-foreground leading-relaxed">
                   If the automatic redirect did not capture your token, paste the token or the full redirected URL from your browser address bar below:
                 </p>
               </div>
@@ -182,7 +182,7 @@ function CallbackContent() {
                   value={manualToken}
                   onChange={(e) => setManualToken(e.target.value)}
                   placeholder="Paste request_token or full redirected URL..."
-                  className="h-11 text-xs font-mono bg-slate-50 border-slate-200 focus:bg-white focus:border-blue-500"
+                  className="h-11 text-xs font-mono bg-muted/50 border-border focus:bg-card focus:border-blue-500"
                 />
 
                 <Button
@@ -205,7 +205,7 @@ function CallbackContent() {
               </form>
 
               <div className="pt-2 text-center">
-                <Link href="/dashboard" className="text-xs text-slate-400 hover:text-slate-600 hover:underline">
+                <Link href="/dashboard" className="text-xs text-muted-foreground hover:text-foreground/75 hover:underline">
                   Skip &amp; return to Dashboard
                 </Link>
               </div>
@@ -219,7 +219,7 @@ function CallbackContent() {
 
 export default function BrokerCallbackPage() {
   return (
-    <Suspense fallback={<div className="h-96 flex items-center justify-center text-xs text-slate-400">Loading gateway...</div>}>
+    <Suspense fallback={<div className="h-96 flex items-center justify-center text-xs text-muted-foreground">Loading gateway...</div>}>
       <CallbackContent />
     </Suspense>
   );

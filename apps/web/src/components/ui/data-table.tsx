@@ -262,8 +262,8 @@ export function DataTable<TData, TValue>({
             </Button>
 
             {showColumnMenu && (
-              <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2 shadow-2xl z-50 animate-in fade-in-50 zoom-in-95 space-y-1">
-                <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+              <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl border border-border dark:border-slate-800 bg-card dark:bg-slate-900 p-2 shadow-2xl z-50 animate-in fade-in-50 zoom-in-95 space-y-1">
+                <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border dark:border-slate-800">
                   <span>Toggle Columns</span>
                   <button
                     type="button"
@@ -302,7 +302,7 @@ export function DataTable<TData, TValue>({
                               "h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-colors",
                               isVisible
                                 ? "bg-blue-600 border-blue-600 text-white"
-                                : "border-slate-300 dark:border-slate-700 bg-transparent"
+                                : "border-border dark:border-slate-700 bg-transparent"
                             )}
                           >
                             {isVisible && <Check className="h-3 w-3 stroke-[3]" />}

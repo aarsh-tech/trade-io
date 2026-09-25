@@ -43,14 +43,14 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-1.5rem)] sm:max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-slate-200 bg-white text-slate-900 shadow-2xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 rounded-2xl",
+        "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-1.5rem)] sm:max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card text-foreground shadow-2xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 rounded-2xl",
         className
       )}
       {...props}
     >
       {children}
       {!hideClose && (
-        <DialogPrimitive.Close className="absolute right-3.5 top-3.5 z-50 rounded-full p-1.5 bg-slate-100/90 hover:bg-slate-200 text-slate-500 hover:text-slate-900 transition-colors focus:outline-none shadow-xs">
+        <DialogPrimitive.Close className="absolute right-3.5 top-3.5 z-50 rounded-full p-1.5 bg-muted/90 hover:bg-border text-muted-foreground hover:text-foreground transition-colors focus:outline-none shadow-xs">
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
@@ -109,7 +109,7 @@ const DialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-sm text-slate-500", className)}
+    className={cn("text-sm text-muted-foreground", className)}
     {...props}
   />
 ))

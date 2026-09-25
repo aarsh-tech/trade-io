@@ -17,10 +17,10 @@ export default function RegisterPage() {
         </div>
 
         <div className="space-y-2">
-          <h2 className="text-base font-semibold text-slate-900">
+          <h2 className="text-base font-semibold text-foreground">
             Invite-Only Platform
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500 leading-relaxed max-w-xs mx-auto">
+          <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed max-w-xs mx-auto">
             Public signups are currently disabled. Accounts can only be provisioned directly by the platform administrator.
           </p>
         </div>

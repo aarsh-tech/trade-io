@@ -12,14 +12,14 @@ interface IndexData {
 
 export function MarketTicker({ indices }: { indices: IndexData[] }) {
   return (
-    <div className="h-10 bg-white border-b border-slate-100 flex items-center overflow-hidden whitespace-nowrap">
+    <div className="h-10 bg-card border-b border-border flex items-center overflow-hidden whitespace-nowrap">
       <div className="flex animate-marquee hover:pause gap-12 px-6">
         {[...indices, ...indices].map((item, idx) => (
           <div key={`${item.symbol}-${idx}`} className="flex items-center gap-2 group cursor-pointer">
-            <span className="text-[11px] font-bold text-slate-500 group-hover:text-blue-600 transition-colors uppercase">
+            <span className="text-[11px] font-bold text-muted-foreground group-hover:text-blue-600 transition-colors uppercase">
               {item.symbol}
             </span>
-            <span className="text-[11px] font-black text-slate-800 tabular-nums">
+            <span className="text-[11px] font-black text-foreground tabular-nums">
               {item.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </span>
             <div className={cn(

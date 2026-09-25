@@ -28,6 +28,7 @@ import {
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatINR } from "@/lib/format";
 
 interface OhlStockItem {
   symbol: string;
@@ -442,7 +443,7 @@ export default function LiveOhlScreenerPage() {
                 </span>
               </div>
               {/* Progress ratio bar */}
-              <div className="w-full bg-slate-200 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden flex my-1.5">
+              <div className="w-full bg-border dark:bg-slate-800 h-2.5 rounded-full overflow-hidden flex my-1.5">
                 <div
                   className="bg-emerald-500 transition-all duration-500"
                   style={{
@@ -567,7 +568,7 @@ export default function LiveOhlScreenerPage() {
               className={cn(
                 "px-2.5 py-1 rounded-lg transition-all shrink-0 font-medium",
                 selectedCategory === cat
-                  ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm"
+                  ? "bg-slate-900 text-white dark:bg-muted dark:text-foreground shadow-sm"
                   : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
@@ -642,7 +643,7 @@ export default function LiveOhlScreenerPage() {
                             flash === "down" && "bg-rose-500/30 text-rose-400 scale-105"
                           )}
                         >
-                          ₹{stock.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {formatINR(stock.ltp)}
                         </span>
                         <div className={cn("flex items-center justify-end gap-0.5 font-bold text-[11px] font-mono", isUp ? "text-emerald-500" : "text-rose-500")}>
                           {isUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
@@ -817,7 +818,7 @@ export default function LiveOhlScreenerPage() {
                               flash === "down" && "bg-rose-500/30 text-rose-400 scale-105"
                             )}
                           >
-                            ₹{stock.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {formatINR(stock.ltp)}
                           </span>
                         </td>
 

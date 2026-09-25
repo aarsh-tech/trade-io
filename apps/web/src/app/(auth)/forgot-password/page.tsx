@@ -50,11 +50,11 @@ export default function ForgotPasswordPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="peer w-full h-[46px] px-3.5 pt-1 text-sm bg-white text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors"
+              className="peer w-full h-[46px] px-3.5 pt-1 text-sm bg-card text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors"
             />
             <label
               htmlFor="email"
-              className="absolute left-2.5 -top-2.5 px-1 bg-white text-xs text-[#888888] transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:text-[#999999] peer-placeholder-shown:top-3 peer-placeholder-shown:left-3.5 peer-focus:-top-2.5 peer-focus:left-2.5 peer-focus:text-xs peer-focus:text-blue-600 pointer-events-none"
+              className="absolute left-2.5 -top-2.5 px-1 bg-card text-xs text-[#888888] transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:text-[#999999] peer-placeholder-shown:top-3 peer-placeholder-shown:left-3.5 peer-focus:-top-2.5 peer-focus:left-2.5 peer-focus:text-xs peer-focus:text-blue-600 pointer-events-none"
             >
               Registered Email ID
             </label>

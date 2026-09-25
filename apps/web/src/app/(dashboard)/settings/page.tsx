@@ -79,8 +79,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6 max-w-4xl mx-auto animate-[fade-up_0.4s_ease_both]">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
+        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
           Manage your account settings, personal details, and two-factor authentication security
         </p>
       </div>
@@ -93,7 +93,7 @@ export default function SettingsPage() {
               "w-full text-left px-4 py-2.5 rounded-xl font-medium border flex items-center gap-3 transition-all",
               activeTab === "profile"
                 ? "bg-blue-50 text-blue-700 border-blue-200 shadow-2xs font-bold"
-                : "text-slate-600 border-transparent hover:bg-slate-50"
+                : "text-foreground/75 border-transparent hover:bg-muted/50"
             )}
           >
             <User className="h-4 w-4 text-blue-600" /> Profile
@@ -104,7 +104,7 @@ export default function SettingsPage() {
               "w-full text-left px-4 py-2.5 rounded-xl font-medium border flex items-center gap-3 transition-all",
               activeTab === "security"
                 ? "bg-blue-50 text-blue-700 border-blue-200 shadow-2xs font-bold"
-                : "text-slate-600 border-transparent hover:bg-slate-50"
+                : "text-foreground/75 border-transparent hover:bg-muted/50"
             )}
           >
             <Lock className="h-4 w-4 text-indigo-600" /> Security & 2FA
@@ -114,7 +114,7 @@ export default function SettingsPage() {
         <div className="md:col-span-2 space-y-6">
 
           {activeTab === "profile" && (
-            <Card className="border-slate-200/90 bg-white shadow-xs rounded-2xl">
+            <Card className="border-border/90 bg-card shadow-xs rounded-2xl">
               <CardHeader>
                 <CardTitle>Profile Details</CardTitle>
                 <CardDescription>Update your personal information.</CardDescription>
@@ -122,18 +122,18 @@ export default function SettingsPage() {
               <CardContent>
                 <form onSubmit={handleProfileUpdate} className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">Full Name</label>
+                    <label className="text-sm font-semibold text-foreground/75">Full Name</label>
                     <input
                       value={profileForm.name}
                       onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                      className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full h-10 px-3 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-semibold text-slate-700">Email Address</label>
-                      <span className="text-xs text-slate-400 flex items-center gap-1 font-medium">
-                        <Lock className="h-3 w-3 text-slate-400" /> Locked
+                      <label className="text-sm font-semibold text-foreground/75">Email Address</label>
+                      <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium">
+                        <Lock className="h-3 w-3 text-muted-foreground" /> Locked
                       </span>
                     </div>
                     <input
@@ -141,9 +141,9 @@ export default function SettingsPage() {
                       value={user?.email || ""}
                       disabled
                       readOnly
-                      className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-slate-100/90 text-slate-500 font-mono text-sm cursor-not-allowed select-none focus:outline-none"
+                      className="w-full h-10 px-3 rounded-lg border border-border bg-muted/90 text-muted-foreground font-mono text-sm cursor-not-allowed select-none focus:outline-none"
                     />
-                    <p className="text-xs text-slate-400">Your account email address cannot be changed.</p>
+                    <p className="text-xs text-muted-foreground">Your account email address cannot be changed.</p>
                   </div>
                   <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isUpdatingProfile}>
                     {isUpdatingProfile ? "Saving..." : "Save Changes"}
@@ -155,7 +155,7 @@ export default function SettingsPage() {
 
           {activeTab === "security" && (
             <>
-              <Card className="border-slate-200/90 bg-white shadow-xs rounded-2xl">
+              <Card className="border-border/90 bg-card shadow-xs rounded-2xl">
                 <CardHeader>
                   <CardTitle>Change Password</CardTitle>
                   <CardDescription>Ensure your account is using a long, random password to stay secure.</CardDescription>
@@ -163,19 +163,19 @@ export default function SettingsPage() {
                 <CardContent>
                   <form onSubmit={handlePasswordUpdate} className="space-y-4">
                     <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Current Password</label>
+                      <label className="text-sm font-semibold text-foreground/75">Current Password</label>
                       <div className="relative">
                         <input
                           type={showPasswords.current ? "text" : "password"}
                           value={passwordForm.current}
                           onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
-                          className="w-full h-10 pl-3 pr-10 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           required
                         />
                         <button
                           type="button"
                           onClick={() => toggleShowPassword("current")}
-                          className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
+                          className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-muted-foreground hover:text-foreground/75 focus:outline-none transition-colors"
                           aria-label={showPasswords.current ? "Hide current password" : "Show current password"}
                         >
                           {showPasswords.current ? (
@@ -188,19 +188,19 @@ export default function SettingsPage() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-1.5">
-                        <label className="text-sm font-semibold text-slate-700">New Password</label>
+                        <label className="text-sm font-semibold text-foreground/75">New Password</label>
                         <div className="relative">
                           <input
                             type={showPasswords.newPassword ? "text" : "password"}
                             value={passwordForm.newPassword}
                             onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             required
                           />
                           <button
                             type="button"
                             onClick={() => toggleShowPassword("newPassword")}
-                            className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
+                            className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-muted-foreground hover:text-foreground/75 focus:outline-none transition-colors"
                             aria-label={showPasswords.newPassword ? "Hide new password" : "Show new password"}
                           >
                             {showPasswords.newPassword ? (
@@ -212,19 +212,19 @@ export default function SettingsPage() {
                         </div>
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-sm font-semibold text-slate-700">Confirm Password</label>
+                        <label className="text-sm font-semibold text-foreground/75">Confirm Password</label>
                         <div className="relative">
                           <input
                             type={showPasswords.confirm ? "text" : "password"}
                             value={passwordForm.confirm}
                             onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
-                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-slate-200 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             required
                           />
                           <button
                             type="button"
                             onClick={() => toggleShowPassword("confirm")}
-                            className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
+                            className="absolute right-0 top-0 h-10 w-10 flex items-center justify-center text-muted-foreground hover:text-foreground/75 focus:outline-none transition-colors"
                             aria-label={showPasswords.confirm ? "Hide confirm password" : "Show confirm password"}
                           >
                             {showPasswords.confirm ? (
@@ -236,7 +236,7 @@ export default function SettingsPage() {
                         </div>
                       </div>
                     </div>
-                    <Button type="submit" variant="outline" className="border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold" disabled={isChangingPassword}>
+                    <Button type="submit" variant="outline" className="border-border hover:bg-muted/50 text-foreground/75 font-semibold" disabled={isChangingPassword}>
                       {isChangingPassword ? "Updating..." : "Update Password"}
                     </Button>
                   </form>
@@ -284,16 +284,16 @@ export default function SettingsPage() {
                           <Key className="h-4 w-4" /> {isSettingUp ? "Generating..." : "Setup 2FA"}
                         </Button>
                       ) : (
-                        <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-6">
+                        <div className="p-4 border border-border rounded-xl bg-muted/50 space-y-6">
                           <div className="text-center">
-                            <p className="text-sm font-semibold text-slate-900 mb-2">1. Scan this QR Code with your Authenticator App</p>
-                            <div className="flex justify-center p-4 bg-white rounded-lg shadow-sm border border-slate-100 mx-auto w-fit">
+                            <p className="text-sm font-semibold text-foreground mb-2">1. Scan this QR Code with your Authenticator App</p>
+                            <div className="flex justify-center p-4 bg-card rounded-lg shadow-sm border border-border mx-auto w-fit">
                               <img src={qrCode} alt="2FA QR Code" className="w-40 h-40" />
                             </div>
                           </div>
 
                           <div className="space-y-3">
-                            <p className="text-sm font-semibold text-slate-900 text-center">2. Enter the 6-digit code</p>
+                            <p className="text-sm font-semibold text-foreground text-center">2. Enter the 6-digit code</p>
                             <div className="flex gap-2 max-w-[240px] mx-auto">
                               <input
                                 type="text"
@@ -301,7 +301,7 @@ export default function SettingsPage() {
                                 maxLength={6}
                                 value={setup2faCode}
                                 onChange={(e) => setSetup2faCode(e.target.value)}
-                                className="w-full h-12 text-center text-xl tracking-[0.5em] rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono font-bold text-slate-900"
+                                className="w-full h-12 text-center text-xl tracking-[0.5em] rounded-lg border border-border focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono font-bold text-foreground"
                               />
                             </div>
                             <Button onClick={onVerify2FASetup} disabled={isVerifying} className="w-full max-w-[240px] mx-auto block bg-blue-600 hover:bg-blue-700 text-white">

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { formatINR } from "@/lib/format";
 
 interface ClosedTrade {
   id: string;
@@ -519,7 +520,7 @@ export default function MonthlyLedgerPage() {
               "text-2xl sm:text-3xl font-black font-mono tracking-tight",
               isNetProfit ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
             )}>
-              {isNetProfit ? "+" : ""}₹{summary.totalRealizedPnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {isNetProfit ? "+" : ""}{formatINR(summary.totalRealizedPnl)}
             </div>
             <div className="flex items-center gap-2 mt-2 text-[11px] sm:text-xs text-muted-foreground flex-wrap">
               <span>Gross Profit: <span className="text-emerald-500 font-mono font-semibold">+₹{summary.totalGrossProfit.toFixed(0)}</span></span>
@@ -735,7 +736,7 @@ export default function MonthlyLedgerPage() {
                           "text-[11px] sm:text-sm font-bold font-mono text-right truncate",
                           isProfit ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
                         )}>
-                          {isProfit ? "+" : ""}₹{(cell.item?.pnl || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          {isProfit ? "+" : ""}{formatINR((cell.item?.pnl || 0), { decimals: 0 })}
                         </div>
                         <div className="text-[8.5px] sm:text-[9.5px] text-muted-foreground text-right mt-0.5 truncate hidden sm:block">
                           Win: {cell.item?.winRate}%
@@ -1003,7 +1004,7 @@ export default function MonthlyLedgerPage() {
                             "font-mono font-black text-sm",
                             isWin ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
                           )}>
-                            {isWin ? "+" : ""}₹{t.realizedPnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {isWin ? "+" : ""}{formatINR(t.realizedPnl)}
                           </div>
                           <span className={cn(
                             "text-[10px] font-mono font-bold",
@@ -1110,7 +1111,7 @@ export default function MonthlyLedgerPage() {
                               "font-mono font-black text-sm",
                               isWin ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
                             )}>
-                              {isWin ? "+" : ""}₹{t.realizedPnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isWin ? "+" : ""}{formatINR(t.realizedPnl)}
                             </div>
                             <div className={cn(
                               "text-[10.5px] font-mono font-bold mt-0.5",
@@ -1226,7 +1227,7 @@ export default function MonthlyLedgerPage() {
                       <div className="flex items-center justify-between text-xs pt-0.5">
                         <div className="text-[11px] text-muted-foreground">
                           Cumul: <span className={cn("font-mono font-bold", isCumulProfit ? "text-emerald-600" : "text-rose-600")}>
-                            {isCumulProfit ? "+" : ""}₹{d.cumulativePnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {isCumulProfit ? "+" : ""}{formatINR(d.cumulativePnl)}
                           </span>
                         </div>
 
@@ -1234,7 +1235,7 @@ export default function MonthlyLedgerPage() {
                           "font-mono font-black text-sm",
                           isProfit ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
                         )}>
-                          {isProfit ? "+" : ""}₹{d.pnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {isProfit ? "+" : ""}{formatINR(d.pnl)}
                         </div>
                       </div>
                     </div>
@@ -1291,7 +1292,7 @@ export default function MonthlyLedgerPage() {
                               "font-mono font-bold text-xs sm:text-sm",
                               isProfit ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
                             )}>
-                              {isProfit ? "+" : ""}₹{d.pnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isProfit ? "+" : ""}{formatINR(d.pnl)}
                             </span>
                           </td>
                           <td className="py-3.5 px-4 text-right whitespace-nowrap">
@@ -1299,7 +1300,7 @@ export default function MonthlyLedgerPage() {
                               "font-mono font-bold text-xs",
                               isCumulProfit ? "text-emerald-600" : "text-rose-600"
                             )}>
-                              {isCumulProfit ? "+" : ""}₹{d.cumulativePnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isCumulProfit ? "+" : ""}{formatINR(d.cumulativePnl)}
                             </span>
                           </td>
                           <td className="py-3.5 px-4 text-center">

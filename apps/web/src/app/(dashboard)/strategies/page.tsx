@@ -981,7 +981,7 @@ function StrategyCard({
                 s.latestExecution?.status === "STOPPED" && "bg-amber-500/10 text-amber-600",
                 s.latestExecution?.status === "ERROR" && "bg-rose-500/10 text-rose-600",
                 (!s.latestExecution || s.latestExecution?.status === "COMPLETED") &&
-                "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                "bg-slate-500/10 text-foreground/75 dark:text-muted-foreground"
               )}
             >
               {s.latestExecution?.status ?? "READY"}

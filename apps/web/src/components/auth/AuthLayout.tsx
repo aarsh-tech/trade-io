@@ -25,7 +25,7 @@ export function AuthLayout({
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#fbfbfb] text-[#444444] font-sans py-12 px-4 selection:bg-blue-600 selection:text-white">
       {/* Centered White Card (Kite Dimensions & Clean Minimalist Box) */}
-      <div className="w-full max-w-[390px] bg-white border border-[#e8e8e8] rounded-[4px] shadow-[0_2px_8px_rgba(0,0,0,0.05)] p-8 sm:p-10 pt-10 pb-9">
+      <div className="w-full max-w-[390px] bg-card border border-[#e8e8e8] rounded-[4px] shadow-[0_2px_8px_rgba(0,0,0,0.05)] p-8 sm:p-10 pt-10 pb-9">
         {/* Top Logo - Tradeio.site Blue Brand */}
         <div className="flex justify-center mb-6">
           <Link href="/" className="inline-flex items-center justify-center group">

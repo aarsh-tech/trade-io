@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import Link from "next/link";
+import { formatINR } from "@/lib/format";
 
 interface Holding {
   symbol: string;
@@ -354,12 +355,12 @@ export default function PortfolioPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold font-mono text-foreground tracking-tight">
-              ₹{metrics.totalCurrentValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatINR(metrics.totalCurrentValue)}
             </div>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
               <span>Invested:</span>
               <span className="font-mono font-medium text-foreground">
-                ₹{metrics.totalInvested.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {formatINR(metrics.totalInvested)}
               </span>
             </div>
           </CardContent>
@@ -389,7 +390,7 @@ export default function PortfolioPage() {
               )}
             >
               {metrics.totalHoldingPnl > 0 ? "+" : ""}
-              ₹{metrics.totalHoldingPnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatINR(metrics.totalHoldingPnl)}
               {metrics.totalHoldingPnl > 0 ? (
                 <ArrowUpRight className="h-5 w-5 text-emerald-500" />
               ) : metrics.totalHoldingPnl < 0 ? (
@@ -421,7 +422,7 @@ export default function PortfolioPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold font-mono text-foreground tracking-tight">
-              ₹{metrics.availableCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatINR(metrics.availableCash)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Live equity trading balance
@@ -667,7 +668,7 @@ export default function PortfolioPage() {
                               </Badge>
                             </div>
                             <div className="text-[11px] text-muted-foreground mt-0.5">
-                              Invested: ₹{invValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              Invested: {formatINR(invValue)}
                             </div>
                           </td>
 
@@ -678,17 +679,17 @@ export default function PortfolioPage() {
 
                           {/* Avg Price */}
                           <td className="py-3.5 px-4 text-right font-mono text-muted-foreground">
-                            ₹{(h.avgPrice || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {formatINR((h.avgPrice || 0))}
                           </td>
 
                           {/* LTP */}
                           <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
-                            ₹{(h.ltp || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {formatINR((h.ltp || 0))}
                           </td>
 
                           {/* Current Value */}
                           <td className="py-3.5 px-4 text-right font-mono font-bold text-foreground">
-                            ₹{currValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {formatINR(currValue)}
                           </td>
 
                           {/* P&L */}
@@ -699,7 +700,7 @@ export default function PortfolioPage() {
                                 isProfit ? "text-emerald-500" : "text-rose-500"
                               )}
                             >
-                              {isProfit ? "+" : ""}₹{pnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isProfit ? "+" : ""}{formatINR(pnl)}
                               {isProfit ? (
                                 <ArrowUpRight className="h-3.5 w-3.5" />
                               ) : (
@@ -831,11 +832,11 @@ export default function PortfolioPage() {
                           </td>
 
                           <td className="py-3.5 px-4 text-right font-mono text-foreground">
-                            ₹{(pos.avgPrice || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {formatINR((pos.avgPrice || 0))}
                           </td>
 
                           <td className="py-3.5 px-4 text-right font-mono font-bold text-foreground">
-                            ₹{(pos.ltp || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {formatINR((pos.ltp || 0))}
                           </td>
 
                           <td className="py-3.5 px-4 text-right">
@@ -845,7 +846,7 @@ export default function PortfolioPage() {
                                 isProfit ? "text-emerald-500" : "text-rose-500"
                               )}
                             >
-                              {isProfit ? "+" : ""}₹{(pos.pnl || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isProfit ? "+" : ""}{formatINR((pos.pnl || 0))}
                               {isProfit ? (
                                 <ArrowUpRight className="h-3.5 w-3.5" />
                               ) : (
@@ -887,31 +888,31 @@ export default function PortfolioPage() {
 
       {/* Renew Session Modal */}
       <Dialog open={showRenewModal} onOpenChange={setShowRenewModal}>
-        <DialogContent className="max-w-md p-0 overflow-hidden bg-white text-slate-900 border border-slate-200 shadow-2xl">
-          <div className="p-6 pb-2 bg-white">
+        <DialogContent className="max-w-md p-0 overflow-hidden bg-card text-foreground border border-border shadow-2xl">
+          <div className="p-6 pb-2 bg-card">
             <div className="flex items-start gap-3.5 mb-1">
               <div className="h-10 w-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
                 <Zap className="h-5 w-5 text-amber-600" />
               </div>
               <div className="pr-6">
-                <DialogTitle className="text-lg font-bold text-slate-900">
+                <DialogTitle className="text-lg font-bold text-foreground">
                   Broker Daily Login
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-500 mt-1 leading-relaxed">
+                <DialogDescription className="text-xs text-muted-foreground mt-1 leading-relaxed">
                   Brokers require a fresh daily authentication token. Follow these quick steps to sync your account:
                 </DialogDescription>
               </div>
             </div>
           </div>
 
-          <div className="px-6 py-3 space-y-3.5 bg-white">
+          <div className="px-6 py-3 space-y-3.5 bg-card">
             {/* Step 1 Card */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-2.5">
+            <div className="rounded-xl border border-border bg-muted/40 p-3.5 space-y-2.5">
               <div className="flex items-center gap-2">
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
                   1
                 </span>
-                <span className="text-xs font-semibold text-slate-900">
+                <span className="text-xs font-semibold text-foreground">
                   Authenticate on Broker Portal
                 </span>
               </div>
@@ -924,12 +925,12 @@ export default function PortfolioPage() {
             </div>
 
             {/* Step 2 Card */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-3">
+            <div className="rounded-xl border border-border bg-muted/40 p-3.5 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">
                   2
                 </span>
-                <span className="text-xs font-semibold text-slate-900">
+                <span className="text-xs font-semibold text-foreground">
                   Sync Session Token
                 </span>
               </div>
@@ -953,11 +954,11 @@ export default function PortfolioPage() {
                 </Button>
 
                 <div className="flex items-center gap-2 py-0.5">
-                  <div className="h-px flex-1 bg-slate-200" />
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                     OR PASTE MANUALLY
                   </span>
-                  <div className="h-px flex-1 bg-slate-200" />
+                  <div className="h-px flex-1 bg-border" />
                 </div>
 
                 <Input
@@ -971,7 +972,7 @@ export default function PortfolioPage() {
                     setRequestToken(val);
                   }}
                   placeholder="Paste token or redirect URL here..."
-                  className="h-9 border-slate-200 bg-white text-slate-900 text-xs focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
+                  className="h-9 border-border bg-card text-foreground text-xs focus:ring-1 focus:ring-blue-500 placeholder:text-muted-foreground"
                 />
 
                 <Button
@@ -985,11 +986,11 @@ export default function PortfolioPage() {
             </div>
           </div>
 
-          <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 flex justify-end">
+          <div className="bg-muted/50 px-6 py-3 border-t border-border flex justify-end">
             <Button
               type="button"
               variant="ghost"
-              className="text-slate-500 hover:text-slate-800 text-xs h-8"
+              className="text-muted-foreground hover:text-foreground text-xs h-8"
               onClick={() => setShowRenewModal(false)}
             >
               Cancel

@@ -62,7 +62,7 @@ function ResetPasswordForm() {
           onChange={(e) => setForm({ ...form, password: e.target.value })}
           required
           minLength={8}
-          className="w-full h-[46px] px-3.5 pr-10 text-sm bg-white text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors placeholder:text-[#999999]"
+          className="w-full h-[46px] px-3.5 pr-10 text-sm bg-card text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors placeholder:text-[#999999]"
         />
         <button
           type="button"
@@ -88,7 +88,7 @@ function ResetPasswordForm() {
           value={form.confirm}
           onChange={(e) => setForm({ ...form, confirm: e.target.value })}
           required
-          className="w-full h-[46px] px-3.5 text-sm bg-white text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors placeholder:text-[#999999]"
+          className="w-full h-[46px] px-3.5 text-sm bg-card text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors placeholder:text-[#999999]"
         />
         {form.confirm && form.password !== form.confirm && (
           <p className="text-xs text-red-500 font-normal pt-1">Passwords do not match</p>

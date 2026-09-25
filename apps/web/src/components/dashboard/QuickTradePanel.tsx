@@ -10,6 +10,7 @@ import { brokerApi } from "@/lib/api";
 import { useBrokers } from "@/hooks/useBrokers";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { formatINR } from "@/lib/format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface QuickTradeStock {
@@ -336,7 +337,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
 
   return (
     <Dialog open={stock !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent hideClose className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden p-0 border-none max-h-[95vh] sm:max-h-[90vh] flex flex-col gap-0">
+      <DialogContent hideClose className="w-full max-w-md bg-card rounded-3xl shadow-2xl overflow-hidden p-0 border-none max-h-[95vh] sm:max-h-[90vh] flex flex-col gap-0">
         <DialogTitle className="sr-only">Quick Trade Setup for {activeStock.symbol}</DialogTitle>
         <DialogDescription className="sr-only">Quick Trade execution setup and parameters</DialogDescription>
         
@@ -395,11 +396,11 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
             </div>
           ) : (
             <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Broker Account</label>
+              <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Broker Account</label>
               <select
                 value={selectedBrokerId}
                 onChange={(e) => setSelectedBrokerId(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 focus:outline-none focus:border-indigo-400 bg-white"
+                className="w-full border border-border rounded-xl px-3 py-2 text-sm font-semibold text-foreground/75 focus:outline-none focus:border-indigo-400 bg-card"
               >
                 {brokers.map((b: any) => (
                   <option key={b.id} value={b.id}>{b.broker} — {b.clientId}</option>
@@ -429,7 +430,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                   isLong ? "text-emerald-700" : "text-red-700",
                   !isTickValid(entryNum, tickSize) && "text-rose-500")}
               />
-              <div className="text-[9px] font-medium text-slate-400 mt-0.5">
+              <div className="text-[9px] font-medium text-muted-foreground mt-0.5">
                 trigger price · tick {tickSize}
               </div>
             </div>
@@ -451,7 +452,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                   !isTickValid(slNum, tickSize) && "text-rose-300"
                 )}
               />
-              <div className="text-[9px] font-medium text-slate-400 mt-0.5">
+              <div className="text-[9px] font-medium text-muted-foreground mt-0.5">
                 Risk ₹{fmt(Math.abs(entryNum - slNum))} / share
               </div>
             </div>
@@ -473,7 +474,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                   !isTickValid(target1Num, tickSize) && "text-rose-500"
                 )}
               />
-              <div className="text-[9px] font-medium text-slate-400 mt-0.5">
+              <div className="text-[9px] font-medium text-muted-foreground mt-0.5">
                 Profit ₹{fmt(Math.abs(target1Num - entryNum))} / share
               </div>
             </div>
@@ -495,7 +496,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                   !isTickValid(target2Num, tickSize) && "text-rose-500"
                 )}
               />
-              <div className="text-[9px] font-medium text-slate-400 mt-0.5">
+              <div className="text-[9px] font-medium text-muted-foreground mt-0.5">
                 Profit ₹{fmt(Math.abs(target2Num - entryNum))} / share
               </div>
             </div>
@@ -509,7 +510,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
             </div>
             <div className="grid grid-cols-4 gap-2 text-center">
               <div>
-                <p className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Qty</p>
+                <p className="text-[9px] text-muted-foreground font-bold uppercase mb-0.5">Qty</p>
                 <input
                   type="number"
                   min={isFnO ? lotSize : 1}
@@ -528,22 +529,22 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                   className="w-full bg-transparent text-sm font-black text-white text-center focus:outline-none border-b border-slate-700 pb-0.5"
                 />
                 {isFnO && (
-                  <p className="text-[8px] text-slate-400 font-medium mt-0.5">
+                  <p className="text-[8px] text-muted-foreground font-medium mt-0.5">
                     {Math.round(qty / lotSize)} Lot{Math.round(qty / lotSize) > 1 ? 's' : ''}
                   </p>
                 )}
               </div>
               <div>
-                <p className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Capital</p>
-                <p className="text-sm font-black text-white">₹{Math.round(capital).toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-muted-foreground font-bold uppercase mb-0.5">Capital</p>
+                <p className="text-sm font-black text-white">{formatINR(Math.round(capital), { decimals: 0 })}</p>
               </div>
               <div>
-                <p className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Risk</p>
-                <p className="text-sm font-black text-rose-400">₹{Math.round(riskAmt).toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-muted-foreground font-bold uppercase mb-0.5">Risk</p>
+                <p className="text-sm font-black text-rose-400">{formatINR(Math.round(riskAmt), { decimals: 0 })}</p>
               </div>
               <div>
-                <p className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Reward T1</p>
-                <p className="text-sm font-black text-emerald-400">₹{Math.round(rewardT1).toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-muted-foreground font-bold uppercase mb-0.5">Reward T1</p>
+                <p className="text-sm font-black text-emerald-400">{formatINR(Math.round(rewardT1), { decimals: 0 })}</p>
               </div>
             </div>
           </div>
@@ -552,7 +553,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
           {placedOrders.length > 0 && (
             <div className="space-y-1.5">
               {placedOrders.map((line, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs font-medium text-slate-600 bg-slate-50 rounded-xl px-3 py-2 border border-slate-100">
+                <div key={i} className="flex items-start gap-2 text-xs font-medium text-foreground/75 bg-muted/50 rounded-xl px-3 py-2 border border-border">
                   {line}
                 </div>
               ))}
@@ -570,7 +571,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
           {/* Disclaimer */}
           <div className="flex items-start gap-2 px-1">
             <Info className="h-3.5 w-3.5 text-slate-300 shrink-0 mt-0.5" />
-            <div className="text-[10px] text-slate-400 leading-relaxed">
+            <div className="text-[10px] text-muted-foreground leading-relaxed">
               {product === "NRML" ? (
                 <>2 orders will be placed: <strong>Entry (SL trigger)</strong> → <strong>GTT (Stop-Loss & Target)</strong>.</>
               ) : (
@@ -586,10 +587,10 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
         </div>
 
         {/* ── Footer ────────────────────────────────────────────────────── */}
-        <div className="px-6 pb-6 pt-4 flex gap-3 shrink-0 bg-white border-t border-slate-100">
+        <div className="px-6 pb-6 pt-4 flex gap-3 shrink-0 bg-card border-t border-border">
           <button
             onClick={onClose}
-            className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+            className="flex-1 py-3.5 rounded-2xl border border-border text-sm font-bold text-foreground/75 hover:bg-muted/50 transition-colors"
           >
             Cancel
           </button>
@@ -610,8 +611,8 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
                 "flex-[2] py-3.5 rounded-2xl text-white font-black flex items-center justify-center gap-2 transition-all shadow-lg",
                 activeStock.symbol.length > 15 ? "text-xs" : activeStock.symbol.length > 10 ? "text-xs sm:text-sm" : "text-sm",
                 isLong
-                  ? "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-100 disabled:bg-slate-200 disabled:shadow-none"
-                  : "bg-rose-500 hover:bg-rose-600 shadow-rose-100 disabled:bg-slate-200 disabled:shadow-none"
+                  ? "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-100 disabled:bg-border disabled:shadow-none"
+                  : "bg-rose-500 hover:bg-rose-600 shadow-rose-100 disabled:bg-border disabled:shadow-none"
               )}
             >
               {step === "placing" ? (

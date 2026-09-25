@@ -73,7 +73,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 Daily Index Scalper Configuration (SENSEX &amp; NIFTY — All Trading Days)
               </p>
             </div>
-            <p className="text-xs text-slate-900 font-medium leading-relaxed">
+            <p className="text-xs text-foreground font-medium leading-relaxed">
               Executes on <strong>ALL trading days (Mon–Fri)</strong> from 09:20 AM to 03:25 PM IST. Selects high-delta ATM contracts (Delta ~0.50) calculated directly from running Future prices for precise 1:1 index points tracking with zero theta-decay trap.
             </p>
           </div>
@@ -104,7 +104,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 >
                   <div>
                     <p className="font-bold text-xs sm:text-sm text-foreground">{item.label}</p>
-                    <p className="text-xs text-slate-700 font-medium mt-1 leading-snug">{item.desc}</p>
+                    <p className="text-xs text-foreground/75 font-medium mt-1 leading-snug">{item.desc}</p>
                   </div>
                   <Badge variant="secondary" className="text-[10px] font-bold mt-2.5 w-fit border border-border/70">
                     1 Lot = {item.lotSize} Qty
@@ -131,7 +131,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 onChange={(e) => set("lots", e.target.value)}
                 className="font-semibold text-xs h-10 bg-background border-border text-foreground rounded-xl"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Total Qty: {Number(form.lots || 1) * (form.symbol === "SENSEX" ? 20 : 65)} shares
               </p>
             </div>
@@ -155,7 +155,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               <p className="text-xs sm:text-sm font-bold text-foreground">
                 Strict High-Delta ATM &amp; ITM Strike Selection (Zero Cheap OTM)
               </p>
-              <p className="text-xs text-slate-900 font-medium mt-1 leading-relaxed">
+              <p className="text-xs text-foreground font-medium mt-1 leading-relaxed">
                 Cheap OTM options are completely excluded. The engine trades strictly At-The-Money (ATM, Delta ~0.50) or 1-strike In-The-Money (ITM, Delta ~0.55–0.65) contracts for direct 1:1 index tracking without theta decay.
               </p>
             </div>
@@ -166,7 +166,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs sm:text-sm font-bold text-foreground">High-Conviction A+ Setup Boost</p>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Automatically boost position up to 3–5 lots when Range Breakout + Volume Surge + OI Unwinding align
                 </p>
               </div>
@@ -203,7 +203,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                       onChange={(e) => set("gbEnablePartialProfitBooking", e.target.checked)}
                       className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
-                    <label htmlFor="partialBooking" className="text-xs text-slate-900 font-medium font-medium">
+                    <label htmlFor="partialBooking" className="text-xs text-foreground font-medium font-medium">
                       Exit 50% lots @ 2.0x milestone; trail remainder
                     </label>
                   </div>
@@ -237,7 +237,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   </Badge>
                 </div>
                 <p className="text-xs font-semibold text-emerald-600">09:20 AM – 03:25 PM IST</p>
-                <p className="text-xs text-slate-700 font-medium mt-1 leading-snug">
+                <p className="text-xs text-foreground/75 font-medium mt-1 leading-snug">
                   Trades Morning ORB (09:20–11:30), Midday Flags (11:30–13:30), &amp; Afternoon Momentum (13:30–15:25).
                 </p>
               </button>
@@ -263,7 +263,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   </Badge>
                 </div>
                 <p className="text-xs font-semibold text-amber-600">01:00 PM – 03:25 PM IST</p>
-                <p className="text-xs text-slate-700 font-medium mt-1 leading-snug">
+                <p className="text-xs text-foreground/75 font-medium mt-1 leading-snug">
                   Trades only during the afternoon high-volatility window using high-delta ATM contracts.
                 </p>
               </button>
@@ -278,7 +278,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 <p className="text-xs font-bold text-foreground">
                   Active Window: {form.gbStartTime || "09:20"} – {form.gbEndTime || "15:25"} IST
                 </p>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Hold &amp; trail through 15:25–15:30 candle | Hard Auto-Exit @ 03:29:30 PM before market close
                 </p>
               </div>
@@ -320,7 +320,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 <p className="font-extrabold text-sm text-foreground mt-2">
                   🎯 Auto F&amp;O Momentum Scanner
                 </p>
-                <p className="text-xs text-slate-800 font-medium mt-1 leading-relaxed">
+                <p className="text-xs text-foreground font-medium mt-1 leading-relaxed">
                   Scans all 180+ liquid F&amp;O stocks. Picks momentum leaders with 5%–10% intraday potential (RVOL ≥ 1.25, Open=Low/High institutional footprints).
                 </p>
               </button>
@@ -341,7 +341,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-slate-700 font-medium uppercase tracking-wider">
+                  <span className="text-[11px] font-bold text-foreground/75 font-medium uppercase tracking-wider">
                     Custom Stock
                   </span>
                   <Badge variant="outline" className="text-[9px] font-bold border-border text-foreground">Single Stock</Badge>
@@ -349,7 +349,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 <p className="font-extrabold text-sm text-foreground mt-2">
                   📌 Manual Stock Selection
                 </p>
-                <p className="text-xs text-slate-800 font-medium mt-1 leading-relaxed">
+                <p className="text-xs text-foreground font-medium mt-1 leading-relaxed">
                   Trade options on a specific F&amp;O stock you choose (e.g. APOLLOHOSP, RELIANCE, TRENT, BAJFINANCE).
                 </p>
               </button>
@@ -367,7 +367,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     <p className="text-xs sm:text-sm font-bold text-foreground">
                       Live F&amp;O Momentum Engine Active
                     </p>
-                    <p className="text-xs text-slate-700 font-medium mt-0.5">
+                    <p className="text-xs text-foreground/75 font-medium mt-0.5">
                       Scanning all 180+ NSE F&amp;O instruments continuously from 09:15 AM
                     </p>
                   </div>
@@ -380,15 +380,15 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               <div className="grid grid-cols-3 gap-2 text-center pt-2 border-t border-border/60">
                 <div className="p-2.5 rounded-xl bg-card border border-border/70 shadow-2xs">
                   <p className="text-xs font-bold text-blue-700 ">180+ Liquid Stocks</p>
-                  <p className="text-[10px] text-slate-700 font-medium mt-0.5">Scanned dynamically</p>
+                  <p className="text-[10px] text-foreground/75 font-medium mt-0.5">Scanned dynamically</p>
                 </div>
                 <div className="p-2.5 rounded-xl bg-card border border-border/70 shadow-2xs">
                   <p className="text-xs font-bold text-indigo-700 ">5%–10% Velocity</p>
-                  <p className="text-[10px] text-slate-700 font-medium mt-0.5">Day range expansion</p>
+                  <p className="text-[10px] text-foreground/75 font-medium mt-0.5">Day range expansion</p>
                 </div>
                 <div className="p-2.5 rounded-xl bg-card border border-border/70 shadow-2xs">
                   <p className="text-xs font-bold text-emerald-700 ">Auto Lot &amp; Strike</p>
-                  <p className="text-[10px] text-slate-700 font-medium mt-0.5">Live NFO master fetch</p>
+                  <p className="text-[10px] text-foreground/75 font-medium mt-0.5">Live NFO master fetch</p>
                 </div>
               </div>
             </div>
@@ -419,7 +419,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     )}
                   >
                     <p className="font-bold text-xs">{preset.sym}</p>
-                    <p className="text-[10px] text-slate-700 font-medium mt-0.5">1 Lot = {preset.lot}</p>
+                    <p className="text-[10px] text-foreground/75 font-medium mt-0.5">1 Lot = {preset.lot}</p>
                   </button>
                 ))}
               </div>
@@ -462,7 +462,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                         <p className="text-sm font-bold text-foreground group-hover:text-blue-600 transition-colors">
                           {item.symbol}
                         </p>
-                        <p className="text-xs text-slate-700 font-medium uppercase truncate max-w-[220px]">
+                        <p className="text-xs text-foreground/75 font-medium uppercase truncate max-w-[220px]">
                           {item.name}
                         </p>
                       </div>
@@ -477,7 +477,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                             <p className="text-xs font-bold text-emerald-700 ">
                               ₹{Number(itemPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </p>
-                            <span className="text-[10px] text-slate-500">Live LTP</span>
+                            <span className="text-[10px] text-muted-foreground">Live LTP</span>
                           </div>
                         ) : null}
                         <Badge className="text-[10px] font-bold">{item.exchange}</Badge>
@@ -490,9 +490,9 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
 
             <div className="flex items-center justify-between p-4 rounded-2xl bg-secondary/40 border border-border">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-700 font-medium">Current Selection</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-foreground/75 font-medium">Current Selection</p>
                 <div className="flex items-center gap-2.5 mt-0.5">
-                  <p className="text-sm font-bold text-foreground">{form.symbol} <span className="text-xs font-semibold text-slate-700 font-medium">({form.exchange})</span></p>
+                  <p className="text-sm font-bold text-foreground">{form.symbol} <span className="text-xs font-semibold text-foreground/75 font-medium">({form.exchange})</span></p>
                   {(form.lotSize || getLotSize(form.symbol, form.lotSize)) > 1 && (
                     <span className="text-xs font-bold text-amber-700  bg-amber-50  border border-amber-200/60  px-2.5 py-0.5 rounded-md">
                       1 Lot = {form.lotSize || getLotSize(form.symbol, form.lotSize)} Qty
@@ -509,7 +509,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               <Sparkles className="h-5 w-5 text-purple-600  shrink-0 mt-0.5" />
               <div className="text-xs space-y-1">
                 <p className="font-bold text-foreground">Dynamic Margin Lot Sizing Active</p>
-                <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+                <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                   Instead of a fixed 1-lot limit, the engine detects your live Zerodha margin, preserves a 15% cash buffer, and deploys 85% tradeable margin into lots (1 Lot = {form.lotSize || getLotSize(form.symbol || 'NIFTY', form.lotSize)} Qty).
                 </p>
               </div>
@@ -521,7 +521,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
               <Sparkles className="h-5 w-5 text-blue-600  shrink-0 mt-0.5" />
               <div className="text-xs space-y-1">
                 <p className="font-bold text-foreground">Strict Risk Sizing &amp; Exchange Server SL Active</p>
-                <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+                <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                   Automatically queries live Zerodha cash margin. Sizes quantity strictly by your Stop Loss ₹ (never risking more than configured) and caps capital deployment at 25% (5x MIS leverage). Arms a server-side SL-L order at Zerodha on entry fill and monitors Target 1 (+2R) for uncapped momentum trailing.
                 </p>
               </div>
@@ -545,7 +545,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 onChange={(e) => set("lots", e.target.value)}
                 className="font-semibold text-xs h-10 bg-background border-border text-foreground rounded-xl"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 {form.type === 'NIFTY_OPTIONS_SCALPER' || form.type === 'BREAKOUT_15MIN'
                   ? 'Dynamic Margin Allocation: Auto-scales lots from Zerodha cash (85% deployed, 15% buffer)'
                   : form.type === 'STOCK_OPTIONS_BUYING' && form.symbol === 'AUTO'
@@ -575,7 +575,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
         <div className="space-y-4">
           <div className="p-4 rounded-2xl bg-purple-50 border-2 border-purple-300 shadow-xs">
             <p className="text-xs sm:text-sm font-bold text-purple-950 font-black">⚡ Nifty 10-Point Scalper Engine Setup</p>
-            <p className="text-xs text-slate-900 font-medium mt-1 leading-relaxed font-normal">
+            <p className="text-xs text-foreground font-medium mt-1 leading-relaxed font-normal">
               Trades rapid momentum impulses on high-delta options using 3 confluence triggers (EMA-VWAP Crossover, Pullback Rejection &amp; 15-Min ORB). Automatically scales lots from live margin, trails to breakeven at +6 pts, and rides uncapped runners with dynamic momentum ratchets.
             </p>
           </div>
@@ -605,7 +605,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   )}
                 >
                   <p className="font-bold text-xs sm:text-sm text-foreground">{p.label}</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">{p.sub}</p>
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">{p.sub}</p>
                 </button>
               ))}
             </div>
@@ -619,7 +619,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     +88% Monthly ROI Backtest
                   </Badge>
                 </div>
-                <div className="text-xs text-slate-900 font-medium grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-normal">
+                <div className="text-xs text-foreground font-medium grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-normal">
                   <div>• <span className="font-bold text-foreground">Tuesday:</span> NIFTY 50 Weekly Expiry (+10 pt target, 90% win rate)</div>
                   <div>• <span className="font-bold text-foreground">Thursday:</span> SENSEX Weekly Expiry (+35 pt target, 70% win rate)</div>
                   <div>• <span className="font-bold text-foreground">Friday:</span> SENSEX Momentum (+35 pt target, 100% win rate)</div>
@@ -637,7 +637,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   <TrendingUp className="h-4 w-4 text-purple-600 " />
                   Dynamic Compounding Position Sizing
                 </p>
-                <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                <p className="text-xs text-foreground/75 font-medium leading-relaxed">
                   Deploys 85% tradeable margin from live Zerodha balance (preserving 15% cash buffer). Compounds lots up as capital grows to achieve &ge;60% monthly ROI.
                 </p>
               </div>
@@ -686,7 +686,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between">
               <div>
                 <label className="text-xs sm:text-sm font-bold text-foreground block">Scalping Candle Timeframe</label>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Calculates EMA, VWAP and StochRSI on this timeframe for entry signals.
                 </p>
               </div>
@@ -717,7 +717,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   <TrendingUp className="h-3.5 w-3.5 text-purple-600 " />
                   Day VWAP Trend Bias Filter
                 </p>
-                <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                <p className="text-xs text-foreground/75 font-medium leading-relaxed">
                   Only buys CE when Index is above Day VWAP; only buys PE when Index is below Day VWAP. Eliminates over 50% of counter-trend trap entries.
                 </p>
               </div>
@@ -736,7 +736,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   <BarChart2 className="h-3.5 w-3.5 text-blue-600 " />
                   Institutional Volume Surge (RVOL &ge; 1.15x)
                 </p>
-                <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                <p className="text-xs text-foreground/75 font-medium leading-relaxed">
                   Requires trigger candle volume to be 1.15x higher than 10-period average or higher than previous candle. Skips low-volume retail traps.
                 </p>
               </div>
@@ -760,7 +760,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     76.9% Win Rate Shield
                   </Badge>
                 </div>
-                <p className="text-xs text-slate-900 font-medium leading-relaxed">
+                <p className="text-xs text-foreground font-medium leading-relaxed">
                   On Bull Days (Open &ge; Prev Close), suppresses counter-trend PE pullbacks. On Bear Days, suppresses counter-trend CE pullbacks. Proven on Zerodha data to eliminate 80% of losing traps.
                 </p>
               </div>
@@ -779,7 +779,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   <Clock className="h-3.5 w-3.5 text-amber-600 " />
                   Extended Midday Dead-Zone Shield (11:30 AM – 1:30 PM IST)
                 </p>
-                <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                <p className="text-xs text-foreground/75 font-medium leading-relaxed">
                   Skips new entries during the European transition lunch lull (11:30–13:30) when liquidity drops and theta decay accelerates. Focuses capital on prime morning &amp; afternoon breakout windows.
                 </p>
               </div>
@@ -798,7 +798,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
         <div className="space-y-4">
           <div className="p-4 rounded-2xl bg-blue-50 border-2 border-blue-300 shadow-xs">
             <p className="text-xs sm:text-sm font-bold text-blue-950 font-black">🚀 15-Minute Opening Range Breakout Setup</p>
-            <p className="text-xs text-slate-900 font-medium mt-1 leading-relaxed font-normal">
+            <p className="text-xs text-foreground font-medium mt-1 leading-relaxed font-normal">
               Monitors the first 15-minute candle (09:15–09:30 AM). Enters when a 5-minute candle closes beyond the high or low with volume &amp; VWAP alignment. If a false breakout occurs, it detects the liquidity trap and reverses immediately!
             </p>
           </div>
@@ -826,7 +826,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   )}
                 >
                   <p className="font-bold text-xs sm:text-sm text-foreground">{p.label}</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">{p.exch}:{p.sym}</p>
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">{p.exch}:{p.sym}</p>
                 </button>
               ))}
             </div>
@@ -837,7 +837,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             <div className="flex items-center justify-between">
               <div>
                 <label className="text-xs sm:text-sm font-bold text-foreground block">Entry &amp; Trap Timeframe</label>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Establishes 15m range (09:15–09:30), then monitors this lower timeframe for liquidity sweep traps &amp; reclaim entries.
                 </p>
               </div>
@@ -874,7 +874,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   "flex flex-col items-center gap-1 py-3.5 rounded-xl text-xs font-bold transition-all",
                   !form.isOptionBuyingOnly
                     ? "bg-card border border-border shadow-xs text-blue-600 "
-                    : "text-slate-700 font-medium hover:text-foreground"
+                    : "text-foreground/75 font-medium hover:text-foreground"
                 )}
               >
                 <BarChart2 className="h-5 w-5 mb-0.5" />
@@ -888,7 +888,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   "flex flex-col items-center gap-1 py-3.5 rounded-xl text-xs font-bold transition-all",
                   form.isOptionBuyingOnly
                     ? "bg-card border border-border shadow-xs text-blue-600 "
-                    : "text-slate-700 font-medium hover:text-foreground"
+                    : "text-foreground/75 font-medium hover:text-foreground"
                 )}
               >
                 <Target className="h-5 w-5 mb-0.5" />
@@ -909,7 +909,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                 Institutional 80% Profitability Engine (EMA-VWAP + Inside Candle + Pullbacks)
               </p>
             </div>
-            <p className="text-xs text-slate-900 font-medium leading-relaxed mt-1 font-normal">
+            <p className="text-xs text-foreground font-medium leading-relaxed mt-1 font-normal">
               Engineered for asymmetric risk-to-reward. Combines 15-EMA/VWAP momentum alignment with Inside Candle range compression and pullback rejections, backed by strict High-Delta ITM strike liquidity filters.
             </p>
           </div>
@@ -944,9 +944,9 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                   >
                     <div className="flex items-center justify-between">
                       <p className="font-bold text-xs sm:text-sm text-foreground">{item.label}</p>
-                      <Icon className={cn("h-4 w-4", isSelected ? "text-blue-600 " : "text-slate-400")} />
+                      <Icon className={cn("h-4 w-4", isSelected ? "text-blue-600 " : "text-muted-foreground")} />
                     </div>
-                    <p className="text-xs text-slate-700 font-medium mt-1">{item.desc}</p>
+                    <p className="text-xs text-foreground/75 font-medium mt-1">{item.desc}</p>
                   </button>
                 );
               })}
@@ -976,7 +976,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
                     )}
                   >
                     <p className="font-bold text-xs sm:text-sm text-foreground">{item.label}</p>
-                    <p className="text-xs text-slate-700 font-medium mt-1">{item.desc}</p>
+                    <p className="text-xs text-foreground/75 font-medium mt-1">{item.desc}</p>
                   </button>
                 );
               })}
@@ -1033,7 +1033,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
           <div className="flex items-center justify-between p-4 rounded-2xl border border-border bg-card shadow-xs">
             <div>
               <p className="text-xs sm:text-sm font-bold text-foreground">Higher Timeframe (15-Min) Trend Filter</p>
-              <p className="text-xs text-slate-700 font-medium mt-0.5">
+              <p className="text-xs text-foreground/75 font-medium mt-0.5">
                 Ensures trade aligns with the 50-EMA on the 15-min chart before triggering option entry.
               </p>
             </div>

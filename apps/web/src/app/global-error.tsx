@@ -30,7 +30,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-3">
             Critical System Error
           </h1>
-          <p className="text-slate-400 text-sm md:text-base mb-8 max-w-md">
+          <p className="text-muted-foreground text-sm md:text-base mb-8 max-w-md">
             A critical error occurred in the application shell. You can try resetting the app state or return to the landing page.
           </p>
 
@@ -41,7 +41,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
               <span className="text-destructive font-semibold">Critical: </span>
               {error.message || "An unexpected system-level error occurred."}
               {error.digest && (
-                <div className="text-slate-500 mt-1">
+                <div className="text-muted-foreground mt-1">
                   Digest ID: {error.digest}
                 </div>
               )}

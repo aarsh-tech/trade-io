@@ -13,6 +13,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import { formatINR } from "@/lib/format";
 
 interface OrderWindowProps {
   isOpen: boolean;
@@ -206,7 +207,7 @@ export function OrderWindow({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 40 }}
             transition={{ duration: 0.22, ease: "easeOut" }}
-            className="relative z-10 pointer-events-auto w-full md:w-[480px] md:max-w-lg bg-white rounded-t-3xl md:rounded-2xl shadow-2xl border-t md:border border-slate-200 overflow-hidden font-sans select-none max-h-[92vh] flex flex-col mx-0 md:mx-4"
+            className="relative z-10 pointer-events-auto w-full md:w-[480px] md:max-w-lg bg-card rounded-t-3xl md:rounded-2xl shadow-2xl border-t md:border border-border overflow-hidden font-sans select-none max-h-[92vh] flex flex-col mx-0 md:mx-4"
           >
             {/* ─── HEADER ─── */}
             <div
@@ -233,7 +234,7 @@ export function OrderWindow({
                     >
                       <div className={cn(
                         "h-2 w-2 rounded-full transition-all",
-                        exchange === "BSE" ? "bg-white ring-2 ring-white/40" : "bg-white/40 border border-white/60"
+                        exchange === "BSE" ? "bg-card ring-2 ring-white/40" : "bg-white/40 border border-white/60"
                       )} />
                       <span className={exchange === "BSE" ? "font-bold text-white" : "text-white/80"}>
                         BSE ₹{ltp > 0 ? ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
@@ -246,7 +247,7 @@ export function OrderWindow({
                     >
                       <div className={cn(
                         "h-2 w-2 rounded-full transition-all",
-                        exchange === "NSE" ? "bg-white ring-2 ring-white/40" : "bg-white/40 border border-white/60"
+                        exchange === "NSE" ? "bg-card ring-2 ring-white/40" : "bg-white/40 border border-white/60"
                       )} />
                       <span className={exchange === "NSE" ? "font-bold text-white" : "text-white/80"}>
                         NSE ₹{ltp > 0 ? ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
@@ -266,7 +267,7 @@ export function OrderWindow({
                       layout
                       transition={{ type: "spring", stiffness: 500, damping: 30 }}
                       className={cn(
-                        "h-5 w-5 bg-white rounded-full shadow-md",
+                        "h-5 w-5 bg-card rounded-full shadow-md",
                         isBuy ? "translate-x-0" : "translate-x-5"
                       )}
                     />
@@ -284,7 +285,7 @@ export function OrderWindow({
             </div>
 
             {/* ─── TABS BAR ─── */}
-            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-2 overflow-x-auto no-scrollbar shrink-0">
+            <div className="flex items-center justify-between border-b border-border bg-card px-2 overflow-x-auto no-scrollbar shrink-0">
               <div className="flex items-center">
                 {(['Regular', 'Cover', 'AMO', 'Iceberg'] as TabType[]).map((tab) => {
                   const isActive = activeTab === tab;
@@ -295,7 +296,7 @@ export function OrderWindow({
                       onClick={() => setValue("activeTab", tab)}
                       className={cn(
                         "px-3 sm:px-4 py-2 sm:py-2.5 text-[11px] sm:text-[12px] font-semibold cursor-pointer border-b-2 transition-all relative whitespace-nowrap",
-                        isActive ? "text-[#333]" : "text-slate-500 hover:text-slate-800 border-transparent"
+                        isActive ? "text-[#333]" : "text-muted-foreground hover:text-foreground border-transparent"
                       )}
                       style={{
                         borderBottomColor: isActive ? themeColor : 'transparent',
@@ -312,7 +313,7 @@ export function OrderWindow({
                 <button
                   type="button"
                   onClick={() => setShowSettings(!showSettings)}
-                  className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                  className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground/75 transition-colors"
                   title="Order Window Preferences"
                 >
                   <Settings className="h-4 w-4" />
@@ -325,29 +326,29 @@ export function OrderWindow({
                       initial={{ opacity: 0, y: -5, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -5, scale: 0.95 }}
-                      className="absolute right-0 top-8 z-50 w-56 bg-white border border-slate-200 rounded-xl shadow-xl p-3 text-xs space-y-2 text-slate-700"
+                      className="absolute right-0 top-8 z-50 w-56 bg-card border border-border rounded-xl shadow-xl p-3 text-xs space-y-2 text-foreground/75"
                     >
-                      <div className="flex items-center justify-between font-bold border-b pb-1 text-slate-800">
+                      <div className="flex items-center justify-between font-bold border-b pb-1 text-foreground">
                         <span>Order Preferences</span>
-                        <X className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" onClick={() => setShowSettings(false)} />
+                        <X className="h-3.5 w-3.5 cursor-pointer text-muted-foreground hover:text-foreground/75" onClick={() => setShowSettings(false)} />
                       </div>
                       <div className="space-y-1">
-                        <span className="text-[11px] text-slate-400">Default Product</span>
+                        <span className="text-[11px] text-muted-foreground">Default Product</span>
                         <select
                           value={product}
                           onChange={(e) => setValue("product", e.target.value as ProductType)}
-                          className="w-full border rounded-lg px-2 py-1 bg-slate-50 text-xs"
+                          className="w-full border rounded-lg px-2 py-1 bg-muted/50 text-xs"
                         >
                           <option value="MIS">Intraday (MIS)</option>
                           <option value="NRML">Delivery (NRML)</option>
                         </select>
                       </div>
                       <div className="space-y-1">
-                        <span className="text-[11px] text-slate-400">Default Order Type</span>
+                        <span className="text-[11px] text-muted-foreground">Default Order Type</span>
                         <select
                           value={orderType}
                           onChange={(e) => setValue("orderType", e.target.value as OrderType)}
-                          className="w-full border rounded-lg px-2 py-1 bg-slate-50 text-xs"
+                          className="w-full border rounded-lg px-2 py-1 bg-muted/50 text-xs"
                         >
                           <option value="LIMIT">Limit</option>
                           <option value="MARKET">Market</option>
@@ -373,7 +374,7 @@ export function OrderWindow({
                   <div
                     className={cn(
                       "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                      product === 'MIS' ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
+                      product === 'MIS' ? "border-transparent" : "border-border group-hover:border-slate-400"
                     )}
                     style={{
                       borderColor: product === 'MIS' ? themeColor : undefined,
@@ -387,8 +388,8 @@ export function OrderWindow({
                       />
                     )}
                   </div>
-                  <span className="text-xs sm:text-[13px] font-medium text-slate-800">
-                    Intraday <span className="text-[10px] sm:text-[11px] text-slate-400 uppercase font-normal ml-0.5">MIS</span>
+                  <span className="text-xs sm:text-[13px] font-medium text-foreground">
+                    Intraday <span className="text-[10px] sm:text-[11px] text-muted-foreground uppercase font-normal ml-0.5">MIS</span>
                   </span>
                 </label>
 
@@ -400,7 +401,7 @@ export function OrderWindow({
                   <div
                     className={cn(
                       "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                      product === 'NRML' ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
+                      product === 'NRML' ? "border-transparent" : "border-border group-hover:border-slate-400"
                     )}
                     style={{
                       borderColor: product === 'NRML' ? themeColor : undefined,
@@ -414,8 +415,8 @@ export function OrderWindow({
                       />
                     )}
                   </div>
-                  <span className="text-xs sm:text-[13px] font-medium text-slate-800">
-                    Delivery <span className="text-[10px] sm:text-[11px] text-slate-400 uppercase font-normal ml-0.5">NRML</span>
+                  <span className="text-xs sm:text-[13px] font-medium text-foreground">
+                    Delivery <span className="text-[10px] sm:text-[11px] text-muted-foreground uppercase font-normal ml-0.5">NRML</span>
                   </span>
                 </label>
               </div>
@@ -424,31 +425,31 @@ export function OrderWindow({
               <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 {/* QTY FIELD */}
                 <div className="space-y-1">
-                  <label className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                  <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                     QTY.
                   </label>
-                  <div className="relative flex items-center rounded-lg sm:rounded-xl bg-[#edf2f7] border border-slate-200/80 focus-within:bg-white focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20 transition-all h-9 sm:h-10 overflow-hidden">
+                  <div className="relative flex items-center rounded-lg sm:rounded-xl bg-[#edf2f7] border border-border/80 focus-within:bg-card focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20 transition-all h-9 sm:h-10 overflow-hidden">
                     <input
                       type="number"
                       min={1}
                       value={qty}
                       onChange={(e) => setValue("qty", Math.max(1, parseInt(e.target.value) || 1), { shouldValidate: true })}
-                      className="w-full h-full bg-transparent pl-2 sm:pl-3 pr-5 sm:pr-6 text-xs sm:text-[14px] font-bold text-slate-800 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      className="w-full h-full bg-transparent pl-2 sm:pl-3 pr-5 sm:pr-6 text-xs sm:text-[14px] font-bold text-foreground outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     />
                     {/* Stepper buttons (+ / -) */}
-                    <div className="absolute right-0 top-0 bottom-0 w-5 sm:w-6 flex flex-col border-l border-slate-200/60 bg-slate-100/50">
+                    <div className="absolute right-0 top-0 bottom-0 w-5 sm:w-6 flex flex-col border-l border-border/60 bg-muted/50">
                       <button
                         type="button"
                         onClick={() => setValue("qty", qty + 1, { shouldValidate: true })}
-                        className="flex-1 flex items-center justify-center text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 transition-colors"
+                        className="flex-1 flex items-center justify-center text-muted-foreground hover:bg-border/70 hover:text-foreground transition-colors"
                       >
                         <Plus className="h-2 sm:h-2.5 w-2 sm:w-2.5" />
                       </button>
-                      <div className="border-t border-slate-200/60" />
+                      <div className="border-t border-border/60" />
                       <button
                         type="button"
                         onClick={() => setValue("qty", Math.max(1, qty - 1), { shouldValidate: true })}
-                        className="flex-1 flex items-center justify-center text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 transition-colors"
+                        className="flex-1 flex items-center justify-center text-muted-foreground hover:bg-border/70 hover:text-foreground transition-colors"
                       >
                         <Minus className="h-2 sm:h-2.5 w-2 sm:w-2.5" />
                       </button>
@@ -459,14 +460,14 @@ export function OrderWindow({
 
                 {/* PRICE FIELD */}
                 <div className="space-y-1">
-                  <label className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                  <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                     PRICE
                   </label>
                   <div className={cn(
                     "relative flex items-center rounded-lg sm:rounded-xl border transition-all h-9 sm:h-10 overflow-hidden",
                     orderType === 'MARKET'
-                      ? "bg-[#f8f9fa] border-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-[#edf2f7] border-slate-200/80 focus-within:bg-white focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
+                      ? "bg-[#f8f9fa] border-border text-muted-foreground cursor-not-allowed"
+                      : "bg-[#edf2f7] border-border/80 focus-within:bg-card focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
                   )}>
                     <input
                       type="number"
@@ -476,7 +477,7 @@ export function OrderWindow({
                       onChange={(e) => setValue("price", parseFloat(e.target.value) || 0, { shouldValidate: true })}
                       className={cn(
                         "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
-                        orderType === 'MARKET' ? "text-slate-400 cursor-not-allowed" : "text-slate-800"
+                        orderType === 'MARKET' ? "text-muted-foreground cursor-not-allowed" : "text-foreground"
                       )}
                     />
                   </div>
@@ -485,14 +486,14 @@ export function OrderWindow({
 
                 {/* TRIGGER PRICE FIELD */}
                 <div className="space-y-1">
-                  <label className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase tracking-wide truncate block">
+                  <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase tracking-wide truncate block">
                     TRIGGER PRICE
                   </label>
                   <div className={cn(
                     "relative flex items-center rounded-lg sm:rounded-xl border transition-all h-9 sm:h-10 overflow-hidden",
                     !orderType.startsWith('SL')
-                      ? "bg-[#f8f9fa] border-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-[#edf2f7] border-slate-200/80 focus-within:bg-white focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
+                      ? "bg-[#f8f9fa] border-border text-muted-foreground cursor-not-allowed"
+                      : "bg-[#edf2f7] border-border/80 focus-within:bg-card focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
                   )}>
                     <input
                       type="number"
@@ -502,7 +503,7 @@ export function OrderWindow({
                       onChange={(e) => setValue("triggerPrice", parseFloat(e.target.value) || 0, { shouldValidate: true })}
                       className={cn(
                         "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
-                        !orderType.startsWith('SL') ? "text-slate-400 cursor-not-allowed" : "text-slate-800"
+                        !orderType.startsWith('SL') ? "text-muted-foreground cursor-not-allowed" : "text-foreground"
                       )}
                     />
                   </div>
@@ -523,7 +524,7 @@ export function OrderWindow({
                       <div
                         className={cn(
                           "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                          isSelected ? "border-transparent" : "border-slate-300 group-hover:border-slate-400"
+                          isSelected ? "border-transparent" : "border-border group-hover:border-slate-400"
                         )}
                         style={{
                           borderColor: isSelected ? themeColor : undefined,
@@ -539,7 +540,7 @@ export function OrderWindow({
                       </div>
                       <span className={cn(
                         "text-xs sm:text-[13px] font-medium transition-colors",
-                        isSelected ? "text-slate-800 font-semibold" : "text-slate-600"
+                        isSelected ? "text-foreground font-semibold" : "text-foreground/75"
                       )}>
                         {t}
                       </span>
@@ -573,7 +574,7 @@ export function OrderWindow({
                     >
                       {/* Validity */}
                       <div className="space-y-1.5">
-                        <label className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase">
+                        <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase">
                           Validity
                         </label>
                         <div className="flex items-center gap-4">
@@ -589,7 +590,7 @@ export function OrderWindow({
                                 onChange={() => setValue("validity", v, { shouldValidate: true })}
                                 className="accent-[#4184f3]"
                               />
-                              <span className="text-slate-700 font-medium text-xs">{v}</span>
+                              <span className="text-foreground/75 font-medium text-xs">{v}</span>
                             </label>
                           ))}
                         </div>
@@ -597,7 +598,7 @@ export function OrderWindow({
 
                       {validity === 'TTL' && (
                         <div className="space-y-1">
-                          <label className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase">
+                          <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase">
                             TTL (Minutes)
                           </label>
                           <Input
@@ -605,14 +606,14 @@ export function OrderWindow({
                             min={1}
                             value={ttlMinutes}
                             onChange={(e) => setValue("ttlMinutes", parseInt(e.target.value) || 1)}
-                            className="h-8 text-xs bg-[#edf2f7] border-slate-200 w-28 rounded-lg"
+                            className="h-8 text-xs bg-[#edf2f7] border-border w-28 rounded-lg"
                           />
                         </div>
                       )}
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                         <div className="space-y-1">
-                          <label className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase">
+                          <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase">
                             Disclosed Qty
                           </label>
                           <Input
@@ -620,20 +621,20 @@ export function OrderWindow({
                             min={0}
                             value={disclosedQty}
                             onChange={(e) => setValue("disclosedQty", parseInt(e.target.value) || 0)}
-                            className="h-8 text-xs bg-[#edf2f7] border-slate-200 rounded-lg"
+                            className="h-8 text-xs bg-[#edf2f7] border-border rounded-lg"
                             placeholder="Optional"
                           />
                         </div>
 
                         <div className="space-y-1">
-                          <label className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase">
+                          <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase">
                             Order Tag
                           </label>
                           <Input
                             type="text"
                             value={orderTag}
                             onChange={(e) => setValue("orderTag", e.target.value)}
-                            className="h-8 text-xs bg-[#edf2f7] border-slate-200 rounded-lg"
+                            className="h-8 text-xs bg-[#edf2f7] border-border rounded-lg"
                             placeholder="e.g. Scalp1"
                           />
                           {errors.orderTag && <p className="text-[10px] text-rose-500 font-semibold">{errors.orderTag.message}</p>}
@@ -646,18 +647,18 @@ export function OrderWindow({
             </div>
 
             {/* ─── FOOTER SECTION ─── */}
-            <div className="bg-[#f9fafb] px-3.5 sm:px-5 py-3 sm:py-3.5 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+            <div className="bg-[#f9fafb] px-3.5 sm:px-5 py-3 sm:py-3.5 border-t border-border flex items-center justify-between gap-2 shrink-0">
               {/* Left info column */}
               <div className="flex flex-col gap-0.5 min-w-0">
                 <div className="flex items-center gap-1.5 text-[11px] sm:text-xs">
-                  <span className="text-slate-500 font-normal truncate">Req:</span>
-                  <span className="font-bold text-slate-800 whitespace-nowrap">
-                    ₹{marginRequired.toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+                  <span className="text-muted-foreground font-normal truncate">Req:</span>
+                  <span className="font-bold text-foreground whitespace-nowrap">
+                    {formatINR(marginRequired)}
                   </span>
                   <button
                     type="button"
                     onClick={handleRefreshMargin}
-                    className="p-0.5 text-slate-400 hover:text-slate-600 transition-colors focus:outline-none shrink-0"
+                    className="p-0.5 text-muted-foreground hover:text-foreground/75 transition-colors focus:outline-none shrink-0"
                     title="Refresh Margin"
                   >
                     <RotateCcw className={cn("h-3 w-3", isRefreshingMargin && "animate-spin text-[#4184f3]")} />
@@ -665,9 +666,9 @@ export function OrderWindow({
                 </div>
 
                 <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px]">
-                  <span className="text-slate-500 font-normal truncate">Avail:</span>
-                  <span className="font-semibold text-slate-800 whitespace-nowrap">
-                    ₹{availableMargin.toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+                  <span className="text-muted-foreground font-normal truncate">Avail:</span>
+                  <span className="font-semibold text-foreground whitespace-nowrap">
+                    {formatINR(availableMargin)}
                   </span>
                 </div>
               </div>
@@ -678,7 +679,7 @@ export function OrderWindow({
                   type="button"
                   variant="outline"
                   onClick={onClose}
-                  className="bg-white border border-slate-300 text-slate-700 font-semibold px-3 sm:px-5 h-8.5 sm:h-9 rounded-lg sm:rounded-xl text-xs hover:bg-slate-50 hover:text-slate-900 transition-colors"
+                  className="bg-card border border-border text-foreground/75 font-semibold px-3 sm:px-5 h-8.5 sm:h-9 rounded-lg sm:rounded-xl text-xs hover:bg-muted/50 hover:text-foreground transition-colors"
                 >
                   Cancel
                 </Button>

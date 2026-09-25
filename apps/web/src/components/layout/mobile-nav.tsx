@@ -67,7 +67,7 @@ export function MobileBottomNav() {
   return (
     <>
       {/* ─── 1. Fixed Bottom Navigation Bar ─── */}
-      <nav className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 md:hidden shadow-[0_-4px_20px_rgba(0,0,0,0.05)] pb-[env(safe-area-inset-bottom,0px)]">
+      <nav className="fixed bottom-0 inset-x-0 z-40 bg-card/95 backdrop-blur-md border-t border-border/90 md:hidden shadow-[0_-4px_20px_rgba(0,0,0,0.05)] pb-[env(safe-area-inset-bottom,0px)]">
         <div className="grid grid-cols-5 h-16 max-w-lg mx-auto items-center px-1">
           {primaryNav.map(({ href, label, icon: Icon }) => {
             const active = pathname.startsWith(href);
@@ -80,7 +80,7 @@ export function MobileBottomNav() {
                   "flex flex-col items-center justify-center h-full py-1 gap-1 text-[10px] font-semibold transition-all relative select-none",
                   active
                     ? "text-blue-600 font-bold"
-                    : "text-slate-500 hover:text-slate-900 active:scale-95"
+                    : "text-muted-foreground hover:text-foreground active:scale-95"
                 )}
               >
                 {active && (
@@ -105,7 +105,7 @@ export function MobileBottomNav() {
               "flex flex-col items-center justify-center h-full py-1 gap-1 text-[10px] font-semibold transition-all relative select-none",
               isSecondaryActive || drawerOpen
                 ? "text-blue-600 font-bold"
-                : "text-slate-500 hover:text-slate-900 active:scale-95"
+                : "text-muted-foreground hover:text-foreground active:scale-95"
             )}
           >
             {(isSecondaryActive || drawerOpen) && (
@@ -135,23 +135,23 @@ export function MobileBottomNav() {
           onClick={() => setDrawerOpen(false)}
         >
           <div
-            className="fixed inset-x-0 bottom-16 z-50 bg-white rounded-t-2xl border-t border-slate-200 shadow-2xl max-h-[75vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-250"
+            className="fixed inset-x-0 bottom-16 z-50 bg-card rounded-t-2xl border-t border-border shadow-2xl max-h-[75vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-250"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drawer Handle & Header */}
-            <div className="pt-3 pb-2 px-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+            <div className="pt-3 pb-2 px-5 border-b border-border flex items-center justify-between bg-muted/35">
               <div className="flex items-center gap-2.5">
                 <div className="h-7 w-7 rounded-lg bg-blue-600 flex items-center justify-center shadow-xs">
                   <Zap className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
                 </div>
                 <div>
-                  <span className="font-bold text-sm text-slate-900">Tradeio.site Hub</span>
-                  <p className="text-[10px] text-slate-400 font-medium">All Tools & Features</p>
+                  <span className="font-bold text-sm text-foreground">Tradeio.site Hub</span>
+                  <p className="text-[10px] text-muted-foreground font-medium">All Tools & Features</p>
                 </div>
               </div>
               <button
                 onClick={() => setDrawerOpen(false)}
-                className="p-1.5 rounded-full hover:bg-slate-200/60 text-slate-400 hover:text-slate-700 transition-colors"
+                className="p-1.5 rounded-full hover:bg-border/60 text-muted-foreground hover:text-foreground/75 transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -165,14 +165,14 @@ export function MobileBottomNav() {
                     {user.name?.charAt(0) || "U"}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-bold text-slate-800 truncate">{user.name}</p>
-                    <p className="text-[10px] text-slate-500 truncate">{user.email}</p>
+                    <p className="text-xs font-bold text-foreground truncate">{user.name}</p>
+                    <p className="text-[10px] text-muted-foreground truncate">{user.email}</p>
                   </div>
                 </div>
                 <Link
                   href="/settings"
                   onClick={() => setDrawerOpen(false)}
-                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 bg-white px-2.5 py-1 rounded-md border border-blue-200 shadow-2xs shrink-0"
+                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 bg-card px-2.5 py-1 rounded-md border border-blue-200 shadow-2xs shrink-0"
                 >
                   Profile
                 </Link>
@@ -185,7 +185,7 @@ export function MobileBottomNav() {
                 <Link
                   href="/admin/users"
                   onClick={() => setDrawerOpen(false)}
-                  className="flex items-center justify-between p-2 rounded-lg bg-white border border-purple-200 shadow-2xs hover:bg-purple-50/50 transition-colors"
+                  className="flex items-center justify-between p-2 rounded-lg bg-card border border-purple-200 shadow-2xs hover:bg-purple-50/50 transition-colors"
                 >
                   <div className="flex items-center gap-2.5">
                     <div className="p-1.5 rounded-md bg-purple-600 text-white">
@@ -193,10 +193,10 @@ export function MobileBottomNav() {
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-slate-800">User Access Control</span>
+                        <span className="text-xs font-bold text-foreground">User Access Control</span>
                         <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-purple-100 text-purple-700">ADMIN</span>
                       </div>
-                      <p className="text-[10px] text-slate-500">Provision & manage accounts</p>
+                      <p className="text-[10px] text-muted-foreground">Provision & manage accounts</p>
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-purple-400" />
@@ -218,12 +218,12 @@ export function MobileBottomNav() {
                         "flex items-center gap-2.5 p-2.5 rounded-xl text-xs font-semibold transition-all border",
                         active
                           ? "bg-blue-600/10 text-blue-600 border-blue-600/20 shadow-2xs"
-                          : "bg-slate-50/60 text-slate-700 hover:bg-slate-100 border-slate-100/80 active:scale-98"
+                          : "bg-muted/40 text-foreground/75 hover:bg-muted border-border/80 active:scale-98"
                       )}
                     >
                       <div className={cn(
                         "p-1.5 rounded-lg shrink-0",
-                        active ? "bg-blue-600 text-white" : "bg-white text-slate-600 border border-slate-200/60"
+                        active ? "bg-blue-600 text-white" : "bg-card text-foreground/75 border border-border/60"
                       )}>
                         <Icon className="h-3.5 w-3.5" />
                       </div>

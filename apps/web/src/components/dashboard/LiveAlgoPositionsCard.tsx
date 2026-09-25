@@ -22,6 +22,7 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { formatINR } from "@/lib/format";
 
 interface LiveAlgoPositionsCardProps {
   activeBroker: {
@@ -380,11 +381,11 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
   return (
     <div className="space-y-3">
       {/* ─── Main Unified Card ─── */}
-      <Card className="border-slate-200/90 bg-white shadow-xs rounded-xl overflow-hidden">
+      <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden">
         {/* ── 1. Top Header: Zerodha Style ── */}
-        <div className="py-2.5 px-4 border-b border-slate-100 flex flex-row items-center justify-between gap-3 bg-white">
+        <div className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between gap-3 bg-card">
           <div className="flex items-center gap-2.5 flex-wrap">
-            <h2 className="text-sm font-semibold text-slate-900">
+            <h2 className="text-sm font-semibold text-foreground">
               Positions ({openPositions.length})
             </h2>
 
@@ -399,15 +400,12 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                 )}
               >
                 MTM: {totalNetMtm >= 0 ? "+" : ""}
-                ₹{totalNetMtm.toLocaleString("en-IN", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {formatINR(totalNetMtm)}
               </span>
             )}
 
             {/* Active / Scheduled Quick Counters */}
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
               <span>•</span>
               <span className="font-semibold text-emerald-600">
                 {activeStrategies.length} Live
@@ -469,7 +467,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
               }}
               disabled={actionInProgress === "sync-broker"}
               title="Sync live broker positions with algo state"
-              className="h-7 px-2 text-xs text-slate-600 hover:text-slate-900 border-slate-200 rounded gap-1"
+              className="h-7 px-2 text-xs text-foreground/75 hover:text-foreground border-border rounded gap-1"
             >
               <RefreshCcw className={cn("h-3 w-3", actionInProgress === "sync-broker" && "animate-spin")} />
               <span className="hidden sm:inline">Sync Broker</span>
@@ -480,7 +478,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
         {/* ── 2. Zerodha-Style Positions Table ── */}
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left border-collapse">
-            <thead className="border-b border-slate-100 text-[11px] font-medium text-slate-400 bg-white">
+            <thead className="border-b border-border text-[11px] font-medium text-muted-foreground bg-card">
               <tr>
                 <th className="py-2.5 px-4 w-16">Product</th>
                 <th className="py-2.5 px-4">Instrument</th>
@@ -492,17 +490,17 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                 <th className="py-2.5 px-4 text-center w-24">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 font-sans">
+            <tbody className="divide-y divide-border font-sans">
               {isPositionsLoading ? (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-slate-400">
+                  <td colSpan={8} className="py-6 text-center text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin mx-auto mb-1 text-blue-600" />
                     Loading open positions...
                   </td>
                 </tr>
               ) : openPositions.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-5 px-4 text-center text-slate-400 text-xs italic">
+                  <td colSpan={8} className="py-5 px-4 text-center text-muted-foreground text-xs italic">
                     No open market positions. Algorithmic strategies will automatically execute orders when setups trigger.
                   </td>
                 </tr>
@@ -514,7 +512,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                   return (
                     <tr
                       key={pos.symbol}
-                      className="hover:bg-slate-50/70 transition-colors group text-xs text-slate-800"
+                      className="hover:bg-muted/35 transition-colors group text-xs text-foreground"
                     >
                       {/* Product Tag */}
                       <td className="py-2.5 px-4">
@@ -533,10 +531,10 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                       </td>
 
                       {/* Formatted Zerodha Instrument Name */}
-                      <td className="py-2.5 px-4 font-semibold text-slate-900 whitespace-nowrap">
+                      <td className="py-2.5 px-4 font-semibold text-foreground whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           <span>{formatted.display}</span>
-                          <span className="text-[10px] font-medium text-slate-400 uppercase">
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase">
                             {formatted.exchange}
                           </span>
                           {pos.hasLiveTick && (
@@ -551,12 +549,12 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                       </td>
 
                       {/* Avg Price */}
-                      <td className="py-2.5 px-4 text-right font-mono text-slate-700 whitespace-nowrap">
+                      <td className="py-2.5 px-4 text-right font-mono text-foreground/75 whitespace-nowrap">
                         {Number(pos.avgPrice).toFixed(2)}
                       </td>
 
                       {/* Live LTP */}
-                      <td className="py-2.5 px-4 text-right font-mono font-medium text-slate-900 whitespace-nowrap">
+                      <td className="py-2.5 px-4 text-right font-mono font-medium text-foreground whitespace-nowrap">
                         {Number(pos.ltp).toFixed(2)}
                       </td>
 
@@ -606,9 +604,9 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
             </tbody>
             {/* Total P&L Footer like Zerodha */}
             {openPositions.length > 0 && (
-              <tfoot className="border-t border-slate-200 bg-slate-50/50 text-xs">
+              <tfoot className="border-t border-border bg-muted/25 text-xs">
                 <tr>
-                  <td colSpan={5} className="py-2 px-4 text-right font-semibold text-slate-600">
+                  <td colSpan={5} className="py-2 px-4 text-right font-semibold text-foreground/75">
                     Total P&L
                   </td>
                   <td
@@ -628,11 +626,11 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
         </div>
 
         {/* ── 3. Deployed Strategies & 09:15 AM Schedules ── */}
-        <div className="border-t border-slate-100 bg-slate-50/30 p-3.5 space-y-2.5">
+        <div className="border-t border-border bg-muted/40 p-3.5 space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Bot className="h-4 w-4 text-blue-600" />
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+              <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">
                 Active Algorithmic Strategies ({strategies.length})
               </h3>
             </div>
@@ -646,11 +644,11 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
           </div>
 
           {isStrategiesLoading ? (
-            <div className="py-3 text-center text-xs text-slate-400">
+            <div className="py-3 text-center text-xs text-muted-foreground">
               Loading strategies...
             </div>
           ) : strategies.length === 0 ? (
-            <div className="py-3 text-center text-xs text-slate-400">
+            <div className="py-3 text-center text-xs text-muted-foreground">
               No strategies configured.{" "}
               <Link href="/strategies/new" className="text-blue-600 underline font-semibold">
                 Create one now
@@ -670,12 +668,12 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                   <div
                     key={s.id}
                     className={cn(
-                      "p-2.5 rounded-lg border bg-white transition-all flex items-center justify-between gap-2.5",
+                      "p-2.5 rounded-lg border bg-card transition-all flex items-center justify-between gap-2.5",
                       s.isActive
                         ? "border-emerald-300 shadow-2xs"
                         : s.autoStart
                           ? "border-amber-300 shadow-2xs"
-                          : "border-slate-200"
+                          : "border-border"
                     )}
                   >
                     <div className="min-w-0 flex-1">
@@ -692,7 +690,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                             09:15 AM ARMED
                           </span>
                         ) : (
-                          <span className="inline-flex items-center text-[9.5px] font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-500">
+                          <span className="inline-flex items-center text-[9.5px] font-medium px-1.5 py-0.2 rounded bg-muted text-muted-foreground">
                             PAUSED
                           </span>
                         )}
@@ -718,11 +716,11 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                         </span>
                       </div>
 
-                      <h4 className="text-xs font-bold text-slate-900 truncate" title={s.name}>
+                      <h4 className="text-xs font-bold text-foreground truncate" title={s.name}>
                         {s.name}
                       </h4>
 
-                      <p className="text-[10.5px] text-slate-400 mt-0.5 truncate">
+                      <p className="text-[10.5px] text-muted-foreground mt-0.5 truncate">
                         {isStockOptions
                           ? `180+ F&O Scanner • Capital: ₹${Number(cfg.maxCapital || 25000).toLocaleString("en-IN")}`
                           : `${cfg.symbol || "AUTO"} • ${cfg.product || "MIS"} • 09:15–15:05 IST`}
@@ -762,7 +760,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-6 w-6 p-0 text-slate-400 hover:text-blue-600 rounded"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-blue-600 rounded"
                           title="View Execution Telemetry & Logs"
                         >
                           <ExternalLink className="h-3 w-3" />

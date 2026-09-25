@@ -1981,7 +1981,7 @@ export default function StrategyDetailPage() {
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Dead-Zone Chop Filter</p>
-                    <p className="text-sm font-bold text-slate-600">
+                    <p className="text-sm font-bold text-foreground/75">
                       {cfg.enableMiddayChopFilter !== false ? `Active (${cfg.middayDeadZoneStart ?? "11:45"} - ${cfg.middayDeadZoneEnd ?? "13:00"} IST)` : "Disabled"}
                     </p>
                   </div>

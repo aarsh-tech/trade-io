@@ -63,8 +63,8 @@ export default function BrokersPage() {
   return (
     <div className="space-y-6 animate-[fade-up_0.4s_ease_both]">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Broker Accounts</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
+        <h1 className="text-2xl font-bold text-foreground">Broker Accounts</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
           Connect your broker APIs to enable live trading
         </p>
       </div>
@@ -73,7 +73,7 @@ export default function BrokersPage() {
       {/* Connected accounts */}
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {[1, 2].map(i => <div key={i} className="h-40 rounded-xl bg-slate-100 animate-pulse" />)}
+          {[1, 2].map(i => <div key={i} className="h-40 rounded-xl bg-muted animate-pulse" />)}
         </div>
       ) : brokers.length > 0 ? (
         <div>
@@ -96,8 +96,8 @@ export default function BrokersPage() {
                           {config.logo}
                         </div>
                         <div>
-                          <p className="font-semibold text-slate-900">{config.name}</p>
-                          <p className="text-xs text-slate-500">
+                          <p className="font-semibold text-foreground">{config.name}</p>
+                          <p className="text-xs text-muted-foreground">
                             Client: {acc.clientId}
                           </p>
                         </div>
@@ -111,7 +111,7 @@ export default function BrokersPage() {
                             <X className="h-3 w-3" /> Session expired
                           </span>
                         ) : (
-                          <span className="text-slate-500">
+                          <span className="text-muted-foreground">
                             Expires: {new Date(acc.tokenExpiry).toLocaleString("en-IN", {
                               day: '2-digit',
                               month: 'short',
@@ -128,7 +128,7 @@ export default function BrokersPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="flex-1 h-9 gap-2 text-slate-700 bg-white border-slate-200 hover:bg-slate-50 hover:border-blue-200 transition-all rounded-lg"
+                        className="flex-1 h-9 gap-2 text-foreground/75 bg-card border-border hover:bg-muted/50 hover:border-blue-200 transition-all rounded-lg"
                         asChild
                       >
                         <Link href="/portfolio" className="flex items-center gap-2">
@@ -139,7 +139,7 @@ export default function BrokersPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 h-9 w-9 rounded-lg transition-colors"
+                        className="text-muted-foreground hover:text-rose-500 hover:bg-rose-50 h-9 w-9 rounded-lg transition-colors"
                         onClick={() => askDisconnect(acc.id)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -152,9 +152,9 @@ export default function BrokersPage() {
           </div>
         </div>
       ) : (
-        <div className="p-8 border-2 border-dashed border-slate-100 rounded-2xl text-center bg-slate-50/50">
+        <div className="p-8 border-2 border-dashed border-border rounded-2xl text-center bg-muted/25">
           <Plug className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 text-sm font-medium">No brokers connected yet</p>
+          <p className="text-muted-foreground text-sm font-medium">No brokers connected yet</p>
         </div>
       )}
 
@@ -183,13 +183,13 @@ export default function BrokersPage() {
                     {b.logo}
                   </div>
                   <div>
-                    <p className="font-semibold text-slate-900">{b.name}</p>
-                    <p className="text-xs text-slate-500">{b.desc}</p>
+                    <p className="font-semibold text-foreground">{b.name}</p>
+                    <p className="text-xs text-muted-foreground">{b.desc}</p>
                   </div>
                   {isConnected ? (
                     <Badge variant="running" dot>Connected</Badge>
                   ) : (
-                    <Button size="sm" variant="outline" className="gap-1 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    <Button size="sm" variant="outline" className="gap-1 border-border bg-card text-foreground/75 hover:bg-muted/50">
                       <Plus className="h-3 w-3" /> Connect
                     </Button>
                   )}
@@ -202,13 +202,13 @@ export default function BrokersPage() {
 
       {/* Connect modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="p-0 border-slate-100 overflow-hidden w-[calc(100%-2rem)] sm:max-w-[440px] rounded-2xl max-h-[90vh] overflow-y-auto gap-0">
+        <DialogContent className="p-0 border-border overflow-hidden w-[calc(100%-2rem)] sm:max-w-[440px] rounded-2xl max-h-[90vh] overflow-y-auto gap-0">
           <DialogTitle className="sr-only">Connect Broker Account</DialogTitle>
           <DialogDescription className="sr-only">Link your trading account securely</DialogDescription>
           {selectedBroker && (
             <>
               {/* Header */}
-              <div className="px-7 py-6 border-b border-slate-100 flex justify-between bg-slate-50/50">
+              <div className="px-7 py-6 border-b border-border flex justify-between bg-muted/25">
                 <div className="flex items-center gap-4">
                   <div
                     className="h-11 w-11 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-sm"
@@ -217,8 +217,8 @@ export default function BrokersPage() {
                     {selectedBroker.logo}
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-slate-900 leading-tight">Connect {selectedBroker.name}</h3>
-                    <p className="text-xs text-slate-500 font-medium">Link your trading account securely</p>
+                    <h3 className="text-lg font-bold text-foreground leading-tight">Connect {selectedBroker.name}</h3>
+                    <p className="text-xs text-muted-foreground font-medium">Link your trading account securely</p>
                   </div>
                 </div>
               </div>
@@ -228,9 +228,9 @@ export default function BrokersPage() {
                 <form onSubmit={handleConnect} className="space-y-5">
                   <div className="space-y-4 pt-1">
                     <div>
-                      <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Client ID</label>
+                      <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">Client ID</label>
                       <Input
-                        className="border-slate-200 bg-slate-50 hover:bg-white focus:bg-white h-11 text-slate-900 placeholder:text-slate-400 transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                         style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                         placeholder="e.g. AB1234"
                         value={form.clientId}
@@ -239,9 +239,9 @@ export default function BrokersPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">API Key</label>
+                      <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">API Key</label>
                       <Input
-                        className="border-slate-200 bg-slate-50 hover:bg-white focus:bg-white h-11 text-slate-900 placeholder:text-slate-400 transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                         style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                         placeholder="Your App API Key"
                         value={form.apiKey}
@@ -250,9 +250,9 @@ export default function BrokersPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">API Secret</label>
+                      <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">API Secret</label>
                       <Input
-                        className="border-slate-200 bg-slate-50 hover:bg-white focus:bg-white h-11 text-slate-900 placeholder:text-slate-400 transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                         style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                         type="password"
                         placeholder="••••••••••••••••"
@@ -264,9 +264,9 @@ export default function BrokersPage() {
                     {selectedBroker.key === 'ANGEL' && (
                       <>
                         <div>
-                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Trading Password</label>
+                          <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">Trading Password</label>
                           <Input
-                            className="border-slate-200 bg-slate-50 hover:bg-white focus:bg-white h-11 text-slate-900 placeholder:text-slate-400 transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                            className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                             style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                             type="password"
                             placeholder="Your Angel Login Password"
@@ -276,9 +276,9 @@ export default function BrokersPage() {
                           />
                         </div>
                         <div>
-                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">TOTP Secret Key</label>
+                          <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">TOTP Secret Key</label>
                           <Input
-                            className="border-slate-200 bg-slate-50 hover:bg-white focus:bg-white h-11 text-slate-900 placeholder:text-slate-400 transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                            className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                             style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                             placeholder="The secret key from QR code"
                             value={form.totpSecret}
@@ -305,7 +305,7 @@ export default function BrokersPage() {
                         </a>
                       </div>
                       <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
+                        <div className="flex items-center justify-between text-[11px] text-foreground/75 font-medium">
                           <span>Redirect URL:</span>
                           <button
                             type="button"
@@ -318,7 +318,7 @@ export default function BrokersPage() {
                             Copy
                           </button>
                         </div>
-                        <p className="font-mono text-[11px] bg-white p-2 rounded-lg border border-slate-200 truncate select-all text-slate-800">
+                        <p className="font-mono text-[11px] bg-card p-2 rounded-lg border border-border truncate select-all text-foreground">
                           https://api.tradeio.site/v1/brokers/callback/zerodha
                         </p>
                       </div>
@@ -334,9 +334,9 @@ export default function BrokersPage() {
                     </div>
                   )}
 
-                  <div className="flex items-start gap-3 p-4 rounded-xl bg-slate-50 border border-slate-100">
-                    <div className="pt-0.5 text-slate-400">🔒</div>
-                    <p className="text-[11.5px] leading-relaxed text-slate-600 font-medium">
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-muted/50 border border-border">
+                    <div className="pt-0.5 text-muted-foreground">🔒</div>
+                    <p className="text-[11.5px] leading-relaxed text-foreground/75 font-medium">
                       Credentials are encrypted with bank-grade AES-256-GCM. We never store them in plain text or share them with third parties.
                     </p>
                   </div>
@@ -344,7 +344,7 @@ export default function BrokersPage() {
                   <div className="flex gap-3 pt-3">
                     <Button
                       variant="outline"
-                      className="flex-1 h-12 rounded-xl border-slate-200 text-slate-700 font-semibold hover:bg-slate-50"
+                      className="flex-1 h-12 rounded-xl border-border text-foreground/75 font-semibold hover:bg-muted/50"
                       onClick={() => setShowModal(false)}
                       type="button"
                     >

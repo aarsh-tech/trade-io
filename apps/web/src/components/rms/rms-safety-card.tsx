@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { riskApi } from "@/lib/api";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { formatINR } from "@/lib/format";
 
 export interface RiskStatusData {
   userId: string;
@@ -153,10 +154,10 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
 
   if (loading && !status) {
     return (
-      <Card className={cn("border border-slate-200/80 bg-white/70 backdrop-blur-xs shadow-xs animate-pulse", className)}>
+      <Card className={cn("border border-border/80 bg-white/70 backdrop-blur-xs shadow-xs animate-pulse", className)}>
         <CardContent className="p-4 flex items-center justify-between">
-          <div className="h-5 w-48 bg-slate-200 rounded-md" />
-          <div className="h-8 w-24 bg-slate-200 rounded-md" />
+          <div className="h-5 w-48 bg-border rounded-md" />
+          <div className="h-8 w-24 bg-border rounded-md" />
         </CardContent>
       </Card>
     );
@@ -180,13 +181,13 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
             ? "border-rose-300 bg-rose-50/70 dark:bg-rose-950/20"
             : isDanger
             ? "border-amber-300 bg-amber-50/50"
-            : "border-slate-200/80 bg-white/95 backdrop-blur-xs",
+            : "border-border/80 bg-card/95 backdrop-blur-xs",
           className
         )}
       >
         <CardContent className="p-4 sm:p-5">
           {/* Top Row: Shield & Status Badge + Quick Actions */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-border dark:border-slate-800">
             <div className="flex items-center gap-2.5">
               <div
                 className={cn(
@@ -209,7 +210,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
 
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                  <h3 className="text-sm sm:text-base font-bold text-foreground dark:text-slate-100">
                     Risk Management System (RMS)
                   </h3>
                   <Badge
@@ -240,7 +241,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                 variant="outline"
                 size="sm"
                 onClick={handleCheckBrokerHealth}
-                className="h-8 text-xs gap-1.5 border-slate-200 text-slate-600 hover:text-slate-900 bg-white"
+                className="h-8 text-xs gap-1.5 border-border text-foreground/75 hover:text-foreground bg-card"
                 title="Verify Broker Session Tokens"
               >
                 <Activity className="h-3.5 w-3.5 text-blue-600" />
@@ -251,7 +252,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                 variant="outline"
                 size="sm"
                 onClick={() => setShowSettingsModal(true)}
-                className="h-8 text-xs gap-1.5 border-slate-200 text-slate-600 hover:text-slate-900 bg-white"
+                className="h-8 text-xs gap-1.5 border-border text-foreground/75 hover:text-foreground bg-card"
                 title="Configure RMS Risk Parameters"
               >
                 <Sliders className="h-3.5 w-3.5 text-slate-500" />
@@ -334,11 +335,11 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
             <div>
               <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 uppercase tracking-wider">
                 <span>Daily Loss Cap</span>
-                <span className={cn("font-bold font-mono", isDanger ? "text-rose-600" : "text-slate-700")}>
+                <span className={cn("font-bold font-mono", isDanger ? "text-rose-600" : "text-foreground/75")}>
                   {lossUsage}% used
                 </span>
               </div>
-              <div className="mt-1.5 h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+              <div className="mt-1.5 h-2 w-full bg-muted rounded-full overflow-hidden">
                 <div
                   className={cn(
                     "h-full transition-all duration-500 rounded-full",
@@ -348,7 +349,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                 />
               </div>
               <span className="text-[10px] text-slate-500 mt-1 block">
-                Max Allowed Loss: ₹{maxLoss.toLocaleString("en-IN")}
+                Max Allowed Loss: {formatINR(maxLoss)}
               </span>
             </div>
           </div>
@@ -369,7 +370,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
 
       {/* ─── Premium Institutional RMS Settings Modal ─── */}
       <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-        <DialogContent className="max-w-xl w-full p-0 overflow-hidden rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl">
+        <DialogContent className="max-w-xl w-full p-0 overflow-hidden rounded-2xl border border-border/90 dark:border-slate-800 bg-card dark:bg-slate-950 shadow-2xl">
           {/* Top Banner Header */}
           <div className="relative bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950 text-white p-6 pb-5 overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
@@ -406,7 +407,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                     <AlertTriangle className="h-4 w-4" />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider block">
+                    <label className="text-xs font-bold text-foreground dark:text-slate-100 uppercase tracking-wider block">
                       Daily Max Loss Threshold
                     </label>
                     <span className="text-[11px] text-slate-500 block">
@@ -431,7 +432,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                   onChange={(e) =>
                     setSettingsForm((prev) => ({ ...prev, maxDailyLoss: Number(e.target.value) }))
                   }
-                  className="w-full pl-8 pr-28 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold font-mono text-base focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-full pl-8 pr-28 py-2.5 rounded-xl border border-border dark:border-slate-800 bg-card dark:bg-slate-900 text-foreground dark:text-slate-100 font-bold font-mono text-base focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   placeholder="5000"
                   required
                 />
@@ -452,7 +453,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                       "text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all cursor-pointer",
                       settingsForm.maxDailyLoss === preset
                         ? "bg-rose-600 text-white border-rose-600 shadow-xs shadow-rose-500/30"
-                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-slate-300"
+                        : "bg-card dark:bg-slate-900 border-border dark:border-slate-800 text-foreground/75 dark:text-slate-300 hover:border-border"
                     )}
                   >
                     ₹{new Intl.NumberFormat('en-IN').format(preset)}
@@ -469,7 +470,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                     <Zap className="h-4 w-4" />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider block">
+                    <label className="text-xs font-bold text-foreground dark:text-slate-100 uppercase tracking-wider block">
                       Max Single Order Value
                     </label>
                     <span className="text-[11px] text-slate-500 block">
@@ -494,7 +495,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                   onChange={(e) =>
                     setSettingsForm((prev) => ({ ...prev, maxOrderValue: Number(e.target.value) }))
                   }
-                  className="w-full pl-8 pr-32 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold font-mono text-base focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-full pl-8 pr-32 py-2.5 rounded-xl border border-border dark:border-slate-800 bg-card dark:bg-slate-900 text-foreground dark:text-slate-100 font-bold font-mono text-base focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   placeholder="200000"
                   required
                 />
@@ -515,7 +516,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                       "text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all cursor-pointer",
                       settingsForm.maxOrderValue === preset
                         ? "bg-amber-600 text-white border-amber-600 shadow-xs shadow-amber-500/30"
-                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-slate-300"
+                        : "bg-card dark:bg-slate-900 border-border dark:border-slate-800 text-foreground/75 dark:text-slate-300 hover:border-border"
                     )}
                   >
                     ₹{new Intl.NumberFormat('en-IN').format(preset)}
@@ -532,7 +533,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                     <Sliders className="h-4 w-4" />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider block">
+                    <label className="text-xs font-bold text-foreground dark:text-slate-100 uppercase tracking-wider block">
                       Max Quantity per Order
                     </label>
                     <span className="text-[11px] text-slate-500 block">
@@ -557,7 +558,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                   onChange={(e) =>
                     setSettingsForm((prev) => ({ ...prev, maxOrderQty: Number(e.target.value) }))
                   }
-                  className="w-full pl-12 pr-20 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold font-mono text-base focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-full pl-12 pr-20 py-2.5 rounded-xl border border-border dark:border-slate-800 bg-card dark:bg-slate-900 text-foreground dark:text-slate-100 font-bold font-mono text-base focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   placeholder="1800"
                   required
                 />
@@ -583,7 +584,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                       "text-[11px] font-semibold px-2 py-1 rounded-lg border transition-all cursor-pointer flex items-center gap-1",
                       settingsForm.maxOrderQty === item.qty
                         ? "bg-blue-600 text-white border-blue-600 shadow-xs shadow-blue-500/30"
-                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-slate-300"
+                        : "bg-card dark:bg-slate-900 border-border dark:border-slate-800 text-foreground/75 dark:text-slate-300 hover:border-border"
                     )}
                   >
                     <span>{item.name}</span>
@@ -594,19 +595,19 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
             </div>
 
             {/* Active Guard Info Strip */}
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-[11px] text-slate-500">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/50 dark:bg-slate-900 border border-border dark:border-slate-800 text-[11px] text-slate-500">
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
               <span>3s idempotency dedup and 4 orders/min runaway breaker are automatically active.</span>
             </div>
 
             {/* Footer Buttons */}
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border dark:border-slate-800">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setShowSettingsModal(false)}
                 disabled={actionLoading}
-                className="h-10 px-4 text-xs font-semibold rounded-xl border-slate-200 hover:bg-slate-100 transition-colors"
+                className="h-10 px-4 text-xs font-semibold rounded-xl border-border hover:bg-muted transition-colors"
               >
                 Cancel
               </Button>

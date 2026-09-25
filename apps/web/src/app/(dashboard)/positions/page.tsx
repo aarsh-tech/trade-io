@@ -19,6 +19,7 @@ import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import Link from "next/link";
+import { formatINR } from "@/lib/format";
 
 interface Position {
   symbol: string;
@@ -343,7 +344,7 @@ export default function PositionsPage() {
               "text-2xl font-bold font-mono flex items-center gap-1.5",
               totalPnl > 0 ? "text-emerald-500" : totalPnl < 0 ? "text-rose-500" : "text-foreground"
             )}>
-              {totalPnl > 0 ? "+" : ""}₹{totalPnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {totalPnl > 0 ? "+" : ""}{formatINR(totalPnl)}
               {totalPnl > 0 ? (
                 <ArrowUpRight className="h-5 w-5 text-emerald-500" />
               ) : totalPnl < 0 ? (
@@ -380,7 +381,7 @@ export default function PositionsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold font-mono text-foreground">
-              ₹{totalInvestment.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatINR(totalInvestment)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Gross open exposure value

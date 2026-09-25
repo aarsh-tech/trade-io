@@ -1054,7 +1054,7 @@ export default function EditStrategyPage() {
 
                   <div className="grid grid-cols-2 gap-4 pt-1">
                     <div>
-                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-slate-700">
+                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-foreground/75">
                         <Target className="h-3.5 w-3.5 text-green-600" />
                         Risk : Reward Ratio
                       </label>
@@ -1065,20 +1065,20 @@ export default function EditStrategyPage() {
                         max={5}
                         value={form.b15RiskRewardRatio}
                         onChange={(e) => set("b15RiskRewardRatio", e.target.value)}
-                        className="bg-white border-indigo-200 font-semibold text-xs"
+                        className="bg-card border-indigo-200 font-semibold text-xs"
                       />
                       <p className="text-[10px] text-slate-500 mt-1">Default 1:2.0 RR (Target = 2x ATR Risk)</p>
                     </div>
 
                     <div>
-                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-slate-700">
+                      <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-foreground/75">
                         <TrendingUp className="h-3.5 w-3.5 text-blue-600" />
                         Strike Moneyness
                       </label>
                       <select
                         value={form.b15Moneyness}
                         onChange={(e) => set("b15Moneyness", e.target.value)}
-                        className="w-full h-9 rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full h-9 rounded-md border border-indigo-200 bg-card px-3 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
                         <option value="ITM">1-Strike ITM (Recommended - High Delta)</option>
                         <option value="ATM">ATM (At-The-Money)</option>
@@ -1088,7 +1088,7 @@ export default function EditStrategyPage() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-indigo-100">
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableDynamicAtr}
@@ -1096,12 +1096,12 @@ export default function EditStrategyPage() {
                         className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
                       />
                       <div>
-                        <span className="text-xs font-bold text-slate-800 block">Dynamic ATR Scaling</span>
+                        <span className="text-xs font-bold text-foreground block">Dynamic ATR Scaling</span>
                         <span className="text-[9px] text-slate-500">Auto-calibrates buffer & SL to volatility</span>
                       </div>
                     </label>
 
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableFakeoutReversal}
@@ -1109,12 +1109,12 @@ export default function EditStrategyPage() {
                         className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
                       />
                       <div>
-                        <span className="text-xs font-bold text-slate-800 block">⚡ Fakeout Trap Reversal</span>
+                        <span className="text-xs font-bold text-foreground block">⚡ Fakeout Trap Reversal</span>
                         <span className="text-[9px] text-slate-500">Auto-flips trade on failed breakout traps</span>
                       </div>
                     </label>
 
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableBreakevenTrail}
@@ -1122,12 +1122,12 @@ export default function EditStrategyPage() {
                         className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
                       />
                       <div>
-                        <span className="text-xs font-bold text-slate-800 block">🛡 Breakeven Lock (+1R)</span>
+                        <span className="text-xs font-bold text-foreground block">🛡 Breakeven Lock (+1R)</span>
                         <span className="text-[9px] text-slate-500">Trails SL to Cost once in profit</span>
                       </div>
                     </label>
 
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white/80 border border-indigo-100/60 cursor-pointer">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableVwapFilter}
@@ -1135,7 +1135,7 @@ export default function EditStrategyPage() {
                         className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
                       />
                       <div>
-                        <span className="text-xs font-bold text-slate-800 block">VWAP / EMA Filter</span>
+                        <span className="text-xs font-bold text-foreground block">VWAP / EMA Filter</span>
                         <span className="text-[9px] text-slate-500">Only trades with macro trend</span>
                       </div>
                     </label>
@@ -1232,7 +1232,7 @@ export default function EditStrategyPage() {
                         onChange={(e) => set("exitExactAtTarget", e.target.checked)}
                         className="sr-only peer"
                       />
-                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
                     </label>
                   </div>
                   <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
@@ -1257,7 +1257,7 @@ export default function EditStrategyPage() {
                           onChange={(e) => set("enableHybridTrailing", e.target.checked)}
                           className="sr-only peer"
                         />
-                        <div className="w-8 h-4 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
+                        <div className="w-8 h-4 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
                       </label>
                     </div>
                   )}
@@ -1278,7 +1278,7 @@ export default function EditStrategyPage() {
                         onChange={(e) => set("enableProfitFloor", e.target.checked)}
                         className="sr-only peer"
                       />
-                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
                     </label>
                   </div>
                   <p className="text-xs text-[hsl(var(--foreground))] opacity-90 leading-relaxed">

@@ -26,17 +26,17 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2.5 pt-0.5">
-              <div className="p-2.5 rounded-xl bg-white border-2 border-slate-200 shadow-xs">
+              <div className="p-2.5 rounded-xl bg-card border-2 border-border shadow-xs">
                 <span className="font-bold block text-xs text-emerald-700 ">2x Spike (100% ROI)</span>
-                <span className="text-[11px] text-slate-800 font-medium font-normal">SL moves to Cost + ₹1 (Risk-Free)</span>
+                <span className="text-[11px] text-foreground font-medium font-normal">SL moves to Cost + ₹1 (Risk-Free)</span>
               </div>
-              <div className="p-2.5 rounded-xl bg-white border-2 border-slate-200 shadow-xs">
+              <div className="p-2.5 rounded-xl bg-card border-2 border-border shadow-xs">
                 <span className="font-bold block text-xs text-blue-700 ">3x Spike (200% ROI)</span>
-                <span className="text-[11px] text-slate-800 font-medium font-normal">SL locks at 2x profit floor</span>
+                <span className="text-[11px] text-foreground font-medium font-normal">SL locks at 2x profit floor</span>
               </div>
-              <div className="p-2.5 rounded-xl bg-white border-2 border-slate-200 shadow-xs">
+              <div className="p-2.5 rounded-xl bg-card border-2 border-border shadow-xs">
                 <span className="font-bold block text-xs text-purple-700 ">5x+ Multi-Bagger</span>
-                <span className="text-[11px] text-slate-800 font-medium font-normal">Peak Trail (20% below high)</span>
+                <span className="text-[11px] text-foreground font-medium font-normal">Peak Trail (20% below high)</span>
               </div>
             </div>
           </div>
@@ -55,7 +55,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("targetRs", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Optional daily profit lock goal (default: ₹1,500 on 1 lot)
               </p>
             </div>
@@ -71,7 +71,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("stopLossRs", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Initial SL is 50% of premium (~₹300–₹500 max loss per lot)
               </p>
             </div>
@@ -83,12 +83,12 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               High Win-Rate Confluence Filters
             </p>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <Activity className="h-4 w-4 text-indigo-500" />
                 <div>
                   <p className="text-xs font-bold text-foreground">Live Open Interest (OI) &amp; PCR Filter</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Confirms institutional Call/Put unwinding using Zerodha Quote API
                   </p>
                 </div>
@@ -97,16 +97,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.gbEnableOiFilter}
                 onChange={(e) => set("gbEnableOiFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <TrendingUp className="h-4 w-4 text-amber-500" />
                 <div>
                   <p className="text-xs font-bold text-foreground">Volume Surge Confirmation (≥ 2.5x)</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Eliminates fake breakouts by requiring 3x volume on the option contract
                   </p>
                 </div>
@@ -115,16 +115,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.gbEnableVolumeSurge}
                 onChange={(e) => set("gbEnableVolumeSurge", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <Zap className="h-4 w-4 text-emerald-500" />
                 <div>
                   <p className="text-xs font-bold text-foreground">Sub-Second Zero-Latency Ratchet Trailing</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Evaluated on live ticks to lock explosive multi-bagger profits instantly
                   </p>
                 </div>
@@ -133,7 +133,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.gbEnableRatchetTrailing}
                 onChange={(e) => set("gbEnableRatchetTrailing", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
               />
             </label>
           </div>
@@ -143,7 +143,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs sm:text-sm font-bold text-foreground">Fixed Rupee Target &amp; Loss Cutoff</p>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Exit immediately when ₹{form.targetRs || "1500"} target or -₹{form.stopLossRs || "500"} SL is hit; locks profits at +50% milestone
                 </p>
               </div>
@@ -151,7 +151,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.exitExactAtTarget}
                 onChange={(e) => set("exitExactAtTarget", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-pointer"
               />
             </div>
           </div>
@@ -167,7 +167,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("maxTradesPerDay", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Max 2 attempts per session to protect capital
               </p>
             </div>
@@ -179,7 +179,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 value={`${form.gbEndTime || "15:25"} IST (Square-Off)`}
                 className="font-bold text-amber-700 bg-amber-500/10 border-amber-500/30"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Holds &amp; trails through closing candle; hard exit @ 15:29:30
               </p>
             </div>
@@ -202,7 +202,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 2:1 R:R Asymmetry
               </Badge>
             </div>
-            <div className="text-xs text-slate-900 font-medium mt-2 space-y-1.5 leading-relaxed font-normal">
+            <div className="text-xs text-foreground font-medium mt-2 space-y-1.5 leading-relaxed font-normal">
               <p>• <strong className="text-foreground font-semibold">Exchange SL Armed</strong>: Initial -6 pts Stop Loss order placed directly on Zerodha exchange servers.</p>
               <p>• <strong className="text-foreground font-semibold">Breakeven Trail</strong>: Automatically moves SL to COST (+0.5 pt cushion) at +5 points (eliminates premature choke).</p>
               <p>• <strong className="text-foreground font-semibold">1 Win &amp; Done Goal</strong>: Once +10 points is achieved on trade 1, the strategy locks profits and halts for the day.</p>
@@ -224,7 +224,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("dsTargetPoints", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Daily scalp target milestone (default: +10 pts)
               </p>
             </div>
@@ -240,7 +240,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("dsStopLossPoints", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Server-side trigger price armed at Zerodha (default: -6 pts)
               </p>
             </div>
@@ -259,7 +259,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("dsTrailCostAtPoints", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Moves SL to Cost (+0.5 pt cushion) once reached (default: +5 pts)
               </p>
             </div>
@@ -276,7 +276,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("dsMaxLossesPerDay", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Two-Loss &amp; Done: Halts trading upon reaching max losses (default: 2)
               </p>
             </div>
@@ -290,7 +290,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   <Activity className="h-3.5 w-3.5 text-emerald-500" />
                   The Banker &amp; The Runner (Partial Profit Booking)
                 </p>
-                <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                <p className="text-xs text-foreground/75 font-medium leading-relaxed">
                   When Target 1 (+10 pts) is reached on multi-lot positions, automatically books a portion to lock cash into your account, while letting remaining lots run with the uncapped ratchet trail.
                 </p>
               </div>
@@ -332,7 +332,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 Institutional Edge &amp; Systematic Profitability Engine Active
               </p>
             </div>
-            <div className="text-xs text-slate-900 font-medium mt-2 space-y-1.5 leading-relaxed font-normal">
+            <div className="text-xs text-foreground font-medium mt-2 space-y-1.5 leading-relaxed font-normal">
               <p>• <strong className="text-foreground font-semibold">Live Zerodha CPR Engine</strong>: Real-time settlement Pivot, TC, BC, R1/S1, R2/S2. Blocks breakouts running into immediate CPR walls; Wide CPR days restrict to Trap Reversals only.</p>
               <p>• <strong className="text-foreground font-semibold">1-Loss &amp; Done Capital Shield</strong>: Halts strategy immediately after 1 stop-loss hit per day. Preserves monthly profit.</p>
               <p>• <strong className="text-foreground font-semibold">The Banker &amp; The Runner Partial Booking</strong>: Locks 50% profit at +1.8R, moves SL to COST for a risk-free trade, and lets remaining 50% ride on EMA/VWAP.</p>
@@ -362,7 +362,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                         Live Kite Data
                       </Badge>
                     </div>
-                    <p className="text-xs text-slate-900 font-medium mt-0.5 leading-relaxed">
+                    <p className="text-xs text-foreground font-medium mt-0.5 leading-relaxed">
                       Computes Pivot, TC, BC, R1, S1, R2, S2 from previous day Zerodha settlement candles. Restricts Wide CPR days to Trap Reversals only and skips breakouts into immediate CPR hurdles (&lt; 0.35% away).
                     </p>
                   </div>
@@ -390,7 +390,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                         Guaranteed Green Day
                       </Badge>
                     </div>
-                    <p className="text-xs text-slate-900 font-medium mt-0.5 leading-relaxed">
+                    <p className="text-xs text-foreground font-medium mt-0.5 leading-relaxed">
                       Secures day&apos;s profit at target milestone, sets Stop Loss to COST (₹0 risk-free trade), and lets the runner capture 100–300+ pt trends.
                     </p>
                   </div>
@@ -416,7 +416,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                       onChange={(e) => set("b15PartialBookingR", e.target.value)}
                       className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-xl"
                     />
-                    <p className="text-xs text-slate-700 font-medium mt-1">
+                    <p className="text-xs text-foreground/75 font-medium mt-1">
                       Target R-multiple to lock first batch (default: +1.8R)
                     </p>
                   </div>
@@ -431,7 +431,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                       onChange={(e) => set("b15PartialBookingPct", e.target.value)}
                       className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-xl"
                     />
-                    <p className="text-xs text-slate-700 font-medium mt-1">
+                    <p className="text-xs text-foreground/75 font-medium mt-1">
                       % lots squared off at Target (default: 50% Banker, 50% Runner)
                     </p>
                   </div>
@@ -443,17 +443,17 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             <div className="p-3.5 rounded-xl border border-border bg-secondary/40 space-y-3">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2.5">
-                  <Activity className="h-4 w-4 text-slate-600  shrink-0" />
+                  <Activity className="h-4 w-4 text-foreground/75  shrink-0" />
                   <div>
                     <div className="flex items-center gap-1.5">
                       <p className="text-xs font-bold text-foreground">
                         Midday Dead-Zone Chop Shield (11:45 AM – 13:00 PM)
                       </p>
-                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-border text-slate-700 ">
+                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-border text-foreground/75 ">
                         Anti-Whipsaw
                       </Badge>
                     </div>
-                    <p className="text-xs text-slate-900 font-medium mt-0.5 leading-relaxed">
+                    <p className="text-xs text-foreground font-medium mt-0.5 leading-relaxed">
                       Blocks new breakout entries during European morning transition chop. Active trailing runners continue without interruption.
                     </p>
                   </div>
@@ -462,7 +462,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   type="checkbox"
                   checked={form.b15EnableMiddayChopFilter ?? true}
                   onChange={(e) => set("b15EnableMiddayChopFilter", e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-400 text-slate-600 focus:ring-slate-500 cursor-pointer shrink-0 ml-3"
+                  className="h-4 w-4 rounded border-slate-400 text-foreground/75 focus:ring-slate-500 cursor-pointer shrink-0 ml-3"
                 />
               </label>
 
@@ -490,12 +490,12 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               )}
             </div>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <Shield className="h-4 w-4 text-emerald-500 shrink-0" />
                 <div>
                   <p className="text-xs font-bold text-foreground">Structural Candle Stop Loss (Tight Risk)</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Sets SL to breakout candle extreme (45–80 pts) instead of opposite 15m range (200–350 pts)
                   </p>
                 </div>
@@ -504,16 +504,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15UseStructuralCandleSl ?? true}
                 onChange={(e) => set("b15UseStructuralCandleSl", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <Activity className="h-4 w-4 text-indigo-500 shrink-0" />
                 <div>
                   <p className="text-xs font-bold text-foreground">RSI(14) Momentum Trend Alignment</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Confirms active momentum expansion (RSI &gt; 55 for Long, &lt; 45 for Short)
                   </p>
                 </div>
@@ -522,16 +522,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableRsiFilter ?? true}
                 onChange={(e) => set("b15EnableRsiFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <Zap className="h-4 w-4 text-amber-500 shrink-0" />
                 <div>
                   <p className="text-xs font-bold text-foreground">Early Breakeven Trailing (+0.7R -&gt; COST)</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Locks ₹0 risk-free trade at +0.7R profit before normal pullback retests
                   </p>
                 </div>
@@ -540,7 +540,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableBreakevenTrail ?? true}
                 onChange={(e) => set("b15EnableBreakevenTrail", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer"
               />
             </label>
 
@@ -558,7 +558,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                         Zero Greed
                       </Badge>
                     </div>
-                    <p className="text-xs text-slate-900 font-medium mt-0.5 leading-relaxed">
+                    <p className="text-xs text-foreground font-medium mt-0.5 leading-relaxed">
                       Once in profit, trails SL along dynamic EMA &amp; VWAP support curve. Rides multi-hundred point runners until candle exhaustion.
                     </p>
                   </div>
@@ -614,7 +614,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                       High Win-Rate
                     </Badge>
                   </div>
-                  <p className="text-xs text-slate-900 font-medium mt-0.5 leading-relaxed">
+                  <p className="text-xs text-foreground font-medium mt-0.5 leading-relaxed">
                     Fades false breakouts: Buys Bear Traps at range bottom, Sells Bull Traps at range top
                   </p>
                 </div>
@@ -628,12 +628,12 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </label>
 
             {/* Breakout Retest Confirmation */}
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <Shield className="h-4 w-4 text-sky-500 shrink-0" />
                 <div>
                   <p className="text-xs font-bold text-foreground">Breakout Retest &amp; Body Conviction Filter</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Requires candle body &ge; 40% and confirmed retest bounce (eliminates wick traps)
                   </p>
                 </div>
@@ -642,17 +642,17 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableRetestConfirmation ?? true}
                 onChange={(e) => set("b15EnableRetestConfirmation", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-sky-600 focus:ring-sky-500 cursor-pointer"
               />
             </label>
 
             {/* CPR Trend Day Filter */}
-            <label className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
                 <Target className="h-4 w-4 text-blue-500 shrink-0" />
                 <div>
                   <p className="text-xs font-bold text-foreground">Central Pivot Range (CPR) Narrow Trend Filter</p>
-                  <p className="text-xs text-slate-700 font-medium mt-0.5">
+                  <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Identifies high-momentum trending sessions using CPR bandwidth
                   </p>
                 </div>
@@ -661,7 +661,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableCprFilter ?? true}
                 onChange={(e) => set("b15EnableCprFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
             </label>
           </div>
@@ -677,7 +677,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("b15MaxLossesPerDay", e.target.value)}
                 className="font-bold text-xs text-red-600 bg-red-500/10 border-red-500/30 rounded-xl h-9"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 1-Loss Shield: stops after 1 SL hit
               </p>
             </div>
@@ -691,7 +691,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("b15MaxOpeningRangePts", e.target.value)}
                 className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Skip day if 15m bar &gt; limit
               </p>
             </div>
@@ -703,7 +703,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("b15PrimeWindowEndTime", e.target.value)}
                 className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 No new entries after (IST)
               </p>
             </div>
@@ -718,7 +718,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("b15BreakevenTriggerR", e.target.value)}
                 className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 R-multiple to trail to COST
               </p>
             </div>
@@ -736,7 +736,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("b15CprNarrowThresholdPct", e.target.value)}
                 className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 CPR width &lt; threshold = Trend Day Candidate
               </p>
             </div>
@@ -750,7 +750,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("b15TrapSlBufferPts", e.target.value)}
                 className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Buffer beyond sweep extreme for tight trap SL
               </p>
             </div>
@@ -769,7 +769,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("targetRs", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 One-and-Done daily target lock (default: ₹1,500)
               </p>
             </div>
@@ -785,7 +785,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("stopLossRs", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Halts strategy if daily loss reaches threshold (default: ₹1,000)
               </p>
             </div>
@@ -804,7 +804,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 Systematic 80% Profitability Engine &amp; Capital Shield Active
               </p>
             </div>
-            <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+            <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
               Eliminates the #1 reason options buyers lose money: <strong className="text-foreground font-semibold">Theta Decay &amp; Fakeout Chop</strong>.
               Employs &ldquo;The Banker &amp; The Runner&rdquo; partial booking (+50% ROI / 1:1.5R) with automatic Cost Trailing, Midday Chop Dead-Zone, and Macro Market Alignment.
             </p>
@@ -820,7 +820,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 onChange={(e) => set("sMaxCapital", e.target.value)}
                 className="bg-background border-border text-foreground font-semibold"
               />
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Deploys up to 25% capital per trade with strict risk-based sizing (never risking more than your Stop Loss ₹).
               </p>
             </div>
@@ -836,7 +836,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 <option value="35">35 Minutes (Extended Swing)</option>
                 <option value="45">45 Minutes (Maximum Cutoff)</option>
               </select>
-              <p className="text-xs text-slate-700 font-medium mt-1">
+              <p className="text-xs text-foreground/75 font-medium mt-1">
                 Auto-exits at market if trade goes flat without reaching Target 1.
               </p>
             </div>
@@ -849,7 +849,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 <span className="text-xs font-bold text-emerald-950 font-black">Target 1 (+50% ROI / 1:1.5R)</span>
                 <Badge className="bg-emerald-600/20 text-emerald-800  text-[10px] font-bold border-0">The Banker</Badge>
               </div>
-              <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+              <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                 Books 50% lots and moves Stop-Loss to Entry Price + ₹0.50 cushion (100% Risk-Free).
               </p>
             </div>
@@ -858,7 +858,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 <span className="text-xs font-bold text-indigo-950 font-black">Target 2 (+100% ROI / 1:3.0R)</span>
                 <Badge className="bg-indigo-600/20 text-indigo-800  text-[10px] font-bold border-0">The Runner</Badge>
               </div>
-              <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+              <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                 Trails remainder dynamically behind 15-EMA for peak trend continuation gains.
               </p>
             </div>
@@ -871,12 +871,12 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </p>
 
             {/* The Banker Partial Booking */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors">
               <div>
                 <p className="text-xs font-bold text-foreground">
                   &ldquo;The Banker &amp; The Runner&rdquo; Partial Profit Booking
                 </p>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Automatically books 50% lots at Target 1 and trails remainder at breakeven + cost.
                 </p>
               </div>
@@ -884,17 +884,17 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.sEnablePartialBooking !== false}
                 onChange={(e) => set("sEnablePartialBooking", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
             </div>
 
             {/* Macro Market Gate */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors">
               <div>
                 <p className="text-xs font-bold text-foreground">
                   NIFTY 50 Macro Trend Gate
                 </p>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Suppresses stock Calls when NIFTY is dumping below open, and suppresses stock Puts when NIFTY is rallying.
                 </p>
               </div>
@@ -902,17 +902,17 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.sEnableMarketTrendFilter !== false}
                 onChange={(e) => set("sEnableMarketTrendFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
             </div>
 
             {/* Midday Chop Dead Zone */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-white border-2 border-slate-200 hover:bg-accent/40 transition-colors">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors">
               <div>
                 <p className="text-xs font-bold text-foreground">
                   Midday Chop Dead-Zone Filter (11:30 AM – 01:00 PM IST)
                 </p>
-                <p className="text-xs text-slate-700 font-medium mt-0.5">
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Prohibits new breakout triggers during European transition chop, eliminating over 65% of false breakouts.
                 </p>
               </div>
@@ -920,13 +920,13 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.sEnableMiddayChopFilter !== false}
                 onChange={(e) => set("sEnableMiddayChopFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
             </div>
 
             {/* 1 Win & Done / 1 Loss & Done */}
             <div className="grid grid-cols-2 gap-3 pt-1">
-              <div className="p-3 rounded-xl bg-white border-2 border-slate-200">
+              <div className="p-3 rounded-xl bg-card border-2 border-border">
                 <label className="text-xs font-bold block mb-1 text-foreground">&ldquo;1 Win &amp; Done&rdquo; Daily Rule</label>
                 <select
                   value={form.sMaxWinsPerDay || "1"}
@@ -938,7 +938,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   <option value="3">No Win Limit</option>
                 </select>
               </div>
-              <div className="p-3 rounded-xl bg-white border-2 border-slate-200">
+              <div className="p-3 rounded-xl bg-card border-2 border-border">
                 <label className="text-xs font-bold block mb-1 text-foreground">&ldquo;1 Loss &amp; Done&rdquo; Shield</label>
                 <select
                   value={form.sMaxLossesPerDay || "1"}
@@ -965,14 +965,14 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   Strict Risk-Based Sizing &amp; 15-EMA Live Trailing Active
                 </p>
               </div>
-              <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+              <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                 Strict Risk-Based Sizing (Loss capped at your Stop Loss ₹, e.g. ₹500) &amp; max 25% capital deployed per trade at 5x MIS leverage. Stop Loss is placed structurally below entry with a safety buffer (capped at 1.2% max) and trailed live with 15-EMA directly on Zerodha exchange servers.
               </p>
             </div>
           ) : (
             <div className="p-4 rounded-2xl bg-secondary/40 border border-border flex gap-3">
               <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+              <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                 Orders are placed as <strong className="text-foreground font-semibold">Limit</strong> orders for Entry, Stop-Loss (SL-Limit), and Target.
                 Fixed amounts are per trade. Position size is calculated dynamically to adhere to your risk limit.
               </p>
@@ -1009,7 +1009,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           </div>
 
           {/* Exit Exact at Target Toggle */}
-          <div className="p-4 rounded-2xl bg-white border-2 border-slate-200 space-y-2.5 shadow-xs">
+          <div className="p-4 rounded-2xl bg-card border-2 border-border space-y-2.5 shadow-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Target className="h-4 w-4 text-emerald-500 shrink-0" />
@@ -1022,10 +1022,10 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   onChange={(e) => set("exitExactAtTarget", e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-9 h-5 bg-gray-300  peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                <div className="w-9 h-5 bg-gray-300  peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
               </label>
             </div>
-            <p className="text-xs text-slate-900 font-medium leading-relaxed font-normal">
+            <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
               When enabled, immediately squares off the position the moment your exact target profit (e.g. <strong className="text-foreground font-semibold">₹{form.targetRs || "500"}</strong>) or stop loss (e.g. <strong className="text-foreground font-semibold">₹{form.stopLossRs || "500"}</strong>) is hit, with zero trailing or giving back gains.
             </p>
           </div>

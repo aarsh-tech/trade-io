@@ -11,7 +11,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <AuthGuard>
       <MarketSocketProvider>
-      <div className="flex h-screen overflow-hidden bg-slate-50/50">
+      <div className="flex h-screen overflow-hidden bg-muted/25">
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden relative">
           <TopBar />

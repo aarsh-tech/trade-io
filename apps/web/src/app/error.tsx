@@ -31,7 +31,7 @@ export default function ErrorBoundary({ error, reset }: ErrorProps) {
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-3">
           Something went wrong
         </h1>
-        <p className="text-slate-400 text-sm md:text-base mb-8 max-w-md">
+        <p className="text-muted-foreground text-sm md:text-base mb-8 max-w-md">
           The application encountered an unexpected rendering error. We've logged the detail and you can try reloading the component.
         </p>
 
@@ -42,7 +42,7 @@ export default function ErrorBoundary({ error, reset }: ErrorProps) {
             <span className="text-destructive font-semibold">Error: </span>
             {error.message || "An unknown client-side error occurred."}
             {error.digest && (
-              <div className="text-slate-500 mt-1">
+              <div className="text-muted-foreground mt-1">
                 Digest ID: {error.digest}
               </div>
             )}

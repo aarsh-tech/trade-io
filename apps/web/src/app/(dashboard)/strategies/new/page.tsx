@@ -689,19 +689,19 @@ export default function NewStrategyPage() {
 
             {/* Strategy Title & Description */}
             <div>
-              <p className="text-sm font-extrabold text-slate-950 leading-tight truncate">
+              <p className="text-sm font-extrabold text-foreground leading-tight truncate">
                 {form.name || "Untitled Strategy"}
               </p>
-              <p className="text-xs text-slate-800 mt-1 leading-relaxed font-medium">
+              <p className="text-xs text-foreground mt-1 leading-relaxed font-medium">
                 {meta.desc}
               </p>
             </div>
 
             {/* 3-Box Matrix (EXACTLY MATCHING StrategyCard in strategies/page.tsx!) */}
             <div className="grid grid-cols-3 gap-2">
-              <div className="p-2.5 rounded-xl bg-slate-100 border border-slate-300 text-center flex flex-col justify-center">
-                <span className="text-[10px] font-bold text-slate-700 uppercase">Sizing</span>
-                <span className="text-xs font-extrabold text-slate-950 truncate mt-0.5">
+              <div className="p-2.5 rounded-xl bg-muted border border-border text-center flex flex-col justify-center">
+                <span className="text-[10px] font-bold text-foreground/75 uppercase">Sizing</span>
+                <span className="text-xs font-extrabold text-foreground truncate mt-0.5">
                   {form.type === "STOCK_OPTIONS_BUYING"
                     ? `₹${Number(form.sMaxCapital || 25000).toLocaleString("en-IN")}`
                     : `${form.lots || 1} Lot`}
@@ -732,9 +732,9 @@ export default function NewStrategyPage() {
             </div>
 
             {/* Execution & Asset Status Ribbon */}
-            <div className="flex items-center justify-between text-xs py-2 px-3 rounded-xl bg-slate-100 border border-slate-300">
-              <div className="flex items-center gap-1.5 text-slate-800 text-xs font-semibold">
-                <Activity className="h-3.5 w-3.5 text-slate-600 shrink-0" />
+            <div className="flex items-center justify-between text-xs py-2 px-3 rounded-xl bg-muted border border-border">
+              <div className="flex items-center gap-1.5 text-foreground text-xs font-semibold">
+                <Activity className="h-3.5 w-3.5 text-foreground/75 shrink-0" />
                 <span>Mode:</span>
                 <span
                   className={cn(
@@ -747,7 +747,7 @@ export default function NewStrategyPage() {
                   {form.isPaperTrade ? "Paper Trade" : "Live Broker"}
                 </span>
               </div>
-              <span className="text-xs font-extrabold text-slate-950">
+              <span className="text-xs font-extrabold text-foreground">
                 {form.symbol === "AUTO" || form.sIsAutoStockSelect
                   ? "180+ F&O Auto"
                   : form.symbol || "AUTO"}
@@ -755,21 +755,21 @@ export default function NewStrategyPage() {
             </div>
 
             {/* Guardrails checklist */}
-            <div className="space-y-1.5 pt-1 border-t border-slate-200">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-900">
+            <div className="space-y-1.5 pt-1 border-t border-border">
+              <p className="text-[11px] font-extrabold uppercase tracking-wider text-foreground">
                 Built-In Guardrails
               </p>
               {meta.features.map((feat: string, idx: number) => (
-                <div key={idx} className="flex items-center gap-2 text-xs text-slate-900 font-medium">
+                <div key={idx} className="flex items-center gap-2 text-xs text-foreground font-medium">
                   <CheckCircle2 className="h-4 w-4 text-emerald-700 shrink-0" />
-                  <span className="truncate text-slate-900">{feat}</span>
+                  <span className="truncate text-foreground">{feat}</span>
                 </div>
               ))}
             </div>
 
             {/* Pre-Flight Checklist */}
-            <div className="space-y-2 pt-1 border-t border-slate-200">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-900">
+            <div className="space-y-2 pt-1 border-t border-border">
+              <p className="text-[11px] font-extrabold uppercase tracking-wider text-foreground">
                 Pre-Flight Readiness
               </p>
               <div className="space-y-1 text-xs">
@@ -786,11 +786,11 @@ export default function NewStrategyPage() {
                       ) : (
                         <span className="h-2 w-2 rounded-full bg-slate-400 inline-block" />
                       )}
-                      <span className={cn(item.ready ? "text-slate-950 font-bold" : "text-slate-700 font-medium")}>
+                      <span className={cn(item.ready ? "text-foreground font-bold" : "text-foreground/75 font-medium")}>
                         {item.label}
                       </span>
                     </span>
-                    <span className={cn("text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md", item.ready ? "bg-emerald-100 text-emerald-900 border border-emerald-300" : "bg-slate-200 text-slate-800 border border-slate-300")}>
+                    <span className={cn("text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md", item.ready ? "bg-emerald-100 text-emerald-900 border border-emerald-300" : "bg-border text-foreground border border-border")}>
                       {item.ready ? "Ready" : "Pending"}
                     </span>
                   </div>
@@ -804,7 +804,7 @@ export default function NewStrategyPage() {
                 <Sparkles className="h-4 w-4 text-blue-700 shrink-0" />
                 <span>Trading Edge</span>
               </div>
-              <p className="text-xs text-slate-900 font-medium leading-relaxed">
+              <p className="text-xs text-foreground font-medium leading-relaxed">
                 {meta.tip}
               </p>
             </div>
