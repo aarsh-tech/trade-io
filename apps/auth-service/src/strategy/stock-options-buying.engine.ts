@@ -5,6 +5,7 @@ import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { StockOptionsBuyingConfig } from './dto/strategy.dto';
 import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
+import { findOpenPosition, strategyOrderWhere, istDayStart } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
@@ -143,6 +144,12 @@ export class StockOptionsBuyingEngine {
       state,
       `▶ High-Accuracy Stock Options Buying engine started — Mode: ${isAuto ? 'AUTO (180+ F&O Momentum Scanner)' : `Manual (${config.symbol})`} | Bias: ${config.directionBias || 'BOTH'} | Capital: ₹${config.maxCapital} | Execution: ${strategy.isPaperTrade ? 'PAPER' : 'LIVE'}`,
     );
+    // Restore today's trade count so a restart cannot exceed the daily cap
+    state.tradesPlacedToday = await this.prisma.order.count({
+      where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, side: 'BUY', status: 'COMPLETE' },
+    }).catch(() => 0);
+
+    const positionRecovered = await this.recoverOpenPosition(state, brokerAccount);
     await this.persistLogs(state);
 
     // Tick every 15 seconds for rapid position monitoring & trigger checks
@@ -152,11 +159,62 @@ export class StockOptionsBuyingEngine {
     );
     this.timers.set(strategyId, timer);
 
+    if (positionRecovered) {
+      // Skip the historical catch-up: it would replay signals over a position that is already open
+      this.tick(strategyId).catch(e => this.logger.error(e));
+      return { executionId: execution.id };
+    }
+
     this.initialCatchup(strategyId).then(() => {
       this.tick(strategyId).catch(e => this.logger.error(e));
     }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
 
     return { executionId: execution.id };
+  }
+
+  /** Re-adopts a position that was open when the process died (LIVE: broker, PAPER: saved orders). */
+  private async recoverOpenPosition(state: StrategyState, brokerAccount: any): Promise<boolean> {
+    try {
+      const pos = await findOpenPosition({
+        prisma: this.prisma,
+        factory: this.factory,
+        strategyId: state.strategyId,
+        executionId: state.executionId,
+        isPaper: state.isPaperTrade,
+        brokerAccount,
+        accept: (sym) => /(CE|PE)$/.test(sym),
+      });
+      if (!pos || pos.side !== 'LONG') return false; // this engine only buys options
+
+      const entry = pos.avgPrice;
+      const maxLoss = state.config.stopLossRs && state.config.stopLossRs > 0 ? state.config.stopLossRs : 500;
+      const slDistance = Math.min(entry * 0.3, maxLoss / pos.qty);
+      const sl = pos.slPrice ?? this.roundTick(Math.max(0.05, entry - slDistance));
+
+      state.optionSymbol = pos.symbol;
+      state.signalSide = pos.symbol.endsWith('PE') ? 'PUT' : 'CALL';
+      state.entryTriggerPrice = entry;
+      state.stopLossPrice = sl;
+      state.target1Price = this.roundTick(entry * 1.5);
+      state.target2Price = this.roundTick(entry * 2);
+      state.targetPrice = state.target2Price;
+      state.highestPriceReached = entry;
+      state.isT1Reached = false;
+      state.isSlTrailedToCost = false;
+      state.positionQty = pos.qty;
+      state.initialQty = pos.qty;
+      state.lotSize = pos.qty; // real lot size unknown after a restart; disables partial booking
+      state.entryOrderId = pos.entryOrderId;
+      state.entryTime = Date.now();
+      state.stateType = 'ACTIVE_POSITION';
+      state.activeStockSymbol = pos.symbol.replace(/\d.*$/, '');
+
+      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Re-adopted open option position ${pos.symbol}: ${pos.qty} qty @ ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | T1: ₹${state.target1Price.toFixed(2)} | T2: ₹${state.target2Price.toFixed(2)}`);
+      return true;
+    } catch (err: any) {
+      this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
+      return false;
+    }
   }
 
   async stop(strategyId: string): Promise<void> {
@@ -1006,6 +1064,7 @@ export class StockOptionsBuyingEngine {
             data: {
               userId: exec.strategy.userId,
               brokerAccountId: state.brokerAccountId,
+              strategyId: state.strategyId,
               executionId: state.executionId,
               symbol: state.optionSymbol || state.config.symbol || 'OPTION',
               exchange: 'NFO',
@@ -1558,6 +1617,7 @@ export class StockOptionsBuyingEngine {
         data: {
           userId: exec.strategy.userId,
           brokerAccountId: state.brokerAccountId,
+          strategyId: state.strategyId,
           executionId: state.executionId,
           symbol: state.optionSymbol || state.config.symbol || 'OPTION',
           exchange: 'NFO',

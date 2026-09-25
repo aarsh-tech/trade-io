@@ -2,24 +2,16 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 
 @Injectable()
-export class StrategyService implements OnModuleInit {
+export class StrategyService {
   constructor(private prisma: PrismaService) { }
 
-  async onModuleInit() {
-    try {
-      // Clean up orphaned RUNNING executions across all strategies on startup
-      await this.prisma.strategyExecution.updateMany({
-        where: { status: 'RUNNING' },
-        data: { status: 'STOPPED', stoppedAt: new Date() },
-      });
-    } catch { }
-  }
+  // Orphaned RUNNING executions are reconciled by MarketSchedulerService.reconcileOnBoot(),
+  // which resumes active strategies instead of blanket-stopping them.
 
   async list(userId: string) {
     const strategies = await this.prisma.strategy.findMany({

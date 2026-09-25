@@ -5,6 +5,7 @@ import { Breakout15MinConfig } from './dto/strategy.dto';
 import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
+import { findOpenPosition, strategyOrderWhere } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
 interface Candle {
@@ -166,7 +167,7 @@ export class Breakout15MinEngine {
 
     const todayOrders = await this.prisma.order.findMany({
       where: {
-        strategyId,
+        ...strategyOrderWhere(strategyId),
         createdAt: { gte: todayMidnight },
         status: 'COMPLETE',
       },
@@ -250,6 +251,17 @@ export class Breakout15MinEngine {
       this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}`);
     }
 
+    // ── Open-position recovery (restart / crash) ─────────────────────────────
+    // Must run before the completion checks below, otherwise a restart with an open position would
+    // "complete" the strategy and leave that position unmanaged.
+    if (await this.recoverOpenPosition(state, brokerAccount)) {
+      await this.persistLogs(state);
+      const recTimer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
+      this.timers.set(strategyId, recTimer);
+      this.tick(strategyId).catch(e => this.logger.error(e));
+      return { executionId: execution.id };
+    }
+
     if (recoveredTradesToday >= config.maxTradesPerDay) {
       this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) already reached for today. Strategy completed.`);
       await this.persistLogs(state);
@@ -281,6 +293,63 @@ export class Breakout15MinEngine {
     }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
 
     return { executionId: execution.id };
+  }
+
+  /**
+   * Re-adopts a position that was open when the process died (LIVE: from the broker, PAPER: from
+   * saved paper orders) and resumes real-time SL / target / trailing management.
+   */
+  private async recoverOpenPosition(state: StrategyState, brokerAccount: any): Promise<boolean> {
+    try {
+      const pos = await findOpenPosition({
+        prisma: this.prisma,
+        factory: this.factory,
+        strategyId: state.strategyId,
+        executionId: state.executionId,
+        isPaper: state.isPaperTrade,
+        brokerAccount,
+      });
+      if (!pos) return false;
+
+      const isOption = pos.exchange === 'NFO' || pos.exchange === 'BFO' || pos.symbol.endsWith('CE') || pos.symbol.endsWith('PE');
+      const isLong = pos.side === 'LONG';
+      const entry = pos.avgPrice;
+      const fallbackRisk = Math.max(0.5, entry * 0.01);
+      const sl = pos.slPrice ?? (isLong ? entry - fallbackRisk : entry + fallbackRisk);
+      const risk = Math.max(0.5, Math.abs(entry - sl));
+      const rr = state.config.riskRewardRatio ?? 2.0;
+
+      state.entryTriggered = pos.side;
+      state.optionSymbol = isOption ? pos.symbol : null;
+      if (!isOption) state.futureSymbol = pos.symbol;
+      state.entryPrice = entry;
+      state.currentLtp = entry;
+      state.currentPnlRs = 0;
+      state.currentPnlPct = 0;
+      state.peakPnlRs = 0;
+      state.executedQty = pos.qty;
+      state.config.qty = pos.qty;
+      state.entryFilled = true;
+      state.entryOrderId = pos.entryOrderId;
+      state.slOrderId = pos.slOrderId;
+      state.targetOrderId = pos.targetOrderId;
+      state.stopLossPrice = sl;
+      state.initialSlPrice = sl;
+      state.initialRiskPoints = risk;
+      state.targetPrice = pos.targetPrice ?? (isLong ? entry + risk * rr : entry - risk * rr);
+      state.setupTimestamp = Date.now();
+      state.highestPriceReached = entry;
+      state.lowestPriceReached = entry;
+
+      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Re-adopted open position ${pos.symbol}: ${pos.qty} qty ${pos.side} @ ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)}${pos.slOrderId ? ` [Order: ${pos.slOrderId}]` : ''} | Target: ₹${state.targetPrice.toFixed(2)}`);
+
+      const client = brokerAccount?.accessToken ? this.factory.createClient(brokerAccount) : null;
+      await this.startRealtimeMonitor(state, client);
+      return true;
+    } catch (err: any) {
+      this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
+      return false;
+    }
   }
 
   async stop(strategyId: string): Promise<void> {
@@ -3079,6 +3148,7 @@ export class Breakout15MinEngine {
         data: {
           userId: account.userId,
           brokerAccountId: account.id,
+          strategyId,
           executionId,
           symbol: params.symbol,
           exchange: params.exchange,

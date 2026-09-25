@@ -43,6 +43,9 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
    */
   private lastLossCheckTime: number = 0;
 
+  /** Process start time; boot reconciliation waits a few seconds for tickers/DB to settle. */
+  private readonly bootAt = Date.now();
+  private bootReconciled = false;
 
   /**
    * Strategy IDs that the user explicitly stopped during the current
@@ -65,8 +68,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.logger.log('Market Scheduler initialised — will auto-start strategies at 09:15:01 IST sharp');
-    // Check immediately on boot (handles the case where the server restarts mid-session)
-    this.checkAndAct().catch((e) => this.logger.error(e));
+    // Mid-session restarts are handled by reconcileOnBoot() once the process has settled
     // High-precision 1-second check loop
     this.timer = setInterval(() => this.checkAndAct().catch((e) => this.logger.error(e)), 1_000);
   }
@@ -102,6 +104,12 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     const ist = new Date(utcMs + (330 * 60000));
     const day = ist.getDay(); // 0 = Sunday, 6 = Saturday
 
+    // ── Boot reconciliation (once per process, ~5s after start) ─────────────────
+    if (!this.bootReconciled && Date.now() - this.bootAt >= 5_000) {
+      this.bootReconciled = true;
+      await this.reconcileOnBoot(ist, day);
+    }
+
     // Skip auto-start/auto-stop on weekends when Indian markets are closed
     if (day === 0 || day === 6) {
       return;
@@ -123,16 +131,18 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // ── Auto-start at Market Open (09:15:00 to 09:16:00 IST) ───────────────────
-    // Fires once per day at 09:15 IST sharp for all strategies configured with autoStart=true.
-    // The 10-second daytime periodic check has been completely removed to prevent zombie restarts.
-    if (hhmm >= MARKET_OPEN && hhmm <= MARKET_OPEN + 1) {
+    // ── Auto-start at Market Open ─────────────────────────────────────────────
+    // Fires once per IST day for all strategies with autoStart=true (or still active from before a
+    // restart). The session-wide window (not just 09:15-09:16) makes a late start or a restart
+    // idempotent: per-strategy guards in autoStartStrategies() skip anything already running,
+    // stopped, or completed today.
+    if (hhmm >= MARKET_OPEN && hhmm < 15 * 60 + 25) {
       const todayKey = ist.toDateString();
       if (this.lastAutoStartDate !== todayKey) {
         this.lastAutoStartDate = todayKey;
         this.manuallyStoppedToday.clear();
-        this.logger.log('🔔 09:15 IST Market Open — Auto-starting configured strategies for today...');
-        await this.autoStartStrategies();
+        this.logger.log('🔔 Market session — auto-starting configured strategies for today...');
+        await this.autoStartStrategies(true);
       }
     }
 
@@ -154,12 +164,50 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // ── Boot recovery ───────────────────────────────────────────────────────────
+
+  /**
+   * Runs once after a (re)start. During the trading session it re-starts every strategy that was
+   * still active when the process died (engine.start re-adopts open broker positions), then closes
+   * any execution/isActive flag left dangling so the UI never shows a dead strategy as running.
+   * A user stop clears isActive/autoStart in the DB, so manually stopped strategies stay stopped.
+   */
+  private async reconcileOnBoot(ist: Date, day: number) {
+    try {
+      const hhmm = ist.getHours() * 60 + ist.getMinutes();
+      const inSession = day !== 0 && day !== 6 && hhmm >= 9 * 60 + 15 && hhmm < 15 * 60 + 25;
+      if (inSession) {
+        this.lastAutoStartDate = ist.toDateString();
+        this.logger.log('♻ Boot recovery: resuming strategies that were active before restart...');
+        await this.autoStartStrategies(true);
+      }
+
+      const strategies = await this.prisma.strategy.findMany({
+        select: { id: true, type: true, name: true, isActive: true },
+      });
+      for (const strategy of strategies) {
+        const engine = this.getEngine(strategy.type as string);
+        if (engine?.isRunning(strategy.id)) continue;
+        await this.prisma.strategyExecution.updateMany({
+          where: { strategyId: strategy.id, status: 'RUNNING' },
+          data: { status: 'STOPPED', stoppedAt: new Date() },
+        });
+        if (strategy.isActive) {
+          await this.prisma.strategy.update({ where: { id: strategy.id }, data: { isActive: false } });
+          this.logger.warn(`Boot recovery: "${strategy.name}" could not be resumed — marked inactive`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.error(`Boot recovery error: ${err?.message}`);
+    }
+  }
+
   // ── Auto-start all strategies marked autoStart=true ──────────────────────────
 
-  private async autoStartStrategies() {
+  private async autoStartStrategies(includeActive = false) {
     try {
       const strategies = await this.prisma.strategy.findMany({
-        where: { autoStart: true } as any,
+        where: (includeActive ? { OR: [{ autoStart: true }, { isActive: true }] } : { autoStart: true }) as any,
         include: { brokerAccount: true },
       });
 
@@ -222,7 +270,10 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
           },
         }).catch(() => 0);
 
-        if (todayCompletedOrdersCount >= maxTrades) {
+        // A strategy still flagged active was running when the process died: never skip it on the trade
+        // cap here — it may hold an open position that the engine must re-adopt (the engine itself
+        // completes the strategy if there is nothing to recover).
+        if (!strategy.isActive && todayCompletedOrdersCount >= maxTrades) {
           this.logger.log(`Auto-start: ${strategy.name} already executed ${todayCompletedOrdersCount}/${maxTrades} trades today — skipping auto-start`);
           continue;
         }

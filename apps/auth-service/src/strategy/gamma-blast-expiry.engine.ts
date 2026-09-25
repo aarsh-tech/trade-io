@@ -4,6 +4,7 @@ import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { GammaBlastExpiryConfig } from './dto/strategy.dto';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
+import { findOpenPosition, RecoveredPosition } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
@@ -261,14 +262,25 @@ export class GammaBlastExpiryEngine {
       this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay || 2} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}${recoveredDailyTargetLocked ? ' (Daily Limit Locked)' : ''}`);
     }
 
-    if (recoveredTradesToday >= (config.maxTradesPerDay || 2)) {
+    // An open position (restart / crash) must be re-adopted, never "completed" away with its SL cancelled.
+    const openPos = await findOpenPosition({
+      prisma: this.prisma,
+      factory: this.factory,
+      strategyId,
+      executionId: execution.id,
+      isPaper: !!strategy.isPaperTrade,
+      brokerAccount: strategy.brokerAccount,
+      accept: (sym) => /(CE|PE)$/.test(sym),
+    });
+
+    if (!openPos && recoveredTradesToday >= (config.maxTradesPerDay || 2)) {
       this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay || 2}) already reached for today. Strategy completed.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
       return { executionId: execution.id };
     }
 
-    if (recoveredDailyTargetLocked) {
+    if (!openPos && recoveredDailyTargetLocked) {
       this.log(state, `🔒 Daily Profit/Loss limit already reached today (₹${recoveredRealizedPnlRs.toFixed(2)}). Strategy completed.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `🔒 Auto-Stopped: Daily limit locked`);
@@ -316,76 +328,52 @@ export class GammaBlastExpiryEngine {
     this.log(state, `⏰ Execution Window: ${effectiveStartTime} – ${effectiveEndTime} IST (09:15–09:30 Liquidity Mapping, 15m ORB Sniper Traps, Midday Consolidation & Afternoon Gamma)`);
     this.log(state, `💎 Strike Selection: BUDGET & SMC AWARE (Anti-Whipsaw Noise Insulation | High-Delta ATM/ITM | Afternoon Gamma Blast)`);
 
-    // ── Live Crash / Power Recovery on Startup (Safe Strategy-Owned Only) ──
-    if (!strategy.isPaperTrade && strategy.brokerAccount?.accessToken) {
-      try {
-        const client = this.factory.createClient(strategy.brokerAccount);
-        const kite = client['kite'] || client;
-        if (kite && kite.getPositions) {
-          // Safety verification: Only recover positions that belong to an existing completed BUY order by THIS strategy
-          const recentStrategyOrder = await this.prisma.order.findFirst({
-            where: {
-              strategyId,
-              status: 'COMPLETE',
-              side: 'BUY',
-              createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-            },
-            orderBy: { createdAt: 'desc' },
-          });
-
-          if (recentStrategyOrder) {
-            const positionsData = await kite.getPositions().catch(() => null);
-            const netPositions = positionsData?.net || [];
-            const openPos = netPositions.find((p: any) =>
-              Number(p.quantity) > 0 &&
-              p.tradingsymbol === recentStrategyOrder.symbol
-            );
-
-            if (openPos) {
-              const absQty = Math.abs(Number(openPos.quantity));
-              const entryAvg = Number(openPos.average_price) || Number(openPos.buy_price) || 0;
-              const sym = openPos.tradingsymbol;
-              const isCall = sym.endsWith('CE');
-
-              state.optionSymbol = sym;
-              state.entryTriggered = isCall ? 'CALL_BLAST' : 'PUT_BLAST';
-              state.executedQty = absQty;
-              state.entryPrice = entryAvg;
-              state.initialSlPrice = entryAvg * (1 - (config.initialSlPct || 50) / 100);
-              state.stopLossPrice = state.initialSlPrice;
-              state.peakPrice = entryAvg;
-
-              const orders = await (kite.getOrders ? kite.getOrders() : []).catch(() => []);
-              const openOrders = (orders || []).filter((o: any) => o.tradingsymbol === sym && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'));
-              const slOrder = openOrders.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
-
-              if (slOrder) {
-                state.slOrderId = slOrder.order_id;
-                state.stopLossPrice = Number(slOrder.trigger_price) || state.initialSlPrice;
-              }
-
-              this.log(state, `🔄 [POWER RECOVERY] Reconnected to active strategy-owned option position: ${sym} (${absQty} Qty @ Avg ₹${entryAvg.toFixed(2)}) | SL: ₹${state.stopLossPrice?.toFixed(2)}`);
-              await this.startRealtimeMonitor(state, client);
-            }
-          }
-        }
-      } catch (e: any) {
-        this.logger.debug?.(`Position recovery notice: ${e.message}`);
-      }
+    // ── Crash / Power Recovery on Startup (LIVE from broker, PAPER from saved orders) ──
+    let positionRecovered = false;
+    if (openPos && openPos.side === 'LONG') {
+      positionRecovered = await this.adoptOpenPosition(state, openPos, strategy.brokerAccount);
     }
 
     await this.persistLogs(state);
 
-    this.initialCatchup(strategyId).then(() => {
-      this.logger.log(`Initial catchup completed for Gamma Blast strategy ${strategyId}`);
-    }).catch(err => {
-      this.logger.error(`Initial catchup failed: ${err?.message || err}`);
-    });
+    if (!positionRecovered) {
+      this.initialCatchup(strategyId).then(() => {
+        this.logger.log(`Initial catchup completed for Gamma Blast strategy ${strategyId}`);
+      }).catch(err => {
+        this.logger.error(`Initial catchup failed: ${err?.message || err}`);
+      });
+    }
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 5_000);
     this.timers.set(strategyId, timer);
 
     return { executionId: execution.id };
+  }
+
+  private async adoptOpenPosition(state: GammaStrategyState, pos: RecoveredPosition, brokerAccount: any): Promise<boolean> {
+    try {
+      const entry = pos.avgPrice;
+      const slPct = state.config.initialSlPct || 50;
+
+      state.optionSymbol = pos.symbol;
+      state.entryTriggered = pos.symbol.endsWith('PE') ? 'PUT_BLAST' : 'CALL_BLAST';
+      state.executedQty = pos.qty;
+      state.entryPrice = entry;
+      state.initialSlPrice = entry * (1 - slPct / 100);
+      state.stopLossPrice = pos.slPrice ?? state.initialSlPrice;
+      state.peakPrice = entry;
+      state.slOrderId = pos.slOrderId;
+      state.isPartialExited = pos.qty < pos.initialQty;
+
+      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Reconnected to active strategy-owned option position: ${pos.symbol} (${pos.qty} Qty @ Avg ₹${entry.toFixed(2)}) | SL: ₹${state.stopLossPrice.toFixed(2)}`);
+
+      const client = brokerAccount?.accessToken ? this.factory.createClient(brokerAccount) : null;
+      await this.startRealtimeMonitor(state, client);
+      return true;
+    } catch (err: any) {
+      this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
+      return false;
+    }
   }
 
   async stop(strategyId: string): Promise<void> {

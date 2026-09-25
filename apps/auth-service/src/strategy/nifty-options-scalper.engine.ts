@@ -5,6 +5,7 @@ import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
 import { autoSelectStock } from './smart-stock-picker';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
+import { findOpenPosition, tallyTodaysTrades } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
@@ -262,16 +263,80 @@ export class NiftyOptionsScalperEngine {
     this.running.set(strategyId, state);
     this.log(state, `▶ Nifty 10-Point Scalper Started — ${config.symbol}:${config.exchange} (Target: +${config.targetPoints} pts, SL: -${config.stopLossPoints} pts, Cost Trail: +${config.trailCostAtPoints} pts, Strike: ${config.moneyness || 'ITM'})`);
     this.log(state, `⚡ High-Speed Engine active: 3-sec tick frequency, The Banker & Runner (50% partial book), Two-Loss Shield, Midday Dead-Zone Filter (11:45-13:00), RVOL surge & Trend filters enabled`);
+    // Restore today's trade / win / loss counters so a restart cannot bypass the daily caps and shields
+    if (!replayDate) {
+      const tally = await tallyTodaysTrades(this.prisma, strategyId);
+      state.tradesPlacedToday = tally.trades;
+      state.winningTradesToday = tally.wins;
+      state.dailyLossesCount = tally.losses;
+      if (tally.trades > 0) {
+        this.log(state, `📊 [STATE RECOVERY] Restored today's state: ${tally.trades} trades | ${tally.wins} wins | ${tally.losses} losses | Realized P&L: ₹${tally.realizedPnlRs.toFixed(2)}`);
+      }
+    }
+
+    const positionRecovered = replayDate ? false : await this.recoverOpenPosition(state, strategy.brokerAccount);
     await this.persistLogs(state);
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 3_000);
     this.timers.set(strategyId, timer);
+
+    if (positionRecovered) {
+      // Skip the historical catch-up: it would replay signals over a position that is already open
+      this.tick(strategyId).catch(e => this.logger.error(e));
+      return { executionId: execution.id };
+    }
 
     this.initialCatchup(strategyId, replayDate).then(() => {
       this.tick(strategyId).catch(e => this.logger.error(e));
     }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
 
     return { executionId: execution.id };
+  }
+
+  /** Re-adopts a position that was open when the process died (LIVE: broker, PAPER: saved orders). */
+  private async recoverOpenPosition(state: ScalperStrategyState, brokerAccount: any): Promise<boolean> {
+    try {
+      const pos = await findOpenPosition({
+        prisma: this.prisma,
+        factory: this.factory,
+        strategyId: state.strategyId,
+        executionId: state.executionId,
+        isPaper: state.isPaperTrade,
+        brokerAccount,
+        accept: (sym) => /(CE|PE)$/.test(sym),
+      });
+      if (!pos || pos.side !== 'LONG') return false; // this engine only buys options
+
+      const cfg = state.config;
+      const entry = pos.avgPrice;
+      const slPts = cfg.stopLossPoints || 10;
+      const tgtPts = cfg.targetPoints || 10;
+
+      state.entryTriggered = 'LONG';
+      state.optionSymbol = pos.symbol;
+      state.entryPrice = entry;
+      state.stopLossPrice = pos.slPrice ?? this.roundTick(Math.max(0.05, entry - slPts));
+      state.initialSlPrice = state.stopLossPrice;
+      state.targetPrice = pos.targetPrice ?? this.roundTick(entry + tgtPts);
+      state.slOrderId = pos.slOrderId;
+      state.targetOrderId = pos.targetOrderId;
+      state.executedQty = pos.qty;
+      cfg.qty = pos.qty;
+      state.isPartialBooked = pos.qty < pos.initialQty;
+      state.setupTimestamp = Date.now();
+      state.isCostSlTrailed = false;
+      state.isProfitLockTrailed = false;
+      state.isDynamicTrailingActive = false;
+
+      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Re-adopted open option position ${pos.symbol}: ${pos.qty} qty @ ₹${entry.toFixed(2)} | SL: ₹${state.stopLossPrice.toFixed(2)}${pos.slOrderId ? ` [Order: ${pos.slOrderId}]` : ''} | Target: ₹${state.targetPrice.toFixed(2)}`);
+
+      const client = brokerAccount?.accessToken ? this.factory.createClient(brokerAccount) : null;
+      await this.startRealtimeMonitor(state, client);
+      return true;
+    } catch (err: any) {
+      this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
+      return false;
+    }
   }
 
   async stop(strategyId: string): Promise<void> {
