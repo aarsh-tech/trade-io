@@ -3,6 +3,8 @@ import { MarketGateway } from './market.gateway';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerType } from '@prisma/client';
+import { INDEX_INSTRUMENTS, InstrumentStore } from '../brokers/instrument-store';
+import { toKiteError } from '../brokers/kite-errors';
 
 @Injectable()
 export class TickerService implements OnModuleInit, OnModuleDestroy {
@@ -10,6 +12,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   private tickers = new Map<string, any>();
   private failedAccounts = new Map<string, { timestamp: number; accessToken: string }>();
   private refreshInterval: NodeJS.Timeout;
+  private warmInterval: NodeJS.Timeout;
   private listeners = new Set<(ticks: Record<string, number>) => void>();
 
   registerListener(callback: (ticks: Record<string, number>) => void) {
@@ -37,13 +40,14 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
           const isBfo = symbol.startsWith('SENSEX') || symbol.includes('BFO') || symbol.startsWith('BSE:SENSEX');
           const isOptionOrFuture = /CE$|PE$|FUT$/.test(symbol) || symbol.includes('-') || symbol.startsWith('NIFTY') || symbol.startsWith('BANKNIFTY');
           const primaryExchange = isBfo ? 'BFO' : (isOptionOrFuture ? 'NFO' : 'NSE');
-          let instruments = await client.getInstruments(primaryExchange).catch(() => []);
+          // All of these come from the shared daily master (cached), not a REST call per miss.
+          let instruments = await client.getInstruments(primaryExchange);
           let match = instruments.find((i: any) => i.tradingsymbol === symbol);
           if (!match && isBfo) {
-            const bseInstruments = await client.getInstruments('BSE').catch(() => []);
+            const bseInstruments = await client.getInstruments('BSE');
             match = bseInstruments.find((i: any) => i.tradingsymbol === symbol);
           } else if (!match && !isOptionOrFuture) {
-            const nfoInstruments = await client.getInstruments('NFO').catch(() => []);
+            const nfoInstruments = await client.getInstruments('NFO');
             match = nfoInstruments.find((i: any) => i.tradingsymbol === symbol);
           }
           if (match?.instrument_token) {
@@ -107,10 +111,37 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
     // Check every 30 seconds (reduced from 10s to lower idle load)
     this.refreshInterval = setInterval(() => this.syncTickers(), 30000);
+
+    // Refresh the shared instrument master shortly after Kite publishes it (08:45 IST), so the
+    // first request of the day never pays for the download.
+    void this.warmInstrumentStore();
+    this.warmInterval = setInterval(() => void this.warmInstrumentStore(), 5 * 60_000);
+  }
+
+  /** Loads NSE/NFO/BFO masters once per trading day, from 08:45 IST on. Failures are retried next tick. */
+  private async warmInstrumentStore() {
+    try {
+      const ist = new Date(Date.now() + 5.5 * 3600_000);
+      const minute = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+      const weekday = ist.getUTCDay() >= 1 && ist.getUTCDay() <= 5;
+      const exchanges = ['NSE', 'NFO', 'BFO'];
+      const stale = exchanges.filter((e) => !InstrumentStore.isFresh(e));
+      if (stale.length === 0 || !weekday || minute < 8 * 60 + 45 || minute > 15 * 60 + 35) return;
+
+      const account = await this.prisma.brokerAccount.findFirst({
+        where: { isActive: true, accessToken: { not: null }, tokenHealth: { not: 'EXPIRED' } },
+      });
+      if (!account) return;
+      const client = this.brokerFactory.createClient(account);
+      for (const exchange of stale) await client.getInstruments(exchange);
+    } catch (err: any) {
+      this.logger.warn(`Instrument master warm-up failed, will retry: ${err?.message || err}`);
+    }
   }
 
   onModuleDestroy() {
     if (this.refreshInterval) clearInterval(this.refreshInterval);
+    if (this.warmInterval) clearInterval(this.warmInterval);
     this.tickers.forEach((ticker) => {
       try { ticker.disconnect(); } catch (_) {}
     });
@@ -315,33 +346,28 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       const hasBse = symbols.some(s => s.startsWith('BSE') || s.includes('SENSEX'));
       const hasBfo = symbols.some(s => s.startsWith('BFO') || s.includes('SENSEX'));
 
-      const fetches: Promise<any[]>[] = [
-        client.getInstruments('NSE').catch(() => []),
-        client.getInstruments('NFO').catch(() => []),
-      ];
-      if (hasBse) fetches.push(client.getInstruments('BSE').catch(() => []));
-      if (hasBfo) fetches.push(client.getInstruments('BFO').catch(() => []));
-
-      const instrumentArrays = await Promise.all(fetches);
+      // Shared daily instrument master (fetched once, not per ticker). NSE and NFO are required:
+      // a failure here surfaces to the catch below instead of building an empty token map.
+      const exchanges = ['NSE', 'NFO'];
+      if (hasBse) exchanges.push('BSE');
+      if (hasBfo) exchanges.push('BFO');
+      const instrumentArrays = await Promise.all(exchanges.map((e) => client.getInstruments(e)));
       const allInst = instrumentArrays.flat();
       const tokenToSymbol = new Map<number, { symbol: string; exchange: string }>();
       const symbolToToken = new Map<string, number>();
-      
-      // Standard index tokens — each token maps to ONE canonical {symbol, exchange}
-      // Per Kite docs, index instruments have unique tokens per exchange.
-      const indexEntries: Array<{ symbol: string; exchange: string; token: number; aliases: string[] }> = [
-        { symbol: 'NIFTY 50', exchange: 'NSE', token: 256265, aliases: ['NSE:NIFTY 50'] },
-        { symbol: 'NIFTY BANK', exchange: 'NSE', token: 260105, aliases: ['BANKNIFTY', 'NSE:BANKNIFTY'] },
-        { symbol: 'SENSEX', exchange: 'BSE', token: 265, aliases: ['BSE:SENSEX'] },
-        { symbol: 'FINNIFTY', exchange: 'NSE', token: 257801, aliases: ['NSE:FINNIFTY'] },
-        { symbol: 'MIDCPNIFTY', exchange: 'NSE', token: 288009, aliases: ['NSE:MIDCPNIFTY'] },
-        { symbol: 'NIFTY IT', exchange: 'NSE', token: 257545, aliases: ['NSE:NIFTY IT'] },
-      ];
-      indexEntries.forEach(({ symbol, exchange, token, aliases }) => {
-        tokenToSymbol.set(token, { symbol, exchange });
-        symbolToToken.set(symbol, token);
-        aliases.forEach((alias) => symbolToToken.set(alias, token));
-      });
+
+      // Index rows: each token maps to ONE canonical {symbol, exchange}. Tokens come from the
+      // master; the fixed ones only claim the token first so the instrument dump can't overwrite them.
+      const registerIndex = (idx: (typeof INDEX_INSTRUMENTS)[number], token: number) => {
+        tokenToSymbol.set(token, { symbol: idx.tradingsymbol, exchange: idx.exchange });
+        symbolToToken.set(idx.tradingsymbol, token);
+        symbolToToken.set(`${idx.exchange}:${idx.tradingsymbol}`, token);
+        idx.aliases.forEach((alias) => {
+          symbolToToken.set(alias, token);
+          symbolToToken.set(`${idx.exchange}:${alias}`, token);
+        });
+      };
+      INDEX_INSTRUMENTS.forEach((idx) => idx.token && registerIndex(idx, idx.token));
 
       allInst.forEach((i: any) => {
         const sym = i.tradingsymbol;
@@ -356,6 +382,13 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         }
         symbolToToken.set(sym, tok);
         symbolToToken.set(`${exch}:${sym}`, tok);
+      });
+
+      // Indices without a fixed token (FINNIFTY, MIDCPNIFTY, ...) take theirs from the master; a
+      // master token that differs from a fixed one wins.
+      INDEX_INSTRUMENTS.forEach((idx) => {
+        const fromMaster = symbolToToken.get(`${idx.exchange}:${idx.tradingsymbol}`);
+        if (fromMaster && fromMaster !== idx.token) registerIndex(idx, fromMaster);
       });
 
       const resolveToken = (sym: string): number | undefined => {
@@ -504,7 +537,11 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     } catch (err: any) {
       const msg = err?.message || String(err || '');
       this.logger.error(`Failed to setup Zerodha Ticker for ${account.clientId || account.id}: ${msg}`);
-      this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
+      // A transient failure (network, 429, 5xx while loading the instrument master) is retried on the
+      // next sync; only a hard failure (bad token etc.) blocks the account until re-authentication.
+      if (!toKiteError(err).retryable) {
+        this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
+      }
       this.tickers.delete(account.id);
     }
   }

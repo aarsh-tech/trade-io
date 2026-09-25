@@ -1,8 +1,16 @@
+// Index quote keys use Kite's exact index tradingsymbols (see INDEX_INSTRUMENTS in
+// brokers/instrument-store.ts); `symbol` is the display name the UI already uses.
+export const OVERVIEW_INDICES = [
+  { key: 'NSE:NIFTY 50', symbol: 'NIFTY 50' },
+  { key: 'BSE:SENSEX', symbol: 'SENSEX' },
+  { key: 'NSE:NIFTY BANK', symbol: 'BANKNIFTY' },
+];
+
 // Symbols to show in the ticker banner
 export const TICKER_SYMBOLS = [
   { key: 'NSE:NIFTY 50', symbol: 'NIFTY 50', exchange: 'NSE' },
   { key: 'BSE:SENSEX', symbol: 'SENSEX', exchange: 'BSE' },
-  { key: 'NSE:BANKNIFTY', symbol: 'BANKNIFTY', exchange: 'NSE' },
+  { key: 'NSE:NIFTY BANK', symbol: 'BANKNIFTY', exchange: 'NSE' },
   { key: 'NSE:RELIANCE', symbol: 'RELIANCE', exchange: 'NSE' },
   { key: 'NSE:TCS', symbol: 'TCS', exchange: 'NSE' },
   { key: 'NSE:HDFCBANK', symbol: 'HDFCBANK', exchange: 'NSE' },

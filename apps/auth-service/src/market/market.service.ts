@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { PrismaService } from '../prisma/prisma.service';
-import { FO_STOCKS_LIST, NIFTY_500_UNIVERSE, TICKER_SYMBOLS } from './market.constants';
+import { FO_STOCKS_LIST, NIFTY_500_UNIVERSE, TICKER_SYMBOLS, OVERVIEW_INDICES } from './market.constants';
 
 export { FO_STOCKS_LIST, NIFTY_500_UNIVERSE, TICKER_SYMBOLS };
 
@@ -156,11 +156,10 @@ export class MarketService {
       try {
         const client = this.factory.createClient(account);
         const kite = (client as any)['kite'];
-        const indexKeys = ['NSE:NIFTY 50', 'BSE:SENSEX', 'NSE:BANKNIFTY'];
-        const quotes = await kite.getOHLC(indexKeys).catch(() => ({}));
+        // Canonical Kite index keys (the Bank Nifty index is `NIFTY BANK`, not `BANKNIFTY`).
+        const quotes = await kite.getOHLC(OVERVIEW_INDICES.map(i => i.key));
 
-        indices = indexKeys.map(key => {
-          const symbol = key.split(':')[1];
+        indices = OVERVIEW_INDICES.map(({ key, symbol }) => {
           const q = quotes[key];
           const price = q?.last_price ?? 0;
           const prev = q?.ohlc?.close ?? price;
@@ -290,7 +289,14 @@ export class MarketService {
         for (let i = 0; i < FO_STOCKS_LIST.length; i += chunkSize) {
           const chunk = FO_STOCKS_LIST.slice(i, i + chunkSize);
           const keys = chunk.map(s => `${s.exchange || 'NSE'}:${s.symbol}`);
-          const quotes = await kite.getOHLC(keys).catch(() => kite.getLTP(keys).catch(() => ({})));
+          let quotes: Record<string, any>;
+          try {
+            // No LTP fallback: it carries no previous close, which would show a fake 0% change.
+            quotes = await kite.getOHLC(keys);
+          } catch (e: any) {
+            this.logger.warn(`F&O quotes chunk ${i / chunkSize + 1} failed: ${e?.message || e}`);
+            continue;
+          }
 
           chunk.forEach(s => {
             const stock = foStocks.find(st => st.symbol === s.symbol);
@@ -309,17 +315,22 @@ export class MarketService {
           });
         }
 
+        // Lot sizes come from the shared daily instrument master (one string exchange, cached).
         try {
-          const nfoInstruments = await kite.getInstruments(['NFO']).catch(() => []);
-          if (nfoInstruments.length > 0) {
-            foStocks.forEach(stock => {
-              const match = nfoInstruments.find((inst: any) => inst.name === stock.symbol || inst.tradingsymbol === stock.symbol);
-              if (match && match.lot_size > 0) {
-                stock.lotSize = match.lot_size;
-              }
-            });
+          const nfoInstruments = await client.getInstruments('NFO');
+          const lotBySymbol = new Map<string, number>();
+          for (const inst of nfoInstruments) {
+            if (!(inst.lot_size > 0)) continue;
+            if (inst.name && !lotBySymbol.has(inst.name)) lotBySymbol.set(inst.name, inst.lot_size);
+            if (!lotBySymbol.has(inst.tradingsymbol)) lotBySymbol.set(inst.tradingsymbol, inst.lot_size);
           }
-        } catch {}
+          foStocks.forEach(stock => {
+            const lot = lotBySymbol.get(stock.symbol);
+            if (lot) stock.lotSize = lot;
+          });
+        } catch (e: any) {
+          this.logger.warn(`F&O lot sizes not refreshed: ${e?.message || e}`);
+        }
       } catch (e: any) {
         this.logger.warn(`Failed to fetch live quotes for F&O stocks: ${e instanceof Error ? e.message : e}`);
       }
@@ -363,7 +374,9 @@ export class MarketService {
         for (let i = 0; i < nseSymbols.length; i += chunkSize) {
           const chunk = nseSymbols.slice(i, i + chunkSize);
           const keys = chunk.map(s => `NSE:${s}`);
-          const quotes = await kite.getOHLC(keys).catch(() => kite.getLTP(keys).catch(() => ({})));
+          // No LTP fallback: it carries no previous close, which would show a fake 0% change.
+          // A failed chunk propagates to the catch below and is logged.
+          const quotes = await kite.getOHLC(keys);
 
           for (const sym of chunk) {
             const key = `NSE:${sym}`;

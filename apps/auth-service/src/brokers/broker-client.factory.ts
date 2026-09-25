@@ -8,6 +8,7 @@ import * as http from 'http';
 import axios from 'axios';
 import { KiteRateLimiter } from './kite-rate-limiter';
 import { toKiteError } from './kite-errors';
+import { InstrumentStore, resolveIndex } from './instrument-store';
 
 // Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
 export const keepAliveHttpsAgent = new https.Agent({
@@ -71,10 +72,6 @@ export class BrokerClientFactory {
     this.clientCache.delete(accountId);
   }
 }
-
-// Shared cache mapping exchange to instruments array
-const instrumentsCache = new Map<string, { data: any[]; timestamp: number }>();
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 class ZerodhaClient implements IBrokerClient {
   private static recentOrderDedup = new Map<string, number>();
@@ -406,30 +403,22 @@ class ZerodhaClient implements IBrokerClient {
   }
 
   async getInstruments(exchange: string): Promise<any[]> {
-    const now = Date.now();
-    const cached = instrumentsCache.get(exchange);
-    if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
-      return cached.data;
-    }
-
-    console.log(`Fetching ${exchange} instruments list from Zerodha...`);
-    const rawData = await this.kite.getInstruments(exchange);
-    // Lightweight slim projection: retains all required fields while reducing V8 object overhead by 80%
-    const data = (rawData || []).map((i: any) => ({
-      instrument_token: Number(i.instrument_token),
-      tradingsymbol: i.tradingsymbol,
-      name: i.name,
-      exchange: i.exchange,
-      segment: i.segment,
-      lot_size: i.lot_size ? Number(i.lot_size) : undefined,
-      tick_size: i.tick_size ? Number(i.tick_size) : undefined,
-      strike: i.strike ? Number(i.strike) : undefined,
-      instrument_type: i.instrument_type,
-      expiry: i.expiry,
-    }));
-    instrumentsCache.set(exchange, { data, timestamp: now });
-    console.log(`Cached ${data.length} slim instruments for ${exchange}.`);
-    return data;
+    return InstrumentStore.get(exchange, async () => {
+      const rawData = await this.kite.getInstruments(exchange);
+      // Lightweight slim projection: retains all required fields while reducing V8 object overhead by 80%
+      return (rawData || []).map((i: any) => ({
+        instrument_token: Number(i.instrument_token),
+        tradingsymbol: i.tradingsymbol,
+        name: i.name,
+        exchange: i.exchange,
+        segment: i.segment,
+        lot_size: i.lot_size ? Number(i.lot_size) : undefined,
+        tick_size: i.tick_size ? Number(i.tick_size) : undefined,
+        strike: i.strike ? Number(i.strike) : undefined,
+        instrument_type: i.instrument_type,
+        expiry: i.expiry,
+      }));
+    });
   }
 
   async searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string; lotSize?: number; segment?: string }[]> {
@@ -539,16 +528,13 @@ class ZerodhaClient implements IBrokerClient {
       const upperSymbol = symbol.toUpperCase().trim();
       let token: number | null = null;
 
-      // Common index tokens
-      const indexTokens: Record<string, number> = {
-        'NIFTY 50': 256265, 'NIFTY50': 256265,
-        'BANKNIFTY': 260105, 'BANK NIFTY': 260105,
-        'SENSEX': 265, 'NIFTY MIDCAP 50': 288009,
-      };
-
-      if (indexTokens[upperSymbol]) {
-        token = indexTokens[upperSymbol];
-      } else {
+      // Indices: canonical alias -> master row (fixed token only as a fallback)
+      const index = resolveIndex(upperSymbol);
+      if (index) {
+        await this.getInstruments(index.exchange).catch(() => undefined);
+        token = InstrumentStore.find(index.exchange, index.tradingsymbol)?.instrument_token ?? index.token ?? null;
+      }
+      if (!token) {
         const instruments = await this.getInstruments(exchange);
         const found = instruments.find(i => i.tradingsymbol === upperSymbol && i.exchange === exchange);
         if (found) token = found.instrument_token;
