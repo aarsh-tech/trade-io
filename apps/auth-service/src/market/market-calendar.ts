@@ -167,3 +167,45 @@ export function nextKiteTokenExpiry(now: Date = new Date()): Date {
   if (expiryIstMs <= ist.getTime()) expiryIstMs += 24 * 3600_000;
   return new Date(expiryIstMs - IST_OFFSET_MS);
 }
+
+export type MarketSessionState = 'pre-open' | 'open' | 'closed' | 'holiday' | 'weekend';
+
+export interface MarketSessionInfo {
+  state: MarketSessionState;
+  /** IST date, YYYY-MM-DD */
+  date: string;
+  /** Next session open (UTC ISO) when not open; null while open */
+  nextOpenAt: string | null;
+  /** Today's close (UTC ISO) on a trading day, else null */
+  closesAt: string | null;
+}
+
+function istMinuteToIso(date: string, minute: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 0, minute) - IST_OFFSET_MS).toISOString();
+}
+
+/** Market state for the UI status bar: pre-open (09:00–open), open, closed (after hours), holiday or weekend. */
+export function getMarketSessionInfo(now: Date = new Date()): MarketSessionInfo {
+  const { date, minute } = istParts(now);
+  const session = getSession(now);
+  if (session) {
+    const closesAt = istMinuteToIso(date, session.close);
+    if (minute >= session.open && minute <= session.close) {
+      return { state: 'open', date, nextOpenAt: null, closesAt };
+    }
+    if (minute < session.open) {
+      const preOpen = minute >= Math.min(PRE_OPEN_MINUTE, session.open);
+      return { state: preOpen ? 'pre-open' : 'closed', date, nextOpenAt: istMinuteToIso(date, session.open), closesAt };
+    }
+  }
+  // Closed now: find the next trading day's open (search up to two weeks ahead).
+  let nextOpenAt: string | null = null;
+  for (let i = 1; i <= 14 && !nextOpenAt; i++) {
+    const probe = new Date(now.getTime() + i * 24 * 3600_000);
+    const s = getSession(probe);
+    if (s) nextOpenAt = istMinuteToIso(istParts(probe).date, s.open);
+  }
+  const state: MarketSessionState = session ? 'closed' : (closedReason(now) ?? 'closed');
+  return { state, date, nextOpenAt, closesAt: null };
+}

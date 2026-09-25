@@ -6,6 +6,7 @@ import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { requireUserId } from './require-user';
 import { MarketService } from './market.service';
 import { OhlScannerService } from './ohl-scanner.service';
+import { getMarketSessionInfo } from './market-calendar';
 
 @ApiTags('Market')
 @Controller('market')
@@ -56,6 +57,12 @@ export class MarketController {
   ) {
     const lotSize = await this.marketService.getLotSize(symbol, req.user?.id, accountId);
     return { success: true, symbol, lotSize };
+  }
+
+  @Get('session')
+  @ApiOperation({ summary: 'Exchange session state (pre-open/open/closed/holiday/weekend) for the UI status bar' })
+  session() {
+    return { success: true, data: getMarketSessionInfo() };
   }
 
   @Get('overview')

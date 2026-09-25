@@ -221,6 +221,7 @@ export const brokerApi = {
 // ─── Market Data ──────────────────────────────────────────────────────────────
 export const marketApi = {
   marketOverview: () => api.get("/market/overview"),
+  session: () => api.get("/market/session"),
   livePrices: () => api.get("/market/live-prices"),
   movers: () => api.get("/market/movers"),
   getOhlStocks: (params?: { universe?: string; tolerance?: number | string; filter?: string }) =>

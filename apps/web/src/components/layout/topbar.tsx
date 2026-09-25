@@ -5,11 +5,12 @@ import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { openRiskDisclosure } from "@/components/shared/risk-disclosure-modal";
 import { useBrokers } from "@/hooks/useBrokers";
 import { BrokerSessionModal } from "@/components/layout/broker-session-modal";
-import { riskApi } from "@/lib/api";
+import { useRiskStatus } from "@/hooks/useRiskStatus";
+import { StatusBar } from "@/components/layout/status-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 export function TopBar() {
@@ -17,19 +18,8 @@ export function TopBar() {
   const { user } = useAuthStore();
   const { brokers } = useBrokers();
   const [showBrokerModal, setShowBrokerModal] = useState(false);
-  const [isKillActive, setIsKillActive] = useState(false);
-
-  useEffect(() => {
-    async function checkRms() {
-      try {
-        const res = await riskApi.getStatus();
-        setIsKillActive(Boolean(res.data?.data?.killSwitchActive));
-      } catch {}
-    }
-    checkRms();
-    const interval = setInterval(checkRms, 60_000);
-    return () => clearInterval(interval);
-  }, []);
+  const { data: risk } = useRiskStatus();
+  const isKillActive = Boolean(risk?.killSwitchActive);
 
   const zerodhaAccount = brokers.find((b: any) => b.broker === "ZERODHA");
   const isKiteActive = Boolean(
@@ -51,14 +41,6 @@ export function TopBar() {
               Tradeio.site
             </span>
           </Link>
-
-          {/* Live status badge */}
-          <div className="hidden min-[360px]:flex items-center px-2 py-1 sm:px-2.5 sm:py-1 rounded-full bg-emerald-50 border border-emerald-200/60 gap-1.5 shrink-0 whitespace-nowrap">
-            <div className="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-            <span className="text-[10px] sm:text-[11px] font-bold text-emerald-700 uppercase tracking-wider">
-              Live
-            </span>
-          </div>
 
           {/* SEBI Risk Disclosure Trigger Button */}
           <button
@@ -165,6 +147,8 @@ export function TopBar() {
           </Link>
         </div>
       </header>
+
+      <StatusBar onReconnect={() => setShowBrokerModal(true)} />
 
       {/* Kite Session & Developer Console Settings Modal */}
       <BrokerSessionModal
