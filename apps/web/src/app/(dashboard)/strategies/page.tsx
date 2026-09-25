@@ -1028,7 +1028,7 @@ function StrategyCard({
           {/* Auto-Start Arm Button */}
           <Button
             variant="outline"
-            size="icon"
+            size="icon" aria-label="Toggle auto-start"
             disabled={busy}
             onClick={() => onToggleAutoStart(s)}
             title={
@@ -1050,7 +1050,7 @@ function StrategyCard({
           <Link href={`/strategies/${s.id}`} prefetch={false}>
             <Button
               variant="outline"
-              size="icon"
+              size="icon" aria-label="View strategy execution and logs"
               title="View Strategy Execution & Logs"
               className="h-9 w-9 rounded-xl text-muted-foreground hover:text-blue-600 hover:border-blue-500/30"
             >
@@ -1062,7 +1062,7 @@ function StrategyCard({
           <Link href={`/strategies/${s.id}/edit`} prefetch={false}>
             <Button
               variant="outline"
-              size="icon"
+              size="icon" aria-label="Edit strategy parameters"
               title="Edit Strategy Parameters"
               className="h-9 w-9 rounded-xl text-muted-foreground hover:text-foreground hover:border-border"
             >
@@ -1073,7 +1073,7 @@ function StrategyCard({
           {/* Delete */}
           <Button
             variant="outline"
-            size="icon"
+            size="icon" aria-label="Delete strategy"
             disabled={busy}
             onClick={() => onDelete(s)}
             title="Delete Strategy"

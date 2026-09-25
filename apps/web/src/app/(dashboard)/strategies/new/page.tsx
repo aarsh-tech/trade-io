@@ -334,7 +334,7 @@ export default function NewStrategyPage() {
           <Link href="/strategies">
             <Button
               variant="outline"
-              size="icon"
+              size="icon" aria-label="Back to strategies"
               className="h-10 w-10 rounded-xl border-border/80 bg-card hover:bg-accent/60 shadow-2xs shrink-0"
               title="Return to Strategies"
             >

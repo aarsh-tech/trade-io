@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { pressable } from "@/lib/a11y";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -183,7 +184,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                 <div
                   key={label}
                   id={`type-${label}`}
-                  onClick={() => {
+                  {...pressable(() => {
                     set("type", type);
                     if (type === "STOCK_OPTIONS_BUYING") {
                       set("name", "Auto F&O Stock Options Hunter (80% Profitability)");
@@ -257,7 +258,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                       set("exchange", "NSE");
                       set("instrumentType", "INDEX");
                     }
-                  }}
+                  }, { role: "radio" })}
                   className={cn(
                     "relative overflow-hidden rounded-2xl border-2 p-5 flex flex-col justify-between gap-3.5 transition-all duration-200 text-left cursor-pointer group bg-card shadow-xs",
                     isSelected

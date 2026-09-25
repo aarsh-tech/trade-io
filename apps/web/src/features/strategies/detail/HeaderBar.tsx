@@ -20,7 +20,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
           <Link href="/strategies">
             <Button
               variant="outline"
-              size="icon"
+              size="icon" aria-label="Back to strategies"
               className="h-10 w-10 rounded-xl bg-card border-border/80 hover:bg-accent shrink-0 shadow-xs"
             >
               <ArrowLeft className="h-4 w-4" />

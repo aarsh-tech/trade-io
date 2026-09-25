@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { pressable } from "@/lib/a11y";
 import { QueryError } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -400,7 +401,7 @@ export default function MonthlyLedgerPage() {
           <div className="flex items-center justify-between sm:justify-start bg-card border border-border rounded-xl p-1 shadow-2xs">
             <Button
               variant="ghost"
-              size="icon"
+              size="icon" aria-label="Previous month"
               className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
               onClick={handlePrevMonth}
               title="Previous Month"
@@ -442,7 +443,7 @@ export default function MonthlyLedgerPage() {
 
             <Button
               variant="ghost"
-              size="icon"
+              size="icon" aria-label="Next month"
               className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
               onClick={handleNextMonth}
               title="Next Month"
@@ -691,11 +692,11 @@ export default function MonthlyLedgerPage() {
                 return (
                   <div
                     key={cell.dateStr}
-                    onClick={() => {
+                    {...pressable(() => {
                       if (hasData) {
                         setSelectedDateFilter(isSelected ? null : cell.dateStr);
                       }
-                    }}
+                    }, { pressed: isSelected })}
                     className={cn(
                       "h-16 sm:h-24 p-1.5 sm:p-2.5 rounded-xl border flex flex-col justify-between transition-all select-none relative group",
                       hasData ? "cursor-pointer hover:scale-[1.02] shadow-2xs" : "bg-card/40 border-border/40 opacity-70",
@@ -1196,7 +1197,7 @@ export default function MonthlyLedgerPage() {
                   return (
                     <div
                       key={d.date}
-                      onClick={() => setSelectedDateFilter(selectedDateFilter === d.date ? null : d.date)}
+                      {...pressable(() => setSelectedDateFilter(selectedDateFilter === d.date ? null : d.date), { pressed: selectedDateFilter === d.date })}
                       className={cn(
                         "p-3.5 space-y-2 hover:bg-muted/20 transition-colors cursor-pointer",
                         selectedDateFilter === d.date ? "bg-muted/30 border-l-4 border-l-blue-500" : ""
@@ -1269,7 +1270,7 @@ export default function MonthlyLedgerPage() {
                       return (
                         <tr
                           key={d.date}
-                          onClick={() => setSelectedDateFilter(selectedDateFilter === d.date ? null : d.date)}
+                          {...pressable(() => setSelectedDateFilter(selectedDateFilter === d.date ? null : d.date), { role: null })}
                           className={cn(
                             "hover:bg-muted/30 transition-colors cursor-pointer",
                             selectedDateFilter === d.date ? "bg-muted/40 font-semibold" : ""

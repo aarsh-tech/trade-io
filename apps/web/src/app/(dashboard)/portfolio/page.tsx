@@ -331,7 +331,7 @@ export default function PortfolioPage() {
 
           <Button
             variant="outline"
-            size="icon"
+            size="icon" aria-label="Refresh portfolio"
             className="h-9 w-9 border-border"
             onClick={handleRefresh}
             disabled={isDataLoading}

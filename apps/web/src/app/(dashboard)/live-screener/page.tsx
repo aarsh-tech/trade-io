@@ -1,6 +1,7 @@
 "use client";
 
 import { QuickTradePanel, QuickTradeStock } from "@/components/dashboard/QuickTradePanel";
+import { pressable } from "@/lib/a11y";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -718,10 +719,10 @@ export default function LiveOhlScreenerPage() {
                 <tr>
                   <th
                     className="py-3.5 px-4 cursor-pointer hover:text-foreground"
-                    onClick={() => {
+                    {...pressable(() => {
                       if (sortBy === "symbol") setSortOrder(sortOrder === "asc" ? "desc" : "asc");
                       else { setSortBy("symbol"); setSortOrder("asc"); }
-                    }}
+                    }, { role: null })}
                   >
                     <div className="flex items-center gap-1">
                       <span>Stock / Symbol</span>
@@ -731,10 +732,10 @@ export default function LiveOhlScreenerPage() {
                   <th className="py-3.5 px-4">Live LTP (₹)</th>
                   <th
                     className="py-3.5 px-4 cursor-pointer hover:text-foreground"
-                    onClick={() => {
+                    {...pressable(() => {
                       if (sortBy === "changePct") setSortOrder(sortOrder === "asc" ? "desc" : "asc");
                       else { setSortBy("changePct"); setSortOrder("desc"); }
-                    }}
+                    }, { role: null })}
                   >
                     <div className="flex items-center gap-1">
                       <span>Day Change (%)</span>
@@ -746,10 +747,10 @@ export default function LiveOhlScreenerPage() {
                   <th className="py-3.5 px-4">Low</th>
                   <th
                     className="py-3.5 px-4 cursor-pointer hover:text-foreground"
-                    onClick={() => {
+                    {...pressable(() => {
                       if (sortBy === "diff") setSortOrder(sortOrder === "asc" ? "desc" : "asc");
                       else { setSortBy("diff"); setSortOrder("asc"); }
-                    }}
+                    }, { role: null })}
                   >
                     <div className="flex items-center gap-1">
                       <span>O-L / O-H Diff</span>

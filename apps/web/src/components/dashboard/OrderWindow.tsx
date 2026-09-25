@@ -159,6 +159,16 @@ export function OrderWindow({
   const triggerError = errors.triggerPrice?.message ?? ticket.fieldError("triggerPrice");
   const formIssues = ticket.issues.filter((i) => i.field === "form" || i.severity === "warning");
 
+  // Escape closes the ticket, as with any modal dialog.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const isBuy = type === 'BUY';
@@ -213,6 +223,9 @@ export function OrderWindow({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 40 }}
             transition={{ duration: 0.22, ease: "easeOut" }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${type === "BUY" ? "Buy" : "Sell"} ${symbol || "order"}`}
             className="relative z-10 pointer-events-auto w-full md:w-[480px] md:max-w-lg bg-card rounded-t-3xl md:rounded-2xl shadow-2xl border-t md:border border-border overflow-hidden font-sans select-none max-h-[92vh] flex flex-col mx-0 md:mx-4"
           >
             {/* ─── HEADER ─── */}
@@ -233,8 +246,8 @@ export function OrderWindow({
                       x {qty}
                     </span>
                   </div>
-                  <div className="flex items-center gap-3 text-[11px] text-white/90 font-medium">
-                    <label
+                  <div role="radiogroup" aria-label="Exchange" className="flex items-center gap-3 text-[11px] text-white/90 font-medium">
+                    <button type="button" role="radio" aria-checked={exchange === "BSE"}
                       className="flex items-center gap-1.5 cursor-pointer hover:opacity-100 transition-opacity"
                       onClick={() => setValue("exchange", "BSE")}
                     >
@@ -245,9 +258,9 @@ export function OrderWindow({
                       <span className={exchange === "BSE" ? "font-bold text-white" : "text-white/80"}>
                         BSE ₹{ltp > 0 ? ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
                       </span>
-                    </label>
+                    </button>
 
-                    <label
+                    <button type="button" role="radio" aria-checked={exchange === "NSE"}
                       className="flex items-center gap-1.5 cursor-pointer hover:opacity-100 transition-opacity"
                       onClick={() => setValue("exchange", "NSE")}
                     >
@@ -258,13 +271,13 @@ export function OrderWindow({
                       <span className={exchange === "NSE" ? "font-bold text-white" : "text-white/80"}>
                         NSE ₹{ltp > 0 ? ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
                       </span>
-                    </label>
+                    </button>
                   </div>
                 </div>
 
                 {/* Toggle Switch (BUY / SELL) & Close Button */}
                 <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-                  <div
+                  <button type="button" role="switch" aria-checked={!isBuy} aria-label="Order side: on for sell, off for buy"
                     className="w-11 h-6 bg-white/30 rounded-full relative cursor-pointer p-0.5 transition-colors shadow-inner flex items-center"
                     title={`Switch to ${isBuy ? "SELL" : "BUY"}`}
                     onClick={() => onTypeChange?.(isBuy ? "SELL" : "BUY")}
@@ -277,11 +290,12 @@ export function OrderWindow({
                         isBuy ? "translate-x-0" : "translate-x-5"
                       )}
                     />
-                  </div>
+                  </button>
 
                   <button
                     type="button"
                     onClick={onClose}
+                    aria-label="Close order window"
                     className="p-1 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
                   >
                     <X className="h-4 w-4" />
@@ -371,9 +385,9 @@ export function OrderWindow({
             {/* ─── FORM BODY ─── */}
             <div className="p-3.5 sm:p-5 space-y-4 sm:space-y-5 overflow-y-auto flex-1 overscroll-contain">
               {/* Product Type Selector */}
-              <div className="flex items-center gap-6 sm:gap-8">
+              <div role="radiogroup" aria-label="Product" className="flex items-center gap-6 sm:gap-8">
                 {/* Intraday MIS */}
-                <label
+                <button type="button" role="radio" aria-checked={product === 'MIS'}
                   className="flex items-center gap-2 cursor-pointer group"
                   onClick={() => setValue("product", "MIS")}
                 >
@@ -397,10 +411,10 @@ export function OrderWindow({
                   <span className="text-xs sm:text-[13px] font-medium text-foreground">
                     Intraday <span className="text-[10px] sm:text-[11px] text-muted-foreground uppercase font-normal ml-0.5">MIS</span>
                   </span>
-                </label>
+                </button>
 
                 {/* Delivery NRML */}
-                <label
+                <button type="button" role="radio" aria-checked={product === 'NRML'}
                   className="flex items-center gap-2 cursor-pointer group"
                   onClick={() => setValue("product", "NRML")}
                 >
@@ -424,7 +438,7 @@ export function OrderWindow({
                   <span className="text-xs sm:text-[13px] font-medium text-foreground">
                     Delivery <span className="text-[10px] sm:text-[11px] text-muted-foreground uppercase font-normal ml-0.5">NRML</span>
                   </span>
-                </label>
+                </button>
               </div>
 
               {/* ─── INPUT FIELDS GRID (3 COLUMNS) ─── */}
@@ -518,11 +532,11 @@ export function OrderWindow({
               </div>
 
               {/* ─── ORDER TYPE RADIO SELECTOR ─── */}
-              <div className="flex items-center flex-wrap gap-3 sm:gap-6 pt-1">
+              <div role="radiogroup" aria-label="Order type" className="flex items-center flex-wrap gap-3 sm:gap-6 pt-1">
                 {(['Market', 'Limit', 'SL', 'SL-M'] as const).map((t) => {
                   const isSelected = orderType === t.toUpperCase();
                   return (
-                    <label
+                    <button type="button" role="radio" aria-checked={isSelected}
                       key={t}
                       className="flex items-center gap-1.5 sm:gap-2 cursor-pointer group"
                       onClick={() => setValue("orderType", t.toUpperCase() as OrderType, { shouldValidate: true })}
@@ -550,7 +564,7 @@ export function OrderWindow({
                       )}>
                         {t}
                       </span>
-                    </label>
+                    </button>
                   );
                 })}
               </div>
@@ -588,7 +602,6 @@ export function OrderWindow({
                             <label
                               key={v}
                               className="flex items-center gap-1.5 cursor-pointer"
-                              onClick={() => setValue("validity", v, { shouldValidate: true })}
                             >
                               <input
                                 type="radio"

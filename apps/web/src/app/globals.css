@@ -114,6 +114,12 @@
     box-sizing: border-box;
   }
 
+  /* Visible keyboard focus everywhere; :where() keeps specificity at zero so component styles can refine it. */
+  :where(a, button, summary, [role="button"], [role="radio"], [role="switch"], [tabindex]:not([tabindex="-1"])):focus-visible {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 2px;
+  }
+
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
@@ -430,4 +436,14 @@
   --color-yellow-700: var(--color-yellow-300);
   --color-yellow-800: var(--color-yellow-200);
   --color-yellow-900: var(--color-yellow-200);
+}
+
+/* Respect the OS "reduce motion" setting: no pulsing dots, slides or fades. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

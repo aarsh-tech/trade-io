@@ -12,12 +12,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <AuthGuard>
       <MarketSocketProvider>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[2000] focus:rounded-lg focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground"
+      >
+        Skip to main content
+      </a>
       <div className="flex h-screen overflow-hidden bg-muted/25">
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden relative">
           <TopBar />
           <OfflineBanner />
-          <main className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 sm:p-5 md:p-6 pb-24 md:pb-6">
+          <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none overflow-y-auto overflow-x-hidden p-3.5 sm:p-5 md:p-6 pb-24 md:pb-6">
             {children}
           </main>
           <MobileBottomNav />

@@ -138,7 +138,7 @@ export default function BrokersPage() {
                       </Button>
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="icon" aria-label="Disconnect broker account"
                         className="text-muted-foreground hover:text-rose-500 hover:bg-rose-50 h-9 w-9 rounded-lg transition-colors"
                         onClick={() => askDisconnect(acc.id)}
                       >

@@ -347,7 +347,7 @@ export default function DashboardPage() {
 
           <Button
             variant="outline"
-            size="icon"
+            size="icon" aria-label="Refresh dashboard"
             className="h-8 w-8 border-border bg-card hover:bg-muted/50 shadow-2xs rounded-lg"
             onClick={handleManualRefresh}
             disabled={isRefreshing}

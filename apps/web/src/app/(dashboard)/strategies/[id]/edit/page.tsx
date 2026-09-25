@@ -403,7 +403,7 @@ export default function EditStrategyPage() {
     <div className="max-w-2xl mx-auto space-y-6 animate-[fade-up_0.4s_ease_both]">
       <div className="flex items-center gap-3">
         <Link href={`/strategies/${id}`}>
-          <Button variant="ghost" size="icon">
+          <Button variant="ghost" size="icon" aria-label="Back to strategy">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
