@@ -2,12 +2,13 @@
 
 import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import { LiveAlgoPositionsCard } from "@/components/dashboard/LiveAlgoPositionsCard";
+import { MoversCard } from "@/components/dashboard/MoversCard";
+import { TodaySummary } from "@/components/dashboard/TodaySummary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { useMarketData } from "@/hooks/use-market-data";
 import { useBrokers } from "@/hooks/useBrokers";
 import { useDashboard } from "@/hooks/useDashboard";
 import { FeedStatusBadge } from "@/components/dashboard/FeedStatusBadge";
@@ -15,9 +16,7 @@ import { usePortfolio } from "@/hooks/usePortfolio";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store";
 import {
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   ExternalLink,
   History,
   LayoutGrid,
@@ -26,8 +25,6 @@ import {
   RefreshCcw,
   ShoppingCart,
   Sparkles,
-  TrendingDown,
-  TrendingUp,
   Zap
 } from "lucide-react";
 import Link from "next/link";
@@ -82,14 +79,6 @@ export default function DashboardPage() {
   const { movers, feed, isLoading: isDashboardLoading, refresh: refreshDashboard } = useDashboard();
   const { brokers } = useBrokers();
 
-  const moverSymbols = useMemo(() => {
-    const gainers = (movers?.topGainers || []).map((g: any) => g.symbol);
-    const losers = (movers?.topLosers || []).map((l: any) => l.symbol);
-    return [...gainers, ...losers];
-  }, [movers]);
-
-  const { prices } = useMarketData(moverSymbols);
-
   const [showRenewModal, setShowRenewModal] = useState(false);
   const [requestToken, setRequestToken] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -106,6 +95,9 @@ export default function DashboardPage() {
     symbol: "",
     ltp: 0,
   });
+
+  const openOrderFor = (symbol: string, ltp: number) =>
+    setOrderState({ isOpen: true, type: "BUY", symbol, ltp });
 
   // Pick active broker
   const activeBroker = useMemo(() => {
@@ -370,6 +362,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── 1b. Today: day P&L, loss-limit meter, funds, running strategies ── */}
+      <TodaySummary
+        marginAvailable={margins ? stats.marginAvailable : undefined}
+        marginsUsed={margins ? stats.marginsUsed : undefined}
+      />
+
       {/* ── 2. Live Algo Execution & Positions Card ── */}
       <LiveAlgoPositionsCard activeBroker={activeBroker} />
 
@@ -544,155 +542,9 @@ export default function DashboardPage() {
 
       {/* ── 4. Market Movers: Top Gainers & Top Losers (2-Grid) ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-3.5">
-        {/* Top Gainers */}
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden hover:border-border transition-colors">
-          <CardHeader className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-6 w-6 rounded-md bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <TrendingUp className="h-3.5 w-3.5" />
-              </div>
-              <CardTitle className="text-xs font-bold text-foreground tracking-tight">
-                Top Gainers
-              </CardTitle>
-            </div>
-            <div className="flex items-center gap-1">
-              <Badge variant="outline" className="text-[9.5px] font-semibold text-muted-foreground bg-muted/50 py-0 px-1.5">
-                1D
-              </Badge>
-              <Badge variant="outline" className="text-[9.5px] font-semibold text-muted-foreground bg-muted/50 py-0 px-1.5">
-                NIFTY 500
-              </Badge>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-0">
-            <div className="divide-y divide-border text-xs">
-              {(movers?.topGainers || []).slice(0, 8).map((item: any) => {
-                const livePrice = prices[item.symbol] || item.ltp;
-                const basePrice = item.prevClose || item.close || (item.ltp ? item.ltp / (1 + (item.changePercent / 100)) : livePrice);
-                const liveChangePct = basePrice > 0 ? ((livePrice - basePrice) / basePrice) * 100 : item.changePercent;
-
-                return (
-                  <div
-                    key={item.symbol}
-                    onClick={() =>
-                      setOrderState({
-                        isOpen: true,
-                        type: "BUY",
-                        symbol: item.symbol,
-                        ltp: livePrice || 0,
-                      })
-                    }
-                    className="py-2 px-4 flex items-center justify-between hover:bg-muted/40 transition-colors cursor-pointer group"
-                  >
-                    <div>
-                      <div className="font-bold text-foreground text-xs uppercase group-hover:text-blue-600 transition-colors flex items-center gap-1.5">
-                        {item.symbol}
-                        <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1 py-0.2 rounded">
-                          {item.exchange || "NSE"}
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">
-                        Click to place order
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-xs font-bold font-mono text-foreground">
-                        {formatINR((livePrice || 0))}
-                      </div>
-                      <div className="text-[11px] font-mono font-bold text-emerald-600 flex items-center justify-end gap-0.5 mt-0.5">
-                        <ChevronUp className="h-3 w-3 stroke-[2.5]" />+
-                        {Math.abs(liveChangePct || 0).toFixed(2)}%
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {(movers?.topGainers || []).length === 0 && (
-                <div className="py-8 text-center text-xs text-muted-foreground">
-                  Scanning live gainers...
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Top Losers */}
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden hover:border-border transition-colors">
-          <CardHeader className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-6 w-6 rounded-md bg-rose-50 text-rose-600 flex items-center justify-center">
-                <TrendingDown className="h-3.5 w-3.5" />
-              </div>
-              <CardTitle className="text-xs font-bold text-foreground tracking-tight">
-                Top Losers
-              </CardTitle>
-            </div>
-            <div className="flex items-center gap-1">
-              <Badge variant="outline" className="text-[9.5px] font-semibold text-muted-foreground bg-muted/50 py-0 px-1.5">
-                1D
-              </Badge>
-              <Badge variant="outline" className="text-[9.5px] font-semibold text-muted-foreground bg-muted/50 py-0 px-1.5">
-                NIFTY 500
-              </Badge>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-0">
-            <div className="divide-y divide-border text-xs">
-              {(movers?.topLosers || []).slice(0, 8).map((item: any) => {
-                const livePrice = prices[item.symbol] || item.ltp;
-                const basePrice = item.prevClose || item.close || (item.ltp ? item.ltp / (1 + (item.changePercent / 100)) : livePrice);
-                const liveChangePct = basePrice > 0 ? ((livePrice - basePrice) / basePrice) * 100 : item.changePercent;
-
-                return (
-                  <div
-                    key={item.symbol}
-                    onClick={() =>
-                      setOrderState({
-                        isOpen: true,
-                        type: "BUY",
-                        symbol: item.symbol,
-                        ltp: livePrice || 0,
-                      })
-                    }
-                    className="py-2 px-4 flex items-center justify-between hover:bg-muted/40 transition-colors cursor-pointer group"
-                  >
-                    <div>
-                      <div className="font-bold text-foreground text-xs uppercase group-hover:text-blue-600 transition-colors flex items-center gap-1.5">
-                        {item.symbol}
-                        <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1 py-0.2 rounded">
-                          {item.exchange || "NSE"}
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">
-                        Click to place order
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-xs font-bold font-mono text-foreground">
-                        {formatINR((livePrice || 0))}
-                      </div>
-                      <div className="text-[11px] font-mono font-bold text-rose-600 flex items-center justify-end gap-0.5 mt-0.5">
-                        <ChevronDown className="h-3 w-3 stroke-[2.5]" />
-                        {Math.abs(liveChangePct || 0).toFixed(2)}%
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {(movers?.topLosers || []).length === 0 && (
-                <div className="py-8 text-center text-xs text-muted-foreground">
-                  Scanning live losers...
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <MoversCard kind="gainers" items={movers?.topGainers || []} onSelect={openOrderFor} />
+        <MoversCard kind="losers" items={movers?.topLosers || []} onSelect={openOrderFor} />
       </div>
-
 
       {/* ── 5. Renew Session Modal (Pure White Background) ── */}
       <Dialog open={showRenewModal} onOpenChange={setShowRenewModal}>

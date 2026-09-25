@@ -5,11 +5,12 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertOctagon, KeyRound } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { marketApi, orderApi } from "@/lib/api";
+import { marketApi } from "@/lib/api";
 import { formatINR, pnlClass } from "@/lib/format";
 import { useMarketStore } from "@/store/market-store";
 import { useBrokers } from "@/hooks/useBrokers";
 import { useRiskStatus } from "@/hooks/useRiskStatus";
+import { useDayPnl } from "@/hooks/useDayPnl";
 
 type SessionState = "pre-open" | "open" | "closed" | "holiday" | "weekend";
 interface SessionInfo { state: SessionState; nextOpenAt: string | null; closesAt: string | null }
@@ -82,16 +83,8 @@ export function StatusBar({ onReconnect }: { onReconnect: () => void }) {
     feedState === "live" ? "bg-profit" : feedState === "stale" ? "bg-warn" : feedState === "offline" ? "bg-loss" : "bg-muted-foreground";
   const tickAge = lastTickAt ? formatAge(now - lastTickAt) : null;
 
-  // Realised P&L from real fills (same FIFO/charges as the ledger); unrealised from live positions.
-  const { data: dayRealised } = useQuery({
-    queryKey: ["orders", "day-pnl"],
-    queryFn: async () => (await orderApi.dayPnl()).data?.data as { realizedPnl: number; charges: number },
-    refetchInterval: 60_000,
-    refetchOnWindowFocus: true,
-  });
-
   const nextOpen = session?.nextOpenAt ? istFormat.format(new Date(session.nextOpenAt)) : null;
-  const dayPnl = dayRealised && risk ? dayRealised.realizedPnl + risk.unrealizedPnl : undefined;
+  const { total: dayPnl, realised: dayRealised } = useDayPnl();
 
   return (
     <div
