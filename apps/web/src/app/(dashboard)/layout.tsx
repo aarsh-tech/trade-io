@@ -4,11 +4,13 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/topbar";
 import { MobileBottomNav } from "@/components/layout/mobile-nav";
 import { AuthGuard } from "@/components/auth-guard";
+import { MarketSocketProvider } from "@/components/market-socket-provider";
 import { RiskDisclosureModal } from "@/components/shared/risk-disclosure-modal";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
+      <MarketSocketProvider>
       <div className="flex h-screen overflow-hidden bg-slate-50/50">
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden relative">
@@ -20,6 +22,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </div>
       <RiskDisclosureModal />
+      </MarketSocketProvider>
     </AuthGuard>
   );
 }
