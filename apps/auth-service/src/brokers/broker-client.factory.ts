@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BrokerType, BrokerAccount } from '@prisma/client';
-import { IBrokerClient, OrderParams, Holding, Position, Order as IOrder } from './interfaces/broker-client.interface';
+import { IBrokerClient, OrderParams, Holding, Position, Order as IOrder, Trade as ITrade } from './interfaces/broker-client.interface';
 import { decrypt } from '../common/utils/crypto';
 import * as https from 'https';
 import * as http from 'http';
@@ -171,6 +171,27 @@ class ZerodhaClient implements IBrokerClient {
         console.error('Zerodha Positions Error:', err?.message || err);
       }
       throw err;
+    }
+  }
+
+  async getTrades(): Promise<ITrade[]> {
+    try {
+      const trades = await this.kite.getTrades();
+      return (trades || []).map((t: any) => ({
+        tradeId: String(t.trade_id),
+        orderId: String(t.order_id),
+        symbol: t.tradingsymbol,
+        exchange: t.exchange || 'NSE',
+        side: t.transaction_type,
+        product: t.product,
+        qty: Number(t.quantity),
+        price: Number(t.average_price),
+        filledAt: t.fill_timestamp || t.exchange_timestamp || t.order_timestamp,
+      }));
+    } catch (err) {
+      const kerr = toKiteError(err);
+      console.error(`Zerodha Trades Error (${kerr.name}):`, kerr.message);
+      throw kerr;
     }
   }
 

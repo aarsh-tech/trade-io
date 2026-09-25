@@ -37,6 +37,20 @@ export interface Order {
   statusMessage?: string;
 }
 
+/** A single fill from the broker's trade book. */
+export interface Trade {
+  tradeId: string;
+  orderId: string;
+  symbol: string;
+  exchange: string;
+  side: 'BUY' | 'SELL';
+  product?: string;
+  qty: number;
+  price: number;
+  /** ISO timestamp of the fill. */
+  filledAt: string;
+}
+
 /**
  * Why an order is being placed. Only ENTRY orders are subject to the kill switch,
  * per-order user limits, rate limiting and dedup; exits and protective (SL/target)
@@ -68,6 +82,7 @@ export interface IBrokerClient {
   getHoldings(): Promise<Holding[]>;
   getPositions(): Promise<Position[]>;
   getOrders(): Promise<Order[]>;
+  getTrades(): Promise<Trade[]>;
   placeOrder(params: OrderParams): Promise<string>;
   getLTP(symbols: string[]): Promise<Record<string, number>>;
   /** Quotes with previous close, volume and exchange time, keyed by `EXCH:SYMBOL`. */

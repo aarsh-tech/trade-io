@@ -1,7 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderSide, OrderType, ProductType, OrderStatus } from '@prisma/client';
+import { Trade as ITrade } from '../brokers/interfaces/broker-client.interface';
+import { TickerService } from '../market/ticker.service';
+import { OrderUpdateEvent } from '../market/market-tick';
+import { isTradingDay, istParts } from '../market/market-calendar';
+import { parseKiteTime } from './kite-time';
+
+const EOD_SYNC_MINUTE = 15 * 60 + 40;
+const EOD_CHECK_INTERVAL_MS = 60_000;
 
 export interface ClosedTrade {
   id: string;
@@ -68,132 +76,261 @@ export interface MonthlyLedgerResponse {
 }
 
 @Injectable()
-export class OrdersService {
+export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OrdersService.name);
+  private unsubscribeOrderUpdates?: () => void;
+  private eodTimer?: NodeJS.Timeout;
+  private eodRunning = false;
+  private lastEodSyncDate: string | null = null;
+  private accountOwners = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly factory: BrokerClientFactory,
+    private readonly ticker: TickerService,
   ) {}
 
+  onModuleInit() {
+    this.unsubscribeOrderUpdates = this.ticker.registerOrderListener((accountId, update) => {
+      this.applyOrderUpdate(accountId, update).catch((err) =>
+        this.logger.warn(`order_update ${update.orderId} for account ${accountId} not saved: ${err?.message || err}`),
+      );
+    });
+    this.eodTimer = setInterval(() => void this.runEodSyncIfDue(), EOD_CHECK_INTERVAL_MS);
+    // Catch up if the process was down at 15:40 (the broker's order/trade book lives until the next morning).
+    void this.runEodSyncIfDue();
+  }
+
+  onModuleDestroy() {
+    this.unsubscribeOrderUpdates?.();
+    if (this.eodTimer) clearInterval(this.eodTimer);
+  }
+
+  private mapStatus(raw?: string | null): OrderStatus {
+    const s = (raw || '').toUpperCase();
+    if (s === 'COMPLETE') return OrderStatus.COMPLETE;
+    if (s === 'REJECTED') return OrderStatus.REJECTED;
+    if (s.includes('CANCEL')) return OrderStatus.CANCELLED;
+    return OrderStatus.OPEN;
+  }
+
+  private mapProduct(raw?: string | null): ProductType {
+    const p = (raw || '').toUpperCase();
+    if (p === 'CNC') return ProductType.CNC;
+    if (p === 'NRML') return ProductType.NRML;
+    return ProductType.MIS;
+  }
+
+  private mapOrderType(raw?: string | null): OrderType {
+    const t = (raw || '').toUpperCase();
+    if (t === 'LIMIT') return OrderType.LIMIT;
+    if (t === 'SL-M' || t === 'SL_M') return OrderType.SL_M;
+    if (t.includes('SL')) return OrderType.SL;
+    return OrderType.MARKET;
+  }
+
+  private guessExchange(symbol: string, exchange?: string | null): string {
+    return exchange || (/(CE|PE|FUT)$/.test(symbol) ? 'NFO' : 'NSE');
+  }
+
+  private positive(n: unknown): number | null {
+    const v = Number(n);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
   /**
-   * Syncs orders from all active broker accounts into local PostgreSQL DB
+   * Idempotent write of one broker order, keyed on (brokerAccountId, brokerOrderId). Safe to race with the
+   * OrderGateway's own upsert: whichever runs first creates the row, the other only fills in what it knows.
    */
-  async syncBrokerOrders(userId: string): Promise<{ syncedCount: number; message: string }> {
-    // 1. Auto-cancel any stale OPEN orders from prior days since daily market sessions expire daily
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    await this.prisma.order.updateMany({
-      where: {
+  private upsertBrokerOrder(userId: string, accountId: string, bo: {
+    orderId: string; symbol: string; exchange?: string | null; type?: string | null; side?: string | null;
+    product?: string | null; status?: string | null; qty?: number | null; filledQty?: number | null;
+    price?: number | null; triggerPrice?: number | null; avgPrice?: number | null; variety?: string | null;
+    tag?: string | null; orderTime?: unknown;
+  }) {
+    const filledQty = Number(bo.filledQty) || 0;
+    const qty = Number(bo.qty) || filledQty || 1;
+    const price = this.positive(bo.price);
+    const triggerPrice = this.positive(bo.triggerPrice);
+    const avgPrice = this.positive(bo.avgPrice);
+    const status = this.mapStatus(bo.status);
+    const exchange = this.guessExchange(bo.symbol, bo.exchange);
+    const productType = this.mapProduct(bo.product);
+    const variety = bo.variety ? String(bo.variety).toLowerCase() : null;
+    const tag = bo.tag || null;
+
+    return this.prisma.order.upsert({
+      where: { brokerAccountId_brokerOrderId: { brokerAccountId: accountId, brokerOrderId: bo.orderId } },
+      create: {
         userId,
-        status: OrderStatus.OPEN,
-        createdAt: { lt: startOfToday },
+        brokerAccountId: accountId,
+        brokerOrderId: bo.orderId,
+        symbol: bo.symbol,
+        exchange,
+        side: (bo.side || '').toUpperCase() === 'SELL' ? OrderSide.SELL : OrderSide.BUY,
+        orderType: this.mapOrderType(bo.type),
+        productType,
+        qty,
+        price,
+        triggerPrice,
+        avgPrice: avgPrice ?? price,
+        variety,
+        tag,
+        status,
+        filledQty,
+        isPaperTrade: false,
+        createdAt: parseKiteTime(bo.orderTime) ?? new Date(),
       },
-      data: {
-        status: OrderStatus.CANCELLED,
+      // Fields the broker doesn't send (null) never overwrite what we already have; attribution is never touched.
+      update: {
+        status,
+        filledQty,
+        qty,
+        productType,
+        exchange,
+        ...(avgPrice !== null && { avgPrice }),
+        ...(price !== null && { price }),
+        ...(triggerPrice !== null && { triggerPrice }),
+        ...(variety && { variety }),
+        ...(tag && { tag }),
       },
+    });
+  }
+
+  /** Applies a Kite websocket `order_update` to the DB row (drops updates older than what we already hold). */
+  async applyOrderUpdate(accountId: string, u: OrderUpdateEvent): Promise<void> {
+    if (!u.orderId || !u.tradingsymbol) return;
+    let userId = this.accountOwners.get(accountId);
+    if (!userId) {
+      const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId }, select: { userId: true } });
+      if (!account) return;
+      userId = account.userId;
+      this.accountOwners.set(accountId, userId);
+    }
+
+    const existing = await this.prisma.order.findUnique({
+      where: { brokerAccountId_brokerOrderId: { brokerAccountId: accountId, brokerOrderId: u.orderId } },
+      select: { status: true, filledQty: true },
+    });
+    const incomingStatus = this.mapStatus(u.status);
+    const incomingFilled = Number(u.filledQuantity) || 0;
+    if (existing) {
+      const terminal = existing.status !== OrderStatus.OPEN && existing.status !== OrderStatus.PENDING;
+      // Out-of-order delivery: never move a finished order back to open, or a fill count backwards.
+      if ((terminal && incomingStatus === OrderStatus.OPEN) || incomingFilled < existing.filledQty) return;
+    }
+
+    await this.upsertBrokerOrder(userId, accountId, {
+      orderId: u.orderId,
+      symbol: u.tradingsymbol,
+      exchange: u.exchange,
+      type: u.orderType,
+      side: u.transactionType,
+      product: u.product,
+      status: u.status,
+      qty: u.quantity,
+      filledQty: incomingFilled,
+      price: u.price,
+      triggerPrice: u.triggerPrice,
+      avgPrice: u.averagePrice,
+      variety: u.variety,
+      tag: u.tag,
+      orderTime: u.exchangeTs,
+    });
+  }
+
+  /** Pulls today's fills from Kite `/trades` into the `trades` table (idempotent on tradeId). */
+  private async syncAccountTrades(userId: string, accountId: string, client: { getTrades(): Promise<ITrade[]> }): Promise<number> {
+    const trades = await client.getTrades();
+    const rows = trades
+      .filter((t) => t.tradeId && t.orderId && t.symbol && t.qty > 0)
+      .map((t) => ({
+        userId,
+        brokerAccountId: accountId,
+        tradeId: t.tradeId,
+        brokerOrderId: t.orderId,
+        symbol: t.symbol,
+        exchange: this.guessExchange(t.symbol, t.exchange),
+        side: (t.side || '').toUpperCase() === 'SELL' ? OrderSide.SELL : OrderSide.BUY,
+        productType: this.mapProduct(t.product),
+        qty: t.qty,
+        price: t.price,
+        filledAt: parseKiteTime(t.filledAt) ?? new Date(),
+      }));
+    if (rows.length === 0) return 0;
+    const res = await this.prisma.trade.createMany({ data: rows, skipDuplicates: true });
+    return res.count;
+  }
+
+  /**
+   * Syncs orders and fills from all active broker accounts into the local DB. A failure on one account (or on
+   * one of orders/trades) is logged and does not stop the others.
+   */
+  async syncBrokerOrders(userId: string): Promise<{ syncedCount: number; tradesSynced: number; message: string }> {
+    // Kite's order book is per day, so anything still OPEN from before today (IST) can no longer be live.
+    const startOfTodayIst = new Date(`${istParts().date}T00:00:00+05:30`);
+    await this.prisma.order.updateMany({
+      where: { userId, status: OrderStatus.OPEN, createdAt: { lt: startOfTodayIst } },
+      data: { status: OrderStatus.CANCELLED },
     }).catch(() => {});
 
-    const accounts = await this.prisma.brokerAccount.findMany({
-      where: { userId, isActive: true },
-    });
-
+    const accounts = await this.prisma.brokerAccount.findMany({ where: { userId, isActive: true } });
     let totalSynced = 0;
+    let tradesSynced = 0;
 
     for (const account of accounts) {
       if (!account.accessToken) continue;
+      const client = this.factory.createClient(account);
 
       try {
-        const client = this.factory.createClient(account);
         const brokerOrders = await client.getOrders();
-
-        for (const bo of brokerOrders) {
-          if (!bo.orderId) continue;
-
-          // Find existing order in our database
-          const existing = await this.prisma.order.findFirst({
-            where: { userId, brokerOrderId: bo.orderId },
-          });
-
-          let dbStatus: OrderStatus = OrderStatus.OPEN;
-          const statusUpper = (bo.status || '').toUpperCase();
-          if (statusUpper === 'COMPLETE') dbStatus = OrderStatus.COMPLETE;
-          else if (statusUpper === 'REJECTED') dbStatus = OrderStatus.REJECTED;
-          else if (statusUpper === 'CANCELLED') dbStatus = OrderStatus.CANCELLED;
-          else if (statusUpper === 'OPEN' || statusUpper.includes('PENDING') || statusUpper.includes('TRIGGER')) dbStatus = OrderStatus.OPEN;
-
-          const dbAvgPrice = bo.avgPrice && bo.avgPrice > 0 ? Number(bo.avgPrice) : null;
-          const dbPrice = bo.price && bo.price > 0 ? Number(bo.price) : null;
-          const dbTriggerPrice = bo.triggerPrice && bo.triggerPrice > 0 ? Number(bo.triggerPrice) : null;
-          const filledQty = Number(bo.filledQty) || 0;
-          const totalQty = Number(bo.qty) || filledQty || 1;
-
-          // Determine product type
-          let productType: ProductType = ProductType.MIS;
-          const prodUpper = (bo.product || '').toUpperCase();
-          if (prodUpper === 'CNC') productType = ProductType.CNC;
-          else if (prodUpper === 'NRML') productType = ProductType.NRML;
-
-          const exchange = bo.exchange || (bo.symbol.includes('CE') || bo.symbol.includes('PE') || bo.symbol.includes('FUT') ? 'NFO' : 'NSE');
-
-          if (existing) {
-            await this.prisma.order.update({
-              where: { id: existing.id },
-              data: {
-                status: dbStatus,
-                filledQty,
-                qty: totalQty,
-                avgPrice: dbAvgPrice ?? existing.avgPrice,
-                price: dbPrice ?? existing.price,
-                triggerPrice: dbTriggerPrice ?? existing.triggerPrice,
-                productType,
-                exchange,
-              },
-            });
-            totalSynced++;
-          } else {
-            const side: OrderSide = (bo.side || '').toUpperCase() === 'SELL' ? OrderSide.SELL : OrderSide.BUY;
-            
-            let orderType: OrderType = OrderType.MARKET;
-            const typeUpper = (bo.type || '').toUpperCase();
-            if (typeUpper === 'LIMIT') orderType = OrderType.LIMIT;
-            else if (typeUpper === 'SL' || typeUpper === 'STOPLOSS') orderType = OrderType.SL;
-            else if (typeUpper === 'SL-M' || typeUpper === 'SL_M' || typeUpper.includes('SL')) orderType = OrderType.SL_M;
-
-            const orderDate = bo.orderTime ? new Date(bo.orderTime) : new Date();
-
-            await this.prisma.order.create({
-              data: {
-                userId,
-                brokerAccountId: account.id,
-                symbol: bo.symbol,
-                exchange,
-                side,
-                orderType,
-                productType,
-                qty: totalQty,
-                price: dbPrice,
-                triggerPrice: dbTriggerPrice,
-                avgPrice: dbAvgPrice || dbPrice,
-                brokerOrderId: bo.orderId,
-                status: dbStatus,
-                filledQty,
-                createdAt: isNaN(orderDate.getTime()) ? new Date() : orderDate,
-                isPaperTrade: false,
-              },
-            });
-            totalSynced++;
-          }
+        const valid = brokerOrders.filter((bo) => bo.orderId);
+        for (let i = 0; i < valid.length; i += 50) {
+          await this.prisma.$transaction(valid.slice(i, i + 50).map((bo) => this.upsertBrokerOrder(userId, account.id, bo)));
         }
+        totalSynced += valid.length;
       } catch (err: any) {
         this.logger.warn(`Error syncing orders for account ${account.id}: ${err?.message || err}`);
+      }
+
+      try {
+        tradesSynced += await this.syncAccountTrades(userId, account.id, client);
+      } catch (err: any) {
+        this.logger.warn(`Error syncing trades for account ${account.id}: ${err?.message || err}`);
       }
     }
 
     return {
       syncedCount: totalSynced,
-      message: `Successfully synchronized ${totalSynced} orders from active broker accounts`,
+      tradesSynced,
+      message: `Synchronized ${totalSynced} orders and ${tradesSynced} new fills from active broker accounts`,
     };
+  }
+
+  /** 15:40 IST sync for every user with an active, authenticated broker account, once per trading day. */
+  private async runEodSyncIfDue(): Promise<void> {
+    if (this.eodRunning) return;
+    const now = istParts();
+    if (!isTradingDay() || now.minute < EOD_SYNC_MINUTE || this.lastEodSyncDate === now.date) return;
+    this.eodRunning = true;
+    try {
+      const users = await this.prisma.brokerAccount.findMany({
+        where: { isActive: true, accessToken: { not: null } },
+        select: { userId: true },
+        distinct: ['userId'],
+      });
+      for (const { userId } of users) {
+        await this.syncBrokerOrders(userId).catch((err) =>
+          this.logger.warn(`EOD sync failed for user ${userId}: ${err?.message || err}`),
+        );
+      }
+      this.lastEodSyncDate = now.date;
+      this.logger.log(`EOD order/trade sync done for ${users.length} user(s) (${now.date})`);
+    } catch (err: any) {
+      this.logger.error(`EOD sync failed: ${err?.message || err}`);
+    } finally {
+      this.eodRunning = false;
+    }
   }
 
   private lastSyncByUser = new Map<string, number>();

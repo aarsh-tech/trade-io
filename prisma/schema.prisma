@@ -41,6 +41,7 @@ model User {
   brokerAccounts    BrokerAccount[]
   strategies        Strategy[]
   orders            Order[]
+  trades            Trade[]
   refreshTokens     RefreshToken[]
   swingScans        SwingScan[]
   watchlists        Watchlist[]
@@ -79,6 +80,7 @@ model BrokerAccount {
 
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   orders     Order[]
+  trades     Trade[]
   strategies Strategy[]
 
   @@map("broker_accounts")
@@ -179,7 +181,34 @@ model Order {
   execution     StrategyExecution? @relation(fields: [executionId], references: [id])
 
   @@unique([brokerAccountId, brokerOrderId])
+  @@index([userId, createdAt])
+  @@index([strategyId, createdAt])
   @@map("orders")
+}
+
+/// A fill from Kite's /trades. The order book only lives a day, so fills are persisted for the ledger.
+model Trade {
+  id              String      @id @default(cuid())
+  userId          String
+  brokerAccountId String
+  tradeId         String
+  brokerOrderId   String
+  symbol          String
+  exchange        String
+  side            OrderSide
+  productType     ProductType
+  qty             Int
+  price           Float
+  filledAt        DateTime
+  createdAt       DateTime    @default(now())
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brokerAccount BrokerAccount @relation(fields: [brokerAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([brokerAccountId, tradeId])
+  @@index([userId, filledAt])
+  @@index([brokerAccountId, brokerOrderId])
+  @@map("trades")
 }
 
 enum OrderSide {
