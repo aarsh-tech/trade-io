@@ -286,7 +286,7 @@ export class MarketService {
         const kite = (client as any)['kite'];
         
         // Chunk keys into batches of 100 for Kite API
-        const chunkSize = 100;
+        const chunkSize = 500; // one OHLC request (Kite allows 1000); quote calls are 1 req/s
         for (let i = 0; i < FO_STOCKS_LIST.length; i += chunkSize) {
           const chunk = FO_STOCKS_LIST.slice(i, i + chunkSize);
           const keys = chunk.map(s => `${s.exchange || 'NSE'}:${s.symbol}`);
@@ -359,7 +359,7 @@ export class MarketService {
         const client = this.factory.createClient(account);
         const kite = (client as any)['kite'];
 
-        const chunkSize = 150;
+        const chunkSize = 500; // one OHLC request (Kite allows 1000); quote calls are 1 req/s
         for (let i = 0; i < nseSymbols.length; i += chunkSize) {
           const chunk = nseSymbols.slice(i, i + chunkSize);
           const keys = chunk.map(s => `NSE:${s}`);

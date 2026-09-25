@@ -1,3 +1,4 @@
+import { KiteRateLimiter } from './kite-rate-limiter';
 import { Injectable, ConflictException, NotFoundException, BadRequestException, HttpException, Logger } from '@nestjs/common';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -220,7 +221,7 @@ export class BrokersService {
     const apiSecret = decrypt(acc.apiSecretEnc);
 
     const kite = new KiteConnect({ api_key: apiKey });
-    const session = await kite.generateSession(requestToken, apiSecret);
+    const session = await KiteRateLimiter.forKey(apiKey).run<any>('general', () => kite.generateSession(requestToken, apiSecret));
 
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + 1);

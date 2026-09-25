@@ -6,6 +6,7 @@ import * as https from 'https';
 import * as http from 'http';
 
 import axios from 'axios';
+import { KiteRateLimiter } from './kite-rate-limiter';
 
 // Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
 export const keepAliveHttpsAgent = new https.Agent({
@@ -81,16 +82,21 @@ class ZerodhaClient implements IBrokerClient {
   private kite: any;
   private apiKey: string;
   private accessToken: string | null;
+  private limiter: KiteRateLimiter;
 
   constructor(apiKey: string, accessToken: string | null) {
     this.apiKey = apiKey;
     this.accessToken = accessToken;
+    this.limiter = KiteRateLimiter.forKey(apiKey);
     const { KiteConnect } = require('kiteconnect');
     this.kite = new KiteConnect({ api_key: apiKey, timeout: 15000 });
     if (this.kite.requestInstance?.defaults) {
       this.kite.requestInstance.defaults.httpsAgent = keepAliveHttpsAgent;
       this.kite.requestInstance.defaults.httpAgent = keepAliveHttpAgent;
     }
+    // Engines and market services reach the raw client via client['kite'], so the limiter is
+    // installed on the KiteConnect instance itself rather than on ZerodhaClient's methods.
+    this.limiter.instrument(this.kite);
     if (accessToken) {
       this.kite.setAccessToken(accessToken);
     }
