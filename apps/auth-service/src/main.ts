@@ -7,8 +7,40 @@ import { assertEncryptionConfigured } from './common/utils/crypto';
 
 const logger = new Logger('ProcessBoundary');
 
+/**
+ * Alert hook for fatal errors. Posts to ALERT_WEBHOOK_URL (Slack/Discord/Telegram-compatible
+ * JSON `{ text }`) when configured; never throws and is bounded by a short timeout so the
+ * process can always exit.
+ */
+async function sendFatalAlert(message: string): Promise<void> {
+  const url = process.env.ALERT_WEBHOOK_URL;
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: message }),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch (err) {
+    logger.error(`Fatal alert delivery failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+let shuttingDownOnFatal = false;
+
+// After an uncaught exception the process state is undefined; fail fast and let PM2 restart it
+// (startup recovery re-adopts active strategies and open positions).
 process.on('uncaughtException', (error) => {
   logger.error(`Uncaught Exception: ${error?.message || error}`, error?.stack);
+  if (shuttingDownOnFatal) return;
+  shuttingDownOnFatal = true;
+
+  // Hard stop in case the alert or logger flush hangs
+  setTimeout(() => process.exit(1), 3000).unref();
+  void sendFatalAlert(`[algo-backend] Uncaught exception, restarting: ${error?.message || error}`).finally(() =>
+    process.exit(1),
+  );
 });
 
 process.on('unhandledRejection', (reason, promise) => {

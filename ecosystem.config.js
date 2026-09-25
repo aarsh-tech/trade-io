@@ -5,7 +5,11 @@
  * Usage:
  *   pm2 start ecosystem.config.js --env production
  *   pm2 save
- *   pm2 startup
+ *   pm2 startup   # run once on the server, execute the command it prints, then `pm2 save`
+ *                 # so the apps come back after a host reboot
+ *
+ * The backend exits with code 1 on an uncaught exception (see apps/auth-service/src/main.ts);
+ * PM2 restarts it and strategy boot recovery re-adopts active strategies and open positions.
  */
 
 module.exports = {
@@ -19,9 +23,11 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       restart_delay: 2000,
-      // Strict V8 memory limit: Forces aggressive garbage collection at 256MB to keep server RAM < 500MB
-      node_args: '--max-old-space-size=256',
-      max_memory_restart: '320M',
+      // V8 heap 512MB (engines + instrument/candle caches + socket server); PM2 restarts above 640MB RSS
+      node_args: '--max-old-space-size=512',
+      max_memory_restart: '640M',
+      // Give in-flight requests/orders time to finish on SIGINT before PM2 sends SIGKILL
+      kill_timeout: 10000,
       watch: false,
       env_production: {
         NODE_ENV: 'production',
