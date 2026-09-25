@@ -12,6 +12,7 @@ import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { socketOriginCheck } from '../common/utils/socket-cors';
 import { authenticateSocket } from '../common/utils/socket-auth';
+import { CLOSED_FEED, FeedStatus, MarketTick, OrderUpdateEvent } from './market-tick';
 
 const MAX_SYMBOLS_PER_CLIENT = 200;
 
@@ -28,11 +29,22 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private readonly logger = new Logger(MarketGateway.name);
 
-  // Map of symbol -> Set of socket IDs
+  // subscribed key -> socket ids. Keys are stored as the client sent them: `EXCH:SYMBOL` (exact) or a bare symbol.
   private subscriptions = new Map<string, Set<string>>();
 
   // socketId -> raw symbols this client subscribed to (for the per-client cap)
   private clientSymbols = new Map<string, Set<string>>();
+
+  // socketId -> exact keys subscribed (source for per-viewer ticker binding)
+  private clientKeys = new Map<string, Set<string>>();
+
+  private socketUsers = new Map<string, string>();
+
+  private feedByUser = new Map<string, FeedStatus>();
+
+  // Latest tick per instrument, per owning user, flushed as one `ticks` message per socket
+  private tickBuffer = new Map<string, Map<string, MarketTick>>();
+  private flushTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly jwtService: JwtService) {}
 
@@ -44,27 +56,34 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     client.data.userId = userId;
+    this.socketUsers.set(client.id, userId);
+    client.join(`user:${userId}`);
+    client.emit('feed:status', this.feedByUser.get(userId) ?? CLOSED_FEED);
     this.logger.log(`Client connected: ${client.id}`);
   }
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
     this.clientSymbols.delete(client.id);
-    // Cleanup subscriptions
-    this.subscriptions.forEach((clients, symbol) => {
+    this.clientKeys.delete(client.id);
+    this.socketUsers.delete(client.id);
+    this.subscriptions.forEach((clients, key) => {
       clients.delete(client.id);
-      if (clients.size === 0) {
-        this.subscriptions.delete(symbol);
-      }
+      if (clients.size === 0) this.subscriptions.delete(key);
     });
   }
 
-  // Buffered ticks for high-performance batched broadcasting
-  private tickBuffer: Record<string, number> = {};
-  private flushTimer: NodeJS.Timeout | null = null;
-
-  getSubscribedSymbols(): string[] {
-    return Array.from(this.subscriptions.keys());
+  /** Symbols each connected viewer is watching, so the ticker can stream them on that viewer's own account. */
+  getSubscribedSymbolsByUser(): Map<string, string[]> {
+    const byUser = new Map<string, Set<string>>();
+    this.clientKeys.forEach((keys, socketId) => {
+      const userId = this.socketUsers.get(socketId);
+      if (!userId) return;
+      const set = byUser.get(userId) ?? new Set<string>();
+      keys.forEach((k) => set.add(k));
+      byUser.set(userId, set);
+    });
+    return new Map(Array.from(byUser, ([userId, set]) => [userId, Array.from(set)]));
   }
 
   @SubscribeMessage('subscribe')
@@ -77,41 +96,33 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { status: 'error', message: 'symbols array required' };
     }
 
-    // Cap distinct underlying symbols per client (clients send several prefixed variants per symbol)
+    // Cap distinct underlying symbols per client
     const owned = this.clientSymbols.get(client.id) ?? new Set<string>();
+    const keys = this.clientKeys.get(client.id) ?? new Set<string>();
     const accepted: string[] = [];
     for (const symbol of data.symbols) {
-      if (typeof symbol !== 'string' || !symbol) continue;
-      const raw = symbol.includes(':') ? symbol.split(':')[1] : symbol;
+      if (typeof symbol !== 'string' || !symbol.trim()) continue;
+      const key = symbol.trim();
+      const raw = key.includes(':') ? key.split(':')[1] : key;
       if (!owned.has(raw) && owned.size >= MAX_SYMBOLS_PER_CLIENT) continue;
       owned.add(raw);
-      accepted.push(symbol);
+      keys.add(key);
+      accepted.push(key);
     }
     this.clientSymbols.set(client.id, owned);
+    this.clientKeys.set(client.id, keys);
     const truncated = accepted.length < data.symbols.length;
-    data = { symbols: accepted };
 
-    this.logger.log(`Client ${client.id} subscribing to ${data.symbols.length} symbols`);
+    this.logger.log(`Client ${client.id} subscribing to ${accepted.length} symbols`);
 
-    data.symbols.forEach((symbol) => {
-      const rawSym = symbol.includes(':') ? symbol.split(':')[1] : symbol;
-      const nseSym = `NSE:${rawSym}`;
-      const bseSym = `BSE:${rawSym}`;
-      const nfoSym = `NFO:${rawSym}`;
-
-      // Register subscriptions for exact key and normalized keys
-      [symbol, rawSym, nseSym, bseSym, nfoSym].forEach((s) => {
-        if (!this.subscriptions.has(s)) {
-          this.subscriptions.set(s, new Set());
-        }
-        this.subscriptions.get(s).add(client.id);
-        client.join(`symbol:${s}`);
-      });
+    accepted.forEach((key) => {
+      if (!this.subscriptions.has(key)) this.subscriptions.set(key, new Set());
+      this.subscriptions.get(key).add(client.id);
     });
 
     return {
       status: 'ok',
-      subscribed: data.symbols,
+      subscribed: accepted,
       ...(truncated ? { truncated: true, limit: MAX_SYMBOLS_PER_CLIENT } : {}),
     };
   }
@@ -126,69 +137,71 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     this.logger.log(`Client ${client.id} unsubscribing from ${data.symbols.length} symbols`);
-    
-    data.symbols.forEach((symbol) => {
-      const rawSym = symbol.includes(':') ? symbol.split(':')[1] : symbol;
-      const nseSym = `NSE:${rawSym}`;
-      const bseSym = `BSE:${rawSym}`;
-      const nfoSym = `NFO:${rawSym}`;
 
-      [symbol, rawSym, nseSym, bseSym, nfoSym].forEach((s) => {
-        if (this.subscriptions.has(s)) {
-          this.subscriptions.get(s).delete(client.id);
-          if (this.subscriptions.get(s).size === 0) {
-            this.subscriptions.delete(s);
-          }
-        }
-        client.leave(`symbol:${s}`);
-      });
+    const owned = this.clientSymbols.get(client.id);
+    const keys = this.clientKeys.get(client.id);
+    data.symbols.forEach((symbol) => {
+      if (typeof symbol !== 'string') return;
+      const key = symbol.trim();
+      const subs = this.subscriptions.get(key);
+      if (subs) {
+        subs.delete(client.id);
+        if (subs.size === 0) this.subscriptions.delete(key);
+      }
+      keys?.delete(key);
+      owned?.delete(key.includes(':') ? key.split(':')[1] : key);
     });
 
     return { status: 'ok', unsubscribed: data.symbols };
   }
 
   /**
-   * Broadcast LTP update to subscribed clients (subscriber-aware, zero wasted emits)
+   * Queue ticks from `userId`'s market-data feed. Only that user's sockets receive them (a viewer never
+   * streams on someone else's Kite session). Ticks for the same instrument coalesce within a 75 ms window
+   * and go out as one `ticks` array per socket.
    */
-  broadcastLTP(symbol: string, ltp: number) {
-    const rawSym = symbol.includes(':') ? symbol.split(':')[1] : symbol;
+  broadcastTicks(userId: string, ticks: MarketTick[]) {
+    if (!this.server || ticks.length === 0) return;
+    const buffer = this.tickBuffer.get(userId) ?? new Map<string, MarketTick>();
+    ticks.forEach((t) => buffer.set(t.key, t));
+    this.tickBuffer.set(userId, buffer);
 
-    // Check if any client is actually subscribed before serializing/emitting
-    const hasSubscribers =
-      this.subscriptions.has(rawSym) ||
-      this.subscriptions.has(symbol) ||
-      this.subscriptions.has(`NSE:${rawSym}`) ||
-      this.subscriptions.has(`BSE:${rawSym}`) ||
-      this.subscriptions.has(`NFO:${rawSym}`);
-
-    if (!hasSubscribers) return;
-
-    const payload = { symbol: rawSym, ltp, timestamp: new Date().toISOString() };
-
-    // Emit to normalized room (all clients subscribed to this symbol joined symbol:rawSym)
-    this.server.to(`symbol:${rawSym}`).emit('ltp', payload);
-    if (symbol !== rawSym) {
-      this.server.to(`symbol:${symbol}`).emit('ltp', payload);
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flush(), 75);
     }
   }
 
-  /**
-   * High-performance batched tick broadcasting
-   * Merges high-frequency ticks into a 75ms window to eliminate CPU spikes and redundant packet serialization
-   */
-  broadcastTicks(ticks: Record<string, number>) {
-    Object.assign(this.tickBuffer, ticks);
+  private flush() {
+    const pending = this.tickBuffer;
+    this.tickBuffer = new Map();
+    this.flushTimer = null;
 
-    if (!this.flushTimer) {
-      this.flushTimer = setTimeout(() => {
-        const pending = { ...this.tickBuffer };
-        this.tickBuffer = {};
-        this.flushTimer = null;
-
-        Object.entries(pending).forEach(([symbol, ltp]) => {
-          this.broadcastLTP(symbol, ltp);
+    pending.forEach((buffer, userId) => {
+      const perSocket = new Map<string, MarketTick[]>();
+      buffer.forEach((tick) => {
+        // A socket may have subscribed to the exact key and/or the bare symbol: one delivery either way.
+        const sockets = new Set<string>([
+          ...(this.subscriptions.get(tick.key) ?? []),
+          ...(this.subscriptions.get(tick.symbol) ?? []),
+        ]);
+        sockets.forEach((socketId) => {
+          if (this.socketUsers.get(socketId) !== userId) return;
+          const list = perSocket.get(socketId) ?? [];
+          list.push(tick);
+          perSocket.set(socketId, list);
         });
-      }, 75);
-    }
+      });
+      perSocket.forEach((list, socketId) => this.server.to(socketId).emit('ticks', list));
+    });
+  }
+
+  /** Publish a user's feed health; new sockets get the latest value on connect. */
+  emitFeedStatus(userId: string, status: FeedStatus) {
+    this.feedByUser.set(userId, status);
+    this.server?.to(`user:${userId}`).emit('feed:status', status);
+  }
+
+  emitOrderUpdate(userId: string, update: OrderUpdateEvent) {
+    this.server?.to(`user:${userId}`).emit('order_update', update);
   }
 }

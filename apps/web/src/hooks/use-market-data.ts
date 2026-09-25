@@ -3,9 +3,16 @@ import { io, Socket } from 'socket.io-client';
 import { getSocketBaseUrl } from '@/lib/api';
 
 export interface MarketTick {
+  key: string;
   symbol: string;
+  exchange: string;
   ltp: number;
-  timestamp: string;
+  close: number | null;
+  change: number | null;
+  changePct: number | null;
+  volume: number | null;
+  exchangeTs: string | null;
+  ts: string;
 }
 
 export function useMarketData(symbols: string[]) {
@@ -36,29 +43,21 @@ export function useMarketData(symbols: string[]) {
 
     socket.on('connect', () => {
       setIsConnected(true);
-      // Send both raw and prefixed symbol variants to ensure complete matching
-      const allSubscriptions: string[] = [];
-      symbols.forEach((sym) => {
-        const raw = sym.includes(':') ? sym.split(':')[1] : sym;
-        allSubscriptions.push(sym);
-        allSubscriptions.push(raw);
-        allSubscriptions.push(`NSE:${raw}`);
-        allSubscriptions.push(`BSE:${raw}`);
-        allSubscriptions.push(`NFO:${raw}`);
-      });
-      const uniqueSymbols = Array.from(new Set(allSubscriptions));
-      socket.emit('subscribe', { symbols: uniqueSymbols });
+      // The server matches a bare symbol on any exchange and `EXCH:SYMBOL` exactly, and delivers each tick once.
+      socket.emit('subscribe', { symbols: Array.from(new Set(symbols)) });
     });
 
-    socket.on('ltp', (tick: MarketTick) => {
-      if (!tick || !tick.symbol || typeof tick.ltp !== 'number') return;
-      const rawSym = tick.symbol.includes(':') ? tick.symbol.split(':')[1] : tick.symbol;
-
-      setPrices((prev) => ({
-        ...prev,
-        [tick.symbol]: tick.ltp,
-        [rawSym]: tick.ltp,
-      }));
+    socket.on('ticks', (batch: MarketTick[]) => {
+      if (!Array.isArray(batch) || batch.length === 0) return;
+      setPrices((prev) => {
+        const next = { ...prev };
+        for (const tick of batch) {
+          if (!tick?.symbol || typeof tick.ltp !== 'number') continue;
+          next[tick.key] = tick.ltp;
+          next[tick.symbol] = tick.ltp;
+        }
+        return next;
+      });
     });
 
     socket.on('disconnect', () => {

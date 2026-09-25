@@ -5,6 +5,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerType } from '@prisma/client';
 import { INDEX_INSTRUMENTS, InstrumentStore } from '../brokers/instrument-store';
 import { toKiteError } from '../brokers/kite-errors';
+import { CLOSED_FEED, FeedState, FeedStatus, MarketTick, OrderUpdateEvent } from './market-tick';
+
+/** Kite allows at most 3000 instruments per websocket connection. */
+const MAX_TOKENS_PER_TICKER = 3000;
+/** Kite sends a heartbeat about every second; this long with nothing at all means the feed is stale. */
+const FEED_STALE_AFTER_MS = 15_000;
+const FEED_HEALTH_INTERVAL_MS = 5_000;
+/** Re-emit an unchanged feed status this often so clients can show a fresh "last update". */
+const FEED_REEMIT_MS = 15_000;
 
 @Injectable()
 export class TickerService implements OnModuleInit, OnModuleDestroy {
@@ -13,13 +22,42 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   private failedAccounts = new Map<string, { timestamp: number; accessToken: string }>();
   private refreshInterval: NodeJS.Timeout;
   private warmInterval: NodeJS.Timeout;
+  private feedInterval: NodeJS.Timeout;
+  private feedPublished = new Map<string, { status: FeedState; at: number }>();
   private listeners = new Set<(ticks: Record<string, number>) => void>();
+  private orderListeners = new Set<(accountId: string, update: OrderUpdateEvent) => void>();
 
+  /** Engine-facing tick stream: `{ SYMBOL: ltp, 'EXCH:SYMBOL': ltp }`. Browsers get the normalised `ticks` event instead. */
   registerListener(callback: (ticks: Record<string, number>) => void) {
     this.listeners.add(callback);
     return () => {
       this.listeners.delete(callback);
     };
+  }
+
+  /** Order postbacks from the Kite websocket, tagged with the broker account they belong to. */
+  registerOrderListener(callback: (accountId: string, update: OrderUpdateEvent) => void) {
+    this.orderListeners.add(callback);
+    return () => {
+      this.orderListeners.delete(callback);
+    };
+  }
+
+  /** Subscribe tokens in `quote` mode, skipping ones already subscribed and honouring the per-connection cap. */
+  private subscribeTokens(tickerData: any, tokens: number[]) {
+    const have = new Set<number>(tickerData.tokens || []);
+    const fresh = Array.from(new Set(tokens)).filter((t) => !have.has(t));
+    const room = MAX_TOKENS_PER_TICKER - have.size;
+    if (fresh.length > room) {
+      this.logger.warn(`Ticker token cap (${MAX_TOKENS_PER_TICKER}) reached; dropping ${fresh.length - Math.max(room, 0)} subscriptions`);
+    }
+    const accepted = fresh.slice(0, Math.max(room, 0));
+    if (accepted.length === 0) return 0;
+    accepted.forEach((t) => have.add(t));
+    tickerData.tokens = Array.from(have);
+    tickerData.instance.subscribe(accepted);
+    tickerData.instance.setMode(tickerData.instance.modeQuote, accepted);
+    return accepted.length;
   }
 
   async subscribeSymbol(accountId: string, symbol: string) {
@@ -68,10 +106,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (token) {
-      if (!tickerData.tokens.includes(token)) {
-        tickerData.tokens.push(token);
-        tickerData.instance.subscribe([token]);
-        tickerData.instance.setMode(tickerData.instance.modeFull, [token]);
+      if (this.subscribeTokens(tickerData, [token]) > 0) {
         this.logger.log(`Dynamically subscribed to ticker symbol: ${symbol} (token: ${token})`);
       }
     } else {
@@ -116,6 +151,54 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     // first request of the day never pays for the download.
     void this.warmInstrumentStore();
     this.warmInterval = setInterval(() => void this.warmInstrumentStore(), 5 * 60_000);
+
+    this.feedInterval = setInterval(() => this.publishFeedStatuses(), FEED_HEALTH_INTERVAL_MS);
+  }
+
+  /** Aggregate each viewer's feed health across their accounts and push it to their sockets on change. */
+  private publishFeedStatuses() {
+    const marketOpen = this.isIndianMarketOpen();
+    const now = Date.now();
+    const byUser = new Map<string, FeedStatus>();
+    const rank: Record<FeedState, number> = { closed: 0, stale: 1, connected: 2 };
+
+    this.tickers.forEach((t) => {
+      if (!t.userId) return;
+      let status: FeedState = 'closed';
+      if (marketOpen) {
+        status = t.connected && t.lastMessageAt && now - t.lastMessageAt < FEED_STALE_AFTER_MS ? 'connected' : 'stale';
+      }
+      const next: FeedStatus = {
+        status,
+        lastExchangeTs: t.lastExchangeTs ?? null,
+        lastMessageAt: t.lastMessageAt ? new Date(t.lastMessageAt).toISOString() : null,
+      };
+      const cur = byUser.get(t.userId);
+      if (!cur || rank[status] > rank[cur.status]) byUser.set(t.userId, next);
+    });
+
+    // Users whose ticker is gone (market closed, expired token, torn down) become `closed`.
+    this.feedPublished.forEach((_, userId) => {
+      if (!byUser.has(userId)) byUser.set(userId, CLOSED_FEED);
+    });
+
+    byUser.forEach((status, userId) => {
+      const last = this.feedPublished.get(userId);
+      if (last && last.status === status.status && now - last.at < FEED_REEMIT_MS) return;
+      if (status.status === 'closed' && !last) return;
+      this.marketGateway.emitFeedStatus(userId, status);
+      if (status.status === 'closed') this.feedPublished.delete(userId);
+      else this.feedPublished.set(userId, { status: status.status, at: now });
+    });
+  }
+
+  /** Disconnect and forget one account's ticker; its viewer sees `closed` on the next health pass. */
+  private removeTicker(accountId: string) {
+    const existing = this.tickers.get(accountId);
+    if (existing?.disconnect) {
+      try { existing.disconnect(); } catch (_) {}
+    }
+    this.tickers.delete(accountId);
   }
 
   /** Loads NSE/NFO/BFO masters once per trading day, from 08:45 IST on. Failures are retried next tick. */
@@ -142,6 +225,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() {
     if (this.refreshInterval) clearInterval(this.refreshInterval);
     if (this.warmInterval) clearInterval(this.warmInterval);
+    if (this.feedInterval) clearInterval(this.feedInterval);
     this.tickers.forEach((ticker) => {
       try { ticker.disconnect(); } catch (_) {}
     });
@@ -175,10 +259,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       // Add symbols subscribed by active connected dashboard clients
-      const dashboardSymbols = this.marketGateway.getSubscribedSymbols();
+      const viewerSymbols = this.marketGateway.getSubscribedSymbolsByUser();
 
       // OPTIMIZATION 1: If NO active strategies AND NO dashboard clients watching, SLEEP.
-      if (activeStrategies.length === 0 && (!dashboardSymbols || dashboardSymbols.length === 0)) {
+      if (activeStrategies.length === 0 && viewerSymbols.size === 0) {
         if (this.tickers.size > 0) {
           this.logger.log('TickerService: No active strategies or dashboard clients; entering idle sleep mode.');
           this.tickers.forEach((ticker) => {
@@ -223,22 +307,16 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         }
       });
 
-      // Only assign defaultAccount if dashboard users are actually watching symbols
-      if (dashboardSymbols && dashboardSymbols.length > 0) {
-        let defaultAccount = activeStrategies[0]?.brokerAccountId;
-        if (!defaultAccount) {
-          const firstActive = await this.prisma.brokerAccount.findFirst({
-            where: { isActive: true, accessToken: { not: null } },
-          });
-          if (firstActive) defaultAccount = firstActive.id;
-        }
-
-        if (defaultAccount) {
-          if (!symbolsByAccount.has(defaultAccount)) {
-            symbolsByAccount.set(defaultAccount, new Set());
-          }
-          dashboardSymbols.forEach((sym) => symbolsByAccount.get(defaultAccount).add(sym));
-        }
+      // Each viewer streams on their OWN broker account; a viewer without a live account gets no ticks
+      // (they never borrow another user's Kite session).
+      for (const [userId, symbols] of viewerSymbols) {
+        const viewerAccount = await this.prisma.brokerAccount.findFirst({
+          where: { userId, isActive: true, accessToken: { not: null }, tokenHealth: { not: 'EXPIRED' } },
+          select: { id: true },
+        });
+        if (!viewerAccount) continue;
+        if (!symbolsByAccount.has(viewerAccount.id)) symbolsByAccount.set(viewerAccount.id, new Set());
+        symbols.forEach((sym) => symbolsByAccount.get(viewerAccount.id).add(sym));
       }
 
       // For each account with active symbols, ensure a ticker is running
@@ -311,18 +389,13 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         }
         this.tickers.delete(accountId);
       } else {
-        const currentTokens = new Set<number>(tickerData.tokens || []);
         const requestedTokens = symbols
           .map((s) => tickerData.resolveToken(s))
           .filter((t): t is number => typeof t === 'number' && !isNaN(t));
 
-        const tokensToSubscribe = requestedTokens.filter((t) => !currentTokens.has(t));
-        if (tokensToSubscribe.length > 0 && tickerData.instance) {
-          this.logger.log(`Subscribing to ${tokensToSubscribe.length} new tokens for account ${account.clientId}`);
-          tickerData.instance.subscribe(tokensToSubscribe);
-          tickerData.instance.setMode(tickerData.instance.modeFull, tokensToSubscribe);
-          tokensToSubscribe.forEach((t) => currentTokens.add(t));
-          tickerData.tokens = Array.from(currentTokens);
+        if (requestedTokens.length > 0 && tickerData.instance) {
+          const added = this.subscribeTokens(tickerData, requestedTokens);
+          if (added > 0) this.logger.log(`Subscribed ${added} new tokens (quote mode) for account ${account.clientId}`);
         }
         return;
       }
@@ -420,32 +493,105 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         ticker.autoReconnect(true, 100, 3);
       }
 
+      // Per-connection state, shared with the event handlers below. `tokens` also drives re-subscribe
+      // after a reconnect, so tokens added later (subscribeTokens) survive it.
+      const state: any = {
+        disconnect: () => {
+          try { ticker.disconnect(); } catch (_) {}
+        },
+        instance: ticker,
+        tokens: [] as number[],
+        symbolToToken,
+        tokenToSymbol,
+        resolveToken,
+        accessToken: account.accessToken,
+        userId: account.userId as string,
+        connected: false,
+        lastMessageAt: 0,
+        lastExchangeTs: null as string | null,
+      };
+
       ticker.on('ticks', (ticks: any[]) => {
-        const mappedTicks: Record<string, number> = {};
+        const now = Date.now();
+        state.lastMessageAt = now;
+        const legacy: Record<string, number> = {};
+        const quotes: MarketTick[] = [];
         ticks.forEach((tick) => {
           const info = tokenToSymbol.get(tick.instrument_token);
-          if (info && tick.last_price) {
-            // Only emit under the raw symbol AND its correct exchange prefix
-            // This prevents cross-exchange contamination (e.g. BSE:SENSEX index
-            // polluting NFO:SENSEX which could match SENSEX options)
-            mappedTicks[info.symbol] = tick.last_price;
-            mappedTicks[`${info.exchange}:${info.symbol}`] = tick.last_price;
-          }
+          if (!info || !tick.last_price) return;
+
+          // Engine stream: raw symbol AND its exchange-prefixed form (never other exchanges' aliases,
+          // so BSE:SENSEX the index cannot pollute NFO:SENSEX options).
+          legacy[info.symbol] = tick.last_price;
+          legacy[`${info.exchange}:${info.symbol}`] = tick.last_price;
+
+          // Browser stream. Change is measured against the previous close Kite sends (ohlc.close); with
+          // no close we send null rather than a fake 0%.
+          const close = tick.ohlc?.close > 0 ? Number(tick.ohlc.close) : null;
+          const change = close ? tick.last_price - close : null;
+          const exchangeTs = tick.exchange_timestamp instanceof Date ? tick.exchange_timestamp.toISOString() : null;
+          if (exchangeTs) state.lastExchangeTs = exchangeTs;
+          quotes.push({
+            key: `${info.exchange}:${info.symbol}`,
+            symbol: info.symbol,
+            exchange: info.exchange,
+            ltp: tick.last_price,
+            close,
+            change: change === null ? null : Number(change.toFixed(2)),
+            changePct: change === null ? null : Number(((change / close) * 100).toFixed(2)),
+            volume: typeof tick.volume_traded === 'number' ? tick.volume_traded : null,
+            exchangeTs,
+            ts: new Date(now).toISOString(),
+          });
         });
-        if (Object.keys(mappedTicks).length > 0) {
-          this.marketGateway.broadcastTicks(mappedTicks);
+        if (quotes.length > 0) {
+          this.marketGateway.broadcastTicks(state.userId, quotes);
           this.listeners.forEach((cb) => {
-            try { cb(mappedTicks); } catch (e) { this.logger.error(e); }
+            try { cb(legacy); } catch (e) { this.logger.error(e); }
           });
         }
+      });
+
+      // Any frame from Kite (ticks and the ~1 s heartbeat) proves the feed is alive.
+      ticker.on('message', () => {
+        state.lastMessageAt = Date.now();
+      });
+
+      ticker.on('order_update', (order: any) => {
+        if (!order?.order_id) return;
+        const update: OrderUpdateEvent = {
+          orderId: String(order.order_id),
+          status: order.status,
+          exchange: order.exchange,
+          tradingsymbol: order.tradingsymbol,
+          transactionType: order.transaction_type,
+          orderType: order.order_type,
+          product: order.product,
+          variety: order.variety,
+          quantity: order.quantity,
+          filledQuantity: order.filled_quantity,
+          pendingQuantity: order.pending_quantity,
+          price: order.price,
+          triggerPrice: order.trigger_price,
+          averagePrice: order.average_price,
+          statusMessage: order.status_message ?? null,
+          tag: order.tag ?? null,
+          exchangeTs: order.exchange_timestamp ? new Date(order.exchange_timestamp).toISOString() : null,
+        };
+        this.marketGateway.emitOrderUpdate(state.userId, update);
+        this.orderListeners.forEach((cb) => {
+          try { cb(account.id, update); } catch (e) { this.logger.error(e); }
+        });
       });
 
       ticker.on('connect', () => {
         this.logger.log(`Zerodha Ticker connected for account ${account.clientId}`);
         this.failedAccounts.delete(account.id);
-        if (tokensToSubscribe.length > 0) {
-          ticker.subscribe(tokensToSubscribe);
-          ticker.setMode(ticker.modeFull, tokensToSubscribe);
+        state.connected = true;
+        state.lastMessageAt = Date.now();
+        if (state.tokens.length > 0) {
+          ticker.subscribe(state.tokens);
+          ticker.setMode(ticker.modeQuote, state.tokens);
         }
       });
 
@@ -487,6 +633,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       ticker.on('disconnect', (error: any) => {
+        state.connected = false;
         // If this ticker was torn down due to auth error, suppress noisy disconnect log
         if (this.failedAccounts.has(account.id)) {
           return;
@@ -522,18 +669,9 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         this.cleanKiteTickerCache();
       });
 
+      state.tokens = Array.from(new Set(tokensToSubscribe)).slice(0, MAX_TOKENS_PER_TICKER);
       ticker.connect();
-      this.tickers.set(account.id, {
-        disconnect: () => {
-          try { ticker.disconnect(); } catch (_) {}
-        },
-        instance: ticker,
-        tokens: tokensToSubscribe,
-        symbolToToken,
-        tokenToSymbol,
-        resolveToken,
-        accessToken: account.accessToken,
-      });
+      this.tickers.set(account.id, state);
     } catch (err: any) {
       const msg = err?.message || String(err || '');
       this.logger.error(`Failed to setup Zerodha Ticker for ${account.clientId || account.id}: ${msg}`);

@@ -28,8 +28,8 @@ export function useDashboard() {
 
     const data = marketOverviewQuery.data;
     const symbolsToSub = [
-      ...data.indices.map((i: any) => i.symbol),
-      ...data.stocks.map((s: any) => s.symbol),
+      ...data.indices.map((i: any) => i.key),
+      ...data.stocks.map((s: any) => s.key),
     ];
 
     const token = localStorage.getItem('accessToken');
@@ -47,34 +47,25 @@ export function useDashboard() {
       socketInstance.emit('subscribe', { symbols: symbolsToSub });
     });
 
-    socketInstance.on('ltp', (payload: { symbol: string; ltp: number }) => {
+    // One batched message per flush; each tick carries Kite's previous close, so change/changePct are
+    // exact (no re-deriving from the last price).
+    socketInstance.on('ticks', (ticks: Array<{ key: string; ltp: number; change: number | null; changePct: number | null }>) => {
+      if (!Array.isArray(ticks) || ticks.length === 0) return;
+      const byKey = new Map(ticks.map((t) => [t.key, t]));
       queryClient.setQueryData(DASHBOARD_KEYS.overview, (oldData: any) => {
         if (!oldData) return oldData;
-        
-        const newLtp = payload.ltp;
-        
         return {
           ...oldData,
           indices: oldData.indices.map((idx: any) => {
-            if (idx.symbol === payload.symbol) {
-              const prevPrice = idx.price - idx.changeAbs;
-              const newChangeAbs = newLtp - (prevPrice || newLtp);
-              const newChange = prevPrice ? (newChangeAbs / prevPrice) * 100 : 0;
-              return { ...idx, price: newLtp, change: newChange, changeAbs: newChangeAbs };
-            }
-            return idx;
+            const t = byKey.get(idx.key);
+            if (!t) return idx;
+            return { ...idx, price: t.ltp, change: t.changePct ?? idx.change, changeAbs: t.change ?? idx.changeAbs };
           }),
           stocks: oldData.stocks.map((stock: any) => {
-            if (stock.symbol === payload.symbol) {
-              // Usually we need previous close to calc % change.
-              // Assuming change and changeAbs logic similar to indices.
-              const prevPrice = stock.price ? stock.price / (1 + (stock.change / 100)) : newLtp;
-              const newChangeAbs = newLtp - prevPrice;
-              const newChange = prevPrice ? (newChangeAbs / prevPrice) * 100 : 0;
-              return { ...stock, price: newLtp, change: newChange };
-            }
-            return stock;
-          })
+            const t = byKey.get(stock.key);
+            if (!t) return stock;
+            return { ...stock, price: t.ltp, change: t.changePct ?? stock.change };
+          }),
         };
       });
     });

@@ -162,11 +162,11 @@ export class MarketService {
         indices = OVERVIEW_INDICES.map(({ key, symbol }) => {
           const q = quotes[key];
           const price = q?.last_price ?? 0;
-          const prev = q?.ohlc?.close ?? price;
-          const changeAbs = price - prev;
-          const change = prev ? (changeAbs / prev) * 100 : 0;
-          return { symbol, price, change, changeAbs };
-        });
+          const close = q?.ohlc?.close > 0 ? q.ohlc.close : null;
+          const changeAbs = close ? price - close : 0;
+          const change = close ? (changeAbs / close) * 100 : 0;
+          return { symbol, key, price, close, change, changeAbs };
+        }) as typeof defaultIndices;
       } catch (e) {
         this.logger.warn(`Failed to fetch indices: ${e instanceof Error ? e.message : e}`);
       }
@@ -192,7 +192,7 @@ export class MarketService {
 
     const stocks = watchSymbols.map(s => {
       const [exchange, symbol] = s.includes(':') ? s.split(':') : ['NSE', s];
-      return { symbol, exchange, price: 0, change: 0 };
+      return { symbol, exchange, key: `${exchange}:${symbol}`, price: 0, close: null as number | null, change: 0 };
     });
 
     // Fetch initial LTP for stocks if possible
@@ -207,7 +207,8 @@ export class MarketService {
           const q = quotes[key];
           if (q) {
             stock.price = q.last_price;
-            const prev = q.ohlc?.close || q.last_price;
+            const prev = q.ohlc?.close > 0 ? q.ohlc.close : null;
+            stock.close = prev;
             stock.change = prev ? ((q.last_price - prev) / prev) * 100 : 0;
           }
         });
