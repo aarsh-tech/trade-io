@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { strategyApi, brokerApi, marketApi, orderApi } from "@/lib/api";
+import { TRADING_QUERY } from "@/lib/query-options";
 
 // ─── Strategies ─────────────────────────────────────────────────────────────
 
@@ -17,6 +18,7 @@ export function useStrategies() {
       const res = await strategyApi.list();
       return res.data;
     },
+    ...TRADING_QUERY,
   });
 }
 
@@ -59,6 +61,7 @@ export function useBrokerPositions(id: string | null) {
       return res.data;
     },
     enabled: !!id,
+    ...TRADING_QUERY,
   });
 }
 
@@ -95,6 +98,7 @@ export function useOrders(params?: { limit?: number; page?: number }, options?: 
       const res = await orderApi.list(params);
       return res.data;
     },
+    ...TRADING_QUERY,
     ...options,
   });
 }

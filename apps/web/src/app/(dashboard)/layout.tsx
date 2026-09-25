@@ -2,6 +2,7 @@
 
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/topbar";
+import { OfflineBanner } from "@/components/layout/offline-banner";
 import { MobileBottomNav } from "@/components/layout/mobile-nav";
 import { AuthGuard } from "@/components/auth-guard";
 import { MarketSocketProvider } from "@/components/market-socket-provider";
@@ -15,6 +16,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden relative">
           <TopBar />
+          <OfflineBanner />
           <main className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 sm:p-5 md:p-6 pb-24 md:pb-6">
             {children}
           </main>

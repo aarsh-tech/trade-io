@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
 import { queryKeys } from "@/lib/query-keys";
+import { TRADING_QUERY } from "@/lib/query-options";
 
 export const PORTFOLIO_KEYS = queryKeys.portfolio;
 
@@ -22,6 +23,7 @@ export function usePortfolio(brokerId?: string | null) {
     // Holdings are long-term delivery assets; refresh lazily every 60s or on manual sync
     refetchInterval: 60000,
     staleTime: 30000,
+    ...TRADING_QUERY,
   });
 
   const positionsQuery = useQuery({
@@ -35,6 +37,7 @@ export function usePortfolio(brokerId?: string | null) {
     // Positions refresh every 15s while real-time LTP & PnL stream over WebSocket
     refetchInterval: 15000,
     staleTime: 5000,
+    ...TRADING_QUERY,
   });
 
   const marginsQuery = useQuery({
@@ -48,6 +51,7 @@ export function usePortfolio(brokerId?: string | null) {
     // Margins refresh every 30s to prevent Zerodha rate limit throttling
     refetchInterval: 30000,
     staleTime: 15000,
+    ...TRADING_QUERY,
   });
 
   const renewSessionMutation = useMutation({
@@ -102,6 +106,7 @@ export function usePortfolio(brokerId?: string | null) {
     isPositionsLoading: positionsQuery.isLoading,
     isMarginsLoading: marginsQuery.isLoading,
     error: holdingsQuery.error || positionsQuery.error || marginsQuery.error,
+    positionsError: positionsQuery.isError && !positionsQuery.data ? positionsQuery.error : null,
     refreshHoldings: () => holdingsQuery.refetch(),
     refreshPositions: () => positionsQuery.refetch(),
     getLoginUrl: async () => {

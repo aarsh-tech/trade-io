@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
+import { TRADING_QUERY } from "@/lib/query-options";
 
 export const BROKER_KEYS = {
   all: ["brokers"] as const,
@@ -16,6 +17,7 @@ export function useBrokers() {
       const res = await brokerApi.list();
       return res.data.data;
     },
+    ...TRADING_QUERY,
   });
 
   const connectMutation = useMutation({

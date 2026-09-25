@@ -15,6 +15,8 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable, DataTableColumnHeader } from "@/components/ui/data-table";
 import { queryKeys } from "@/lib/query-keys";
+import { TRADING_QUERY } from "@/lib/query-options";
+import { QueryError } from "@/components/shared/query-state";
 import { orderApi, brokerApi } from "@/lib/api";
 import { useBrokers } from "@/hooks/useBrokers";
 import { toast } from "sonner";
@@ -101,7 +103,7 @@ export default function OrdersPage() {
   const [cancellingOrder, setCancellingOrder] = useState<Order | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
-  const { data: ordersData, isLoading, refetch, isFetching } = useQuery({
+  const { data: ordersData, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: queryKeys.orders.lists(),
     queryFn: async () => {
       const res = await orderApi.list();
@@ -109,6 +111,7 @@ export default function OrdersPage() {
     },
     staleTime: 10_000,
     refetchInterval: 10_000,
+    ...TRADING_QUERY,
   });
 
   const syncMutation = useMutation({
@@ -645,7 +648,9 @@ export default function OrdersPage() {
         </CardHeader>
 
         <CardContent className="p-0">
-          {isLoading ? (
+          {isError && !ordersData ? (
+            <QueryError what="orders" error={error} onRetry={() => refetch()} retrying={isFetching} />
+          ) : isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center gap-3">
               <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
               <p className="text-sm text-muted-foreground">Loading orders from database & Zerodha...</p>

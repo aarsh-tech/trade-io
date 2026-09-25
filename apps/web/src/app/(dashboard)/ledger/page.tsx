@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { QueryError } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { orderApi } from "@/lib/api";
@@ -193,7 +194,7 @@ export default function MonthlyLedgerPage() {
     q: debouncedSearch || undefined,
   };
 
-  const { data: ledgerResponse, isLoading, refetch, isFetching } = useQuery({
+  const { data: ledgerResponse, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["ledger", journalParams, page],
     queryFn: async () => {
       const res = await orderApi.ledger({ ...journalParams, page, pageSize: JOURNAL_PAGE_SIZE });
@@ -892,7 +893,9 @@ export default function MonthlyLedgerPage() {
         </CardHeader>
 
         <CardContent className="p-0">
-          {isLoading ? (
+          {isError && !ledgerResponse ? (
+            <QueryError what="the ledger" error={error} onRetry={() => refetch()} retrying={isFetching} />
+          ) : isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center gap-3">
               <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
               <p className="text-xs sm:text-sm text-muted-foreground">Calculating closed trade ledger from broker records...</p>

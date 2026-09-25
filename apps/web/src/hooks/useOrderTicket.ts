@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { brokerApi, riskApi } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   needsConfirmation,
   newIdempotencyKey,
@@ -47,14 +48,17 @@ export function useOrderTicket(ctx: OrderTicketContext) {
   const tickSize = tickQuery.data ?? undefined;
 
   const { side, orderType, product, qty, price, triggerPrice, ltp, availableMargin, marginRequired, lotSize } = ctx;
+  const online = useOnlineStatus();
   const issues: TicketIssue[] = useMemo(
-    () =>
-      validateTicket({
+    () => [
+      ...(online ? [] : [{ field: "form", severity: "error", message: "You are offline. Orders are blocked until the connection returns." } as TicketIssue]),
+      ...validateTicket({
         side, orderType, product, qty, price, triggerPrice, ltp, availableMargin, marginRequired, lotSize,
         tickSize,
         limits: limitsQuery.data,
       }),
-    [side, orderType, product, qty, price, triggerPrice, ltp, availableMargin, marginRequired, lotSize, tickSize, limitsQuery.data],
+    ],
+    [online, side, orderType, product, qty, price, triggerPrice, ltp, availableMargin, marginRequired, lotSize, tickSize, limitsQuery.data],
   );
 
   const errors = issues.filter((i) => i.severity === "error");

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { marketApi } from "@/lib/api";
+import { TRADING_QUERY } from "@/lib/query-options";
 import { useMarketSocket } from "@/components/market-socket-provider";
 import { useMarketStore, type MarketTick } from "@/store/market-store";
 
@@ -24,6 +25,7 @@ export function useDashboard() {
     // 30s automatic polling fallback (WebSocket streams real-time LTP ticks)
     refetchInterval: 30000,
     staleTime: 15000,
+    ...TRADING_QUERY,
   });
 
   // Live ticks come from the shared MarketSocketProvider; overlay them on the REST snapshot.
@@ -72,6 +74,7 @@ export function useDashboard() {
       return res.data.data;
     },
     refetchInterval: 30 * 1000,
+    ...TRADING_QUERY,
   });
 
   return {

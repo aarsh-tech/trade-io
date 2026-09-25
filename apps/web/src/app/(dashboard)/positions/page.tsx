@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
+import { QueryError } from "@/components/shared/query-state";
 import { useMarketData } from "@/hooks/use-market-data";
 import { PriceFreshness } from "@/components/shared/price-freshness";
 import { ColumnDef } from "@tanstack/react-table";
@@ -49,6 +50,7 @@ export default function PositionsPage() {
   const {
     positions = [],
     isPositionsLoading,
+    positionsError,
     refreshPositions,
   } = usePortfolio(activeBrokerId);
 
@@ -421,7 +423,9 @@ export default function PositionsPage() {
           )}
         </CardHeader>
         <CardContent className="p-0">
-          {isPositionsLoading && positions.length === 0 ? (
+          {positionsError ? (
+            <QueryError what="positions" error={positionsError} onRetry={() => refreshPositions()} retrying={isPositionsLoading} />
+          ) : isPositionsLoading && positions.length === 0 ? (
             <div className="py-20 flex flex-col items-center justify-center gap-3">
               <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
               <p className="text-sm text-muted-foreground">Fetching live positions from broker...</p>
