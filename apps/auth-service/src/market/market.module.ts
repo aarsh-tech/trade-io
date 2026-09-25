@@ -6,9 +6,10 @@ import { MarketService } from './market.service';
 import { OhlScannerService } from './ohl-scanner.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { BrokersModule } from '../brokers/brokers.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [PrismaModule, BrokersModule],
+  imports: [PrismaModule, BrokersModule, AuthModule],
   controllers: [MarketController],
   providers: [MarketGateway, TickerService, MarketService, OhlScannerService],
   exports: [MarketGateway, TickerService, MarketService, OhlScannerService],

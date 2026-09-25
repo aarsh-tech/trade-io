@@ -19,9 +19,13 @@ export function useMarketData(symbols: string[]) {
   useEffect(() => {
     if (symbols.length === 0) return;
 
+    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+    if (!token) return;
+
     // Connect to market namespace
     const socket = io(`${getSocketBaseUrl()}/market`, {
       withCredentials: true,
+      auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,

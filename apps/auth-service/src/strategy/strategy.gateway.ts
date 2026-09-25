@@ -11,6 +11,8 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import { socketOriginCheck } from '../common/utils/socket-cors';
+import { authenticateSocket } from '../common/utils/socket-auth';
 import { strategyEvents } from '../common/events';
 import { PrismaService } from '../prisma/prisma.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
@@ -22,7 +24,7 @@ import { StrategyService } from './strategy.service';
 
 @WebSocketGateway({
   cors: {
-    origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => callback(null, true),
+    origin: socketOriginCheck,
     credentials: true,
   },
   namespace: 'strategy',
@@ -47,33 +49,14 @@ export class StrategyGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   handleConnection(client: Socket) {
-    try {
-      let rawToken =
-        client.handshake.auth?.token ||
-        client.handshake.query?.token ||
-        client.handshake.headers?.authorization;
-
-      if (rawToken && typeof rawToken === 'string' && rawToken.startsWith('Bearer ')) {
-        rawToken = rawToken.slice(7).trim();
-      }
-
-      if (!rawToken) {
-        this.logger.warn(`No token provided for strategy socket connection: ${client.id}`);
-        client.disconnect();
-        return;
-      }
-
-      const payload = this.jwtService.verify(rawToken);
-      if (!payload?.sub) {
-        client.disconnect();
-        return;
-      }
-
-      this.logger.log(`Client ${client.id} authenticated on strategy gateway`);
-    } catch (err: any) {
-      this.logger.warn(`Strategy socket auth failed for ${client.id}: ${err.message}`);
-      client.disconnect();
+    const userId = authenticateSocket(client, this.jwtService);
+    if (!userId) {
+      this.logger.warn(`Rejected unauthenticated strategy socket: ${client.id}`);
+      client.disconnect(true);
+      return;
     }
+    client.data.userId = userId;
+    this.logger.log(`Client ${client.id} authenticated on strategy gateway`);
   }
 
   handleDisconnect(client: Socket) {
@@ -90,7 +73,17 @@ export class StrategyGateway implements OnGatewayConnection, OnGatewayDisconnect
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { strategyId: string },
   ) {
-    if (data?.strategyId) {
+    if (data?.strategyId && typeof data.strategyId === 'string') {
+      // Ownership check: only the strategy's owner may join its room
+      const owner = await this.prisma.strategy.findUnique({
+        where: { id: data.strategyId },
+        select: { userId: true },
+      });
+      if (!owner || owner.userId !== client.data?.userId) {
+        this.logger.warn(`Client ${client.id} denied access to strategy room ${data.strategyId}`);
+        return { status: 'error', message: 'forbidden' };
+      }
+
       // Leave previous room if any
       const prev = this.socketSubscriptions.get(client.id);
       if (prev) client.leave(prev);

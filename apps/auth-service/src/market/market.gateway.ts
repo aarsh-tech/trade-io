@@ -9,10 +9,15 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { socketOriginCheck } from '../common/utils/socket-cors';
+import { authenticateSocket } from '../common/utils/socket-auth';
+
+const MAX_SYMBOLS_PER_CLIENT = 200;
 
 @WebSocketGateway({
   cors: {
-    origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => callback(null, true),
+    origin: socketOriginCheck,
     credentials: true,
   },
   namespace: 'market',
@@ -26,12 +31,25 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Map of symbol -> Set of socket IDs
   private subscriptions = new Map<string, Set<string>>();
 
+  // socketId -> raw symbols this client subscribed to (for the per-client cap)
+  private clientSymbols = new Map<string, Set<string>>();
+
+  constructor(private readonly jwtService: JwtService) {}
+
   handleConnection(client: Socket) {
+    const userId = authenticateSocket(client, this.jwtService);
+    if (!userId) {
+      this.logger.warn(`Rejected unauthenticated market socket: ${client.id}`);
+      client.disconnect(true);
+      return;
+    }
+    client.data.userId = userId;
     this.logger.log(`Client connected: ${client.id}`);
   }
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
+    this.clientSymbols.delete(client.id);
     // Cleanup subscriptions
     this.subscriptions.forEach((clients, symbol) => {
       clients.delete(client.id);
@@ -54,12 +72,27 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { symbols: string[] },
   ) {
+    if (!client.data?.userId) return { status: 'error', message: 'unauthorized' };
     if (!data?.symbols || !Array.isArray(data.symbols)) {
       return { status: 'error', message: 'symbols array required' };
     }
 
+    // Cap distinct underlying symbols per client (clients send several prefixed variants per symbol)
+    const owned = this.clientSymbols.get(client.id) ?? new Set<string>();
+    const accepted: string[] = [];
+    for (const symbol of data.symbols) {
+      if (typeof symbol !== 'string' || !symbol) continue;
+      const raw = symbol.includes(':') ? symbol.split(':')[1] : symbol;
+      if (!owned.has(raw) && owned.size >= MAX_SYMBOLS_PER_CLIENT) continue;
+      owned.add(raw);
+      accepted.push(symbol);
+    }
+    this.clientSymbols.set(client.id, owned);
+    const truncated = accepted.length < data.symbols.length;
+    data = { symbols: accepted };
+
     this.logger.log(`Client ${client.id} subscribing to ${data.symbols.length} symbols`);
-    
+
     data.symbols.forEach((symbol) => {
       const rawSym = symbol.includes(':') ? symbol.split(':')[1] : symbol;
       const nseSym = `NSE:${rawSym}`;
@@ -76,7 +109,11 @@ export class MarketGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
     });
 
-    return { status: 'ok', subscribed: data.symbols };
+    return {
+      status: 'ok',
+      subscribed: data.symbols,
+      ...(truncated ? { truncated: true, limit: MAX_SYMBOLS_PER_CLIENT } : {}),
+    };
   }
 
   @SubscribeMessage('unsubscribe')

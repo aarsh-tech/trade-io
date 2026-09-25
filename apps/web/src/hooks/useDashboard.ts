@@ -45,7 +45,11 @@ export function useDashboard() {
       ...data.stocks.map((s: any) => s.symbol),
     ];
 
+    const token = localStorage.getItem('accessToken');
+    if (!token) return;
+
     const socketInstance = io(`${getSocketBaseUrl()}/market`, {
+      auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,
