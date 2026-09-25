@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { Breakout15MinConfig } from './dto/strategy.dto';
 import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from './smart-stock-picker';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
+import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, strategyOrderWhere } from './position-recovery';
@@ -21,6 +23,7 @@ interface StrategyState {
   strategyId: string;
   executionId: string;
   config: Breakout15MinConfig;
+  userId: string;
   brokerAccountId: string;
   isPaperTrade: boolean;
   futureSymbol: string | null;
@@ -132,7 +135,17 @@ export class Breakout15MinEngine {
     private readonly prisma: PrismaService,
     private readonly factory: BrokerClientFactory,
     private readonly tickerService: TickerService,
+    private readonly orderGateway: OrderGateway,
   ) { }
+
+  /** All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record). */
+  private async placeOrder(state: StrategyState, params: OrderParams): Promise<string> {
+    const placed = await this.orderGateway.place(state.userId, state.brokerAccountId, params, {
+      strategyId: state.strategyId,
+      executionId: state.executionId,
+    });
+    return placed.orderId;
+  }
 
   async start(strategyId: string): Promise<{ executionId: string }> {
     if (this.running.has(strategyId)) return { executionId: this.running.get(strategyId)!.executionId };
@@ -211,6 +224,7 @@ export class Breakout15MinEngine {
       strategyId,
       executionId: execution.id,
       config,
+      userId: strategy.userId,
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: (strategy as any).isPaperTrade,
       futureSymbol: config.instrumentType === 'STOCK' ? config.symbol : null,
@@ -496,13 +510,14 @@ export class Breakout15MinEngine {
 
       if (!isAlreadyClosed) {
         const exitSide = (state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY'));
-        await client.placeOrder({
+        await this.placeOrder(state, {
           symbol,
           exchange,
           side: exitSide,
           orderType: 'MARKET',
           product: state.config.product,
           qty: state.executedQty || state.config.qty,
+          intent: 'EXIT'
         }).catch((e: any) => this.log(state, `❌ Square-Off exit order notice: ${e.message}`));
       }
     }
@@ -1099,13 +1114,14 @@ export class Breakout15MinEngine {
           const exitSymbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
           const exitExchange = state.optionSymbol ? (exitSymbol.startsWith('SENSEX') ? 'BFO' : 'NFO') : (state.futureExchange || state.config.exchange);
           const exitSide = state.optionSymbol ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
-          await client.placeOrder({
+          await this.placeOrder(state, {
             symbol: exitSymbol,
             exchange: exitExchange,
             side: exitSide,
             orderType: 'MARKET',
             product: state.config.product,
             qty: state.config.qty,
+            intent: 'EXIT'
           }).catch((e: any) => this.log(state, `❌ 3:05 PM EOD exit order failed: ${e.message}`));
           state.entryTriggered = null;
           state.entryFilled = false;
@@ -1785,13 +1801,14 @@ export class Breakout15MinEngine {
             this.log(state, `💰 [THE BANKER & RUNNER] Paper Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (+${partialR}R / +₹${(pnlPoints * bookQty).toFixed(2)})!`);
           } else if (client) {
             try {
-              const partId = await client.placeOrder({
+              const partId = await this.placeOrder(state, {
                 symbol,
                 exchange,
                 side: exitSide,
                 orderType: 'MARKET',
                 product: state.config.product ?? 'MIS',
                 qty: bookQty,
+                intent: 'EXIT'
               });
               this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} | Order: ${partId}`);
             } catch (err: any) {
@@ -2091,13 +2108,14 @@ export class Breakout15MinEngine {
 
         if (!isManuallyClosed && client && marketExitQty > 0) {
           try {
-            exitOrderId = await client.placeOrder({
+            exitOrderId = await this.placeOrder(state, {
               symbol,
               exchange,
               product: config.product ?? 'MIS',
               qty: marketExitQty,
               side: exitSide,
               orderType: 'MARKET',
+              intent: 'EXIT'
             });
             exitOrderType = 'MARKET';
             this.log(state, `✅ Live Market Exit Order placed (${reason}) for ${marketExitQty} shares: ${exitOrderId}`);
@@ -2117,13 +2135,14 @@ export class Breakout15MinEngine {
             const orphanSide = finalPos.netQty > 0 ? 'SELL' : 'BUY';
             const orphanQty = Math.abs(finalPos.netQty);
             this.log(state, `🚨 [FAIL-SAFE SAFETY NET] Detected ${orphanQty} orphaned shares still open at Zerodha! Executing emergency market square-off order to flatten position completely...`);
-            const emergencyOrderId = await client.placeOrder({
+            const emergencyOrderId = await this.placeOrder(state, {
               symbol,
               exchange,
               product: config.product ?? 'MIS',
               qty: orphanQty,
               side: orphanSide,
               orderType: 'MARKET',
+              intent: 'EXIT'
             }).catch((e: any) => {
               this.log(state, `❌ Emergency square-off failed: ${e.message}`);
               return null;
@@ -2325,7 +2344,7 @@ export class Breakout15MinEngine {
           const limitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
           const qty = state.executedQty || config.qty;
 
-          const slId = await client.placeOrder({
+          const slId = await this.placeOrder(state, {
             symbol,
             exchange,
             side: exitSide,
@@ -2334,6 +2353,7 @@ export class Breakout15MinEngine {
             qty,
             price: limitPrice,
             triggerPrice,
+            intent: 'PROTECTIVE'
           }).catch((e: any) => {
             this.log(state, `❌ SL Order Failed: ${e.message}`);
             return 'FAILED';
@@ -2739,7 +2759,7 @@ export class Breakout15MinEngine {
       return;
     }
     const limitPrice = side === 'BUY' ? this.roundTick(entry + symTickSize * 3, symTickSize) : this.roundTick(entry - symTickSize * 3, symTickSize);
-    const entryId = await client.placeOrder({ symbol, exchange, side, orderType: 'LIMIT', product: config.product ?? 'MIS', qty: config.qty, price: limitPrice });
+    const entryId = await this.placeOrder(state, { symbol, exchange, side, orderType: 'LIMIT', product: config.product ?? 'MIS', qty: config.qty, price: limitPrice, intent: 'ENTRY' });
     state.entryOrderId = entryId;
     this.log(state, `✅ Live Entry Order placed (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
     await this.trackOrder(state, account, executionId, { symbol, exchange, side, orderType: 'LIMIT', product: config.product, qty: config.qty, price: limitPrice }, entryId, strategyId, triggerTime);
@@ -2804,7 +2824,7 @@ export class Breakout15MinEngine {
       const triggerPrice = this.roundTick(state.stopLossPrice || sl, symTickSize);
       const slLimitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
 
-      const slId = await client.placeOrder({
+      const slId = await this.placeOrder(state, {
         symbol,
         exchange,
         side: exitSide,
@@ -2813,6 +2833,7 @@ export class Breakout15MinEngine {
         qty: executedQty,
         price: slLimitPrice,
         triggerPrice,
+        intent: 'PROTECTIVE'
       }).catch((e: any) => {
         this.log(state, `❌ Server SL Order Failed: ${e.message}`);
         return 'FAILED';
@@ -2834,7 +2855,7 @@ export class Breakout15MinEngine {
       }, slId, strategyId, triggerTime);
 
       if (config.exitExactAtTarget) {
-        const targetId = await client.placeOrder({
+        const targetId = await this.placeOrder(state, {
           symbol,
           exchange,
           side: exitSide,
@@ -2842,6 +2863,7 @@ export class Breakout15MinEngine {
           product: config.product ?? 'MIS',
           qty: executedQty,
           price: tgtPrice,
+          intent: 'EXIT'
         }).catch((e: any) => {
           this.log(state, `❌ Server Target Order Failed: ${e.message}`);
           return 'FAILED';

@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
+import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,6 +23,7 @@ interface StrategyState {
   strategyId: string;
   executionId: string;
   config: EmaVwapCrossoverConfig;
+  userId: string;
   brokerAccountId: string;
   isPaperTrade: boolean;
   futureSymbol: string | null;
@@ -108,7 +111,17 @@ export class EmaVwapCrossoverEngine {
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
     private tickerService: TickerService,
+    private orderGateway: OrderGateway,
   ) { }
+
+  /** All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record). */
+  private async placeOrder(state: StrategyState, params: OrderParams): Promise<string> {
+    const placed = await this.orderGateway.place(state.userId, state.brokerAccountId, params, {
+      strategyId: state.strategyId,
+      executionId: state.executionId,
+    });
+    return placed.orderId;
+  }
 
   async start(strategyId: string): Promise<{ executionId: string }> {
     if (this.running.has(strategyId)) return { executionId: this.running.get(strategyId)!.executionId };
@@ -226,6 +239,7 @@ export class EmaVwapCrossoverEngine {
       strategyId,
       executionId: execution.id,
       config,
+      userId: strategy.userId,
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: strategy.isPaperTrade,
       futureSymbol: null,
@@ -1763,7 +1777,7 @@ export class EmaVwapCrossoverEngine {
       } else {
         let initialOrderError: string | null = null;
         try {
-          entryId = await client.placeOrder({ symbol, exchange, product: usedProduct, qty: config.qty, side: finalSide, orderType: 'LIMIT', price: limitPrice });
+          entryId = await this.placeOrder(state, { symbol, exchange, product: usedProduct, qty: config.qty, side: finalSide, orderType: 'LIMIT', price: limitPrice, intent: 'ENTRY' });
           this.log(state, `✅ Entry Order (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
           state.entryOrderId = entryId;
           state.tradesPlacedToday++;
@@ -1837,7 +1851,7 @@ export class EmaVwapCrossoverEngine {
             this.log(state, `🔄 Retrying entry order with NRML (Cash Equity / Delivery): ${nrmlQty} shares @ ₹${limitPrice.toFixed(2)} (Required Capital: ₹${(nrmlQty * entry).toFixed(2)})`);
 
             try {
-              entryId = await client.placeOrder({ symbol, exchange, product: 'NRML', qty: nrmlQty, side: 'BUY', orderType: 'LIMIT', price: limitPrice });
+              entryId = await this.placeOrder(state, { symbol, exchange, product: 'NRML', qty: nrmlQty, side: 'BUY', orderType: 'LIMIT', price: limitPrice, intent: 'ENTRY' });
               this.log(state, `✅ NRML Entry Order placed (LIMIT @ ₹${limitPrice.toFixed(2)}): ${entryId}`);
               state.entryOrderId = entryId;
               if (initialOrderError) {
@@ -1900,7 +1914,7 @@ export class EmaVwapCrossoverEngine {
           const slTriggerPrice = this.roundTick(sl, symbol);
           const tgtPrice = this.roundTick(tgt, symbol);
 
-          slOrderId = await client.placeOrder({
+          slOrderId = await this.placeOrder(state, {
             symbol,
             exchange,
             product: usedProduct,
@@ -1908,14 +1922,15 @@ export class EmaVwapCrossoverEngine {
             side: exitSide,
             orderType: 'SL',
             price: slLimitPrice,
-            triggerPrice: slTriggerPrice
+            triggerPrice: slTriggerPrice,
+            intent: 'PROTECTIVE'
           }).catch((e: any) => { this.log(state, `❌ SL Failed: ${e.message}`); return null; });
 
           if (slOrderId) {
             this.log(state, `🛡 Stop Loss Armed at broker (${state.executedQty} shares): Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)} | OrderId: ${slOrderId}`);
           }
           if (config.enableProfitFloor === false || config.exitExactAtTarget) {
-            targetOrderId = await client.placeOrder({ symbol, exchange, product: usedProduct, qty: state.executedQty, side: exitSide, orderType: 'LIMIT', price: tgtPrice })
+            targetOrderId = await this.placeOrder(state, { symbol, exchange, product: usedProduct, qty: state.executedQty, side: exitSide, orderType: 'LIMIT', price: tgtPrice, intent: 'EXIT' })
               .catch((e: any) => { this.log(state, `❌ Target Failed: ${e.message}`); return null; });
             if (targetOrderId) {
               this.log(state, `🎯 Broker LIMIT Target Armed (${state.executedQty} shares @ ₹${tgtPrice.toFixed(2)}) | OrderId: ${targetOrderId}`);
@@ -2391,7 +2406,7 @@ export class EmaVwapCrossoverEngine {
                 ? this.roundTick(isOption ? state.stopLossPrice * 1.02 : state.stopLossPrice + symTickSize * 3, symbol)
                 : this.roundTick(isOption ? state.stopLossPrice * 0.98 : state.stopLossPrice - symTickSize * 3, symbol);
               const slTriggerPrice = this.roundTick(state.stopLossPrice, symbol);
-              state.slOrderId = await client.placeOrder({
+              state.slOrderId = await this.placeOrder(state, {
                 symbol,
                 exchange,
                 product: state.config.product ?? 'MIS',
@@ -2399,7 +2414,8 @@ export class EmaVwapCrossoverEngine {
                 side: exitSide,
                 orderType: 'SL',
                 price: slLimitPrice,
-                triggerPrice: slTriggerPrice
+                triggerPrice: slTriggerPrice,
+                intent: 'PROTECTIVE'
               }).catch((e: any) => { this.log(state, `❌ SL Failed: ${e.message}`); return null; });
               if (state.slOrderId) {
                 this.log(state, `🛡 Armed SL order (${state.slOrderId}) for ${state.executedQty} shares @ Trigger ₹${slTriggerPrice.toFixed(2)}`);
@@ -2417,14 +2433,15 @@ export class EmaVwapCrossoverEngine {
                 }
               } else if (state.targetPrice) {
                 const tgtPrice = this.roundTick(state.targetPrice, symbol);
-                state.targetOrderId = await client.placeOrder({
+                state.targetOrderId = await this.placeOrder(state, {
                   symbol,
                   exchange,
                   product: state.config.product ?? 'MIS',
                   qty: state.executedQty,
                   side: exitSide,
                   orderType: 'LIMIT',
-                  price: tgtPrice
+                  price: tgtPrice,
+                  intent: 'EXIT'
                 }).catch((e: any) => { this.log(state, `❌ Target Failed: ${e.message}`); return null; });
                 if (state.targetOrderId) {
                   this.log(state, `🎯 Broker LIMIT Target Armed (${state.executedQty} shares @ ₹${tgtPrice.toFixed(2)}) | OrderId: ${state.targetOrderId}`);
@@ -2771,13 +2788,14 @@ export class EmaVwapCrossoverEngine {
 
           if (!isManuallyClosed && marketExitQty > 0) {
             try {
-              exitOrderId = await client.placeOrder({
+              exitOrderId = await this.placeOrder(state, {
                 symbol,
                 exchange,
                 product: config.product ?? 'MIS',
                 qty: marketExitQty,
                 side: exitSide,
                 orderType: 'MARKET',
+                intent: 'EXIT'
               });
               exitOrderType = 'MARKET';
               this.log(state, `✅ Live Market Exit Order placed (${reason}) for ${marketExitQty} shares: ${exitOrderId}`);
@@ -2797,13 +2815,14 @@ export class EmaVwapCrossoverEngine {
               const orphanSide = finalPos.netQty > 0 ? 'SELL' : 'BUY';
               const orphanQty = Math.abs(finalPos.netQty);
               this.log(state, `🚨 [FAIL-SAFE SAFETY NET] Detected ${orphanQty} orphaned shares still open at Zerodha! Executing emergency market square-off order to flatten position completely...`);
-              const emergencyOrderId = await client.placeOrder({
+              const emergencyOrderId = await this.placeOrder(state, {
                 symbol,
                 exchange,
                 product: config.product ?? 'MIS',
                 qty: orphanQty,
                 side: orphanSide,
                 orderType: 'MARKET',
+                intent: 'EXIT'
               }).catch((e: any) => {
                 this.log(state, `❌ Emergency square-off failed: ${e.message}`);
                 return null;

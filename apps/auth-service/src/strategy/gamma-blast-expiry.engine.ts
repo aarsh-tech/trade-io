@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { GammaBlastExpiryConfig } from './dto/strategy.dto';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
+import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, RecoveredPosition } from './position-recovery';
@@ -45,6 +47,7 @@ interface GammaStrategyState {
   strategyId: string;
   executionId: string;
   config: GammaBlastExpiryConfig;
+  userId: string;
   brokerAccountId: string;
   isPaperTrade: boolean;
   activeUnderlying: 'NIFTY' | 'SENSEX';
@@ -119,7 +122,17 @@ export class GammaBlastExpiryEngine {
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
     private tickerService: TickerService,
+    private readonly orderGateway: OrderGateway,
   ) { }
+
+  /** All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record). */
+  private async placeOrder(state: GammaStrategyState, params: OrderParams): Promise<string> {
+    const placed = await this.orderGateway.place(state.userId, state.brokerAccountId, params, {
+      strategyId: state.strategyId,
+      executionId: state.executionId,
+    });
+    return placed.orderId;
+  }
 
   async start(strategyId: string): Promise<{ executionId: string }> {
     if (this.running.has(strategyId)) {
@@ -231,6 +244,7 @@ export class GammaBlastExpiryEngine {
       strategyId,
       executionId: execution.id,
       config,
+      userId: strategy.userId,
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: strategy.isPaperTrade,
       activeUnderlying: underlying,
@@ -1439,7 +1453,7 @@ export class GammaBlastExpiryEngine {
     const limitPrice = this.roundTick(entryPrice + 0.50);
       const entryId = state.isPaperTrade
         ? `PAPER_GAMMA_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({
+        : await this.placeOrder(state, {
           symbol,
           exchange,
           product,
@@ -1447,6 +1461,7 @@ export class GammaBlastExpiryEngine {
           side: 'BUY',
           orderType: 'LIMIT',
           price: limitPrice,
+          intent: 'ENTRY'
         });
 
       state.entryOrderId = entryId;
@@ -1469,7 +1484,7 @@ export class GammaBlastExpiryEngine {
       if (!state.isPaperTrade) {
         const slTrigger = this.roundTick(initialSl);
         const slLimit = this.roundTick(initialSl * 0.90);
-        const slOrderId = await client.placeOrder({
+        const slOrderId = await this.placeOrder(state, {
           symbol,
           exchange,
           product,
@@ -1478,6 +1493,7 @@ export class GammaBlastExpiryEngine {
           orderType: 'SL',
           price: slLimit,
           triggerPrice: slTrigger,
+          intent: 'PROTECTIVE'
         }).catch((e: any) => { this.log(state, `❌ SL Order notice: ${e.message}`); return null; });
 
         state.slOrderId = slOrderId;
@@ -1828,13 +1844,14 @@ export class GammaBlastExpiryEngine {
           await client.cancelOrder(state.slOrderId).catch(() => { });
         }
 
-        exitOrderId = await client.placeOrder({
+        exitOrderId = await this.placeOrder(state, {
           symbol,
           exchange,
           product: state.config.product || 'NRML',
           qty: partialQty,
           side: 'SELL',
           orderType: 'MARKET',
+          intent: 'EXIT'
         });
         this.log(state, `✅ Partial Market Exit Order Placed (${reason}): ${exitOrderId} for ${partialQty} Qty`);
 
@@ -1843,7 +1860,7 @@ export class GammaBlastExpiryEngine {
         if (remainingQty > 0 && state.stopLossPrice) {
           const slTrigger = this.roundTick(state.stopLossPrice);
           const slLimit = this.roundTick(slTrigger * 0.90);
-          state.slOrderId = await client.placeOrder({
+          state.slOrderId = await this.placeOrder(state, {
             symbol,
             exchange,
             product: state.config.product || 'NRML',
@@ -1852,6 +1869,7 @@ export class GammaBlastExpiryEngine {
             orderType: 'SL',
             price: slLimit,
             triggerPrice: slTrigger,
+            intent: 'PROTECTIVE'
           }).catch(() => null);
 
           if (state.slOrderId) {
@@ -1904,13 +1922,14 @@ export class GammaBlastExpiryEngine {
         }
 
         if (!isManuallyClosed) {
-          exitOrderId = await client.placeOrder({
+          exitOrderId = await this.placeOrder(state, {
             symbol,
             exchange,
             product: state.config.product || 'NRML',
             qty,
             side: 'SELL',
             orderType: 'MARKET',
+            intent: 'EXIT'
           });
           this.log(state, `✅ Live Market Exit Order Placed (${reason}): ${exitOrderId}`);
         }

@@ -4,6 +4,7 @@ import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { StockOptionsBuyingConfig } from './dto/strategy.dto';
 import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart-stock-picker';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { strategyEvents } from '../common/events';
 import { findOpenPosition, strategyOrderWhere, istDayStart } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
@@ -21,6 +22,7 @@ interface StrategyState {
   strategyId: string;
   executionId: string;
   config: StockOptionsBuyingConfig;
+  userId: string;
   brokerAccountId: string;
   isPaperTrade: boolean;
 
@@ -78,7 +80,17 @@ export class StockOptionsBuyingEngine {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
+    private readonly orderGateway: OrderGateway,
   ) { }
+
+  /** All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record). */
+  private async placeOrder(state: StrategyState, params: OrderParams): Promise<string> {
+    const placed = await this.orderGateway.place(state.userId, state.brokerAccountId, params, {
+      strategyId: state.strategyId,
+      executionId: state.executionId,
+    });
+    return placed.orderId;
+  }
 
   async start(strategyId: string): Promise<{ executionId: string }> {
     if (this.running.has(strategyId)) {
@@ -121,6 +133,7 @@ export class StockOptionsBuyingEngine {
       strategyId,
       executionId: execution.id,
       config,
+      userId: strategy.userId,
       brokerAccountId: brokerAccount.id,
       isPaperTrade: strategy.isPaperTrade,
       stateType: 'SCANNING',
@@ -794,7 +807,7 @@ export class StockOptionsBuyingEngine {
           qty: state.positionQty,
         };
 
-        const orderId = await client.placeOrder(params);
+        const orderId = await this.placeOrder(state, { ...params, intent: 'ENTRY' });
         state.entryOrderId = orderId;
         state.stateType = 'WAITING_FOR_TRIGGER';
         this.log(state, `✅ Precision SL Limit Order placed at exchange: ${orderId} (Trigger: ₹${entryPrice}, Limit: ₹${limitPrice})`);
@@ -955,7 +968,7 @@ export class StockOptionsBuyingEngine {
                   product: state.config.product ?? 'MIS',
                   qty: qtyToBook,
                 };
-                const partialOrderId = await client.placeOrder(params);
+                const partialOrderId = await this.placeOrder(state, { ...params, intent: 'EXIT' });
                 this.log(state, `💰 [THE BANKER - LIVE] Booked ${lotsToBook} lot(s) (${qtyToBook} Qty) at Target 1 (Order: ${partialOrderId})!`);
               }
               state.positionQty -= qtyToBook;
@@ -1045,7 +1058,7 @@ export class StockOptionsBuyingEngine {
               qty: state.positionQty,
             };
 
-            const exitOrderId = await client.placeOrder(params);
+            const exitOrderId = await this.placeOrder(state, { ...params, intent: 'EXIT' });
             this.log(state, `✅ Live Exit Order placed: ${exitOrderId}`);
           } catch (err: any) {
             this.log(state, `❌ Live Exit Order failed: ${err.message}`);

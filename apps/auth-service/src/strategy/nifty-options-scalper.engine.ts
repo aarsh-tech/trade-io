@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
 import { autoSelectStock } from './smart-stock-picker';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
+import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, tallyTodaysTrades } from './position-recovery';
@@ -21,6 +23,7 @@ interface ScalperStrategyState {
   strategyId: string;
   executionId: string;
   config: NiftyOptionsScalperConfig;
+  userId: string;
   brokerAccountId: string;
   isPaperTrade: boolean;
   futureSymbol: string | null;
@@ -79,7 +82,17 @@ export class NiftyOptionsScalperEngine {
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
     private tickerService: TickerService,
+    private readonly orderGateway: OrderGateway,
   ) { }
+
+  /** All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record). */
+  private async placeOrder(state: ScalperStrategyState, params: OrderParams): Promise<string> {
+    const placed = await this.orderGateway.place(state.userId, state.brokerAccountId, params, {
+      strategyId: state.strategyId,
+      executionId: state.executionId,
+    });
+    return placed.orderId;
+  }
 
   getIndexScalpParams(symbol: string, userConfig?: Partial<NiftyOptionsScalperConfig>, targetDate?: Date) {
     const symUpper = (symbol || 'NIFTY').toUpperCase().trim();
@@ -231,6 +244,7 @@ export class NiftyOptionsScalperEngine {
       strategyId,
       executionId: execution.id,
       config,
+      userId: strategy.userId,
       brokerAccountId: strategy.brokerAccountId!,
       isPaperTrade: strategy.isPaperTrade,
       futureSymbol: null,
@@ -1164,7 +1178,7 @@ export class NiftyOptionsScalperEngine {
     const tStart = performance.now();
     const orderId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ symbol: optSym, exchange: exch, product: config.product, qty: tradeQty, side: 'BUY', orderType: 'MARKET' });
+        : await this.placeOrder(state, { symbol: optSym, exchange: exch, product: config.product, qty: tradeQty, side: 'BUY', orderType: 'MARKET', intent: 'ENTRY' });
 
       const elapsed = (performance.now() - tStart).toFixed(2);
       this.log(state, `⚡ Order punched in ${elapsed} ms [${state.isPaperTrade ? 'Paper Trade' : 'Live Broker Execution'}] (Order ID: ${orderId})`);
@@ -1177,7 +1191,7 @@ export class NiftyOptionsScalperEngine {
         const slTriggerPrice = this.roundTick(sl);
         const slLimitPrice = this.roundTick(Math.max(0.05, sl - 1.00));
         try {
-          state.slOrderId = await client.placeOrder({
+          state.slOrderId = await this.placeOrder(state, {
             symbol: optSym,
             exchange: exch,
             product: config.product ?? 'MIS',
@@ -1185,7 +1199,8 @@ export class NiftyOptionsScalperEngine {
             side: 'SELL',
             orderType: 'SL',
             price: slLimitPrice,
-            triggerPrice: slTriggerPrice
+            triggerPrice: slTriggerPrice,
+            intent: 'PROTECTIVE'
           });
           this.log(state, `🛡 Armed Zerodha Server SL Order (${state.slOrderId}) for ${tradeQty} shares @ Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)}`);
         } catch (slErr: any) {
@@ -1322,13 +1337,14 @@ export class NiftyOptionsScalperEngine {
               this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`).catch(() => {});
             } else if (client) {
               try {
-                const partOrderId = await client.placeOrder({
+                const partOrderId = await this.placeOrder(state, {
                   symbol,
                   exchange: exch,
                   product: state.config.product,
                   qty: bookQty,
                   side: 'SELL',
                   orderType: 'MARKET',
+                  intent: 'EXIT'
                 });
                 this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
                 this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
@@ -1566,13 +1582,14 @@ export class NiftyOptionsScalperEngine {
             this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`).catch(() => {});
           } else if (client) {
             try {
-              const partOrderId = await client.placeOrder({
+              const partOrderId = await this.placeOrder(state, {
                 symbol,
                 exchange: exch,
                 product: state.config.product,
                 qty: bookQty,
                 side: 'SELL',
                 orderType: 'MARKET',
+                intent: 'EXIT'
               });
               this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
               this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
@@ -1682,7 +1699,7 @@ export class NiftyOptionsScalperEngine {
     try {
       const exitOrderId = state.isPaperTrade
         ? `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await client.placeOrder({ symbol, exchange: exch, product: state.config.product, qty, side: 'SELL', orderType: 'MARKET' });
+        : await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product, qty, side: 'SELL', orderType: 'MARKET', intent: 'EXIT' });
 
       await this.trackOrderInDB(state, 'SELL', symbol, exch, qty, exitPrice, exitOrderId);
       state.tradesPlacedToday++;
