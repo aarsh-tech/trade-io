@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerType } from '@prisma/client';
 import { canonicalKey, INDEX_INSTRUMENTS, InstrumentStore } from '../brokers/instrument-store';
 import { toKiteError } from '../brokers/kite-errors';
-import { isMarketWindow, isTradingDay, istParts } from './market-calendar';
+import { clearObservedClosed, isMarketWindow, isTradingDay, istParts, markObservedClosed } from './market-calendar';
 import { CLOSED_FEED, FeedState, FeedStatus, MarketTick, OrderUpdateEvent } from './market-tick';
 
 /** Kite allows at most 3000 instruments per websocket connection. */
@@ -149,8 +149,30 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     this.feedInterval = setInterval(() => this.publishFeedStatuses(), FEED_HEALTH_INTERVAL_MS);
   }
 
+  /**
+   * Backstop for the static holiday list (unknown year, unlisted closure). Once the market should be
+   * open, a connected feed whose exchange clock (NIFTY 50) still carries a previous day's timestamp
+   * means the exchange is closed today; flag it so the ticker, scheduler and auto-start stand down.
+   * Runs from 09:12 IST, before the 09:15 auto-start; needs a positive stale timestamp, so a silent
+   * or timestamp-less feed never triggers it.
+   */
+  private verifyCalendarAgainstFeed() {
+    const { date, minute } = istParts();
+    if (!isTradingDay() || minute < 9 * 60 + 12 || minute > 15 * 60 + 30) return;
+
+    let staleEvidence = false;
+    this.tickers.forEach((t) => {
+      if (!t.connected || !t.lastExchangeTs) return;
+      const tsDate = istParts(new Date(t.lastExchangeTs)).date;
+      if (tsDate === date) return void clearObservedClosed(date);
+      if (tsDate < date) staleEvidence = true;
+    });
+    if (staleEvidence && isTradingDay()) markObservedClosed(date);
+  }
+
   /** Aggregate each viewer's feed health across their accounts and push it to their sockets on change. */
   private publishFeedStatuses() {
+    this.verifyCalendarAgainstFeed();
     const marketOpen = this.isIndianMarketOpen();
     const now = Date.now();
     const byUser = new Map<string, FeedStatus>();

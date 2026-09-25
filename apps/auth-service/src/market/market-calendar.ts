@@ -11,6 +11,8 @@ import { Logger } from '@nestjs/common';
  *   MARKET_SPECIAL_SESSIONS="2026-11-08@18:15-19:15"  trading on an otherwise closed day
  *                                                    (Muhurat, Saturday special sessions);
  *                                                    "@HH:MM-HH:MM" is optional (default 09:15-15:30).
+ * The static list is backed by a live check: if the feed's exchange clock is still stale shortly
+ * before the open, the day is flagged closed at runtime (markObservedClosed).
  * A year with no built-in list and no env entries is treated as weekday-only and warns once.
  */
 
@@ -53,6 +55,8 @@ export interface IstParts {
 interface Session { open: number; close: number }
 
 const warnedYears = new Set<number>();
+/** IST dates the live feed proved closed (see TickerService.verifyCalendarAgainstFeed); process-local. */
+const observedClosed = new Set<string>();
 let envCache: { key: string; holidays: Set<string>; specials: Map<string, Session> } | null = null;
 
 export function istParts(now: Date = new Date()): IstParts {
@@ -113,8 +117,20 @@ export function getSession(now: Date = new Date()): Session | null {
   const special = cfg.specials.get(date);
   if (special) return special;
   warnIfYearUnknown(date);
+  if (observedClosed.has(date)) return null;
   if (day === 0 || day === 6 || cfg.holidays.has(date)) return null;
   return { open: MARKET_OPEN_MINUTE, close: MARKET_CLOSE_MINUTE };
+}
+
+/** Records that the exchange is closed on this IST date although the static calendar says open. */
+export function markObservedClosed(date: string) {
+  if (observedClosed.has(date)) return;
+  observedClosed.add(date);
+  logger.warn(`Live feed shows no fresh exchange data on ${date}: treating it as a market holiday. Add it to MARKET_HOLIDAYS.`);
+}
+
+export function clearObservedClosed(date: string) {
+  if (observedClosed.delete(date)) logger.warn(`Fresh exchange data arrived on ${date}: cancelling the observed-holiday flag.`);
 }
 
 /** True when the exchange holds a session on this IST date (weekday and not a holiday, or a special session). */
