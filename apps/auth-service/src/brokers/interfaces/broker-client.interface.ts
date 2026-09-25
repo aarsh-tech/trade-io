@@ -70,6 +70,10 @@ export interface IBrokerClient {
   getOrders(): Promise<Order[]>;
   placeOrder(params: OrderParams): Promise<string>;
   getLTP(symbols: string[]): Promise<Record<string, number>>;
+  /** Quotes with previous close, volume and exchange time, keyed by `EXCH:SYMBOL`. */
+  getQuotes(
+    symbols: string[],
+  ): Promise<Record<string, { ltp: number; close: number | null; volume: number | null; exchangeTs: string | null }>>;
   getMargins(): Promise<any>;
   getOrder(orderId: string): Promise<Order>;
   cancelOrder(orderId: string): Promise<void>;

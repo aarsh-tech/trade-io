@@ -3,7 +3,7 @@ import { MarketGateway } from './market.gateway';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerType } from '@prisma/client';
-import { INDEX_INSTRUMENTS, InstrumentStore } from '../brokers/instrument-store';
+import { canonicalKey, INDEX_INSTRUMENTS, InstrumentStore } from '../brokers/instrument-store';
 import { toKiteError } from '../brokers/kite-errors';
 import { CLOSED_FEED, FeedState, FeedStatus, MarketTick, OrderUpdateEvent } from './market-tick';
 
@@ -14,6 +14,14 @@ const FEED_STALE_AFTER_MS = 15_000;
 const FEED_HEALTH_INTERVAL_MS = 5_000;
 /** Re-emit an unchanged feed status this often so clients can show a fresh "last update". */
 const FEED_REEMIT_MS = 15_000;
+/** While a feed is stale, serve REST quote snapshots at most this often per account, for at most this many symbols. */
+const REST_FALLBACK_INTERVAL_MS = 5_000;
+const REST_FALLBACK_MAX_SYMBOLS = 200;
+/**
+ * Always subscribed in `full` mode on every connection: index packets are only 32 bytes and carry the exchange
+ * timestamp, which gives the feed status a real exchange clock even though quote-mode stock packets have none.
+ */
+const CLOCK_INDEX_KEY = 'NSE:NIFTY 50';
 
 @Injectable()
 export class TickerService implements OnModuleInit, OnModuleDestroy {
@@ -167,6 +175,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       let status: FeedState = 'closed';
       if (marketOpen) {
         status = t.connected && t.lastMessageAt && now - t.lastMessageAt < FEED_STALE_AFTER_MS ? 'connected' : 'stale';
+        if (status === 'stale') void this.serveRestSnapshot(t);
       }
       const next: FeedStatus = {
         status,
@@ -190,6 +199,52 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       if (status.status === 'closed') this.feedPublished.delete(userId);
       else this.feedPublished.set(userId, { status: status.status, at: now });
     });
+  }
+
+  /**
+   * The websocket is down or silent: keep the viewer's screen alive with REST quote snapshots (flagged
+   * `source: 'rest'`). Engines are NOT fed from this; they must not trade on a degraded feed.
+   */
+  private async serveRestSnapshot(t: any) {
+    const now = Date.now();
+    if (t.restBusy || now - (t.lastRestAt || 0) < REST_FALLBACK_INTERVAL_MS) return;
+    const wanted = this.marketGateway.getSubscribedSymbolsByUser().get(t.userId);
+    if (!wanted?.length) return;
+
+    t.restBusy = true;
+    t.lastRestAt = now;
+    try {
+      const keys = Array.from(
+        new Set(wanted.map((s) => canonicalKey(s)).map((k) => (k.includes(':') ? k : `NSE:${k}`))),
+      ).slice(0, REST_FALLBACK_MAX_SYMBOLS);
+      const account = await this.prisma.brokerAccount.findUnique({ where: { id: t.accountId } });
+      if (!account?.accessToken || account.tokenHealth === 'EXPIRED') return;
+      const quotes = await this.brokerFactory.createClient(account).getQuotes(keys);
+
+      const ts = new Date().toISOString();
+      const ticks: MarketTick[] = Object.entries(quotes).map(([key, q]) => {
+        const [exchange, symbol] = key.split(':');
+        const change = q.close ? q.ltp - q.close : null;
+        return {
+          key,
+          symbol,
+          exchange,
+          ltp: q.ltp,
+          close: q.close,
+          change: change === null ? null : Number(change.toFixed(2)),
+          changePct: change === null ? null : Number(((change / q.close) * 100).toFixed(2)),
+          volume: q.volume,
+          exchangeTs: q.exchangeTs,
+          ts,
+          source: 'rest' as const,
+        };
+      });
+      this.marketGateway.broadcastTicks(t.userId, ticks);
+    } catch (err: any) {
+      this.logger.warn(`REST quote fallback failed for user feed ${t.userId}: ${err?.message || err}`);
+    } finally {
+      t.restBusy = false;
+    }
   }
 
   /** Disconnect and forget one account's ticker; its viewer sees `closed` on the next health pass. */
@@ -506,6 +561,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         resolveToken,
         accessToken: account.accessToken,
         userId: account.userId as string,
+        accountId: account.id as string,
+        clockToken: symbolToToken.get(CLOCK_INDEX_KEY),
+        restBusy: false,
+        lastRestAt: 0,
         connected: false,
         lastMessageAt: 0,
         lastExchangeTs: null as string | null,
@@ -542,6 +601,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
             volume: typeof tick.volume_traded === 'number' ? tick.volume_traded : null,
             exchangeTs,
             ts: new Date(now).toISOString(),
+            source: 'ws',
           });
         });
         if (quotes.length > 0) {
@@ -590,8 +650,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         state.connected = true;
         state.lastMessageAt = Date.now();
         if (state.tokens.length > 0) {
+          const quoteTokens = state.tokens.filter((t: number) => t !== state.clockToken);
           ticker.subscribe(state.tokens);
-          ticker.setMode(ticker.modeQuote, state.tokens);
+          if (quoteTokens.length > 0) ticker.setMode(ticker.modeQuote, quoteTokens);
+          if (state.clockToken) ticker.setMode(ticker.modeFull, [state.clockToken]);
         }
       });
 
@@ -669,7 +731,12 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         this.cleanKiteTickerCache();
       });
 
-      state.tokens = Array.from(new Set(tokensToSubscribe)).slice(0, MAX_TOKENS_PER_TICKER);
+      // The clock index goes first so the token cap can never squeeze it out; being in `tokens` also makes
+      // subscribeTokens skip it (it must stay in full mode).
+      state.tokens = Array.from(new Set([...(state.clockToken ? [state.clockToken] : []), ...tokensToSubscribe])).slice(
+        0,
+        MAX_TOKENS_PER_TICKER,
+      );
       ticker.connect();
       this.tickers.set(account.id, state);
     } catch (err: any) {

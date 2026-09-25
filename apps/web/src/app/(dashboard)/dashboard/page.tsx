@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useBrokers } from "@/hooks/useBrokers";
 import { useDashboard } from "@/hooks/useDashboard";
+import { FeedStatusBadge } from "@/components/dashboard/FeedStatusBadge";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store";
@@ -77,7 +78,7 @@ interface Broker {
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
-  const { movers, isLoading: isDashboardLoading, refresh: refreshDashboard } = useDashboard();
+  const { movers, feed, isLoading: isDashboardLoading, refresh: refreshDashboard } = useDashboard();
   const { brokers } = useBrokers();
 
   const moverSymbols = useMemo(() => {
@@ -320,6 +321,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center flex-wrap gap-2">
+          <FeedStatusBadge feed={feed} />
           {activeBroker && (
             <Button
               variant="outline"

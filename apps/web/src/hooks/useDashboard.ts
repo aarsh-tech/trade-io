@@ -2,6 +2,26 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { marketApi, getSocketBaseUrl } from "@/lib/api";
 import { useEffect, useState } from "react";
 import { io, Socket } from "socket.io-client";
+import { toast } from "sonner";
+import { queryKeys } from "@/lib/query-keys";
+
+export type FeedState = "connected" | "stale" | "closed";
+
+export interface FeedStatus {
+  status: FeedState;
+  lastExchangeTs: string | null;
+  lastMessageAt: string | null;
+}
+
+interface OrderUpdate {
+  orderId: string;
+  status: string;
+  tradingsymbol?: string;
+  transactionType?: string;
+  filledQuantity?: number;
+  quantity?: number;
+  statusMessage?: string | null;
+}
 
 export const DASHBOARD_KEYS = {
   overview: ["dashboard", "overview"] as const,
@@ -10,6 +30,7 @@ export const DASHBOARD_KEYS = {
 export function useDashboard() {
   const queryClient = useQueryClient();
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [feed, setFeed] = useState<FeedStatus>({ status: "closed", lastExchangeTs: null, lastMessageAt: null });
 
   const marketOverviewQuery = useQuery({
     queryKey: DASHBOARD_KEYS.overview,
@@ -70,6 +91,18 @@ export function useDashboard() {
       });
     });
 
+    socketInstance.on("feed:status", (status: FeedStatus) => setFeed(status));
+    socketInstance.on("disconnect", () => setFeed((f) => ({ ...f, status: "stale" })));
+
+    // Broker postbacks: refresh anything that shows orders or positions and surface the outcome.
+    socketInstance.on("order_update", (o: OrderUpdate) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.portfolio.all });
+      const label = `${o.transactionType ?? ""} ${o.tradingsymbol ?? ""}`.trim();
+      if (o.status === "COMPLETE") toast.success(`Order filled: ${label} (${o.filledQuantity ?? o.quantity ?? ""})`);
+      else if (o.status === "REJECTED") toast.error(`Order rejected: ${label}${o.statusMessage ? ` - ${o.statusMessage}` : ""}`);
+    });
+
     setSocket(socketInstance);
 
     return () => {
@@ -88,6 +121,7 @@ export function useDashboard() {
 
   return {
     market: marketOverviewQuery.data || { indices: [], stocks: [] },
+    feed,
     movers: moversQuery.data || { topGainers: [], topLosers: [] },
     isLoading: marketOverviewQuery.isLoading || moversQuery.isLoading,
     refresh: () => {

@@ -340,6 +340,32 @@ class ZerodhaClient implements IBrokerClient {
     }
   }
 
+  /** Full quotes (last price, previous close, volume, exchange time) keyed by `EXCH:SYMBOL`. Batched by the rate limiter. */
+  async getQuotes(
+    symbols: string[],
+  ): Promise<Record<string, { ltp: number; close: number | null; volume: number | null; exchangeTs: string | null }>> {
+    try {
+      const quotes = await this.kite.getQuote(symbols);
+      const result: Record<string, { ltp: number; close: number | null; volume: number | null; exchangeTs: string | null }> = {};
+      Object.keys(quotes).forEach((key) => {
+        const q = quotes[key];
+        if (!q?.last_price) return;
+        const ts = q.timestamp ? new Date(q.timestamp) : null;
+        result[key] = {
+          ltp: q.last_price,
+          close: q.ohlc?.close > 0 ? q.ohlc.close : null,
+          volume: typeof q.volume === 'number' ? q.volume : null,
+          exchangeTs: ts && !isNaN(ts.getTime()) ? ts.toISOString() : null,
+        };
+      });
+      return result;
+    } catch (err) {
+      const kerr = toKiteError(err);
+      console.error(`Zerodha getQuote Error (${kerr.name}):`, kerr.message);
+      throw kerr;
+    }
+  }
+
   async getMargins(): Promise<any> {
     try {
       return await this.kite.getMargins();

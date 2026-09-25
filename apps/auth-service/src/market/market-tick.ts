@@ -12,10 +12,15 @@ export interface MarketTick {
   /** Percent change vs previous close; null when there is no close. */
   changePct: number | null;
   volume: number | null;
-  /** Exchange timestamp (ISO). Kite only sends it for indices and full-mode packets, else null. */
+  /**
+   * Exchange timestamp (ISO). Present for REST quotes and index packets; quote-mode websocket packets for
+   * stocks/derivatives do not carry one (null) - use `ts` there. The feed-level clock is `FeedStatus.lastExchangeTs`.
+   */
   exchangeTs: string | null;
   /** Server receive time (ISO). */
   ts: string;
+  /** `ws` = live websocket tick; `rest` = snapshot served while the websocket feed is stale. */
+  source: 'ws' | 'rest';
 }
 
 export type FeedState = 'connected' | 'stale' | 'closed';

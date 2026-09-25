@@ -13,6 +13,7 @@ export interface MarketTick {
   volume: number | null;
   exchangeTs: string | null;
   ts: string;
+  source: 'ws' | 'rest';
 }
 
 export function useMarketData(symbols: string[]) {

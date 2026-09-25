@@ -80,7 +80,8 @@ export function OrderWindow({
     setValue,
     formState: { errors },
   } = useForm<OrderFormValues>({
-    resolver: zodResolver(orderFormSchema),
+    // pnpm resolves @hookform/resolvers against zod 4 types while this schema is zod 3; runtime is v3-compatible.
+    resolver: zodResolver(orderFormSchema as unknown as Parameters<typeof zodResolver>[0]),
     defaultValues: {
       product: 'MIS',
       orderType: 'LIMIT',
