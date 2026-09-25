@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   X, Zap, TrendingUp, TrendingDown, ShieldAlert, Target,
   Loader2, CheckCircle2, AlertTriangle, ChevronRight, Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { brokerApi } from "@/lib/api";
+import { newIdempotencyKey } from "@/lib/order-ticket";
 import { useBrokers } from "@/hooks/useBrokers";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -136,6 +137,9 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
   const [errorMsg, setErrorMsg] = useState("");
   const [selectedBrokerId, setSelectedBrokerId] = useState<string>("");
   const [tickSize, setTickSize] = useState(DEFAULT_TICK);
+  // One key per distinct leg payload: retrying "Place" after a timeout re-sends the same keys, so a
+  // leg that did reach the broker is replayed by the server instead of placed twice.
+  const legKeys = useRef(new Map<string, string>());
   const [loadingTick, setLoadingTick] = useState(false);
 
   // Fetch real tick size from broker when stock + broker are available
@@ -207,8 +211,18 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
   const rewardT1 = qty * Math.abs(target1Num - entryNum);
 
   // ── Order Execution ────────────────────────────────────────────────────────
+  function placeLeg(brokerId: string, payload: Record<string, unknown>) {
+    const fingerprint = JSON.stringify(payload);
+    let key = legKeys.current.get(fingerprint);
+    if (!key) {
+      key = newIdempotencyKey();
+      legKeys.current.set(fingerprint, key);
+    }
+    return brokerApi.placeOrder(brokerId, payload, key);
+  }
+
   async function executeTrade() {
-    if (!activeStock) return;
+    if (!activeStock || step === "placing") return;
 
     if (!selectedBrokerId) {
       toast.error("Please connect a broker first (Settings → Brokers)");
@@ -247,7 +261,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
       const placed: string[] = [];
 
       // ① Entry order  (SL for break-out / break-down trigger)
-      const entryOrder = await brokerApi.placeOrder(selectedBrokerId, {
+      const entryOrder = await placeLeg(selectedBrokerId, {
         symbol: activeStock.symbol,
         exchange: activeStock.exchange,
         side: entrySide,
@@ -283,11 +297,12 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
         placed.push(`🛑🎯 GTT Stop-Loss & Target Placed — ${gttId}`);
         setPlacedOrders([...placed]);
         // toast.success(`GTT Target & Stop-loss placed`);
+        legKeys.current.clear();
         setStep("done");
         // toast.success(`🚀 Entry + GTT placed for ${activeStock.symbol}!`);
       } else {
         // ② Stop-Loss order (SL on the opposite side)
-        const slOrder = await brokerApi.placeOrder(selectedBrokerId, {
+        const slOrder = await placeLeg(selectedBrokerId, {
           symbol: activeStock.symbol,
           exchange: activeStock.exchange,
           side: slSide,
@@ -306,7 +321,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
         await delay(400);
 
         // ③ Target 1 order (LIMIT, opposite side)
-        const t1Order = await brokerApi.placeOrder(selectedBrokerId, {
+        const t1Order = await placeLeg(selectedBrokerId, {
           symbol: activeStock.symbol,
           exchange: activeStock.exchange,
           side: slSide,
@@ -322,6 +337,7 @@ export function QuickTradePanel({ stock, onClose, targetRs = 500 }: Props) {
         setPlacedOrders([...placed]);
         // toast.success(`Target order placed @ ₹${fmt(target1Num)}`);
 
+        legKeys.current.clear();
         setStep("done");
         // toast.success(`🚀 All 3 orders placed for ${activeStock.symbol}!`);
       }

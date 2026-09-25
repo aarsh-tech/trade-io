@@ -10,12 +10,14 @@ import { BrokerType } from '@prisma/client';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { nextKiteTokenExpiry } from '../market/market-calendar';
 import { resolveJwtSecret } from '../auth/jwt-secret';
+import { IdempotencyStore } from './idempotency.store';
 
 
 @Injectable()
 export class BrokersService {
   private readonly logger = new Logger(BrokersService.name);
   private cache = new Map<string, { data: any; expiresAt: number }>();
+  private readonly orderRequests = new IdempotencyStore<{ orderId: string }>();
 
   constructor(
     private prisma: PrismaService,
@@ -195,18 +197,20 @@ export class BrokersService {
     return expected.length === given.length && timingSafeEqual(expected, given);
   }
 
-  async placeOrder(userId: string, accountId: string, orderData: any) {
-    try {
-      // Manual orders are always treated as ENTRY: the client cannot pick its own intent
-      // and thereby bypass the kill switch, user limits, rate limit or dedup.
-      const { orderId } = await this.gateway.place(userId, accountId, { ...orderData, intent: 'ENTRY' });
-      this.clearAccountCache(accountId, userId);
-      return { orderId };
-    } catch (err: any) {
-      // Rule rejections and "account not found" already carry the right HTTP status.
-      if (err instanceof HttpException) throw err;
-      throw new BadRequestException(err?.message || 'Broker failed to place order');
-    }
+  async placeOrder(userId: string, accountId: string, orderData: any, idempotencyKey?: string) {
+    return this.orderRequests.run(`${userId}:${accountId}`, idempotencyKey, async () => {
+      try {
+        // Manual orders are always treated as ENTRY: the client cannot pick its own intent
+        // and thereby bypass the kill switch, user limits, rate limit or dedup.
+        const { orderId } = await this.gateway.place(userId, accountId, { ...orderData, intent: 'ENTRY' });
+        this.clearAccountCache(accountId, userId);
+        return { orderId };
+      } catch (err: any) {
+        // Rule rejections and "account not found" already carry the right HTTP status.
+        if (err instanceof HttpException) throw err;
+        throw new BadRequestException(err?.message || 'Broker failed to place order');
+      }
+    });
   }
 
   async placeGtt(userId: string, accountId: string, orderData: any) {

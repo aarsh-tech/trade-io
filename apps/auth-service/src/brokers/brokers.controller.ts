@@ -1,10 +1,11 @@
 import {
-  Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Request,
+  Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Request, Headers,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { BrokersService } from './brokers.service';
 import { ConnectBrokerDto } from './dto/broker.dto';
+import { sanitizeIdempotencyKey } from './idempotency.store';
 
 @ApiTags('Brokers')
 @Controller('brokers')
@@ -68,9 +69,19 @@ export class BrokersController {
   }
 
   @Post(':id/orders')
-  @ApiOperation({ summary: 'Place an order' })
-  async placeOrder(@Request() req, @Param('id') id: string, @Body() orderData: any) {
-    const result = await this.brokersService.placeOrder(req.user.id, id, orderData);
+  @ApiOperation({ summary: 'Place an order (send an Idempotency-Key header to make retries and double clicks safe)' })
+  async placeOrder(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() orderData: any,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const result = await this.brokersService.placeOrder(
+      req.user.id,
+      id,
+      orderData,
+      sanitizeIdempotencyKey(idempotencyKey),
+    );
     return { success: true, data: result };
   }
 

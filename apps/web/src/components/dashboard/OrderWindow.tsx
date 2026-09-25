@@ -2,17 +2,15 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Settings, ChevronDown, ChevronUp, RotateCcw, Plus, Minus, Loader2, Info, X } from "lucide-react";
+import { Settings, ChevronDown, ChevronUp, RotateCcw, Plus, Minus, Loader2, AlertTriangle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
+import { useOrderTicket } from "@/hooks/useOrderTicket";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/query-keys";
 import { formatINR } from "@/lib/format";
 
 interface OrderWindowProps {
@@ -23,6 +21,8 @@ interface OrderWindowProps {
   ltp: number;
   availableMargin: number;
   brokerId?: string;
+  /** Contract lot size for F&O; quantity must then be a multiple of it. */
+  lotSize?: number;
   onTypeChange?: (type: 'BUY' | 'SELL') => void;
 }
 
@@ -71,9 +71,9 @@ export function OrderWindow({
   ltp,
   availableMargin,
   brokerId,
+  lotSize,
   onTypeChange,
 }: OrderWindowProps) {
-  const queryClient = useQueryClient();
 
   const {
     handleSubmit,
@@ -117,7 +117,6 @@ export function OrderWindow({
   const [showSettings, setShowSettings] = useState(false);
 
   // Loading & refresh state
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRefreshingMargin, setIsRefreshingMargin] = useState(false);
 
   useEffect(() => {
@@ -133,6 +132,33 @@ export function OrderWindow({
     }
   }, [orderType, ltp, setValue]);
 
+  // Margin calculation (approximate 5x leverage for MIS)
+  const effectivePrice = orderType === 'MARKET' ? ltp : price;
+  const marginRequired = product === 'MIS'
+    ? (effectivePrice * qty) / 5
+    : (effectivePrice * qty);
+
+  const ticket = useOrderTicket({
+    enabled: isOpen,
+    symbol,
+    exchange,
+    brokerId,
+    side: type,
+    orderType,
+    product,
+    qty,
+    price,
+    triggerPrice,
+    ltp,
+    availableMargin,
+    marginRequired,
+    lotSize,
+  });
+  const qtyError = errors.qty?.message ?? ticket.fieldError("qty");
+  const priceError = errors.price?.message ?? ticket.fieldError("price");
+  const triggerError = errors.triggerPrice?.message ?? ticket.fieldError("triggerPrice");
+  const formIssues = ticket.issues.filter((i) => i.field === "form" || i.severity === "warning");
+
   if (!isOpen) return null;
 
   const isBuy = type === 'BUY';
@@ -140,22 +166,10 @@ export function OrderWindow({
   const themeColor = isBuy ? '#4184f3' : '#ff5722';
   const themeHover = isBuy ? '#3371dc' : '#ea4c19';
 
-  // Margin calculation (approximate 5x leverage for MIS)
-  const effectivePrice = orderType === 'MARKET' ? ltp : price;
-  const marginRequired = product === 'MIS'
-    ? (effectivePrice * qty) / 5
-    : (effectivePrice * qty);
-
-  const onSubmit = async (data: OrderFormValues) => {
-    if (!brokerId) {
-      toast.error("No active broker selected");
-      return;
-    }
-
-    try {
-      setIsSubmitting(true);
-      const variety = data.activeTab === 'AMO' ? 'amo' : data.activeTab === 'Cover' ? 'co' : data.activeTab === 'Iceberg' ? 'iceberg' : 'regular';
-      await brokerApi.placeOrder(brokerId, {
+  const onSubmit = (data: OrderFormValues) => {
+    const variety = data.activeTab === 'AMO' ? 'amo' : data.activeTab === 'Cover' ? 'co' : data.activeTab === 'Iceberg' ? 'iceberg' : 'regular';
+    return ticket.submit(
+      {
         symbol,
         exchange: data.exchange,
         side: type,
@@ -168,20 +182,12 @@ export function OrderWindow({
         validity: data.validity,
         disclosedQty: data.disclosedQty,
         tag: data.orderTag || undefined,
-      });
-
-      toast.success(`${data.activeTab === 'AMO' ? 'AMO' : type} order placed for ${data.qty} ${symbol}`);
-
-      // Centralized query cache invalidation via Query Key Factory
-      queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
-      queryClient.invalidateQueries({ queryKey: queryKeys.portfolio.all });
-
-      onClose();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.message || "Failed to place order");
-    } finally {
-      setIsSubmitting(false);
-    }
+      },
+      () => {
+        toast.success(`${data.activeTab === 'AMO' ? 'AMO' : type} order placed for ${data.qty} ${symbol}`);
+        onClose();
+      },
+    );
   };
 
   const handleRefreshMargin = () => {
@@ -455,7 +461,7 @@ export function OrderWindow({
                       </button>
                     </div>
                   </div>
-                  {errors.qty && <p className="text-[10px] text-rose-500 font-semibold">{errors.qty.message}</p>}
+                  {qtyError && <p className="text-[10px] text-rose-500 font-semibold">{qtyError}</p>}
                 </div>
 
                 {/* PRICE FIELD */}
@@ -481,7 +487,7 @@ export function OrderWindow({
                       )}
                     />
                   </div>
-                  {errors.price && <p className="text-[10px] text-rose-500 font-semibold">{errors.price.message}</p>}
+                  {priceError && <p className="text-[10px] text-rose-500 font-semibold">{priceError}</p>}
                 </div>
 
                 {/* TRIGGER PRICE FIELD */}
@@ -507,7 +513,7 @@ export function OrderWindow({
                       )}
                     />
                   </div>
-                  {errors.triggerPrice && <p className="text-[10px] text-rose-500 font-semibold">{errors.triggerPrice.message}</p>}
+                  {triggerError && <p className="text-[10px] text-rose-500 font-semibold">{triggerError}</p>}
                 </div>
               </div>
 
@@ -646,6 +652,29 @@ export function OrderWindow({
               </div>
             </div>
 
+            {/* ─── RISK PREVIEW / CONFIRM ─── */}
+            {(formIssues.length > 0 || ticket.confirming) && (
+              <div className="px-3.5 sm:px-5 py-2 border-t border-border space-y-1 shrink-0" role="status" aria-live="polite">
+                {formIssues.map((issue, idx) => (
+                  <p
+                    key={idx}
+                    className={cn(
+                      "flex items-start gap-1.5 text-[11px] font-medium",
+                      issue.severity === "error" ? "text-loss" : "text-warn"
+                    )}
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" aria-hidden />
+                    <span>{issue.message}</span>
+                  </p>
+                ))}
+                {ticket.confirming && (
+                  <p className="text-[12px] font-semibold text-foreground">
+                    Confirm: {isBuy ? "BUY" : "SELL"} {qty} {symbol} at {orderType === "MARKET" || orderType === "SL-M" ? "market" : formatINR(price)} (~{formatINR(ticket.orderValue)}). Press {isBuy ? "Buy" : "Sell"} again to place it.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* ─── FOOTER SECTION ─── */}
             <div className="bg-[#f9fafb] px-3.5 sm:px-5 py-3 sm:py-3.5 border-t border-border flex items-center justify-between gap-2 shrink-0">
               {/* Left info column */}
@@ -687,19 +716,19 @@ export function OrderWindow({
                 <Button
                   type="button"
                   onClick={handleSubmit(onSubmit)}
-                  disabled={isSubmitting}
-                  className="text-white font-bold px-5 sm:px-8 h-8.5 sm:h-9 rounded-lg sm:rounded-xl text-xs transition-all shadow-sm hover:brightness-105 active:scale-[0.98]"
+                  disabled={ticket.isSubmitting || ticket.hasErrors}
+                  className="text-white disabled:opacity-50 font-bold px-5 sm:px-8 h-8.5 sm:h-9 rounded-lg sm:rounded-xl text-xs transition-all shadow-sm hover:brightness-105 active:scale-[0.98]"
                   style={{
                     backgroundColor: themeColor,
                   }}
                 >
-                  {isSubmitting ? (
+                  {ticket.isSubmitting ? (
                     <span className="flex items-center gap-1.5">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       Placing...
                     </span>
                   ) : (
-                    isBuy ? 'Buy' : 'Sell'
+                    ticket.confirming ? (isBuy ? 'Confirm Buy' : 'Confirm Sell') : (isBuy ? 'Buy' : 'Sell')
                   )}
                 </Button>
               </div>

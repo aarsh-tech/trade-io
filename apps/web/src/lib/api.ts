@@ -211,7 +211,9 @@ export const brokerApi = {
   holdings: (id: string) => api.get(`/brokers/${id}/holdings`),
   margins: (id: string) => api.get(`/brokers/${id}/margins`),
   orders: (id: string) => api.get(`/brokers/${id}/orders`),
-  placeOrder: (id: string, data: unknown) => api.post(`/brokers/${id}/orders`, data),
+  /** `idempotencyKey` makes a retry or double click return the first result instead of a second order. */
+  placeOrder: (id: string, data: unknown, idempotencyKey?: string) =>
+    api.post(`/brokers/${id}/orders`, data, idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined),
   placeGtt: (id: string, data: unknown) => api.post(`/brokers/${id}/gtt`, data),
   cancelOrder: (id: string, orderId: string) => api.delete(`/brokers/${id}/orders/${orderId}`),
   tickSize: (id: string, symbol: string, exchange: string) =>
@@ -287,6 +289,7 @@ export const riskApi = {
   updateSettings: (dto: { maxDailyLoss?: number; maxOrderValue?: number; maxOrderQty?: number }) =>
     api.patch("/risk/settings", dto),
   checkBrokerHealth: () => api.get("/risk/broker-health"),
+  orderLimits: (symbol?: string) => api.get("/risk/order-limits", { params: { symbol } }),
 };
 
 
