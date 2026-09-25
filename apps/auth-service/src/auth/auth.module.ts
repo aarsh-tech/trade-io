@@ -5,6 +5,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { resolveJwtSecret } from './jwt-secret';
 import { UsersModule } from '../users/users.module';
 
 @Module({
@@ -15,7 +16,7 @@ import { UsersModule } from '../users/users.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'changeme-super-secret-jwt'),
+        secret: resolveJwtSecret(config.get<string>('JWT_SECRET')),
         signOptions: { expiresIn: config.get('JWT_ACCESS_EXPIRY', '8h') },
       }),
     }),

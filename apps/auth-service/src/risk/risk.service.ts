@@ -15,6 +15,7 @@ import { NiftyOptionsScalperEngine } from '../strategy/nifty-options-scalper.eng
 import { GammaBlastExpiryEngine } from '../strategy/gamma-blast-expiry.engine';
 import { UpdateRiskSettingsDto } from './dto/risk.dto';
 import { OrderStatus } from '@prisma/client';
+import { isKiteAuthError } from '../common/utils/kite-errors';
 
 export interface ExchangeFreezeLimit {
   [symbolOrPrefix: string]: number;
@@ -489,7 +490,7 @@ export class RiskService {
       broker: string;
       userId: string;
       userEmail: string;
-      tokenHealth: 'HEALTHY' | 'EXPIRED';
+      tokenHealth: 'HEALTHY' | 'EXPIRED' | 'UNKNOWN';
       message: string;
     }> = [];
 
@@ -519,36 +520,47 @@ export class RiskService {
           message: 'Broker session token is valid and active.',
         });
       } catch (err: any) {
-        const isAuthError =
-          err?.status === 403 ||
-          err?.error_type === 'TokenException' ||
-          err?.message?.includes('token') ||
-          err?.message?.includes('session') ||
-          err?.message?.includes('Invalid') ||
-          err?.message?.includes('Forbidden');
+        // Only a genuine Kite TokenException / HTTP 403 means the session is dead.
+        // Network errors, 429s and 5xx are transient: keep the previous health value.
+        const isAuthError = isKiteAuthError(err);
 
-        const healthStatus: 'HEALTHY' | 'EXPIRED' = isAuthError ? 'EXPIRED' : 'EXPIRED';
+        if (isAuthError) {
+          await this.prisma.brokerAccount.update({
+            where: { id: acc.id },
+            data: { tokenHealth: 'EXPIRED', lastHealthCheckAt: new Date() },
+          });
 
-        await this.prisma.brokerAccount.update({
-          where: { id: acc.id },
-          data: {
-            tokenHealth: healthStatus,
-            lastHealthCheckAt: new Date(),
-          },
-        });
+          this.logger.warn(
+            `⚠️ [Broker Health Check Failed] Account ${acc.id} (${acc.broker}) for ${acc.user?.email}: ${err.message}`,
+          );
 
-        this.logger.warn(
-          `⚠️ [Broker Health Check Failed] Account ${acc.id} (${acc.broker}) for ${acc.user?.email}: ${err.message}`,
-        );
+          results.push({
+            accountId: acc.id,
+            broker: acc.broker,
+            userId: acc.userId,
+            userEmail: acc.user?.email || '',
+            tokenHealth: 'EXPIRED',
+            message: `Broker token expired or invalid: ${err.message}. Please re-login before market open at 09:15 AM IST!`,
+          });
+        } else {
+          await this.prisma.brokerAccount.update({
+            where: { id: acc.id },
+            data: { lastHealthCheckAt: new Date() },
+          });
 
-        results.push({
-          accountId: acc.id,
-          broker: acc.broker,
-          userId: acc.userId,
-          userEmail: acc.user?.email || '',
-          tokenHealth: 'EXPIRED',
-          message: `Broker token expired or invalid: ${err.message}. Please re-login before market open at 09:15 AM IST!`,
-        });
+          this.logger.warn(
+            `⚠️ [Broker Health Check Inconclusive] Account ${acc.id} (${acc.broker}) for ${acc.user?.email}: ${err?.message || err} (transient, token status unchanged)`,
+          );
+
+          results.push({
+            accountId: acc.id,
+            broker: acc.broker,
+            userId: acc.userId,
+            userEmail: acc.user?.email || '',
+            tokenHealth: 'UNKNOWN',
+            message: `Could not verify broker session (temporary error: ${err?.message || 'unknown'}). Token status left unchanged; will retry.`,
+          });
+        }
       }
     }
 

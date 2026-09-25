@@ -17,7 +17,9 @@ export class MarketService {
   async search(query: string, userId?: string, accountId?: string) {
     let account = null;
     if (accountId && accountId !== 'null' && accountId !== 'undefined') {
-      account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
+      account = userId
+        ? await this.prisma.brokerAccount.findFirst({ where: { id: accountId, userId } })
+        : null;
     }
     if (!account || !account.accessToken) {
       if (userId) {
@@ -25,12 +27,6 @@ export class MarketService {
           where: { userId, accessToken: { not: null } },
         });
       }
-    }
-    // Fallback to any active broker account with accessToken in system
-    if (!account || !account.accessToken) {
-      account = await this.prisma.brokerAccount.findFirst({
-        where: { accessToken: { not: null }, isActive: true },
-      });
     }
 
     if (!account || !account.accessToken) return [];
@@ -66,7 +62,9 @@ export class MarketService {
     if (!symbol) return 1;
     let account = null;
     if (accountId && accountId !== 'null' && accountId !== 'undefined') {
-      account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
+      account = userId
+        ? await this.prisma.brokerAccount.findFirst({ where: { id: accountId, userId } })
+        : null;
     }
     if (!account || !account.accessToken) {
       if (userId) {
@@ -74,11 +72,6 @@ export class MarketService {
           where: { userId, accessToken: { not: null } },
         });
       }
-    }
-    if (!account || !account.accessToken) {
-      account = await this.prisma.brokerAccount.findFirst({
-        where: { accessToken: { not: null }, isActive: true },
-      });
     }
 
     if (!account || !account.accessToken) {
@@ -269,19 +262,10 @@ export class MarketService {
 
   // ── F&O Stocks List with Official Lot Sizes & Prices ──────────────────────
 
-  async getFoStocks(userId?: string) {
-    let account = null;
-    if (userId) {
-      account = await this.prisma.brokerAccount.findFirst({
-        where: { userId, isActive: true, accessToken: { not: null } },
-      });
-    }
-
-    if (!account || !account.accessToken) {
-      account = await this.prisma.brokerAccount.findFirst({
-        where: { isActive: true, accessToken: { not: null } },
-      });
-    }
+  async getFoStocks(userId: string) {
+    const account = await this.prisma.brokerAccount.findFirst({
+      where: { userId, isActive: true, accessToken: { not: null } },
+    });
 
     const foStocks = FO_STOCKS_LIST.map(s => ({
       ...s,
@@ -345,11 +329,12 @@ export class MarketService {
 
   // ── Top Gainers & Top Losers ────────────────────────────────────────────────
 
-  private moversCache: { data: { topGainers: any[]; topLosers: any[] }; timestamp: number } | null = null;
+  private moversCache = new Map<string, { data: { topGainers: any[]; topLosers: any[] }; timestamp: number }>();
 
   async getMovers(userId: string) {
-    if (this.moversCache && (Date.now() - this.moversCache.timestamp < 60_000)) {
-      return this.moversCache.data;
+    const cachedMovers = this.moversCache.get(userId);
+    if (cachedMovers && (Date.now() - cachedMovers.timestamp < 60_000)) {
+      return cachedMovers.data;
     }
 
     const nseSymbols = NIFTY_500_UNIVERSE;
@@ -366,8 +351,6 @@ export class MarketService {
 
     const account = await this.prisma.brokerAccount.findFirst({
       where: { userId, isActive: true, accessToken: { not: null } },
-    }) || await this.prisma.brokerAccount.findFirst({
-      where: { isActive: true, accessToken: { not: null } },
     });
 
     if (account?.accessToken) {
@@ -414,7 +397,7 @@ export class MarketService {
 
     const payload = { topGainers, topLosers };
     if (results.length > 0) {
-      this.moversCache = { data: payload, timestamp: Date.now() };
+      this.moversCache.set(userId, { data: payload, timestamp: Date.now() });
     }
 
     return payload;

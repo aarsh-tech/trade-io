@@ -2,6 +2,8 @@ import { Controller, Get, Post, Delete, Body, Query, UseGuards, Request } from '
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { requireUserId } from './require-user';
 import { MarketService } from './market.service';
 import { OhlScannerService } from './ohl-scanner.service';
 
@@ -17,6 +19,7 @@ export class MarketController {
 
   @Get('ohl-stocks')
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get Live Open=High and Open=Low stocks with streaming metrics' })
   async getOhlStocks(
     @Query('universe') universe: string = 'fno',
@@ -25,7 +28,7 @@ export class MarketController {
     @Request() req: any,
   ) {
     const tolNum = parseFloat(tolerance) || 0.05;
-    const data = await this.ohlScannerService.scan(req.user?.id, universe, tolNum, filter);
+    const data = await this.ohlScannerService.scan(requireUserId(req), universe, tolNum, filter);
     return { success: true, data };
   }
 
@@ -44,6 +47,7 @@ export class MarketController {
 
   @Get('lot-size')
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get dynamic lot size for an instrument or stock symbol' })
   async getLotSize(
     @Query('symbol') symbol: string,
@@ -63,25 +67,28 @@ export class MarketController {
 
   @Get('live-prices')
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get live LTP for dashboard ticker banner' })
   async livePrices(@Request() req: any) {
-    const data = await this.marketService.getLivePrices(req.user?.id);
+    const data = await this.marketService.getLivePrices(requireUserId(req));
     return { success: true, data };
   }
 
   @Get('fo-stocks')
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get active F&O stock list with lot sizes and quotes' })
   async foStocks(@Request() req: any) {
-    const data = await this.marketService.getFoStocks(req.user?.id);
+    const data = await this.marketService.getFoStocks(requireUserId(req));
     return { success: true, data };
   }
 
   @Get('movers')
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get top gainers and top losers with live quotes' })
   async movers(@Request() req: any) {
-    const data = await this.marketService.getMovers(req.user?.id);
+    const data = await this.marketService.getMovers(requireUserId(req));
     return { success: true, data };
   }
 

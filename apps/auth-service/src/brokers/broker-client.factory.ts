@@ -45,7 +45,7 @@ export class BrokerClientFactory {
     }
 
     const apiKey = decrypt(account.apiKeyEnc);
-    const accessToken = account.accessToken;
+    const accessToken = account.accessToken ? decrypt(account.accessToken) : null;
 
     let client: IBrokerClient;
     switch (account.broker) {

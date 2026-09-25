@@ -379,7 +379,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       const ticker = new KiteTicker({
         api_key: apiKey,
-        access_token: account.accessToken,
+        access_token: require('../common/utils/crypto').decrypt(account.accessToken),
       });
 
       // Enable native auto-reconnection: up to 100 retries with 3s backoff

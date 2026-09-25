@@ -1,7 +1,9 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { assertEncryptionConfigured } from './common/utils/crypto';
 
 const logger = new Logger('ProcessBoundary');
 
@@ -14,7 +16,12 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  assertEncryptionConfigured();
+
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Behind nginx: trust exactly one proxy hop so req.ip is the real client (per-IP throttling)
+  app.set('trust proxy', 1);
 
   // CORS
   app.enableCors({

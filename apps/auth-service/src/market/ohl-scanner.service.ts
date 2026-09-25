@@ -89,12 +89,12 @@ export class OhlScannerService {
    * @param filter 'all' | 'open_low' | 'open_high' | 'near'
    */
   async scan(
-    userId?: string,
+    userId: string,
     universe: string = 'fno',
     tolerance: number = 0.05,
     filter: string = 'all',
   ): Promise<OhlScannerResponse> {
-    const cacheKey = `${universe}_${tolerance}_${filter}_${userId || 'anon'}`;
+    const cacheKey = `${universe}_${tolerance}_${filter}_${userId}`;
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
       return cached.data;
@@ -107,17 +107,9 @@ export class OhlScannerService {
     }
 
     // Attempt to fetch live OHLC from active broker account
-    let account = null;
-    if (userId) {
-      account = await this.prisma.brokerAccount.findFirst({
-        where: { userId, isActive: true, accessToken: { not: null } },
-      });
-    }
-    if (!account || !account.accessToken) {
-      account = await this.prisma.brokerAccount.findFirst({
-        where: { isActive: true, accessToken: { not: null } },
-      });
-    }
+    const account = await this.prisma.brokerAccount.findFirst({
+      where: { userId, isActive: true, accessToken: { not: null } },
+    });
 
     let ohlcMap = new Map<string, { open: number; high: number; low: number; close: number; ltp: number; volume: number }>();
 

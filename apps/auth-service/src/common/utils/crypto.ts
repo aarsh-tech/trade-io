@@ -2,60 +2,111 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypt
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
-const AUTH_TAG_LENGTH = 16;
+const SALT_LENGTH = 16;
+const VERSION_PREFIX = 'v1:';
+const MIN_SECRET_LENGTH = 32;
+// Legacy (pre-v1) records were derived with this constant salt.
+const LEGACY_SALT = 'salt';
 
-// In production, ENCRYPTION_KEY should be a 32-byte hex string in .env
-const getEncryptionKeys = (): Buffer[] => {
-  const secrets = Array.from(new Set([
-    process.env.ENCRYPTION_SECRET,
-    '8a7c2e4f1b9d3e5a0c6f7b8d9e2a1c4f5b6a7d8e9f0a1b2c3d4e5f6a7b8c9d0e',
-    'fallback-secret-for-dev-only-change-it',
-  ].filter(Boolean) as string[]));
+/**
+ * Formats:
+ *   v1:<salt>:<iv>:<authTag>:<ciphertext>   (hex, per-record salt) - written by encrypt()
+ *   <iv>:<authTag>:<ciphertext>             (legacy, constant salt) - still readable
+ *   anything else                           (legacy plaintext) - returned unchanged
+ */
 
-  return secrets.map(secret => scryptSync(secret, 'salt', 32));
-};
+/** Throws if ENCRYPTION_SECRET is missing or too short. Call at boot. */
+export function assertEncryptionConfigured(): string {
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret || secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      `ENCRYPTION_SECRET must be set to a random string of at least ${MIN_SECRET_LENGTH} characters ` +
+      `(generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")`,
+    );
+  }
+  return secret;
+}
+
+// Old secrets, only used to read legacy records during key rotation/migration.
+// Comma-separated LEGACY_ENCRYPTION_SECRETS; remove once the migration has run.
+function getLegacySecrets(): string[] {
+  const extra = (process.env.LEGACY_ENCRYPTION_SECRETS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  return Array.from(new Set([assertEncryptionConfigured(), ...extra]));
+}
+
+const keyCache = new Map<string, Buffer>();
+function deriveKey(secret: string, salt: string | Buffer): Buffer {
+  const saltId = Buffer.isBuffer(salt) ? salt.toString('hex') : `s:${salt}`;
+  const cacheKey = `${secret}\u0000${saltId}`;
+  let key = keyCache.get(cacheKey);
+  if (!key) {
+    key = scryptSync(secret, salt, 32);
+    keyCache.set(cacheKey, key);
+  }
+  return key;
+}
 
 export function encrypt(text: string): string {
+  const secret = assertEncryptionConfigured();
+  const salt = randomBytes(SALT_LENGTH);
   const iv = randomBytes(IV_LENGTH);
-  const key = getEncryptionKeys()[0];
+  // Fresh salt per record: derive without caching so the cache doesn't grow unbounded.
+  const key = scryptSync(secret, salt, 32);
   const cipher = createCipheriv(ALGORITHM, key, iv);
-  
+
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
-  
   const authTag = cipher.getAuthTag().toString('hex');
-  
-  // Format: iv:authTag:encrypted
-  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+
+  return `${VERSION_PREFIX}${salt.toString('hex')}:${iv.toString('hex')}:${authTag}:${encrypted}`;
+}
+
+function decipher(key: Buffer, ivHex: string, authTagHex: string, cipherHex: string): string {
+  const d = createDecipheriv(ALGORITHM, key, Buffer.from(ivHex, 'hex'));
+  d.setAuthTag(Buffer.from(authTagHex, 'hex'));
+  return d.update(cipherHex, 'hex', 'utf8') + d.final('utf8');
+}
+
+/** True if the value is in the current versioned format. */
+export function isCurrentFormat(value: string | null | undefined): boolean {
+  return !!value && value.startsWith(VERSION_PREFIX);
 }
 
 export function decrypt(hash: string): string {
-  if (!hash || !hash.includes(':')) {
-    return hash;
-  }
+  if (!hash) return hash;
 
-  const [ivHex, authTagHex, encryptedText] = hash.split(':');
-  if (!ivHex || !authTagHex || !encryptedText) {
-    return hash;
-  }
-  
-  const iv = Buffer.from(ivHex, 'hex');
-  const authTag = Buffer.from(authTagHex, 'hex');
-  const keys = getEncryptionKeys();
-
-  for (const key of keys) {
-    try {
-      const decipher = createDecipheriv(ALGORITHM, key, iv);
-      decipher.setAuthTag(authTag);
-      let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
-      if (decrypted) {
-        return decrypted;
+  if (hash.startsWith(VERSION_PREFIX)) {
+    const [saltHex, ivHex, authTagHex, encrypted] = hash.slice(VERSION_PREFIX.length).split(':');
+    if (!saltHex || !ivHex || !authTagHex || encrypted === undefined) {
+      throw new Error('Malformed v1 ciphertext');
+    }
+    const salt = Buffer.from(saltHex, 'hex');
+    // Current secret first, then legacy secrets (covers a rotation window).
+    for (const secret of getLegacySecrets()) {
+      try {
+        return decipher(deriveKey(secret, salt), ivHex, authTagHex, encrypted);
+      } catch {
+        // try next secret
       }
+    }
+    throw new Error('Unable to decrypt data with configured encryption secrets');
+  }
+
+  const parts = hash.split(':');
+  if (parts.length !== 3 || !parts.every(p => /^[0-9a-f]+$/i.test(p))) {
+    return hash; // legacy plaintext
+  }
+
+  const [ivHex, authTagHex, encrypted] = parts;
+  for (const secret of getLegacySecrets()) {
+    try {
+      return decipher(deriveKey(secret, LEGACY_SALT), ivHex, authTagHex, encrypted);
     } catch {
-      // try next key
+      // try next secret
     }
   }
-
   throw new Error('Unable to decrypt data with configured encryption secrets');
 }

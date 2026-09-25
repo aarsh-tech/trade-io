@@ -2,6 +2,7 @@ import { Injectable, ConflictException, NotFoundException, BadRequestException, 
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectBrokerDto } from './dto/broker.dto';
 import { encrypt, decrypt } from '../common/utils/crypto';
+import { isKiteAuthError } from '../common/utils/kite-errors';
 import { BrokerClientFactory } from './broker-client.factory';
 import { BrokerType } from '@prisma/client';
 
@@ -17,17 +18,9 @@ export class BrokersService {
   ) { }
 
   private isTokenExpiredError(err: any): boolean {
-    const msg = String(err?.message || '').toLowerCase();
-    const errType = String(err?.error_type || '').toLowerCase();
-    const status = err?.status || err?.response?.status;
-    return (
-      msg.includes('access_token') ||
-      msg.includes('api_key') ||
-      msg.includes('token') ||
-      msg.includes('forbidden') ||
-      errType.includes('tokenexception') ||
-      status === 403
-    );
+    // Only Kite's TokenException / HTTP 403 means the session is dead.
+    // Network errors, 429s and 5xx are transient and must not flag EXPIRED.
+    return isKiteAuthError(err);
   }
 
   private async markTokenExpired(accountId: string) {
@@ -264,7 +257,7 @@ export class BrokersService {
     const updatedAcc = await this.prisma.brokerAccount.update({
       where: { id: accountId },
       data: {
-        accessToken: session.access_token,
+        accessToken: encrypt(session.access_token),
         tokenExpiry: expiry,
         isActive: true,
         tokenHealth: 'HEALTHY',
