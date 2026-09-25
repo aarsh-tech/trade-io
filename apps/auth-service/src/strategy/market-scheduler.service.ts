@@ -7,6 +7,7 @@ import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
 import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 import { RiskService } from '../risk/risk.service';
+import { isTradingDay, closedReason } from '../market/market-calendar';
 
 /**
  * MarketSchedulerService
@@ -91,6 +92,10 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
    * strategies are started immediately without waiting for the next check tick.
    */
   async triggerImmediateAutoStart() {
+    if (!isTradingDay()) {
+      this.logger.log(`MarketScheduler: immediate auto-start skipped — market closed today (${closedReason()})`);
+      return;
+    }
     this.logger.log('MarketScheduler: Immediate auto-start requested (broker session updated)');
     await this.autoStartStrategies();
   }
@@ -110,8 +115,8 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       await this.reconcileOnBoot(ist, day);
     }
 
-    // Skip auto-start/auto-stop on weekends when Indian markets are closed
-    if (day === 0 || day === 6) {
+    // Skip auto-start/auto-stop on weekends and exchange holidays
+    if (!isTradingDay(now)) {
       return;
     }
 
@@ -175,7 +180,10 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   private async reconcileOnBoot(ist: Date, day: number) {
     try {
       const hhmm = ist.getHours() * 60 + ist.getMinutes();
-      const inSession = day !== 0 && day !== 6 && hhmm >= 9 * 60 + 15 && hhmm < 15 * 60 + 25;
+      const inSession = isTradingDay() && hhmm >= 9 * 60 + 15 && hhmm < 15 * 60 + 25;
+      if (!isTradingDay()) {
+        this.logger.log(`Boot recovery: market closed today (${closedReason()}) — not resuming strategies`);
+      }
       if (inSession) {
         this.lastAutoStartDate = ist.toDateString();
         this.logger.log('♻ Boot recovery: resuming strategies that were active before restart...');

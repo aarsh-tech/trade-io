@@ -7,6 +7,9 @@ import { encrypt, decrypt } from '../common/utils/crypto';
 import { isKiteAuthError } from '../common/utils/kite-errors';
 import { BrokerClientFactory } from './broker-client.factory';
 import { BrokerType } from '@prisma/client';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { nextKiteTokenExpiry } from '../market/market-calendar';
+import { resolveJwtSecret } from '../auth/jwt-secret';
 
 
 @Injectable()
@@ -157,10 +160,39 @@ export class BrokersService {
 
     switch (acc.broker) {
       case BrokerType.ZERODHA:
-        return { url: `https://kite.zerodha.com/connect/login?v=3&api_key=${apiKey}` };
+        // Kite echoes redirect_params on the redirect back; the signed state binds the callback
+        // to this user + account so a forged redirect can't attach someone else's session.
+        const state = this.signLoginState(userId, accountId);
+        const redirectParams = encodeURIComponent(`state=${state}`);
+        return { url: `https://kite.zerodha.com/connect/login?v=3&api_key=${encodeURIComponent(apiKey)}&redirect_params=${redirectParams}` };
       default:
         throw new BadRequestException('Login URL not available for this broker');
     }
+  }
+
+  private static readonly LOGIN_STATE_TTL_MS = 15 * 60_000;
+
+  private loginStateMac(userId: string, accountId: string, issuedAt: string, nonce: string) {
+    return createHmac('sha256', resolveJwtSecret(process.env.JWT_SECRET))
+      .update(`kite-login|${userId}|${accountId}|${issuedAt}|${nonce}`)
+      .digest('hex');
+  }
+
+  /** Stateless, expiring login state: `<issuedAtMs>.<nonce>.<hmac>` (URL-safe). */
+  private signLoginState(userId: string, accountId: string): string {
+    const issuedAt = String(Date.now());
+    const nonce = randomBytes(8).toString('hex');
+    return `${issuedAt}.${nonce}.${this.loginStateMac(userId, accountId, issuedAt, nonce)}`;
+  }
+
+  private verifyLoginState(userId: string, accountId: string, state: string): boolean {
+    const [issuedAt, nonce, mac] = String(state || '').split('.');
+    if (!issuedAt || !nonce || !mac || !/^\d+$/.test(issuedAt)) return false;
+    const age = Date.now() - Number(issuedAt);
+    if (age < 0 || age > BrokersService.LOGIN_STATE_TTL_MS) return false;
+    const expected = Buffer.from(this.loginStateMac(userId, accountId, issuedAt, nonce));
+    const given = Buffer.from(mac);
+    return expected.length === given.length && timingSafeEqual(expected, given);
   }
 
   async placeOrder(userId: string, accountId: string, orderData: any) {
@@ -206,7 +238,7 @@ export class BrokersService {
   }
 
 
-  async setSession(userId: string, accountId: string, requestToken: string) {
+  async setSession(userId: string, accountId: string, requestToken: string, state?: string) {
     const acc = await this.prisma.brokerAccount.findUnique({
       where: { id: accountId },
     });
@@ -216,6 +248,11 @@ export class BrokersService {
       throw new BadRequestException('Session refresh logic not implemented for this broker');
     }
 
+    // Kite echoes redirect_params on the redirect back; a supplied state must be ours and fresh.
+    if (state !== undefined && state !== null && state !== '' && !this.verifyLoginState(userId, accountId, state)) {
+      throw new BadRequestException('Broker login state is invalid or expired. Please start the login again.');
+    }
+
     const { KiteConnect } = require('kiteconnect');
     const apiKey = decrypt(acc.apiKeyEnc);
     const apiSecret = decrypt(acc.apiSecretEnc);
@@ -223,9 +260,7 @@ export class BrokersService {
     const kite = new KiteConnect({ api_key: apiKey });
     const session = await KiteRateLimiter.forKey(apiKey).run<any>('general', () => kite.generateSession(requestToken, apiSecret));
 
-    const expiry = new Date();
-    expiry.setDate(expiry.getDate() + 1);
-    expiry.setHours(6, 0, 0, 0);
+    const expiry = nextKiteTokenExpiry();
 
     const updatedAcc = await this.prisma.brokerAccount.update({
       where: { id: accountId },

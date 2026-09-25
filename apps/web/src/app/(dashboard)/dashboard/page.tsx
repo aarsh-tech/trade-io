@@ -132,12 +132,15 @@ export default function DashboardPage() {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("request_token") || params.get("requestToken");
 
-    if (token) {
-      renewSession(token)
+    // Only auto-submit redirect tokens that carry our signed login state (see getLoginUrl).
+    const state = params.get("state");
+    if (token && state && (!params.get("status") || params.get("status") === "success")) {
+      renewSession({ token, state })
         .then(() => {
           const url = new URL(window.location.href);
           url.searchParams.delete("request_token");
           url.searchParams.delete("requestToken");
+          url.searchParams.delete("state");
           url.searchParams.delete("action");
           url.searchParams.delete("status");
           url.searchParams.delete("type");
@@ -159,9 +162,10 @@ export default function DashboardPage() {
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
       const urlToken = urlParams.get("request_token") || urlParams.get("requestToken");
-      if (urlToken) {
+      const urlState = urlParams.get("state");
+      if (urlToken && urlState) {
         try {
-          await renewSession(urlToken);
+          await renewSession({ token: urlToken, state: urlState });
           setShowRenewModal(false);
           setRequestToken("");
           return;

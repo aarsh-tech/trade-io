@@ -43,8 +43,18 @@ function CallbackContent() {
 
     if (!token) return;
 
+    // Kite echoes the signed state from our login URL; a redirect without it (or with a failed
+    // login status) is never auto-submitted. The user can still paste a token below.
+    const state = searchParams.get("state");
+    const loginStatus = searchParams.get("status");
+    if (!state || (loginStatus && loginStatus !== "success")) {
+      setStatus("error");
+      setErrorMessage("This login link is missing its verification state. Start the login from the dashboard again, or paste the request token below.");
+      return;
+    }
+
     setStatus("processing");
-    renewSession(token)
+    renewSession({ token, state })
       .then(() => {
         setStatus("success");
         toast.success("Zerodha session connected successfully!");

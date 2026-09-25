@@ -63,8 +63,8 @@ export class BrokersController {
 
   @Post(':id/session')
   @ApiOperation({ summary: 'Set active session for a broker account' })
-  async setSession(@Request() req, @Param('id') id: string, @Body('requestToken') token: string) {
-    return this.brokersService.setSession(req.user.id, id, token);
+  async setSession(@Request() req, @Param('id') id: string, @Body('requestToken') token: string, @Body('state') state?: string) {
+    return this.brokersService.setSession(req.user.id, id, token, state);
   }
 
   @Post(':id/orders')

@@ -51,7 +51,9 @@ export function usePortfolio(brokerId?: string | null) {
   });
 
   const renewSessionMutation = useMutation({
-    mutationFn: async (rawToken: string) => {
+    mutationFn: async (input: string | { token: string; state?: string | null }) => {
+      const rawToken = typeof input === "string" ? input : input.token;
+      const state = typeof input === "string" ? undefined : input.state || undefined;
       if (!brokerId) throw new Error("No broker selected");
       let token = (rawToken || "").trim();
       if (token.includes("request_token=")) {
@@ -61,7 +63,7 @@ export function usePortfolio(brokerId?: string | null) {
         } catch {}
       }
       if (!token) throw new Error("Please enter or paste a valid request token");
-      const res = await brokerApi.setSession(brokerId, token);
+      const res = await brokerApi.setSession(brokerId, token, state);
       return res.data;
     },
     onSuccess: async (data: any) => {

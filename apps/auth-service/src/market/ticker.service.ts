@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerType } from '@prisma/client';
 import { canonicalKey, INDEX_INSTRUMENTS, InstrumentStore } from '../brokers/instrument-store';
 import { toKiteError } from '../brokers/kite-errors';
+import { isMarketWindow, isTradingDay, istParts } from './market-calendar';
 import { CLOSED_FEED, FeedState, FeedStatus, MarketTick, OrderUpdateEvent } from './market-tick';
 
 /** Kite allows at most 3000 instruments per websocket connection. */
@@ -128,24 +129,9 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
   ) { }
 
+  /** Active window: 15 min pre-open to 5 min after close, on exchange trading days only (holiday-aware). */
   private isIndianMarketOpen(): boolean {
-    const now = new Date();
-    // Convert to Indian Standard Time (UTC + 5:30)
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const istTime = new Date(now.getTime() + istOffsetMs);
-
-    const day = istTime.getUTCDay(); // 0 = Sun, 6 = Sat
-    if (day === 0 || day === 6) return false;
-
-    const hours = istTime.getUTCHours();
-    const minutes = istTime.getUTCMinutes();
-    const currentMinute = hours * 60 + minutes;
-
-    // Active market hours window: 09:00 AM (pre-open) to 03:35 PM (closing settlement)
-    const openMinute = 9 * 60; // 09:00
-    const closeMinute = 15 * 60 + 35; // 15:35
-
-    return currentMinute >= openMinute && currentMinute <= closeMinute;
+    return isMarketWindow(new Date(), 15, 5);
   }
 
   async onModuleInit() {
@@ -259,12 +245,11 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   /** Loads NSE/NFO/BFO masters once per trading day, from 08:45 IST on. Failures are retried next tick. */
   private async warmInstrumentStore() {
     try {
-      const ist = new Date(Date.now() + 5.5 * 3600_000);
-      const minute = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-      const weekday = ist.getUTCDay() >= 1 && ist.getUTCDay() <= 5;
+      const { minute } = istParts();
+      const tradingDay = isTradingDay();
       const exchanges = ['NSE', 'NFO', 'BFO'];
       const stale = exchanges.filter((e) => !InstrumentStore.isFresh(e));
-      if (stale.length === 0 || !weekday || minute < 8 * 60 + 45 || minute > 15 * 60 + 35) return;
+      if (stale.length === 0 || !tradingDay || minute < 8 * 60 + 45 || minute > 15 * 60 + 35) return;
 
       const account = await this.prisma.brokerAccount.findFirst({
         where: { isActive: true, accessToken: { not: null }, tokenHealth: { not: 'EXPIRED' } },
