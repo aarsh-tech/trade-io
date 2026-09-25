@@ -1,5 +1,7 @@
+import { ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { withKiteRetry } from '../brokers/kite-errors';
 
 /**
  * Shared crash / restart recovery for strategy engines.
@@ -26,6 +28,22 @@ export interface RecoveredPosition {
   targetOrderId: string | null;
   targetPrice: number | null;
   isPaper: boolean;
+  /**
+   * Where the SL/target ids came from. CONFIRMED: read from the broker (or paper). UNVERIFIED:
+   * broker unreadable, ids come from our own order records. UNKNOWN: broker unreadable and no
+   * record; a live SL may exist that we cannot see.
+   */
+  protection?: 'CONFIRMED' | 'UNVERIFIED' | 'UNKNOWN';
+}
+
+/**
+ * Thrown when a live strategy has orders today but the broker's open positions cannot be read.
+ * "Unknown" must never be treated as "flat": callers stop the start instead of trading blind.
+ */
+export class PositionUnknownError extends ServiceUnavailableException {
+  constructor(reason: string) {
+    super(`Cannot verify open broker positions (${reason}). Strategy not started; try again once the broker responds.`);
+  }
 }
 
 /** Orders of a strategy, including legacy rows that were saved with only an executionId. */
@@ -178,7 +196,11 @@ async function findLive(
     const kite = (client as any)['kite'] || client;
     if (!kite?.getPositions) return null;
 
-    const positions = await kite.getPositions().catch(() => null);
+    // A failed positions fetch must not read as "flat": retry transient errors, then fail closed.
+    // Starting blind could open a second position on top of an unmanaged live one.
+    const positions = await withKiteRetry<any>(() => kite.getPositions(), 4, 400).catch((e: any) => {
+      throw new PositionUnknownError(e?.message || String(e));
+    });
     const net: any[] = positions?.net || [];
     const openPos = net.find((p) => Number(p.quantity) !== 0 && owned.has(p.tradingsymbol));
     if (!openPos) return null;
@@ -187,12 +209,50 @@ async function findLive(
     const symbol: string = openPos.tradingsymbol;
     const avgPrice = Number(openPos.average_price) || Number(openPos.buy_price) || Number(openPos.sell_price) || 0;
 
-    const orders: any[] = await (kite.getOrders ? kite.getOrders() : []).catch(() => []);
-    const openOrders = (orders || []).filter(
-      (o: any) => o.tradingsymbol === symbol && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'),
-    );
-    const sl = openOrders.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
-    const target = openOrders.find((o: any) => o.order_type === 'LIMIT');
+    // "Could not read orders" is not "no orders". The position is always adopted (never left
+    // unmanaged), but where the protective orders came from is recorded in `protection`.
+    let brokerOrders: any[] | null = null;
+    if (kite.getOrders) {
+      brokerOrders = await withKiteRetry<any[]>(() => kite.getOrders()).catch((e: any) => {
+        console.warn(`[PositionRecovery] orders fetch failed for ${symbol}: ${e.message}`);
+        return null;
+      });
+    }
+
+    const exitSide = rawQty > 0 ? 'SELL' : 'BUY';
+    let slId: string | null = null;
+    let slPrice: number | null = null;
+    let targetId: string | null = null;
+    let targetPrice: number | null = null;
+    let protection: RecoveredPosition['protection'];
+
+    if (brokerOrders) {
+      protection = 'CONFIRMED';
+      const open = brokerOrders.filter(
+        (o: any) => o.tradingsymbol === symbol && (o.status === 'TRIGGER PENDING' || o.status === 'OPEN'),
+      );
+      const sl = open.find((o: any) => o.order_type === 'SL' || o.order_type === 'SL-M');
+      const target = open.find((o: any) => o.order_type === 'LIMIT');
+      slId = sl?.order_id ?? null;
+      slPrice = sl ? Number(sl.trigger_price) || Number(sl.price) || null : null;
+      targetId = target?.order_id ?? null;
+      targetPrice = target ? Number(target.price) || null : null;
+    } else {
+      // Broker unreadable: fall back to the orders we recorded ourselves through OrderGateway.
+      // These ids are likely right but unverified, so the engine keeps managing them by id
+      // instead of arming a second SL next to a live one.
+      const mine = todays
+        .filter((o) => o.symbol === symbol && o.status === 'OPEN' && o.side === exitSide && o.brokerOrderId)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const sl = mine.find((o) => o.orderType === 'SL' || o.orderType === 'SL_M');
+      const target = mine.find((o) => o.orderType === 'LIMIT');
+      slId = sl?.brokerOrderId ?? null;
+      slPrice = sl ? Number(sl.triggerPrice ?? sl.price) || null : null;
+      targetId = target?.brokerOrderId ?? null;
+      targetPrice = target ? Number(target.price ?? target.triggerPrice) || null : null;
+      protection = slId || targetId ? 'UNVERIFIED' : 'UNKNOWN';
+      console.warn(`[PositionRecovery] ${symbol} adopted with protection ${protection} (broker orders unreadable); OrderGateway will not duplicate a live SL.`);
+    }
 
     return {
       symbol,
@@ -202,15 +262,28 @@ async function findLive(
       initialQty: Math.abs(rawQty),
       avgPrice,
       entryOrderId: null,
-      slOrderId: sl?.order_id ?? null,
-      slPrice: sl ? Number(sl.trigger_price) || Number(sl.price) || null : null,
-      targetOrderId: target?.order_id ?? null,
-      targetPrice: target ? Number(target.price) || null : null,
+      slOrderId: slId,
+      slPrice,
+      targetOrderId: targetId,
+      targetPrice,
       isPaper: false,
+      protection,
     };
-  } catch {
+  } catch (err) {
+    if (err instanceof PositionUnknownError) throw err; // fail closed, never "no position"
     return null;
   }
+}
+
+/** A user-facing log line when recovery could not confirm the broker's SL/target orders. */
+export function protectionNotice(pos: RecoveredPosition): string | null {
+  if (pos.protection === 'UNVERIFIED') {
+    return `⚠ Broker orders were unreadable on recovery; SL/target ids come from our own records and will be verified. No duplicate SL will be armed.`;
+  }
+  if (pos.protection === 'UNKNOWN') {
+    return `⚠ Broker orders were unreadable on recovery and no SL record exists; a live SL may already be working. Any new SL reuses an existing one instead of duplicating it.`;
+  }
+  return null;
 }
 
 export interface DailyTally {

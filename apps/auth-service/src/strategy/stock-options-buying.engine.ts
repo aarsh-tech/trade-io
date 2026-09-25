@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { withKiteRetry } from '../brokers/kite-errors';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { StockOptionsBuyingConfig } from './dto/strategy.dto';
 import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart-stock-picker';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { strategyEvents } from '../common/events';
-import { findOpenPosition, strategyOrderWhere, istDayStart } from './position-recovery';
+import { findOpenPosition, strategyOrderWhere, istDayStart, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
@@ -223,8 +224,14 @@ export class StockOptionsBuyingEngine {
       state.activeStockSymbol = pos.symbol.replace(/\d.*$/, '');
 
       this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Re-adopted open option position ${pos.symbol}: ${pos.qty} qty @ ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | T1: ₹${state.target1Price.toFixed(2)} | T2: ₹${state.target2Price.toFixed(2)}`);
+      const notice = protectionNotice(pos);
+      if (notice) this.log(state, notice);
       return true;
     } catch (err: any) {
+      if (err instanceof PositionUnknownError) {
+        await this.stopWithStatus(state.strategyId, 'STOPPED', `🛑 Start aborted: ${err.message}`);
+        throw err;
+      }
       this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
       return false;
     }
@@ -1133,7 +1140,10 @@ export class StockOptionsBuyingEngine {
         this.resetStateToScanning(state);
       } else if (state.stateType === 'ACTIVE_POSITION') {
         const key = `NFO:${state.optionSymbol}`;
-        const ltpData = await kite.getLTP([key]).catch(() => ({}));
+        const ltpData = await withKiteRetry(() => kite.getLTP([key]), 2).catch((e: any) => {
+          this.log(state, `⚠ LTP unavailable for force close, using trigger price: ${e.message}`);
+          return {} as Record<string, any>;
+        });
         const currentPrice = ltpData[key]?.last_price || state.entryTriggerPrice || 0.05;
         await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
       }

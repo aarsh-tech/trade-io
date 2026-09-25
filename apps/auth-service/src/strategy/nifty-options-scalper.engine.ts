@@ -7,7 +7,7 @@ import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
-import { findOpenPosition, tallyTodaysTrades } from './position-recovery';
+import { findOpenPosition, tallyTodaysTrades, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
@@ -344,10 +344,17 @@ export class NiftyOptionsScalperEngine {
 
       this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Re-adopted open option position ${pos.symbol}: ${pos.qty} qty @ ₹${entry.toFixed(2)} | SL: ₹${state.stopLossPrice.toFixed(2)}${pos.slOrderId ? ` [Order: ${pos.slOrderId}]` : ''} | Target: ₹${state.targetPrice.toFixed(2)}`);
 
+      const notice = protectionNotice(pos);
+      if (notice) this.log(state, notice);
+
       const client = brokerAccount?.accessToken ? this.factory.createClient(brokerAccount) : null;
       await this.startRealtimeMonitor(state, client);
       return true;
     } catch (err: any) {
+      if (err instanceof PositionUnknownError) {
+        await this.stopWithStatus(state.strategyId, 'STOPPED', `🛑 Start aborted: ${err.message}`);
+        throw err;
+      }
       this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
       return false;
     }

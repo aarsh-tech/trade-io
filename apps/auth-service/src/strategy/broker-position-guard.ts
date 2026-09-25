@@ -185,7 +185,7 @@ export async function getCompletedBrokerExitDetails(
   }
 
   try {
-    const orders: any[] = await kite.getOrders().catch(() => []);
+    const orders: any[] = await kite.getOrders();
     const completeOrders = (orders || []).filter(
       (o: any) =>
         normalizeSymbol(o.tradingsymbol) === cleanSym &&

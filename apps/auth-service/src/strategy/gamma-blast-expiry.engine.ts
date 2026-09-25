@@ -6,7 +6,7 @@ import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
-import { findOpenPosition, RecoveredPosition } from './position-recovery';
+import { findOpenPosition, RecoveredPosition, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
@@ -277,15 +277,23 @@ export class GammaBlastExpiryEngine {
     }
 
     // An open position (restart / crash) must be re-adopted, never "completed" away with its SL cancelled.
-    const openPos = await findOpenPosition({
-      prisma: this.prisma,
-      factory: this.factory,
-      strategyId,
-      executionId: execution.id,
-      isPaper: !!strategy.isPaperTrade,
-      brokerAccount: strategy.brokerAccount,
-      accept: (sym) => /(CE|PE)$/.test(sym),
-    });
+    let openPos: RecoveredPosition | null;
+    try {
+      openPos = await findOpenPosition({
+        prisma: this.prisma,
+        factory: this.factory,
+        strategyId,
+        executionId: execution.id,
+        isPaper: !!strategy.isPaperTrade,
+        brokerAccount: strategy.brokerAccount,
+        accept: (sym) => /(CE|PE)$/.test(sym),
+      });
+    } catch (err) {
+      if (err instanceof PositionUnknownError) {
+        await this.stopWithStatus(strategyId, 'STOPPED', `🛑 Start aborted: ${err.message}`);
+      }
+      throw err;
+    }
 
     if (!openPos && recoveredTradesToday >= (config.maxTradesPerDay || 2)) {
       this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay || 2}) already reached for today. Strategy completed.`);
@@ -380,6 +388,9 @@ export class GammaBlastExpiryEngine {
       state.isPartialExited = pos.qty < pos.initialQty;
 
       this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Reconnected to active strategy-owned option position: ${pos.symbol} (${pos.qty} Qty @ Avg ₹${entry.toFixed(2)}) | SL: ₹${state.stopLossPrice.toFixed(2)}`);
+
+      const notice = protectionNotice(pos);
+      if (notice) this.log(state, notice);
 
       const client = brokerAccount?.accessToken ? this.factory.createClient(brokerAccount) : null;
       await this.startRealtimeMonitor(state, client);

@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
-import { OrderIntent, OrderParams } from '../brokers/interfaces/broker-client.interface';
+import { IBrokerClient, OrderIntent, OrderParams } from '../brokers/interfaces/broker-client.interface';
+import { withKiteRetry } from '../brokers/kite-errors';
 import {
   DEFAULT_MAX_ORDER_QTY,
   buildOrderTag,
@@ -21,6 +22,14 @@ export interface PlacedOrder {
   orderId: string;
   tag?: string;
   qty: number;
+}
+
+const WORKING_STATUSES = new Set(['OPEN', 'TRIGGER PENDING', 'PUT ORDER REQ RECEIVED', 'VALIDATION PENDING']);
+
+/** Midnight of the current IST day; today's orders are the only ones a restart can inherit. */
+function istStartOfDay(now = new Date()): Date {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+  return new Date(`${day}T00:00:00.000+05:30`);
 }
 
 const RATE_WINDOW_MS = 60_000;
@@ -58,11 +67,37 @@ export class OrderGateway {
     private readonly factory: BrokerClientFactory,
   ) {}
 
+  /** `${accountId}:${symbol}:${side}` -> tail of the protective-order queue for that leg */
+  private readonly protectiveLocks = new Map<string, Promise<unknown>>();
+
   async place(
     userId: string,
     accountId: string,
     params: OrderParams,
     ctx: OrderContext = {},
+  ): Promise<PlacedOrder> {
+    // Two SL requests for the same leg (e.g. overlapping ticks) must not both pass the
+    // "is an SL already working?" check before either has reached the broker, so they queue.
+    if (params.intent === 'PROTECTIVE' && (params.orderType === 'SL' || params.orderType === 'SL-M')) {
+      const key = `${accountId}:${params.symbol}:${params.side}`;
+      const prev = this.protectiveLocks.get(key) ?? Promise.resolve();
+      const run = prev.catch(() => undefined).then(() => this.placeUnlocked(userId, accountId, params, ctx));
+      const tail = run.catch(() => undefined);
+      this.protectiveLocks.set(key, tail);
+      try {
+        return await run;
+      } finally {
+        if (this.protectiveLocks.get(key) === tail) this.protectiveLocks.delete(key);
+      }
+    }
+    return this.placeUnlocked(userId, accountId, params, ctx);
+  }
+
+  private async placeUnlocked(
+    userId: string,
+    accountId: string,
+    params: OrderParams,
+    ctx: OrderContext,
   ): Promise<PlacedOrder> {
     const intent: OrderIntent = params.intent ?? 'ENTRY';
     if (!params.intent) {
@@ -109,6 +144,13 @@ export class OrderGateway {
       );
     }
 
+    // 3b. Idempotent protection: never arm a second SL next to a live one (restart recovery,
+    //     retries after a lost response). Reuses the existing order when it is still working.
+    if (intent === 'PROTECTIVE' && (params.orderType === 'SL' || params.orderType === 'SL-M')) {
+      const existing = await this.reuseWorkingProtective(client, accountId, params, qty);
+      if (existing) return existing;
+    }
+
     // 4. Rate limit + dedup (entries only). The slot is reserved before the broker
     //    call so concurrent identical entries can't both slip through.
     const dedupKey =
@@ -142,6 +184,80 @@ export class OrderGateway {
 
   resetCircuitBreaker(userId: string): void {
     this.consecutiveRejections.delete(userId);
+  }
+
+  /**
+   * Looks for an SL already working for the same account/symbol/side/product. The broker is the
+   * source of truth; if it can't be read, our own OPEN records from today stand in (an unreadable
+   * broker must not read as "no SL"). When found, its quantity/trigger are aligned by modifying it;
+   * if that modify fails (e.g. the order was just cancelled) the caller places a fresh SL instead.
+   */
+  private async reuseWorkingProtective(
+    client: IBrokerClient,
+    accountId: string,
+    params: OrderParams,
+    qty: number,
+  ): Promise<PlacedOrder | null> {
+    let found: { orderId: string; qty: number; triggerPrice: number; tag?: string; verified: boolean } | null = null;
+
+    try {
+      const orders = await withKiteRetry(() => client.getOrders());
+      const hit = orders.find(
+        (o) =>
+          o.symbol === params.symbol &&
+          (o.exchange || params.exchange) === params.exchange &&
+          o.side === params.side &&
+          (o.product || params.product) === params.product &&
+          (o.type === 'SL' || o.type === 'SL-M') &&
+          WORKING_STATUSES.has(String(o.status).toUpperCase()),
+      );
+      if (hit) {
+        found = { orderId: hit.orderId, qty: Number(hit.qty) || 0, triggerPrice: Number(hit.triggerPrice) || 0, tag: hit.tag, verified: true };
+      }
+    } catch (err: any) {
+      this.logger.warn(`Cannot read broker orders to check for an existing SL on ${params.symbol}: ${err?.message}`);
+      try {
+        const row = await this.prisma.order.findFirst({
+          where: {
+            brokerAccountId: accountId,
+            symbol: params.symbol,
+            side: params.side,
+            status: 'OPEN',
+            orderType: { in: ['SL', 'SL_M'] as any },
+            isPaperTrade: false,
+            createdAt: { gte: istStartOfDay() },
+            brokerOrderId: { not: null },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (row?.brokerOrderId) {
+          found = { orderId: row.brokerOrderId, qty: Number(row.qty) || 0, triggerPrice: Number(row.triggerPrice) || 0, tag: row.tag ?? undefined, verified: false };
+        }
+      } catch {
+        /* DB unreadable too: fall through and place, an unprotected position is the worse outcome */
+      }
+    }
+
+    if (!found) return null;
+
+    const trigger = Number(params.triggerPrice) || 0;
+    const needsModify = found.qty !== qty || (trigger > 0 && Math.abs(found.triggerPrice - trigger) > 1e-6);
+    if (needsModify) {
+      try {
+        await client.modifyOrder?.(found.orderId, {
+          quantity: qty,
+          ...(trigger > 0 && { triggerPrice: trigger }),
+          ...(params.price && { price: Number(params.price) }),
+        });
+      } catch (err: any) {
+        this.logger.warn(`Existing SL ${found.orderId} on ${params.symbol} could not be modified (${err?.message}); placing a fresh SL.`);
+        return null;
+      }
+    }
+    this.logger.warn(
+      `🛡 Reusing existing ${found.verified ? '' : '(unverified) '}SL ${found.orderId} on ${params.symbol} instead of placing a duplicate.`,
+    );
+    return { orderId: found.orderId, tag: found.tag, qty };
   }
 
   private reject(message: string): BadRequestException {

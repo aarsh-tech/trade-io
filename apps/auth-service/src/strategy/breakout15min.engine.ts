@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { withKiteRetry } from '../brokers/kite-errors';
 import { Breakout15MinConfig } from './dto/strategy.dto';
 import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from './smart-stock-picker';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
-import { findOpenPosition, strategyOrderWhere } from './position-recovery';
+import { findOpenPosition, strategyOrderWhere, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
 interface Candle {
@@ -357,10 +358,17 @@ export class Breakout15MinEngine {
 
       this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Re-adopted open position ${pos.symbol}: ${pos.qty} qty ${pos.side} @ ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)}${pos.slOrderId ? ` [Order: ${pos.slOrderId}]` : ''} | Target: ₹${state.targetPrice.toFixed(2)}`);
 
+      const notice = protectionNotice(pos);
+      if (notice) this.log(state, notice);
+
       const client = brokerAccount?.accessToken ? this.factory.createClient(brokerAccount) : null;
       await this.startRealtimeMonitor(state, client);
       return true;
     } catch (err: any) {
+      if (err instanceof PositionUnknownError) {
+        await this.stopWithStatus(state.strategyId, 'STOPPED', `🛑 Start aborted: ${err.message}`);
+        throw err;
+      }
       this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
       return false;
     }
@@ -1105,7 +1113,10 @@ export class Breakout15MinEngine {
       if (state.entryTriggered) {
         this.log(state, `⏰ 3:05 PM Intraday EOD cutoff reached! Auto-squaring off position.`);
         if (state.isPaperTrade) {
-          const quotes = await kite.getLTP([`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]).catch(() => ({}));
+          const quotes = await withKiteRetry(() => kite.getLTP([`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]), 2).catch((e: any) => {
+            this.log(state, `⚠ LTP unavailable for paper EOD close, using entry price: ${e.message}`);
+            return {} as Record<string, any>;
+          });
           const ltp = quotes[`${state.futureExchange}:${state.optionSymbol || state.futureSymbol}`]?.last_price || state.entryPrice || 0;
           await this.closePaperTrade(state, 'CAS_CUTOFF_3_05_PM', ltp);
         } else {
@@ -1641,7 +1652,7 @@ export class Breakout15MinEngine {
         const kite = client['kite'] || client;
         if (kite && kite.getOrders) {
           try {
-            const orders = await kite.getOrders().catch(() => []);
+            const orders = await kite.getOrders();
 
             // Check if entry filled more shares
             if (state.entryOrderId && (state.executedQty || 0) < state.config.qty) {
@@ -1709,7 +1720,10 @@ export class Breakout15MinEngine {
               await this.exitPosition(state, client, avgPrice, 'TARGET');
               return;
             }
-          } catch { }
+          } catch (e: any) {
+            // Order status is unknown this tick; the monitor polls again, so never assume "no orders".
+            this.logger.debug?.(`[${state.config?.symbol}] broker order sync skipped: ${e.message}`);
+          }
         }
       }
 
@@ -2044,7 +2058,7 @@ export class Breakout15MinEngine {
       // 1. Check if server SL or Target order completed at broker
       if (kite && (state.slOrderId || state.targetOrderId)) {
         try {
-          const orders = await kite.getOrders().catch(() => []);
+          const orders = await withKiteRetry<any[]>(() => kite.getOrders());
           const slOrder = state.slOrderId && state.slOrderId !== 'FAILED' ? orders.find((o: any) => o.order_id === state.slOrderId) : null;
           const targetOrder = state.targetOrderId && state.targetOrderId !== 'FAILED' ? orders.find((o: any) => o.order_id === state.targetOrderId) : null;
 
@@ -2081,7 +2095,10 @@ export class Breakout15MinEngine {
               this.log(state, `⚠ Broker Target Order (${exitOrderId}) only filled ${tgtFilled}/${qty} shares @ Avg ₹${actualExitPrice.toFixed(2)}. Remaining ${qty - tgtFilled} shares will be squared off at market!`);
             }
           }
-        } catch { }
+        } catch (e: any) {
+          // Unknown whether the broker SL/target already filled: isSafeToExit below guards against a double exit.
+          this.log(state, `⚠ Could not verify broker SL/Target status before exit (${e.message}); relying on live position check.`);
+        }
       }
 
       if (!isAlreadyFilledAtBroker) {

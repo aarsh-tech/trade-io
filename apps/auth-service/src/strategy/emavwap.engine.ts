@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { withKiteRetry } from '../brokers/kite-errors';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
-import { findOpenPosition } from './position-recovery';
+import { findOpenPosition, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getInstrumentTickSize, getTopCandidateStocks, roundToInstrumentTick } from './smart-stock-picker';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
@@ -351,10 +352,17 @@ export class EmaVwapCrossoverEngine {
       this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Reconnected to active position: ${pos.symbol} (${pos.qty} qty ${pos.side} @ Avg ₹${entryAvg.toFixed(2)}) | SL: ₹${state.stopLossPrice.toFixed(2)}${pos.slOrderId ? ` [OrderId: ${pos.slOrderId}]` : ''} | Target: ₹${state.targetPrice.toFixed(2)}`);
       this.log(state, `📡 Resumed live real-time tracking & dynamic trailing seamlessly!`);
 
+      const notice = protectionNotice(pos);
+      if (notice) this.log(state, notice);
+
       const client = brokerAccount?.accessToken ? this.factory.createClient(brokerAccount) : null;
       await this.startRealtimeMonitor(state, client);
       return true;
     } catch (err: any) {
+      if (err instanceof PositionUnknownError) {
+        await this.stopWithStatus(state.strategyId, 'STOPPED', `🛑 Start aborted: ${err.message}`);
+        throw err;
+      }
       this.logger.warn(`Position recovery failed for ${state.strategyId}: ${err?.message}`);
       return false;
     }
@@ -1395,7 +1403,10 @@ export class EmaVwapCrossoverEngine {
             if (setup && !isAlreadyInvalidated) {
               const checkSymbol = state.futureSymbol || targetSym;
               const checkExchange = state.futureSymbol ? state.futureExchange : config.exchange;
-              const ltpData = await kite.getLTP([`${checkExchange}:${checkSymbol}`]).catch(() => null);
+              const ltpData = await withKiteRetry(() => kite.getLTP([`${checkExchange}:${checkSymbol}`]), 2).catch((e: any) => {
+                this.log(state, `[${targetSym}] ⚠ LTP unavailable for instant-entry check: ${e.message}`);
+                return null;
+              });
               const ltp = ltpData?.[`${checkExchange}:${checkSymbol}`]?.last_price;
 
               if (setup.trend === 'LONG') {

@@ -42,6 +42,8 @@ export function roundToInstrumentTick(price: number, tickSize: number = 0.05): n
  * Combines full NIFTY 500 universe (Top Gainers/Losers, Midcaps, RRKABEL, IFCI, etc.)
  * with all 180+ liquid F&O stocks and maps them to their NSE equity instrument tokens.
  */
+import { withKiteRetry } from '../brokers/kite-errors';
+
 export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promise<{ symbols: string[]; tokenMap: Map<string, number>; tickSizeMap: Map<string, number> }> {
   if (cachedDynamicStocks && (Date.now() - cachedDynamicStocksTime) < 4 * 60 * 60 * 1000) {
     return cachedDynamicStocks;
@@ -167,7 +169,10 @@ export async function autoSelectStock(
 
   // Fallback
   const fallbackSym = 'TRENT';
-  const relQuotes = await kite.getLTP([`NSE:${fallbackSym}`]).catch(() => ({}));
+  const relQuotes = await withKiteRetry(() => kite.getLTP([`NSE:${fallbackSym}`]), 2).catch((e: any) => {
+    logger?.warn(`Fallback LTP for ${fallbackSym} unavailable, using reference price: ${e.message}`);
+    return {} as Record<string, any>;
+  });
   const ltp = relQuotes[`NSE:${fallbackSym}`]?.last_price || 6500;
   const maxLossFallback = stopLossRs && stopLossRs > 0 ? stopLossRs : 500;
   const riskPerShare = Math.max(0.50, ltp * 0.01);

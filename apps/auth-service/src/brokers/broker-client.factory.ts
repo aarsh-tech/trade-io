@@ -7,6 +7,7 @@ import * as http from 'http';
 
 import axios from 'axios';
 import { KiteRateLimiter } from './kite-rate-limiter';
+import { toKiteError } from './kite-errors';
 
 // Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
 export const keepAliveHttpsAgent = new https.Agent({
@@ -198,8 +199,9 @@ class ZerodhaClient implements IBrokerClient {
         statusMessage: o.status_message,
       }));
     } catch (err) {
-      console.error('Zerodha Orders Error:', err);
-      return [];
+      const kerr = toKiteError(err);
+      console.error(`Zerodha Orders Error (${kerr.name}):`, kerr.message);
+      throw kerr;
     }
   }
 
@@ -335,8 +337,9 @@ class ZerodhaClient implements IBrokerClient {
       });
       return result;
     } catch (err) {
-      console.error('Zerodha getLTP Error:', err);
-      return {};
+      const kerr = toKiteError(err);
+      console.error(`Zerodha getLTP Error (${kerr.name}):`, kerr.message);
+      throw kerr;
     }
   }
 
