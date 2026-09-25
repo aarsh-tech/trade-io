@@ -85,9 +85,14 @@ interface UIStore {
   setActiveBroker: (id: string) => void;
 }
 
-export const useUIStore = create<UIStore>()((set) => ({
-  sidebarCollapsed: false,
-  activeBrokerId: null,
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setActiveBroker: (id) => set({ activeBrokerId: id }),
-}));
+export const useUIStore = create<UIStore>()(
+  persist(
+    (set) => ({
+      sidebarCollapsed: false,
+      activeBrokerId: null,
+      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      setActiveBroker: (id) => set({ activeBrokerId: id }),
+    }),
+    { name: "algo-trade-ui", partialize: (state) => ({ sidebarCollapsed: state.sidebarCollapsed }) },
+  ),
+);

@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { useMarketData } from "@/hooks/use-market-data";
+import { PriceFreshness } from "@/components/shared/price-freshness";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable, DataTableColumnHeader } from "@/components/ui/data-table";
 import { brokerApi } from "@/lib/api";
@@ -219,7 +220,7 @@ export default function PositionsPage() {
       header: ({ column }) => <DataTableColumnHeader column={column} title="LTP" align="right" />,
       cell: ({ row }) => (
         <div className="text-right font-mono font-semibold text-foreground">
-          ₹{row.original.ltp?.toFixed(2) || "0.00"}
+          <PriceFreshness symbol={row.original.symbol} className="mr-1" />₹{row.original.ltp?.toFixed(2) || "0.00"}
         </div>
       ),
     },
@@ -484,7 +485,7 @@ export default function PositionsPage() {
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <span>Avg: <strong className="text-foreground font-mono">₹{pos.avgPrice?.toFixed(2) || "0.00"}</strong></span>
                             <span>•</span>
-                            <span>LTP: <strong className="text-foreground font-mono">₹{pos.ltp?.toFixed(2) || "0.00"}</strong></span>
+                            <span>LTP: <PriceFreshness symbol={pos.symbol} /> <strong className="text-foreground font-mono">₹{pos.ltp?.toFixed(2) || "0.00"}</strong></span>
                           </div>
                           <div className="flex items-center gap-1 text-[11px]">
                             <span className={cn("font-semibold font-mono", pos.pnlPct >= 0 ? "text-emerald-600" : "text-rose-600")}>

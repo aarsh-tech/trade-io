@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertOctagon, KeyRound } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { marketApi } from "@/lib/api";
+import { marketApi, orderApi } from "@/lib/api";
 import { formatINR, pnlClass } from "@/lib/format";
 import { useMarketStore } from "@/store/market-store";
 import { useBrokers } from "@/hooks/useBrokers";
@@ -82,8 +82,16 @@ export function StatusBar({ onReconnect }: { onReconnect: () => void }) {
     feedState === "live" ? "bg-profit" : feedState === "stale" ? "bg-warn" : feedState === "offline" ? "bg-loss" : "bg-muted-foreground";
   const tickAge = lastTickAt ? formatAge(now - lastTickAt) : null;
 
+  // Realised P&L from real fills (same FIFO/charges as the ledger); unrealised from live positions.
+  const { data: dayRealised } = useQuery({
+    queryKey: ["orders", "day-pnl"],
+    queryFn: async () => (await orderApi.dayPnl()).data?.data as { realizedPnl: number; charges: number },
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+  });
+
   const nextOpen = session?.nextOpenAt ? istFormat.format(new Date(session.nextOpenAt)) : null;
-  const dayPnl = risk?.totalDailyPnl;
+  const dayPnl = dayRealised && risk ? dayRealised.realizedPnl + risk.unrealizedPnl : undefined;
 
   return (
     <div
@@ -123,7 +131,7 @@ export function StatusBar({ onReconnect }: { onReconnect: () => void }) {
         </Link>
       )}
 
-      <span className="ml-auto whitespace-nowrap" title="Realised + unrealised, all accounts">
+      <span className="ml-auto whitespace-nowrap" title={dayRealised && risk ? `Realised ${formatINR(dayRealised.realizedPnl)} (net of charges) + unrealised ${formatINR(risk.unrealizedPnl)}` : "Realised + unrealised"}>
         Day P&amp;L{" "}
         <span className={cn("font-semibold num", dayPnl === undefined ? "text-muted-foreground" : pnlClass(dayPnl))}>
           {dayPnl === undefined ? "—" : formatINR(dayPnl, { signed: true })}

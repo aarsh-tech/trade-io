@@ -24,6 +24,12 @@ export class OrdersController {
     return { success: true, data: result };
   }
 
+  @Get('day-pnl')
+  @ApiOperation({ summary: "Today's realized P&L (net of charges) from real fills, same matching as the ledger" })
+  async dayPnl(@Request() req) {
+    return { success: true, data: await this.ordersService.getDayRealizedPnl(req.user.id) };
+  }
+
   @Get('ledger')
   @ApiOperation({ summary: 'Monthly realized P&L ledger (net of charges, algo vs manual) with a paginated trade journal' })
   @ApiQuery({ name: 'month', required: false, type: Number })

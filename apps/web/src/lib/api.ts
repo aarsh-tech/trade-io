@@ -242,6 +242,7 @@ export const orderApi = {
   list: (params?: { limit?: number; page?: number }) =>
     api.get("/orders", { params }),
   sync: () => api.post("/orders/sync"),
+  dayPnl: () => api.get("/orders/day-pnl"),
   ledger: (params?: {
     month?: number;
     year?: number;

@@ -4,6 +4,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useMarketData } from "@/hooks/use-market-data";
+import { PriceFreshness } from "@/components/shared/price-freshness";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { brokerApi, strategyApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -555,7 +556,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
 
                       {/* Live LTP */}
                       <td className="py-2.5 px-4 text-right font-mono font-medium text-foreground whitespace-nowrap">
-                        {Number(pos.ltp).toFixed(2)}
+                        <PriceFreshness symbol={pos.symbol} className="mr-1" />{Number(pos.ltp).toFixed(2)}
                       </td>
 
                       {/* P&L (Red / Green like Zerodha) */}

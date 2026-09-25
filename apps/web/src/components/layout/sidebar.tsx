@@ -91,6 +91,7 @@ export function Sidebar() {
           )}
           <button
             onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             className={cn(
               "p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-all hidden md:block",
               sidebarCollapsed && "absolute -right-3 top-1/2 -translate-y-1/2 bg-card border border-border shadow-md z-50"

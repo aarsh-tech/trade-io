@@ -499,6 +499,26 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Today's (IST) realized P&L from real fills, net of charges, split algo vs manual. Same FIFO matching as the
+   * ledger, so the status bar and the ledger always agree. Reads only the DB.
+   */
+  async getDayRealizedPnl(userId: string) {
+    const today = istDate(new Date());
+    const tomorrowStartIst = new Date(new Date(`${today}T00:00:00+05:30`).getTime() + 24 * 3600_000);
+    const trades = matchFills(await this.loadFills(userId, tomorrowStartIst)).filter((t) => t.date === today);
+    const sum = (list: ClosedTrade[]) => round2(list.reduce((a, t) => a + t.realizedPnl, 0));
+    return {
+      date: today,
+      realizedPnl: sum(trades),
+      grossPnl: round2(trades.reduce((a, t) => a + t.grossPnl, 0)),
+      charges: round2(trades.reduce((a, t) => a + t.charges, 0)),
+      algoPnl: sum(trades.filter((t) => t.source === 'ALGO')),
+      manualPnl: sum(trades.filter((t) => t.source === 'MANUAL')),
+      trades: trades.length,
+    };
+  }
+
+  /**
    * Monthly realized P&L from real fills: FIFO round trips, net of charges, bucketed by IST day/month, split into
    * algo vs manual, with a paginated/filterable trade journal. Reads only the DB (no broker call); the DB is kept
    * current by order_update events, the manual sync and the 15:40 IST job.
