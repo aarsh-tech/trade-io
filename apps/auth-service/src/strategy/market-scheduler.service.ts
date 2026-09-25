@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { PositionFlattener } from '../order-gateway/position-flattener.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
@@ -56,7 +56,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly factory: BrokerClientFactory,
+    private readonly flattener: PositionFlattener,
     private readonly breakoutEngine: Breakout15MinEngine,
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     private readonly stockOptionsBuyingEngine: StockOptionsBuyingEngine,
@@ -357,84 +357,19 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // 2. Direct Broker RMS Safety Net: Check all broker accounts for any open MIS intraday positions
+      // 2. Broker safety net via the OrderGateway: cancel stray algo orders and flatten any
+      //    algo MIS position still open (MARKET, market_protection -1, retried, alerts on failure).
       const activeAccounts = await this.prisma.brokerAccount.findMany({
         where: { isActive: true, accessToken: { not: null } },
       });
 
       for (const account of activeAccounts) {
         try {
-          const client = this.factory.createClient(account);
-          const kite = client['kite'];
-          if (!kite) continue;
-
-          // Get all algo orders placed today for this broker account
-          const algoOrdersToday = await this.prisma.order.findMany({
-            where: {
-              brokerAccountId: account.id,
-              createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
-            },
-            select: { brokerOrderId: true, symbol: true },
-          });
-          const algoBrokerOrderIds = new Set(algoOrdersToday.map(o => o.brokerOrderId).filter(Boolean));
-          const algoSymbols = new Set(algoOrdersToday.map(o => o.symbol));
-
-          // Cancel open/trigger pending orders to avoid stray executions (Algo orders ONLY)
-          try {
-            const openOrders = await kite.getOrders();
-            const pendingOrders = (openOrders || []).filter(
-              (o: any) => o.status === 'OPEN' || o.status === 'TRIGGER PENDING'
+          const res = await this.flattener.flattenAlgoPositions(account, 'EOD SQUARE-OFF');
+          if (res.cancelled || res.closed.length || res.failed.length) {
+            this.logger.warn(
+              `🛡 [RMS Safety Net] Account ${account.id}: cancelled ${res.cancelled}, closed [${res.closed.join(', ')}], FAILED [${res.failed.join(', ')}]`,
             );
-            for (const po of pendingOrders) {
-              if (algoBrokerOrderIds.has(po.order_id) || algoSymbols.has(po.tradingsymbol)) {
-                await kite.cancelOrder('regular', po.order_id).catch(() => {});
-                this.logger.warn(`🛡 [RMS Safety Net] Cancelled pending algo order ${po.order_id} (${po.tradingsymbol})`);
-              } else {
-                this.logger.log(`🛡 [RMS Safety Net] Preserving user manual order ${po.order_id} (${po.tradingsymbol})`);
-              }
-            }
-          } catch (ordErr: any) {
-            this.logger.debug?.(`RMS Safety Net order check notice: ${ordErr?.message}`);
-          }
-
-          // Inspect live net positions directly on Zerodha
-          const positionsData = await kite.getPositions().catch(() => null);
-          const netPositions = positionsData?.net || [];
-
-          for (const pos of netPositions) {
-            const qty = Number(pos.quantity);
-            const product = String(pos.product).toUpperCase();
-
-            // CRITICAL: NEVER exit NRML, CNC, or manual user positions!
-            // Only consider MIS positions that were placed by our algo today.
-            if (qty !== 0 && product === 'MIS') {
-              if (!algoSymbols.has(pos.tradingsymbol)) {
-                this.logger.log(
-                  `🛡 [RMS Safety Net] Skipping MIS position ${pos.tradingsymbol} - Not placed by any algo strategy today (Manual position preserved).`
-                );
-                continue;
-              }
-
-              const exitSide = qty > 0 ? 'SELL' : 'BUY';
-              const exitQty = Math.abs(qty);
-              this.logger.warn(
-                `🚨 [RMS Safety Net] Found open algo MIS position on Zerodha: ${pos.exchange}:${pos.tradingsymbol} (Qty: ${qty}). Placing emergency MARKET exit to avoid ₹50+GST penalty!`
-              );
-
-              try {
-                const res = await kite.placeOrder('regular', {
-                  exchange: pos.exchange,
-                  tradingsymbol: pos.tradingsymbol,
-                  transaction_type: exitSide,
-                  quantity: exitQty,
-                  product: 'MIS',
-                  order_type: 'MARKET',
-                });
-                this.logger.log(`✅ [RMS Safety Net] Emergency exit placed: ${res.order_id || 'SUCCESS'}`);
-              } catch (placeErr: any) {
-                this.logger.error(`❌ [RMS Safety Net] Failed emergency exit for ${pos.tradingsymbol}: ${placeErr?.message}`);
-              }
-            }
           }
         } catch (accErr: any) {
           this.logger.error(`RMS Safety Net account check error (${account.id}): ${accErr?.message}`);

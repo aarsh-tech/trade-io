@@ -1,4 +1,5 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException, HttpException, Logger } from '@nestjs/common';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectBrokerDto } from './dto/broker.dto';
 import { encrypt, decrypt } from '../common/utils/crypto';
@@ -15,6 +16,7 @@ export class BrokersService {
   constructor(
     private prisma: PrismaService,
     private factory: BrokerClientFactory,
+    private gateway: OrderGateway,
   ) { }
 
   private isTokenExpiredError(err: any): boolean {
@@ -161,47 +163,17 @@ export class BrokersService {
   }
 
   async placeOrder(userId: string, accountId: string, orderData: any) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { killSwitchActive: true },
-    });
-    if (user?.killSwitchActive) {
-      throw new BadRequestException('🛑 [RMS KILL SWITCH ACTIVE] Trading is locked for today. Orders are suspended.');
-    }
-
-    const acc = await this.prisma.brokerAccount.findUnique({
-      where: { id: accountId },
-    });
-    if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
-
-    const client = this.factory.createClient(acc);
-    let orderId: string;
-
     try {
-      orderId = await client.placeOrder(orderData);
+      // Manual orders are always treated as ENTRY: the client cannot pick its own intent
+      // and thereby bypass the kill switch, user limits, rate limit or dedup.
+      const { orderId } = await this.gateway.place(userId, accountId, { ...orderData, intent: 'ENTRY' });
+      this.clearAccountCache(accountId, userId);
+      return { orderId };
     } catch (err: any) {
-      throw new BadRequestException(err.message || 'Broker failed to place order');
+      // Rule rejections and "account not found" already carry the right HTTP status.
+      if (err instanceof HttpException) throw err;
+      throw new BadRequestException(err?.message || 'Broker failed to place order');
     }
-
-    // Track order in DB asynchronously (non-blocking for ultra-fast response)
-    this.prisma.order.create({
-      data: {
-        userId,
-        brokerAccountId: accountId,
-        symbol: orderData.symbol,
-        exchange: orderData.exchange,
-        side: orderData.side,
-        orderType: orderData.orderType,
-        productType: orderData.product,
-        qty: Number(orderData.qty),
-        price: orderData.price ? Number(orderData.price) : null,
-        triggerPrice: orderData.triggerPrice ? Number(orderData.triggerPrice) : null,
-        brokerOrderId: orderId,
-        status: 'OPEN',
-      }
-    }).catch(err => console.error('Async DB order tracking error:', err));
-
-    return { orderId };
   }
 
   async placeGtt(userId: string, accountId: string, orderData: any) {

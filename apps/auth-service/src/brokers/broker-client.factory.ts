@@ -151,6 +151,7 @@ class ZerodhaClient implements IBrokerClient {
       }
       return (positions?.net || []).map((p: any) => ({
         symbol: p.tradingsymbol,
+        exchange: p.exchange,
         qty: p.quantity,
         avgPrice: p.average_price,
         ltp: p.last_price,
@@ -224,6 +225,7 @@ class ZerodhaClient implements IBrokerClient {
 
       // ── Safety Guard 3: Rate Limiting & Idempotency Dedup (Entries ONLY) ──
       const isExitOrSl = Boolean(
+        (params.intent && params.intent !== 'ENTRY') ||
         params.tag?.toUpperCase().includes('EXIT') ||
         params.tag?.toUpperCase().includes('SL') ||
         params.tag?.toUpperCase().includes('TARGET') ||

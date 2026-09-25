@@ -9,6 +9,7 @@ export interface Holding {
 
 export interface Position {
   symbol: string;
+  exchange?: string;
   qty: number;
   avgPrice: number;
   ltp: number;
@@ -36,6 +37,13 @@ export interface Order {
   statusMessage?: string;
 }
 
+/**
+ * Why an order is being placed. Only ENTRY orders are subject to the kill switch,
+ * per-order user limits, rate limiting and dedup; exits and protective (SL/target)
+ * orders must always be able to reach the broker so positions can be closed.
+ */
+export type OrderIntent = 'ENTRY' | 'EXIT' | 'PROTECTIVE';
+
 export interface OrderParams {
   symbol: string;
   exchange: string;
@@ -50,7 +58,10 @@ export interface OrderParams {
   disclosedQty?: number;
   marketProtection?: number;
   autoslice?: boolean;
+  /** Kite tag: max 20 chars, alphanumeric. Set by OrderGateway when omitted. */
   tag?: string;
+  /** Defaults to ENTRY (the strictest treatment) when omitted. */
+  intent?: OrderIntent;
 }
 
 export interface IBrokerClient {
