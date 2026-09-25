@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { apiErrorMessage } from "@/lib/api-error";
+import { validateStrategyConfig } from "@/lib/strategy-config";
+import { buildStrategyConfig } from "./build-config";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { strategyApi, brokerApi } from "@/lib/api";
-import { StrategyFormState, BrokerAccount, getLotSize } from "./types";
+import { StrategyFormState, BrokerAccount } from "./types";
 import { Step1StrategyType } from "./components/Step1StrategyType";
 import { Step2InstrumentConfig } from "./components/Step2InstrumentConfig";
 import { Step3RiskManagement } from "./components/Step3RiskManagement";
@@ -271,7 +274,14 @@ export default function NewStrategyPage() {
     }).catch(() => { });
   }, []);
 
+  // Same rules the API enforces, evaluated live so problems show on the step that caused them.
+  const configErrors = useMemo(
+    () => (form.type ? validateStrategyConfig(form.type, buildStrategyConfig(form) ?? {}) : []),
+    [form],
+  );
+
   const canNext = () => {
+    if (step >= 1 && configErrors.length > 0) return false;
     if (step === 0) return !!form.name && !!form.type;
     if (step === 1) return !!form.symbol && Number(form.lots) > 0;
     if (step === 2) {
@@ -290,180 +300,7 @@ export default function NewStrategyPage() {
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      const lotSize = form.lotSize || getLotSize(form.symbol, form.lotSize);
-      const qty = Number(form.lots || 1) * lotSize;
-
-      let config: any;
-      if (form.type === "GAMMA_BLAST_EXPIRY") {
-        config = {
-          tradingMode: form.gbTradingMode === "AFTERNOON_ONLY" ? "AFTERNOON_GAMMA_ONLY" : "FULL_DAY_SCALPER",
-          enableOrbMorningTrigger: form.gbEnableOrbMorningTrigger !== false,
-          enableMiddayBreakout: form.gbEnableMiddayBreakout !== false,
-          symbol: form.symbol.trim() === "SENSEX" ? "SENSEX" : (form.symbol.trim() === "AUTO" ? "AUTO" : "NIFTY"),
-          exchange: form.symbol.trim() === "SENSEX" ? "BFO" : "NFO",
-          lots: Number(form.lots || 1),
-          product: form.product || "NRML",
-          maxTradesPerDay: Number(form.maxTradesPerDay || 2),
-          maxWinsPerDay: 1,
-          autoSelectStrike: true,
-          startTime: form.gbTradingMode === "AFTERNOON_ONLY" ? "13:00" : (form.gbStartTime || "09:20"),
-          endTime: form.gbEndTime || "15:25",
-          enableOiFilter: form.gbEnableOiFilter,
-          enableVolumeSurge: form.gbEnableVolumeSurge,
-          enableRatchetTrailing: form.gbEnableRatchetTrailing,
-          enableHighConvictionBoost: form.gbEnableHighConvictionBoost,
-          maxConvictionLots: Number(form.gbMaxConvictionLots || 3),
-          enablePartialProfitBooking: form.gbEnablePartialProfitBooking,
-          initialSlPct: Number(form.gbInitialSlPct || 50),
-          targetRs: Number(form.targetRs || 1000),
-          stopLossRs: Number(form.stopLossRs || 500),
-          targetPoints: Math.round(Number(form.targetRs || 1000) / (lotSize || 20)),
-          stopLossPoints: Math.round(Number(form.stopLossRs || 500) / (lotSize || 20)),
-          exitExactAtTarget: !!form.exitExactAtTarget,
-        };
-      } else if (form.type === "NIFTY_OPTIONS_SCALPER") {
-        config = {
-          symbol: form.symbol.trim(),
-          exchange: form.exchange,
-          lots: Number(form.lots),
-          qty,
-          product: form.product,
-          emaPeriod: 15,
-          isOptionBuyingOnly: true,
-          targetPoints: Number(form.dsTargetPoints || 10),
-          stopLossPoints: Number(form.dsStopLossPoints || 7),
-          trailCostAtPoints: Number(form.dsTrailCostAtPoints || 6),
-          stopLossRs: Number(form.dsStopLossPoints || 7) * qty,
-          targetRs: Number(form.dsTargetPoints || 10) * qty,
-          maxTradesPerDay: Number(form.maxTradesPerDay || 2),
-          maxWinsPerDay: 1,
-          maxLossesPerDay: Number(form.dsMaxLossesPerDay || 2),
-          enablePartialBooking: form.dsEnablePartialBooking !== false,
-          partialBookingPct: Number(form.dsPartialBookingPct || 50),
-          enableMiddayChopFilter: form.dsEnableMiddayChopFilter !== false,
-          middayDeadZoneStart: "12:15",
-          middayDeadZoneEnd: "13:15",
-          enableVolumeSurge: form.dsEnableVolumeSurge !== false,
-          enableTrendBiasFilter: form.dsEnableTrendBiasFilter !== false,
-          enableMacroDayBias: form.dsEnableMacroDayBias !== false,
-          entryCutoffTime: form.dsEntryCutoffTime || "14:15",
-          timeframe: form.dsTimeframe || "5minute",
-          enableOrbTrigger: false,
-          enablePullbackTrigger: true,
-          enableRsiFilter: false,
-          enableRangeFilter: true,
-          enableStagnancyExit: true,
-          moneyness: "ITM",
-          enableAutoHybrid: form.symbol.toUpperCase().includes("HYBRID"),
-          enableDynamicSizing: form.dsEnableDynamicSizing !== false,
-          maxCapital: form.dsMaxCapital ? Number(form.dsMaxCapital) : undefined,
-          maxLots: form.dsMaxLots ? Number(form.dsMaxLots) : 25,
-        };
-      } else if (form.type === "STOCK_OPTIONS_BUYING") {
-        const isAuto = form.sIsAutoStockSelect || form.symbol === "AUTO";
-        config = {
-          symbol: isAuto ? "AUTO" : form.symbol.trim(),
-          exchange: "NSE",
-          timeframe: form.sTimeframe,
-          isAutoStockSelect: isAuto,
-          emaPeriod: Number(form.sEmaPeriod),
-          riskRewardRatio: Number(form.sRiskRewardRatio),
-          maxCapital: Number(form.sMaxCapital),
-          lots: Number(form.lots),
-          lotSize,
-          qty,
-          maxTradesPerDay: Number(form.maxTradesPerDay),
-          product: form.product,
-          startAfterMin: Number(form.startAfterMin),
-          triggerOffset: Number(form.sTriggerOffset),
-          protectionBufferPct: Number(form.sProtectionBufferPct),
-          directionBias: form.sDirectionBias,
-          setupType: form.sSetupType,
-          moneyness: form.sMoneyness,
-          minRvol: Number(form.sMinRvol || 1.25),
-          enableMarketTrendFilter: form.sEnableMarketTrendFilter !== false,
-          enableMiddayChopFilter: form.sEnableMiddayChopFilter !== false,
-          middayDeadZoneStart: "11:30",
-          middayDeadZoneEnd: "13:00",
-          enablePartialBooking: form.sEnablePartialBooking !== false,
-          partialBookingPct: Number(form.sPartialBookingPct || 50),
-          maxStagnantTimeMin: Number(form.sMaxStagnantTimeMin || 25),
-          maxWinsPerDay: Number(form.sMaxWinsPerDay || 1),
-          maxLossesPerDay: Number(form.sMaxLossesPerDay || 1),
-          enableHtfFilter: form.sEnableHtfFilter !== false,
-          enableTrailingSl: form.sEnableTrailingSl !== false,
-          target1RR: Number(form.sTarget1RR || 1.5),
-          target2RR: Number(form.sTarget2RR || 3.0),
-          enableDynamicSizing: form.sEnableDynamicSizing !== false,
-        };
-      } else if (form.type === "BREAKOUT_15MIN") {
-        config = {
-          symbol: form.symbol.trim(),
-          exchange: form.exchange,
-          instrumentType: form.instrumentType,
-          qty,
-          lots: Number(form.lots),
-          product: form.product,
-          stopLossRs: Number(form.stopLossRs),
-          targetRs: Number(form.targetRs),
-          exitExactAtTarget: !!form.exitExactAtTarget,
-          maxTradesPerDay: Number(form.maxTradesPerDay),
-          enableDynamicAtr: form.b15EnableDynamicAtr,
-          riskRewardRatio: Number(form.b15RiskRewardRatio),
-          enableFakeoutReversal: form.b15EnableFakeoutReversal,
-          enableVwapFilter: form.b15EnableVwapFilter,
-          enableBreakevenTrail: form.b15EnableBreakevenTrail,
-          moneyness: form.b15Moneyness,
-          useStructuralCandleSl: form.b15UseStructuralCandleSl,
-          maxOpeningRangePts: Number(form.b15MaxOpeningRangePts || 300),
-          primeWindowEndTime: form.b15PrimeWindowEndTime || "15:00",
-          enableRsiFilter: form.b15EnableRsiFilter,
-          breakevenTriggerR: Number(form.b15BreakevenTriggerR || 0.7),
-          enableTrapReversal: form.b15EnableTrapReversal,
-          enableRetestConfirmation: form.b15EnableRetestConfirmation,
-          enableCprFilter: form.b15EnableCprFilter,
-          cprNarrowThresholdPct: Number(form.b15CprNarrowThresholdPct || 0.18),
-          trapSlBufferPts: Number(form.b15TrapSlBufferPts || 10),
-          entryTimeframe: form.b15EntryTimeframe || "3min",
-          enableEmaVwapTrailing: form.b15EnableEmaVwapTrailing,
-          trailingEmaPeriod: Number(form.b15TrailingEmaPeriod || 9),
-          trailingVwapSource: form.b15TrailingVwapSource || "both",
-          maxLossesPerDay: Number(form.b15MaxLossesPerDay || 1),
-          enableMiddayChopFilter: form.b15EnableMiddayChopFilter,
-          middayDeadZoneStart: form.b15MiddayDeadZoneStart || "11:45",
-          middayDeadZoneEnd: form.b15MiddayDeadZoneEnd || "13:00",
-          enablePartialBooking: form.b15EnablePartialBooking,
-          partialBookingPct: Number(form.b15PartialBookingPct || 50),
-          partialBookingR: Number(form.b15PartialBookingR || 1.8),
-          enableCprSupportResistance: form.b15EnableCprSupportResistance,
-          ...((form.instrumentType === 'INDEX' || form.instrumentType === 'OPTION') && {
-            minPremium: Number(form.minPremium),
-            maxPremium: Number(form.maxPremium),
-          }),
-        };
-      } else {
-        config = {
-          symbol: form.symbol.trim(),
-          exchange: form.exchange,
-          instrumentType: form.instrumentType,
-          emaPeriod: Number(form.emaPeriod),
-          vwapSource: form.vwapSource || 'close',
-          isOptionBuyingOnly: form.isOptionBuyingOnly,
-          qty,
-          lots: Number(form.lots),
-          product: form.product,
-          stopLossRs: Number(form.stopLossRs),
-          targetRs: Number(form.targetRs),
-          exitExactAtTarget: !!form.exitExactAtTarget,
-          maxTradesPerDay: Number(form.maxTradesPerDay),
-          enableProfitFloor: form.enableProfitFloor,
-          profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
-          ...(form.isOptionBuyingOnly && {
-            minPremium: Number(form.minPremium),
-            maxPremium: Number(form.maxPremium),
-          }),
-        };
-      }
+      const config = buildStrategyConfig(form);
 
       const payload = {
         name: form.name,
@@ -480,7 +317,7 @@ export default function NewStrategyPage() {
       router.push("/strategies");
     } catch (err: any) {
       console.error("❌ Create strategy error:", err);
-      toast.error(err?.response?.data?.message ?? "Failed to create strategy");
+      toast.error(apiErrorMessage(err, "Failed to create strategy"));
     } finally {
       setSubmitting(false);
     }
@@ -615,6 +452,17 @@ export default function NewStrategyPage() {
             {step === 1 && <Step2InstrumentConfig form={form} set={set} />}
             {step === 2 && <Step3RiskManagement form={form} set={set} />}
             {step === 3 && <Step4BrokerReview form={form} set={set} brokers={brokers} />}
+
+            {step >= 1 && configErrors.length > 0 && (
+              <div role="alert" className="rounded-xl border border-loss/40 bg-loss/5 p-3 text-xs space-y-1">
+                <p className="font-semibold text-loss">Fix these before continuing</p>
+                <ul className="list-disc pl-4 text-foreground/80 space-y-0.5">
+                  {configErrors.map((e) => (
+                    <li key={e}>{e}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* Bottom Navigation Controls inside card */}
             <div className="flex items-center justify-between pt-4 border-t border-border/50">

@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { strategyApi, brokerApi, marketApi } from "@/lib/api";
 import Link from "next/link";
+import { apiErrorMessage } from "@/lib/api-error";
+import { validateStrategyConfig } from "@/lib/strategy-config";
 
 const LOT_SIZES: Record<string, number> = {
   "NIFTY": 65,
@@ -362,6 +364,12 @@ export default function EditStrategyPage() {
         };
       }
 
+      const problems = validateStrategyConfig(form.type, config);
+      if (problems.length > 0) {
+        toast.error(problems.join(" · "));
+        return;
+      }
+
       await strategyApi.update(id, {
         name: form.name,
         type: form.type as any,
@@ -372,7 +380,7 @@ export default function EditStrategyPage() {
       toast.success("Strategy updated successfully!");
       router.push(`/strategies/${id}`);
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Failed to update strategy");
+      toast.error(apiErrorMessage(err, "Failed to update strategy"));
     } finally {
       setSubmitting(false);
     }

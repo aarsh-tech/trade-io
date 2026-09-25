@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
+import { assertValidStrategyConfig } from './strategy-config.validator';
 
 @Injectable()
 export class StrategyService {
@@ -93,6 +94,7 @@ export class StrategyService {
   }
 
   async create(userId: string, dto: CreateStrategyDto) {
+    assertValidStrategyConfig(dto.type, dto.config);
     let validBrokerAccountId: string | null = null;
     if (dto.brokerAccountId) {
       const brokerAccount = await this.prisma.brokerAccount.findFirst({
@@ -117,7 +119,8 @@ export class StrategyService {
   }
 
   async update(userId: string, id: string, dto: UpdateStrategyDto) {
-    await this.assertOwner(userId, id);
+    const existing = await this.assertOwner(userId, id);
+    if (dto.config) assertValidStrategyConfig(dto.type ?? existing.type, dto.config);
     let validBrokerAccountId: string | null | undefined = undefined;
     if (dto.brokerAccountId !== undefined) {
       if (dto.brokerAccountId) {
