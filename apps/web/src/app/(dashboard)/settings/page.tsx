@@ -79,7 +79,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6 max-w-4xl mx-auto animate-[fade-up_0.4s_ease_both]">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+        <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">Settings</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Manage your account settings, personal details, and two-factor authentication security
         </p>
@@ -90,31 +90,31 @@ export default function SettingsPage() {
           <button
             onClick={() => setActiveTab("profile")}
             className={cn(
-              "w-full text-left px-4 py-2.5 rounded-xl font-medium border flex items-center gap-3 transition-all",
+              "w-full text-left px-4 py-2.5 rounded-lg font-medium border flex items-center gap-3 transition-all",
               activeTab === "profile"
-                ? "bg-blue-50 text-blue-700 border-blue-200 shadow-2xs font-bold"
+                ? "bg-brand-subtle text-accent-foreground border-primary/30  font-semibold"
                 : "text-foreground/75 border-transparent hover:bg-muted/50"
             )}
           >
-            <User className="h-4 w-4 text-blue-600" /> Profile
+            <User className="h-4 w-4 text-accent-foreground" /> Profile
           </button>
           <button
             onClick={() => setActiveTab("security")}
             className={cn(
-              "w-full text-left px-4 py-2.5 rounded-xl font-medium border flex items-center gap-3 transition-all",
+              "w-full text-left px-4 py-2.5 rounded-lg font-medium border flex items-center gap-3 transition-all",
               activeTab === "security"
-                ? "bg-blue-50 text-blue-700 border-blue-200 shadow-2xs font-bold"
+                ? "bg-brand-subtle text-accent-foreground border-primary/30  font-semibold"
                 : "text-foreground/75 border-transparent hover:bg-muted/50"
             )}
           >
-            <Lock className="h-4 w-4 text-indigo-600" /> Security & 2FA
+            <Lock className="h-4 w-4 text-accent-foreground" /> Security & 2FA
           </button>
         </div>
 
         <div className="md:col-span-2 space-y-6">
 
           {activeTab === "profile" && (
-            <Card className="border-border/90 bg-card shadow-xs rounded-2xl">
+            <Card className="border-border/90 bg-card rounded-lg">
               <CardHeader>
                 <CardTitle>Profile Details</CardTitle>
                 <CardDescription>Update your personal information.</CardDescription>
@@ -126,7 +126,7 @@ export default function SettingsPage() {
                     <input
                       value={profileForm.name}
                       onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                      className="w-full h-10 px-3 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full h-10 px-3 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -145,7 +145,7 @@ export default function SettingsPage() {
                     />
                     <p className="text-xs text-muted-foreground">Your account email address cannot be changed.</p>
                   </div>
-                  <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isUpdatingProfile}>
+                  <Button type="submit" className="bg-primary hover:bg-brand-hover text-primary-foreground" disabled={isUpdatingProfile}>
                     {isUpdatingProfile ? "Saving..." : "Save Changes"}
                   </Button>
                 </form>
@@ -155,7 +155,7 @@ export default function SettingsPage() {
 
           {activeTab === "security" && (
             <>
-              <Card className="border-border/90 bg-card shadow-xs rounded-2xl">
+              <Card className="border-border/90 bg-card rounded-lg">
                 <CardHeader>
                   <CardTitle>Change Password</CardTitle>
                   <CardDescription>Ensure your account is using a long, random password to stay secure.</CardDescription>
@@ -169,7 +169,7 @@ export default function SettingsPage() {
                           type={showPasswords.current ? "text" : "password"}
                           value={passwordForm.current}
                           onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
-                          className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                           required
                         />
                         <button
@@ -194,7 +194,7 @@ export default function SettingsPage() {
                             type={showPasswords.newPassword ? "text" : "password"}
                             value={passwordForm.newPassword}
                             onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                             required
                           />
                           <button
@@ -218,7 +218,7 @@ export default function SettingsPage() {
                             type={showPasswords.confirm ? "text" : "password"}
                             value={passwordForm.confirm}
                             onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
-                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full h-10 pl-3 pr-10 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                             required
                           />
                           <button
@@ -246,17 +246,17 @@ export default function SettingsPage() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-blue-600" />
+                    <Shield className="h-5 w-5 text-accent-foreground" />
                     <CardTitle>Two-Factor Authentication</CardTitle>
                   </div>
                   <CardDescription>Add additional security to your account using 2FA.</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {user?.twoFaEnabled ? (
-                    <div className="bg-green-50 text-green-700 p-4 rounded-lg flex items-center justify-between border border-green-200">
+                    <div className="bg-profit-subtle text-profit p-4 rounded-lg flex items-center justify-between border border-profit/30">
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-green-200 flex items-center justify-center">
-                          <Shield className="h-4 w-4 text-green-700" />
+                        <div className="h-8 w-8 rounded-full bg-profit-subtle flex items-center justify-center">
+                          <Shield className="h-4 w-4 text-profit" />
                         </div>
                         <div>
                           <p className="font-semibold text-sm">2FA is Enabled</p>
@@ -265,7 +265,7 @@ export default function SettingsPage() {
                       </div>
                       <Button
                         variant="outline"
-                        className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        className="border-loss/30 text-loss hover:bg-loss-subtle hover:text-loss"
                         onClick={async () => {
                           if (confirm("Are you sure you want to disable Two-Factor Authentication? This will make your account less secure.")) {
                             await disable2FA();
@@ -280,14 +280,14 @@ export default function SettingsPage() {
                   ) : (
                     <div className="space-y-4">
                       {!qrCode ? (
-                        <Button onClick={onInit2FASetup} disabled={isSettingUp} className="bg-slate-900 hover:bg-black text-white gap-2">
+                        <Button onClick={onInit2FASetup} disabled={isSettingUp} className="bg-foreground hover:bg-foreground/90 text-background gap-2">
                           <Key className="h-4 w-4" /> {isSettingUp ? "Generating..." : "Setup 2FA"}
                         </Button>
                       ) : (
-                        <div className="p-4 border border-border rounded-xl bg-muted/50 space-y-6">
+                        <div className="p-4 border border-border rounded-lg bg-muted/50 space-y-6">
                           <div className="text-center">
                             <p className="text-sm font-semibold text-foreground mb-2">1. Scan this QR Code with your Authenticator App</p>
-                            <div className="flex justify-center p-4 bg-card rounded-lg shadow-sm border border-border mx-auto w-fit">
+                            <div className="flex justify-center p-4 bg-card rounded-lg border border-border mx-auto w-fit">
                               <img src={qrCode} alt="2FA QR Code" className="w-40 h-40" />
                             </div>
                           </div>
@@ -301,10 +301,10 @@ export default function SettingsPage() {
                                 maxLength={6}
                                 value={setup2faCode}
                                 onChange={(e) => setSetup2faCode(e.target.value)}
-                                className="w-full h-12 text-center text-xl tracking-[0.5em] rounded-lg border border-border focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono font-bold text-foreground"
+                                className="w-full h-12 text-center text-xl tracking-[0.5em] rounded-lg border border-border focus:ring-2 focus:ring-primary focus:outline-none font-mono font-semibold text-foreground"
                               />
                             </div>
-                            <Button onClick={onVerify2FASetup} disabled={isVerifying} className="w-full max-w-[240px] mx-auto block bg-blue-600 hover:bg-blue-700 text-white">
+                            <Button onClick={onVerify2FASetup} disabled={isVerifying} className="w-full max-w-[240px] mx-auto block bg-primary hover:bg-brand-hover text-primary-foreground">
                               {isVerifying ? "Verifying..." : "Verify & Enable"}
                             </Button>
                           </div>

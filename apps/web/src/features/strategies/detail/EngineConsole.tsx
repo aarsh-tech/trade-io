@@ -18,12 +18,22 @@ const FILTERS: { id: LogFilter; label: string }[] = [
 ];
 
 const KIND_STYLE: Record<LogKind, string> = {
-  PNL: "text-cyan-300 bg-cyan-950/40 border-l-2 border-cyan-400 px-2 rounded",
-  SIGNAL: "text-emerald-300 font-semibold",
-  ORDER: "text-sky-300",
-  ERROR: "text-rose-400 font-semibold",
-  WARN: "text-amber-300",
-  INFO: "text-slate-300",
+  PNL: "text-log-text",
+  SIGNAL: "text-log-text",
+  ORDER: "text-log-text",
+  ERROR: "bg-log-error-row text-log-error -mx-3 px-3",
+  WARN: "text-log-text",
+  INFO: "text-log-text",
+};
+
+/** Tag colours follow the design system's log tokens; the tag text keeps kind readable without colour. */
+const KIND_TAG_STYLE: Record<LogKind, string> = {
+  PNL: "text-log-pnl",
+  SIGNAL: "text-log-signal",
+  ORDER: "text-log-order",
+  ERROR: "text-log-error",
+  WARN: "text-log-warn",
+  INFO: "text-log-info",
 };
 
 /** Log-line tag so a kind is never conveyed by colour alone. */
@@ -79,13 +89,13 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
   };
 
   return (
-    <Card className="border-border/60 bg-card shadow-sm overflow-hidden rounded-2xl">
+    <Card className="border-border/60 bg-card overflow-hidden rounded-lg">
       <CardHeader className="p-4 bg-muted/30 border-b border-border/60 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Terminal className="h-4 w-4 text-emerald-500" aria-hidden />
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">Engine console</CardTitle>
-            {strategy.isActive && <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500 animate-ping" aria-label="Engine running" />}
+            <Terminal className="h-4 w-4 text-profit" aria-hidden />
+            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-foreground">Engine console</CardTitle>
+            {strategy.isActive && <span className="inline-flex h-2 w-2 rounded-full bg-profit animate-ping" aria-label="Engine running" />}
           </div>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" onClick={copy} className="h-7 px-2 text-[11px] gap-1 text-muted-foreground" aria-label="Copy shown log lines">
@@ -119,7 +129,7 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
                 aria-pressed={filter === f.id}
                 className={cn(
                   "h-7 px-2.5 rounded-md text-[11px] font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  filter === f.id ? "bg-blue-600 text-white border-blue-600" : "bg-card text-muted-foreground border-border hover:text-foreground",
+                  filter === f.id ? "bg-accent text-accent-foreground border-primary" : "bg-transparent text-muted-foreground border-border hover:text-foreground hover:bg-muted",
                 )}
               >
                 {f.label} <span className="num opacity-80">{counts[f.id]}</span>
@@ -133,7 +143,7 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search logs"
-              className="h-7 w-full rounded-md border border-border bg-card pl-7 pr-2 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-7 w-full rounded-md border border-input bg-sunken pl-7 pr-2 text-[11px] placeholder:text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
         </div>
@@ -147,10 +157,10 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
           aria-live="off"
           aria-label="Engine log"
           tabIndex={0}
-          className="h-80 overflow-y-auto bg-slate-950 p-3 font-mono text-xs space-y-0.5 select-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-80 overflow-y-auto bg-log-bg border-t border-border px-3 py-2 font-code text-xs select-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {shown.length === 0 ? (
-            <p className="text-slate-500 italic py-4 text-sm">
+            <p className="text-muted-foreground italic py-4 text-sm">
               {parsed.length > 0
                 ? "No log lines match this filter."
                 : strategy.isActive
@@ -159,9 +169,9 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
             </p>
           ) : (
             shown.map((l) => (
-              <div key={l.index} className={cn("leading-relaxed py-0.5 flex gap-2", KIND_STYLE[l.kind])}>
-                <span className="shrink-0 w-8 text-[10px] uppercase text-slate-500 pt-0.5" aria-hidden>{KIND_TAG[l.kind]}</span>
-                {l.time && <span className="shrink-0 text-slate-500 num">{l.time.split(", ").pop()}</span>}
+              <div key={l.index} className={cn("leading-[18px] py-px flex gap-2 items-baseline", KIND_STYLE[l.kind])}>
+                <span className={cn("shrink-0 w-9 text-center text-[10px] font-semibold leading-4 border border-current rounded-xs", KIND_TAG_STYLE[l.kind])} aria-hidden>{KIND_TAG[l.kind]}</span>
+                {l.time && <span className="shrink-0 text-log-time num">{l.time.split(", ").pop()}</span>}
                 <span className="break-words min-w-0">{l.text}</span>
               </div>
             ))

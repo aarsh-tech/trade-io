@@ -341,11 +341,11 @@ export default function StrategiesPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/50 pb-5">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-blue-600/10 border border-blue-600/20 text-blue-600 shadow-xs">
+            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20 text-accent-foreground">
               <Bot className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-extrabold tracking-tight">
+              <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">
                 Trading Strategies
               </h1>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -371,7 +371,7 @@ export default function StrategiesPage() {
           <Link href="/strategies/new">
             <Button
               size="sm"
-              className="gap-2 text-xs h-9 font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 px-4"
+              className="gap-2 text-xs h-9 font-semibold bg-primary hover:bg-brand-hover text-primary-foreground shadow-md px-4"
             >
               <Plus className="h-4 w-4" />
               New Strategy
@@ -385,38 +385,38 @@ export default function StrategiesPage() {
 
       {/* ─── KPI Metrics Stat Ribbon ─── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Total Configured
               </span>
-              <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600">
+              <div className="p-1.5 rounded-lg bg-primary/10 text-accent-foreground">
                 <SlidersHorizontal className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black">{stats.total}</span>
+              <span className="text-2xl font-semibold">{stats.total}</span>
               <span className="text-[11px] text-muted-foreground">strategies</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Live Engines
               </span>
-              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600">
+              <div className="p-1.5 rounded-lg bg-profit/10 text-profit">
                 <Radio className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-emerald-600">{stats.active}</span>
-              <span className="text-[11px] font-medium text-emerald-600/90 flex items-center gap-1">
+              <span className="text-2xl font-semibold text-profit">{stats.active}</span>
+              <span className="text-[11px] font-medium text-profit/90 flex items-center gap-1">
                 {stats.active > 0 && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-profit animate-ping inline-block" />
                 )}
                 active now
               </span>
@@ -424,35 +424,35 @@ export default function StrategiesPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 09:15 AM Auto-Start
               </span>
-              <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-600">
+              <div className="p-1.5 rounded-lg bg-warn/10 text-warn">
                 <AlarmClock className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-amber-600">{stats.scheduled}</span>
+              <span className="text-2xl font-semibold text-warn">{stats.scheduled}</span>
               <span className="text-[11px] text-muted-foreground">scheduled</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Active Execution
               </span>
-              <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-600">
+              <div className="p-1.5 rounded-lg bg-signal/10 text-signal">
                 <Activity className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-purple-600">
+              <span className="text-2xl font-semibold text-signal">
                 {stats.runningExecutions}
               </span>
               <span className="text-[11px] text-muted-foreground">executing orders</span>
@@ -463,27 +463,27 @@ export default function StrategiesPage() {
 
       {/* ─── 1-Click Quick Deploy Presets (Compact Side-by-Side Grid) ─── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {/* Card 1: Stock Options Buying (80% Win-Rate Architecture) */}
-        <div className="relative overflow-hidden rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-950/20 via-card to-indigo-950/15 p-4 flex flex-col justify-between gap-3 shadow-xs hover:border-blue-500/50 transition-all">
+        {/* Card 1: Stock Options Buying preset */}
+        <div className="relative overflow-hidden rounded-lg border border-primary/30 bg-card p-4 flex flex-col justify-between gap-3 hover:border-primary/50 transition-all">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-600 text-white font-extrabold px-2 py-0 text-[9px] tracking-wider uppercase shadow-2xs">
-                  🔥 80% WIN-RATE
+                <Badge className="bg-primary hover:bg-brand-hover text-primary-foreground font-semibold px-2 py-0 text-[9px] tracking-wider uppercase">
+                  Options buying
                 </Badge>
-                <Badge variant="outline" className="text-[9px] font-medium border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5 gap-1 py-0">
+                <Badge variant="outline" className="text-[9px] font-medium border-primary/30 text-accent-foreground bg-primary/5 gap-1 py-0">
                   <Clock className="h-2.5 w-2.5" />
                   09:15 AM
                 </Badge>
               </div>
-              <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md">
+              <span className="text-[10px] font-semibold text-accent-foreground bg-primary/10 px-2 py-0.5 rounded-md">
                 180+ F&amp;O Scanner
               </span>
             </div>
 
             <div>
-              <h4 className="font-extrabold text-sm text-foreground flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+              <h4 className="font-semibold text-sm text-foreground flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-accent-foreground shrink-0" />
                 Stock Option Auto-Hunter (Banker &amp; Runner)
               </h4>
               <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">
@@ -493,15 +493,15 @@ export default function StrategiesPage() {
 
             <div className="flex items-center gap-2.5 text-[10px] text-muted-foreground pt-0.5 flex-wrap">
               <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-blue-500" />
+                <CheckCircle2 className="h-3 w-3 text-accent-foreground" />
                 50% Lock @ T1
               </span>
               <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-blue-500" />
+                <CheckCircle2 className="h-3 w-3 text-accent-foreground" />
                 Breakeven Trail
               </span>
               <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-blue-500" />
+                <CheckCircle2 className="h-3 w-3 text-accent-foreground" />
                 NIFTY Macro Gate
               </span>
             </div>
@@ -510,7 +510,7 @@ export default function StrategiesPage() {
           <Button
             onClick={handleQuickDeployStockOptions}
             disabled={actionId === "quick-stock-options"}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-8.5 text-xs shadow-md shadow-blue-600/20 rounded-lg transition-all flex items-center justify-center gap-1.5 mt-1"
+            className="w-full bg-primary hover:bg-brand-hover text-primary-foreground font-semibold h-8.5 text-xs shadow-md rounded-lg transition-all flex items-center justify-center gap-1.5 mt-1"
           >
             {actionId === "quick-stock-options" ? (
               <>
@@ -527,26 +527,26 @@ export default function StrategiesPage() {
         </div>
 
         {/* Card 2: Intraday Auto Stock Picker (Equity 5x MIS) */}
-        <div className="relative overflow-hidden rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-950/20 via-card to-blue-950/10 p-4 flex flex-col justify-between gap-3 shadow-xs hover:border-emerald-500/50 transition-all">
+        <div className="relative overflow-hidden rounded-lg border border-profit/30 bg-card p-4 flex flex-col justify-between gap-3 hover:border-profit/50 transition-all">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white font-extrabold px-2 py-0 text-[9px] tracking-wider uppercase shadow-2xs">
-                  ⭐ RECOMMENDED PRESET
+                <Badge className="bg-profit hover:bg-profit/90 text-on-profit font-semibold px-2 py-0 text-[9px] tracking-wider uppercase">
+                  Recommended preset
                 </Badge>
-                <Badge variant="outline" className="text-[9px] font-medium border-emerald-500/30 text-emerald-600 bg-emerald-500/5 gap-1 py-0">
+                <Badge variant="outline" className="text-[9px] font-medium border-profit/30 text-profit bg-profit/5 gap-1 py-0">
                   <Clock className="h-2.5 w-2.5" />
                   09:15 AM
                 </Badge>
               </div>
-              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md">
+              <span className="text-[10px] font-semibold text-profit bg-profit/10 px-2 py-0.5 rounded-md">
                 5x MIS Leverage
               </span>
             </div>
 
             <div>
-              <h4 className="font-extrabold text-sm text-foreground flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              <h4 className="font-semibold text-sm text-foreground flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-warn shrink-0" />
                 Intraday Auto Stock Picker (₹500 Target)
               </h4>
               <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">
@@ -556,15 +556,15 @@ export default function StrategiesPage() {
 
             <div className="flex items-center gap-2.5 text-[10px] text-muted-foreground pt-0.5 flex-wrap">
               <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                <CheckCircle2 className="h-3 w-3 text-profit" />
                 5x MIS Leverage
               </span>
               <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                <CheckCircle2 className="h-3 w-3 text-profit" />
                 Trailing SL
               </span>
               <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                <CheckCircle2 className="h-3 w-3 text-profit" />
                 Auto 03:05 PM EOD
               </span>
             </div>
@@ -573,7 +573,7 @@ export default function StrategiesPage() {
           <Button
             onClick={handleQuickDeploy500}
             disabled={actionId === "quick-500"}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-8.5 text-xs shadow-md shadow-emerald-600/20 rounded-lg transition-all flex items-center justify-center gap-1.5 mt-1"
+            className="w-full bg-profit hover:bg-profit/90 text-on-profit font-semibold h-8.5 text-xs shadow-md rounded-lg transition-all flex items-center justify-center gap-1.5 mt-1"
           >
             {actionId === "quick-500" ? (
               <>
@@ -591,7 +591,7 @@ export default function StrategiesPage() {
       </div>
 
       {/* ─── Search & Category Filter Bar ─── */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card/50 p-2 rounded-xl border border-border/60">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card/50 p-2 rounded-lg border border-border/60">
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
           <Button
             variant={activeTab === "ALL" ? "default" : "ghost"}
@@ -599,7 +599,7 @@ export default function StrategiesPage() {
             onClick={() => setActiveTab("ALL")}
             className={cn(
               "text-xs h-8 px-3 rounded-lg font-semibold",
-              activeTab === "ALL" && "bg-blue-600 text-white hover:bg-blue-700"
+              activeTab === "ALL" && "bg-primary text-primary-foreground hover:bg-brand-hover"
             )}
           >
             All ({strategies.length})
@@ -610,10 +610,10 @@ export default function StrategiesPage() {
             onClick={() => setActiveTab("ACTIVE")}
             className={cn(
               "text-xs h-8 px-3 rounded-lg font-semibold gap-1.5",
-              activeTab === "ACTIVE" && "bg-emerald-600 text-white hover:bg-emerald-700"
+              activeTab === "ACTIVE" && "bg-profit text-on-profit hover:bg-profit/90"
             )}
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            <span className="h-1.5 w-1.5 rounded-full bg-profit/40" />
             Live ({stats.active})
           </Button>
           <Button
@@ -622,7 +622,7 @@ export default function StrategiesPage() {
             onClick={() => setActiveTab("SCHEDULED")}
             className={cn(
               "text-xs h-8 px-3 rounded-lg font-semibold gap-1.5",
-              activeTab === "SCHEDULED" && "bg-amber-600 text-white hover:bg-amber-700"
+              activeTab === "SCHEDULED" && "bg-warn text-on-warn hover:bg-warn/90"
             )}
           >
             <AlarmClock className="h-3 w-3" />
@@ -645,7 +645,7 @@ export default function StrategiesPage() {
             onClick={() => setActiveTab("OPTIONS")}
             className={cn(
               "text-xs h-8 px-3 rounded-lg font-semibold",
-              activeTab === "OPTIONS" && "bg-purple-600 text-white hover:bg-purple-700"
+              activeTab === "OPTIONS" && "bg-signal text-on-signal hover:bg-signal/90"
             )}
           >
             Options & Scalpers
@@ -678,11 +678,11 @@ export default function StrategiesPage() {
 
         {/* Add Strategy Dashed Card */}
         <Link href="/strategies/new" className="h-full">
-          <div className="h-full min-h-[260px] rounded-2xl border-2 border-dashed border-border/70 hover:border-blue-500/60 bg-card/30 hover:bg-blue-500/[0.03] transition-all flex flex-col items-center justify-center p-6 text-center group cursor-pointer">
-            <div className="h-12 w-12 rounded-2xl bg-blue-600/10 border border-blue-600/20 text-blue-600 flex items-center justify-center group-hover:scale-110 group-hover:bg-blue-600 group-hover:text-white transition-all shadow-xs mb-3">
+          <div className="h-full min-h-[260px] rounded-lg border-2 border-dashed border-border/70 hover:border-primary/60 bg-card/30 hover:bg-primary/[0.03] transition-all flex flex-col items-center justify-center p-6 text-center group cursor-pointer">
+            <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 text-accent-foreground flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-hover group-hover:text-primary-foreground transition-all mb-3">
               <Plus className="h-6 w-6" />
             </div>
-            <h4 className="text-sm font-bold text-foreground group-hover:text-blue-600 transition-colors">
+            <h4 className="text-sm font-semibold text-foreground group-hover:text-accent-foreground transition-colors">
               Create New Strategy
             </h4>
             <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">
@@ -694,9 +694,9 @@ export default function StrategiesPage() {
 
       {/* ─── Empty Search State ─── */}
       {filteredStrategies.length === 0 && strategies.length > 0 && (
-        <div className="text-center py-12 bg-card/40 rounded-2xl border border-border/60">
+        <div className="text-center py-12 bg-card/40 rounded-lg border border-border/60">
           <SlidersHorizontal className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-          <p className="text-sm font-bold text-foreground">No matching strategies found</p>
+          <p className="text-sm font-semibold text-foreground">No matching strategies found</p>
           <p className="text-xs text-muted-foreground mt-1">
             Try adjusting your search query or switching the category tab filter.
           </p>
@@ -716,18 +716,18 @@ export default function StrategiesPage() {
 
       {/* ─── Global Empty State ─── */}
       {strategies.length === 0 && (
-        <div className="text-center py-20 bg-card/30 rounded-2xl border border-border/60">
-          <div className="h-14 w-14 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4 text-muted-foreground/60">
+        <div className="text-center py-20 bg-card/30 rounded-lg border border-border/60">
+          <div className="h-14 w-14 rounded-lg bg-muted/60 flex items-center justify-center mx-auto mb-4 text-muted-foreground/60">
             <Bot className="h-8 w-8" />
           </div>
-          <h3 className="text-base font-bold text-foreground">No Trading Strategies Configured</h3>
+          <h3 className="text-base font-semibold text-foreground">No Trading Strategies Configured</h3>
           <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
             Get started by launching our recommended 1-click ₹500/day preset above, or build a custom strategy from scratch.
           </p>
           <div className="mt-5 flex items-center justify-center gap-3">
             <Button
               onClick={handleQuickDeploy500}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 gap-1.5"
+              className="bg-profit hover:bg-profit/90 text-on-profit font-semibold text-xs h-9 gap-1.5"
             >
               <Zap className="h-3.5 w-3.5" />
               Quick Deploy ₹500 Preset
@@ -783,15 +783,15 @@ function StrategyCard({
   return (
     <Card
       className={cn(
-        "relative rounded-2xl overflow-hidden transition-all duration-300 border bg-card hover:shadow-md flex flex-col justify-between",
+        "relative rounded-lg overflow-hidden transition-all duration-300 border bg-card hover:shadow-md flex flex-col justify-between",
         s.isActive
-          ? "border-emerald-500/40 shadow-[0_4px_20px_rgba(16,185,129,0.08)] ring-1 ring-emerald-500/20"
+          ? "border-profit/40 ring-1 ring-profit/20"
           : "border-border/70 hover:border-border"
       )}
     >
       {/* Top Active Ambient Bar */}
       {s.isActive && (
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-blue-500" />
+        <div className="absolute top-0 left-0 right-0 h-1 bg-profit" />
       )}
 
       <CardHeader className="p-4 pb-3 space-y-2.5">
@@ -801,13 +801,13 @@ function StrategyCard({
             {/* Strategy Type Badge */}
             <span
               className={cn(
-                "inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full border",
-                isNiftyScalper && "bg-purple-500/10 text-purple-600 border-purple-500/20",
-                isStockOptions && "bg-amber-500/10 text-amber-600 border-amber-500/20",
-                isGammaBlast && "bg-orange-500/10 text-orange-600 border-orange-500/20",
-                is15Min && "bg-blue-500/10 text-blue-600 border-blue-500/20",
-                isEmaVwap && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-                isDailyScalper && "bg-cyan-500/10 text-cyan-600 border-cyan-500/20"
+                "inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border",
+                isNiftyScalper && "bg-signal/10 text-signal border-signal/20",
+                isStockOptions && "bg-warn/10 text-warn border-warn/20",
+                isGammaBlast && "bg-warn/10 text-warn border-warn/20",
+                is15Min && "bg-primary/10 text-accent-foreground border-primary/20",
+                isEmaVwap && "bg-profit/10 text-profit border-profit/20",
+                isDailyScalper && "bg-primary/10 text-accent-foreground border-primary/20"
               )}
             >
               {isNiftyScalper && <Target className="h-3 w-3" />}
@@ -844,16 +844,16 @@ function StrategyCard({
           {/* Live Status Pill */}
           <div
             className={cn(
-              "inline-flex items-center gap-1.5 text-[10px] font-extrabold px-2.5 py-1 rounded-full border shadow-2xs",
+              "inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full border ",
               s.isActive
-                ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30"
+                ? "bg-profit/15 text-profit border-profit/30"
                 : "bg-muted text-muted-foreground border-border/70"
             )}
           >
             <span
               className={cn(
                 "h-1.5 w-1.5 rounded-full",
-                s.isActive ? "bg-emerald-500 animate-ping" : "bg-slate-400"
+                s.isActive ? "bg-profit animate-ping" : "bg-muted-foreground"
               )}
             />
             {s.isActive ? "LIVE" : "OFF"}
@@ -862,7 +862,7 @@ function StrategyCard({
 
         {/* Strategy Title & Subtitle */}
         <div>
-          <CardTitle className="text-base font-bold text-foreground leading-tight line-clamp-1">
+          <CardTitle className="text-base font-semibold text-foreground leading-tight line-clamp-1">
             {s.name}
           </CardTitle>
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
@@ -882,10 +882,10 @@ function StrategyCard({
       <CardContent className="p-4 pt-0 space-y-3.5">
         {/* ─── Risk & Sizing 3-Box Matrix ─── */}
         <div className="grid grid-cols-3 gap-2">
-          <div className="p-2 rounded-xl bg-secondary/40 border border-border/50 text-center flex flex-col justify-center">
+          <div className="p-2 rounded-lg bg-secondary/40 border border-border/50 text-center flex flex-col justify-center">
             <span className="text-[10px] font-medium text-muted-foreground">Sizing</span>
             <span
-              className="text-xs font-bold text-foreground truncate mt-0.5"
+              className="text-xs font-semibold text-foreground truncate mt-0.5"
               title={
                 isStockOptions
                   ? `Max Capital: ₹${Number(cfg.maxCapital || 25000).toLocaleString("en-IN")} • Auto Lots`
@@ -910,10 +910,10 @@ function StrategyCard({
             </span>
           </div>
 
-          <div className="p-2 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center flex flex-col justify-center">
-            <span className="text-[10px] font-medium text-rose-500/80">Stop Loss</span>
+          <div className="p-2 rounded-lg bg-loss/5 border border-loss/20 text-center flex flex-col justify-center">
+            <span className="text-[10px] font-medium text-loss/80">Stop Loss</span>
             <span
-              className="text-xs font-bold text-rose-600 mt-0.5 truncate"
+              className="text-xs font-semibold text-loss mt-0.5 truncate"
               title={
                 isStockOptions
                   ? "Mother candle low SL with breakeven trailing at Target 1"
@@ -938,10 +938,10 @@ function StrategyCard({
             </span>
           </div>
 
-          <div className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-center flex flex-col justify-center">
-            <span className="text-[10px] font-medium text-emerald-600/80">Target</span>
+          <div className="p-2 rounded-lg bg-profit/5 border border-profit/20 text-center flex flex-col justify-center">
+            <span className="text-[10px] font-medium text-profit/80">Target</span>
             <span
-              className="text-xs font-bold text-emerald-600 mt-0.5 truncate"
+              className="text-xs font-semibold text-profit mt-0.5 truncate"
               title={
                 isStockOptions
                   ? `Target 1: 1:${cfg.target1RR || 1.5} RR (50% Banker Lock) • Target 2: 1:${cfg.target2RR || 3.0} RR (Runner Trail)`
@@ -976,12 +976,12 @@ function StrategyCard({
             <span>Last Status:</span>
             <span
               className={cn(
-                "font-bold uppercase text-[10px] px-1.5 py-0.2 rounded",
-                s.latestExecution?.status === "RUNNING" && "bg-emerald-500/10 text-emerald-600",
-                s.latestExecution?.status === "STOPPED" && "bg-amber-500/10 text-amber-600",
-                s.latestExecution?.status === "ERROR" && "bg-rose-500/10 text-rose-600",
+                "font-semibold uppercase text-[10px] px-1.5 py-0.2 rounded",
+                s.latestExecution?.status === "RUNNING" && "bg-profit/10 text-profit",
+                s.latestExecution?.status === "STOPPED" && "bg-warn/10 text-warn",
+                s.latestExecution?.status === "ERROR" && "bg-loss/10 text-loss",
                 (!s.latestExecution || s.latestExecution?.status === "COMPLETED") &&
-                "bg-slate-500/10 text-foreground/75 dark:text-muted-foreground"
+                "bg-muted-foreground/10 text-foreground/75 dark:text-muted-foreground"
               )}
             >
               {s.latestExecution?.status ?? "READY"}
@@ -989,7 +989,7 @@ function StrategyCard({
           </div>
 
           {s.autoStart && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-warn bg-warn/10 px-2 py-0.5 rounded-full border border-warn/20">
               <AlarmClock className="h-3 w-3" />
               09:15 AM
             </span>
@@ -1004,10 +1004,10 @@ function StrategyCard({
             disabled={busy}
             onClick={() => onToggle(s)}
             className={cn(
-              "flex-1 h-9 font-bold text-xs gap-1.5 rounded-xl transition-all shadow-xs",
+              "flex-1 h-9 font-semibold text-xs gap-1.5 rounded-lg transition-all ",
               s.isActive
-                ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20"
-                : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
+                ? "bg-loss hover:bg-loss/90 text-on-loss "
+                : "bg-profit hover:bg-profit/90 text-on-profit "
             )}
           >
             {busy ? (
@@ -1037,10 +1037,10 @@ function StrategyCard({
                 : "Auto-Start Disarmed — Click to arm for 09:15 AM"
             }
             className={cn(
-              "h-9 w-9 rounded-xl transition-all border",
+              "h-9 w-9 rounded-lg transition-all border",
               s.autoStart
-                ? "bg-amber-500/15 text-amber-600 border-amber-500/30 hover:bg-amber-500/20"
-                : "text-muted-foreground hover:text-amber-600 hover:border-amber-500/30"
+                ? "bg-warn/15 text-warn border-warn/30 hover:bg-warn/20"
+                : "text-muted-foreground hover:text-warn hover:border-warn/30"
             )}
           >
             <AlarmClock className="h-4 w-4" />
@@ -1052,7 +1052,7 @@ function StrategyCard({
               variant="outline"
               size="icon" aria-label="View strategy execution and logs"
               title="View Strategy Execution & Logs"
-              className="h-9 w-9 rounded-xl text-muted-foreground hover:text-blue-600 hover:border-blue-500/30"
+              className="h-9 w-9 rounded-lg text-muted-foreground hover:text-accent-foreground hover:border-primary/30"
             >
               <Activity className="h-4 w-4" />
             </Button>
@@ -1064,7 +1064,7 @@ function StrategyCard({
               variant="outline"
               size="icon" aria-label="Edit strategy parameters"
               title="Edit Strategy Parameters"
-              className="h-9 w-9 rounded-xl text-muted-foreground hover:text-foreground hover:border-border"
+              className="h-9 w-9 rounded-lg text-muted-foreground hover:text-foreground hover:border-border"
             >
               <Settings2 className="h-4 w-4" />
             </Button>
@@ -1077,7 +1077,7 @@ function StrategyCard({
             disabled={busy}
             onClick={() => onDelete(s)}
             title="Delete Strategy"
-            className="h-9 w-9 rounded-xl text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 hover:border-rose-500/30"
+            className="h-9 w-9 rounded-lg text-muted-foreground hover:text-loss hover:bg-loss/10 hover:border-loss/30"
           >
             <Trash2 className="h-4 w-4" />
           </Button>

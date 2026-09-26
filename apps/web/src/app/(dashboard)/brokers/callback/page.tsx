@@ -99,12 +99,12 @@ function CallbackContent() {
 
   return (
     <div className="min-h-[75vh] flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg border-border shadow-xl rounded-2xl overflow-hidden bg-card">
+      <Card className="w-full max-w-lg border-border shadow-xl rounded-lg overflow-hidden bg-card">
         <CardHeader className="bg-muted/50 border-b border-border text-center pb-5">
-          <div className="mx-auto h-12 w-12 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm mb-3">
+          <div className="mx-auto h-12 w-12 rounded-lg bg-primary flex items-center justify-center text-primary-foreground mb-3">
             <Key className="h-6 w-6" />
           </div>
-          <CardTitle className="text-xl font-bold text-foreground">
+          <CardTitle className="text-xl font-semibold text-foreground">
             Zerodha Kite Session Gateway
           </CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
@@ -116,7 +116,7 @@ function CallbackContent() {
           {/* State: Processing */}
           {status === "processing" && (
             <div className="py-8 text-center space-y-4">
-              <RefreshCw className="h-10 w-10 text-blue-600 animate-spin mx-auto" />
+              <RefreshCw className="h-10 w-10 text-accent-foreground animate-spin mx-auto" />
               <div>
                 <h3 className="text-base font-semibold text-foreground">
                   Verifying Token with Zerodha...
@@ -131,14 +131,14 @@ function CallbackContent() {
           {/* State: Success */}
           {status === "success" && (
             <div className="py-8 text-center space-y-4 animate-[fade-up_0.3s_ease_both]">
-              <div className="h-14 w-14 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-600 flex items-center justify-center mx-auto">
+              <div className="h-14 w-14 rounded-full bg-profit-subtle border border-profit/30 text-profit flex items-center justify-center mx-auto">
                 <CheckCircle2 className="h-8 w-8" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-foreground">
+                <h3 className="text-lg font-semibold text-foreground">
                   Authentication Successful!
                 </h3>
-                <p className="text-xs text-emerald-700 font-medium mt-1">
+                <p className="text-xs text-profit font-medium mt-1">
                   Your Zerodha broker account is now live and synchronized.
                 </p>
                 <p className="text-[11px] text-muted-foreground mt-2">
@@ -146,7 +146,7 @@ function CallbackContent() {
                 </p>
               </div>
               <Link href="/dashboard" className="inline-block pt-2">
-                <Button className="h-9 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-5">
+                <Button className="h-9 bg-primary hover:bg-brand-hover text-primary-foreground text-xs font-semibold px-5">
                   <span>Go to Dashboard Now</span>
                   <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                 </Button>
@@ -158,8 +158,8 @@ function CallbackContent() {
           {status !== "processing" && status !== "success" && (
             <div className="space-y-5">
               {status === "error" && (
-                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-rose-800 text-xs">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+                <div className="p-3.5 bg-loss-subtle border border-loss/30 rounded-lg flex items-start gap-2.5 text-loss text-xs">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-loss mt-0.5" />
                   <div>
                     <strong className="font-semibold block">Authentication Error</strong>
                     <span>{errorMessage || "Token invalid or expired. Please generate a fresh token."}</span>
@@ -168,8 +168,8 @@ function CallbackContent() {
               )}
 
               <div className="space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-foreground/75">
-                  <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground/75">
+                  <Sparkles className="h-3.5 w-3.5 text-accent-foreground" />
                   Manual Request Token Activation
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
@@ -182,13 +182,13 @@ function CallbackContent() {
                   value={manualToken}
                   onChange={(e) => setManualToken(e.target.value)}
                   placeholder="Paste request_token or full redirected URL..."
-                  className="h-11 text-xs font-mono bg-muted/50 border-border focus:bg-card focus:border-blue-500"
+                  className="h-11 text-xs font-mono bg-muted/50 border-border focus:bg-card focus:border-primary"
                 />
 
                 <Button
                   type="submit"
                   disabled={isRenewing || isBrokersLoading || !manualToken.trim()}
-                  className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-sm disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full h-11 bg-primary hover:bg-brand-hover text-primary-foreground font-semibold text-xs sm:text-sm rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {isRenewing ? (
                     <>

@@ -4,32 +4,34 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-95",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-[13px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 cursor-pointer",
   {
     variants: {
       variant: {
         default:
-          "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary)/0.85)] shadow-lg hover:shadow-[hsl(var(--primary)/0.3)] hover:shadow-xl",
+          "bg-primary text-primary-foreground hover:bg-brand-hover",
         destructive:
-          "bg-[hsl(var(--destructive))] text-white hover:bg-[hsl(var(--destructive)/0.85)]",
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "border border-[hsl(var(--border))] bg-transparent hover:bg-[hsl(var(--secondary))] text-[hsl(var(--foreground))]",
+          "border border-input bg-transparent hover:bg-muted text-foreground",
         secondary:
-          "bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] hover:bg-[hsl(var(--secondary)/0.8)]",
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost:
-          "hover:bg-[hsl(var(--secondary))] text-[hsl(var(--foreground))]",
-        link: "text-[hsl(var(--primary))] underline-offset-4 hover:underline",
+          "hover:bg-muted text-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
         success:
-          "bg-[hsl(var(--green))] text-white hover:bg-[hsl(var(--green)/0.85)] shadow-lg hover:shadow-[hsl(var(--green)/0.3)] hover:shadow-xl",
+          "bg-profit text-on-profit hover:bg-profit/90",
         danger:
-          "bg-[hsl(var(--red))] text-white hover:bg-[hsl(var(--red)/0.85)]",
+          "bg-loss text-on-loss hover:bg-loss/90",
+        buy: "bg-buy text-primary-foreground hover:bg-buy/90",
+        sell: "bg-sell text-on-loss hover:bg-sell/90",
       },
       size: {
-        default: "h-10 px-5 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-12 rounded-lg px-8 text-base",
-        icon: "h-10 w-10",
-        "icon-sm": "h-8 w-8 rounded-md",
+        default: "h-11 px-4 md:h-8",
+        sm: "h-9 rounded-md px-3 text-xs md:h-7",
+        lg: "h-12 rounded-md px-6 text-sm md:h-10",
+        icon: "h-11 w-11 md:h-8 md:w-8",
+        "icon-sm": "h-9 w-9 rounded-md md:h-7 md:w-7",
       },
     },
     defaultVariants: {

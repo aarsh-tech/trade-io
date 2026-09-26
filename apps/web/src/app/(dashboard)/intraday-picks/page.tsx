@@ -109,8 +109,8 @@ _Powered by Tradeio.site Intelligence_`;
   return (
     <Card
       className={cn(
-        "border-border/90 bg-card shadow-xs rounded-xl overflow-hidden hover:border-border hover:shadow-md transition-all group flex flex-col justify-between",
-        r.confidence === "HIGH" && "border-emerald-300"
+        "border-border/90 bg-card  rounded-lg overflow-hidden hover:border-border hover:shadow-md transition-all group flex flex-col justify-between",
+        r.confidence === "HIGH" && "border-profit/30"
       )}
     >
       <div className="p-5 space-y-4">
@@ -118,7 +118,7 @@ _Powered by Tradeio.site Intelligence_`;
         <div className="flex items-start justify-between gap-2">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-lg font-bold text-foreground group-hover:text-blue-600 transition-colors">
+              <h3 className="text-lg font-semibold text-foreground group-hover:text-accent-foreground transition-colors">
                 {r.symbol}
               </h3>
               <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1 text-muted-foreground">
@@ -127,10 +127,10 @@ _Powered by Tradeio.site Intelligence_`;
               <Badge
                 variant={isLong ? "success" : "destructive"}
                 className={cn(
-                  "text-[10px] font-bold py-0 px-1.5 inline-flex items-center gap-0.5",
+                  "text-[10px] font-semibold py-0 px-1.5 inline-flex items-center gap-0.5",
                   isLong
-                    ? "bg-emerald-50 text-emerald-600 border-emerald-200"
-                    : "bg-rose-50 text-rose-600 border-rose-200"
+                    ? "bg-profit-subtle text-profit border-profit/30"
+                    : "bg-loss-subtle text-loss border-loss/30"
                 )}
               >
                 {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
@@ -139,7 +139,7 @@ _Powered by Tradeio.site Intelligence_`;
             </div>
 
             <div className="flex items-center gap-2 mt-1">
-              <span className="font-mono text-xs font-bold text-foreground/75 bg-muted/50 px-2 py-0.5 rounded border border-border/60">
+              <span className="font-mono text-xs font-semibold text-foreground/75 bg-muted/50 px-2 py-0.5 rounded border border-border/60">
                 LTP: ₹{fmt(r.currentPrice)}
               </span>
               <Badge
@@ -147,13 +147,13 @@ _Powered by Tradeio.site Intelligence_`;
                 className={cn(
                   "text-[10px] font-medium",
                   r.confidence === "HIGH"
-                    ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                    ? "bg-profit-subtle text-profit border border-profit/30"
                     : r.confidence === "MEDIUM"
-                    ? "bg-amber-50 text-amber-700 border border-amber-100"
+                    ? "bg-warn-subtle text-warn border border-warn/30"
                     : "bg-muted text-foreground/75"
                 )}
               >
-                <Star className="h-2.5 w-2.5 inline mr-1 text-amber-500 fill-amber-500" />
+                <Star className="h-2.5 w-2.5 inline mr-1 text-warn fill-warn" />
                 {r.confidence}
               </Badge>
             </div>
@@ -161,7 +161,7 @@ _Powered by Tradeio.site Intelligence_`;
 
           <div className="text-right">
             <div className="flex items-center justify-end gap-1.5 mb-0.5">
-              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Score</span>
+              <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Score</span>
               <button
                 onClick={handleShare}
                 className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground/75 transition-colors"
@@ -172,8 +172,8 @@ _Powered by Tradeio.site Intelligence_`;
             </div>
             <div
               className={cn(
-                "text-2xl font-bold font-mono",
-                r.score >= 85 ? "text-blue-600" : r.score >= 75 ? "text-emerald-600" : "text-muted-foreground"
+                "text-lg sm:text-2xl font-semibold font-mono",
+                r.score >= 85 ? "text-accent-foreground" : r.score >= 75 ? "text-profit" : "text-muted-foreground"
               )}
             >
               {r.score}
@@ -186,42 +186,42 @@ _Powered by Tradeio.site Intelligence_`;
           <div
             className={cn(
               "p-2.5 rounded-lg border",
-              isLong ? "bg-emerald-50/50 border-emerald-100" : "bg-rose-50/50 border-rose-100"
+              isLong ? "bg-profit-subtle/50 border-profit/30" : "bg-loss-subtle/50 border-loss/30"
             )}
           >
             <div
               className={cn(
-                "flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider mb-0.5",
-                isLong ? "text-emerald-600" : "text-rose-600"
+                "flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider mb-0.5",
+                isLong ? "text-profit" : "text-loss"
               )}
             >
               <Target className="h-3 w-3" />
               {isLong ? "Buy Above" : "Sell Below"}
             </div>
-            <div className={cn("text-base font-bold font-mono", isLong ? "text-emerald-700" : "text-rose-700")}>
+            <div className={cn("text-base font-semibold font-mono", isLong ? "text-profit" : "text-loss")}>
               ₹{fmt(r.entryPrice)}
             </div>
           </div>
 
-          <div className="p-2.5 bg-rose-50/50 rounded-lg border border-rose-100">
-            <div className="flex items-center gap-1 text-[10px] font-bold text-rose-600 uppercase tracking-wider mb-0.5">
+          <div className="p-2.5 bg-loss-subtle/50 rounded-lg border border-loss/30">
+            <div className="flex items-center gap-1 text-[10px] font-semibold text-loss uppercase tracking-wider mb-0.5">
               <ShieldAlert className="h-3 w-3" /> Stop Loss
             </div>
-            <div className="text-base font-bold font-mono text-rose-700">₹{fmt(r.stopLoss)}</div>
-            <div className="text-[10px] text-rose-500 font-medium">{r.riskPct.toFixed(1)}% Risk</div>
+            <div className="text-base font-semibold font-mono text-loss">₹{fmt(r.stopLoss)}</div>
+            <div className="text-[10px] text-loss font-medium">{r.riskPct.toFixed(1)}% Risk</div>
           </div>
         </div>
 
         {/* Targets Strip */}
         <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
           {[
-            { label: "T1 (Fib 0.382)", price: r.target1, color: "text-emerald-700 bg-emerald-50 border-emerald-100" },
-            { label: "T2 (Fib 0.618)", price: r.target2, color: "text-teal-700 bg-teal-50 border-teal-100" },
-            { label: "T3 (Fib 1.0)", price: r.target3, color: "text-blue-700 bg-blue-50 border-blue-100" },
+            { label: "T1 (Fib 0.382)", price: r.target1, color: "text-profit bg-profit-subtle border-profit/30" },
+            { label: "T2 (Fib 0.618)", price: r.target2, color: "text-accent-foreground bg-brand-subtle border-primary/30" },
+            { label: "T3 (Fib 1.0)", price: r.target3, color: "text-accent-foreground bg-brand-subtle border-primary/30" },
           ].map((t) => (
             <div key={t.label} className={cn("flex-shrink-0 px-2.5 py-1.5 rounded-lg border flex flex-col items-center min-w-[85px]", t.color)}>
               <span className="text-[9px] font-semibold uppercase">{t.label}</span>
-              <span className="text-xs font-bold font-mono">₹{fmt(t.price)}</span>
+              <span className="text-xs font-semibold font-mono">₹{fmt(t.price)}</span>
             </div>
           ))}
         </div>
@@ -230,28 +230,28 @@ _Powered by Tradeio.site Intelligence_`;
         <div className="bg-muted/50 rounded-lg p-3 border border-border/80">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5 text-foreground/75">
-              <Rocket className="h-3.5 w-3.5 text-blue-600" />
-              <span className="text-[11px] font-bold uppercase tracking-wider">Goal Plan</span>
+              <Rocket className="h-3.5 w-3.5 text-accent-foreground" />
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Goal Plan</span>
             </div>
-            <span className="text-[10px] font-bold font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-100">
+            <span className="text-[10px] font-semibold font-mono bg-brand-subtle text-accent-foreground px-2 py-0.5 rounded border border-primary/30">
               Target: ₹{targetRs}
             </span>
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-center">
             <div>
-              <div className="text-[9px] text-muted-foreground font-bold uppercase">Qty</div>
-              <div className="text-xs font-bold font-mono text-foreground">{qty}</div>
+              <div className="text-[9px] text-muted-foreground font-semibold uppercase">Qty</div>
+              <div className="text-xs font-semibold font-mono text-foreground">{qty}</div>
             </div>
             <div className="border-x border-border">
-              <div className="text-[9px] text-muted-foreground font-bold uppercase">Capital</div>
-              <div className="text-xs font-bold font-mono text-foreground">
+              <div className="text-[9px] text-muted-foreground font-semibold uppercase">Capital</div>
+              <div className="text-xs font-semibold font-mono text-foreground">
                 {formatINR(Math.round(capital), { decimals: 0 })}
               </div>
             </div>
             <div>
-              <div className="text-[9px] text-muted-foreground font-bold uppercase">Max Risk</div>
-              <div className="text-xs font-bold font-mono text-rose-600">
+              <div className="text-[9px] text-muted-foreground font-semibold uppercase">Max Risk</div>
+              <div className="text-xs font-semibold font-mono text-loss">
                 {formatINR(Math.round(stopLossAmount), { decimals: 0 })}
               </div>
             </div>
@@ -275,10 +275,10 @@ _Powered by Tradeio.site Intelligence_`;
             })
           }
           className={cn(
-            "w-full min-w-0 h-9 px-3 text-xs font-bold uppercase tracking-wider rounded-lg shadow-2xs gap-1.5 flex items-center justify-center overflow-hidden",
+            "w-full min-w-0 h-9 px-3 text-xs font-semibold uppercase tracking-wider rounded-lg  gap-1.5 flex items-center justify-center overflow-hidden",
             isLong
-              ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-              : "bg-rose-600 hover:bg-rose-700 text-white"
+              ? "bg-profit hover:bg-profit/90 text-on-profit"
+              : "bg-loss hover:bg-loss/90 text-on-loss"
           )}
         >
           <Zap className="h-3.5 w-3.5 shrink-0" />
@@ -299,7 +299,7 @@ _Powered by Tradeio.site Intelligence_`;
           <div className="mt-2 space-y-1.5 border-t border-border pt-2.5 text-xs text-foreground/75">
             {r.notes.map((note, idx) => (
               <div key={idx} className="flex items-start gap-1.5">
-                <div className="mt-1 h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
+                <div className="mt-1 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
                 <span>{note}</span>
               </div>
             ))}
@@ -377,8 +377,8 @@ export default function IntradayPicksPage() {
       {/* ── 1. Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <Sparkles className="h-6 w-6 text-blue-600" />
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground flex items-center gap-2">
+            <Sparkles className="h-6 w-6 text-accent-foreground" />
             Smart Intraday Momentum Picks
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -390,7 +390,7 @@ export default function IntradayPicksPage() {
           <Button
             onClick={handleScan}
             disabled={loading}
-            className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
+            className="h-9 px-4 bg-primary hover:bg-brand-hover text-primary-foreground font-semibold text-xs gap-1.5"
           >
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
             {loading ? "Scanning Market..." : "Run Market Scan"}
@@ -399,61 +399,61 @@ export default function IntradayPicksPage() {
       </div>
 
       {/* ── 2. Stat Cards Grid ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Card className="border-border/90 bg-card rounded-lg">
           <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Scanned Universe</span>
-              <BarChart2 className="h-4 w-4 text-blue-500" />
+              <BarChart2 className="h-4 w-4 text-accent-foreground" />
             </CardTitle>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="text-2xl font-bold font-mono text-foreground">
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
               {scan?.totalScanned || 0} Stocks
             </div>
             <p className="text-[11px] text-muted-foreground mt-0.5">Total symbols screened</p>
           </CardContent>
         </Card>
 
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl">
+        <Card className="border-border/90 bg-card rounded-lg">
           <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Total Setups</span>
-              <Zap className="h-4 w-4 text-indigo-500" />
+              <Zap className="h-4 w-4 text-accent-foreground" />
             </CardTitle>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="text-2xl font-bold font-mono text-foreground">
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
               {allResults.length} Candidates
             </div>
             <p className="text-[11px] text-muted-foreground mt-0.5">Passed momentum threshold</p>
           </CardContent>
         </Card>
 
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl">
+        <Card className="border-border/90 bg-card rounded-lg">
           <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Long Breakouts</span>
-              <TrendingUp className="h-4 w-4 text-emerald-500" />
+              <TrendingUp className="h-4 w-4 text-profit" />
             </CardTitle>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="text-2xl font-bold font-mono text-emerald-600">
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-profit">
               {longCount} Setups
             </div>
             <p className="text-[11px] text-muted-foreground mt-0.5">Bullish momentum buy setups</p>
           </CardContent>
         </Card>
 
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl">
+        <Card className="border-border/90 bg-card rounded-lg">
           <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Short Breakdowns</span>
-              <TrendingDown className="h-4 w-4 text-rose-500" />
+              <TrendingDown className="h-4 w-4 text-loss" />
             </CardTitle>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="text-2xl font-bold font-mono text-rose-600">
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-loss">
               {shortCount} Setups
             </div>
             <p className="text-[11px] text-muted-foreground mt-0.5">Bearish momentum sell setups</p>
@@ -462,7 +462,7 @@ export default function IntradayPicksPage() {
       </div>
 
       {/* ── 3. Controls & Filter Bar ── */}
-      <Card className="border-border/90 bg-card shadow-xs rounded-xl">
+      <Card className="border-border/90 bg-card rounded-lg">
         <CardContent className="p-4">
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
             {/* Direction Filter Pills */}
@@ -474,17 +474,17 @@ export default function IntradayPicksPage() {
                   className={cn(
                     "px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all inline-flex items-center gap-1.5",
                     dirFilter === d
-                      ? "bg-card text-foreground shadow-2xs font-bold"
+                      ? "bg-card text-foreground  font-semibold"
                       : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   {d === "LONG" ? (
                     <>
-                      <TrendingUp className="h-3 w-3 text-emerald-600" /> Long ({longCount})
+                      <TrendingUp className="h-3 w-3 text-profit" /> Long ({longCount})
                     </>
                   ) : d === "SHORT" ? (
                     <>
-                      <TrendingDown className="h-3 w-3 text-rose-600" /> Short ({shortCount})
+                      <TrendingDown className="h-3 w-3 text-loss" /> Short ({shortCount})
                     </>
                   ) : (
                     `All Setups (${allResults.length})`
@@ -497,15 +497,15 @@ export default function IntradayPicksPage() {
             <div className="flex items-center gap-3 flex-wrap">
               {/* Daily Target Pill */}
               <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 bg-muted/50 text-xs">
-                <Target className="h-3.5 w-3.5 text-blue-600" />
+                <Target className="h-3.5 w-3.5 text-accent-foreground" />
                 <span className="text-[11px] font-semibold text-muted-foreground">Target Profit:</span>
                 <div className="flex items-center gap-1">
-                  <span className="font-mono font-bold text-foreground">₹</span>
+                  <span className="font-mono font-semibold text-foreground">₹</span>
                   <input
                     type="number"
                     value={targetRs}
                     onChange={(e) => setTargetRs(Number(e.target.value))}
-                    className="w-16 bg-transparent font-mono font-bold text-foreground focus:outline-none text-xs"
+                    className="w-16 bg-transparent font-mono font-semibold text-foreground focus:outline-none text-xs"
                   />
                 </div>
               </div>
@@ -517,7 +517,7 @@ export default function IntradayPicksPage() {
                   placeholder="Search symbol..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-9 pl-8 pr-3 text-xs bg-card border-border text-foreground focus:ring-1 focus:ring-blue-500"
+                  className="h-9 pl-8 pr-3 text-xs bg-card border-border text-foreground focus:ring-1 focus:ring-primary"
                 />
               </div>
             </div>
@@ -528,7 +528,7 @@ export default function IntradayPicksPage() {
       {/* ── 4. Candidate Picks Grid ── */}
       {initialLoad ? (
         <div className="flex flex-col items-center justify-center py-24 gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <Loader2 className="h-8 w-8 animate-spin text-accent-foreground" />
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             Loading Intraday Setups...
           </p>
@@ -536,15 +536,15 @@ export default function IntradayPicksPage() {
       ) : filtered.length === 0 ? (
         <Card className="border-border bg-card">
           <CardContent className="p-16 text-center space-y-3">
-            <Zap className="h-10 w-10 text-slate-300 mx-auto" />
-            <h3 className="text-base font-bold text-foreground">No Active Intraday Picks Found</h3>
+            <Zap className="h-10 w-10 text-muted-foreground/50 mx-auto" />
+            <h3 className="text-base font-semibold text-foreground">No Active Intraday Picks Found</h3>
             <p className="text-xs text-muted-foreground max-w-sm mx-auto">
               Run a fresh market scan or adjust your filters to identify high probability breakout candidates.
             </p>
             <Button
               onClick={handleScan}
               disabled={loading}
-              className="mt-2 h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold gap-1.5 shadow-sm"
+              className="mt-2 h-9 px-4 bg-primary hover:bg-brand-hover text-primary-foreground text-xs font-semibold gap-1.5"
             >
               <RefreshCcw className="h-3.5 w-3.5" /> Start New Scan
             </Button>
@@ -564,10 +564,10 @@ export default function IntradayPicksPage() {
       )}
 
       {/* ── 5. Information & Safety Panel ── */}
-      <Card className="border-border/80 bg-muted/40 shadow-2xs rounded-xl">
+      <Card className="border-border/80 bg-muted/40 rounded-lg">
         <CardContent className="p-5 text-xs text-foreground/75 leading-relaxed space-y-2">
-          <div className="flex items-center gap-2 font-bold text-foreground uppercase tracking-wider">
-            <Info className="h-4 w-4 text-blue-600" /> Automated Risk & Execution Model
+          <div className="flex items-center gap-2 font-semibold text-foreground uppercase tracking-wider">
+            <Info className="h-4 w-4 text-accent-foreground" /> Automated Risk & Execution Model
           </div>
           <p>
             Clicking <strong>⚡ Buy/Short</strong> triggers a pre-calculated bracket/intraday order structure with entry trigger, protective stop-loss, and multi-tier Fibonacci profit targets. All orders use <strong>MIS product type</strong>.

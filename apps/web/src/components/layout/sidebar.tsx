@@ -2,53 +2,43 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  TrendingUp,
-  Plug,
-  ClipboardList,
-  Settings,
-  ChevronLeft,
-  Zap,
-  LogOut,
-  Wallet,
-  ScanSearch,
-  Layers,
-  Activity,
-  BookOpen,
-  ShieldCheck,
-  ShieldAlert,
-} from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronsLeft, LogOut, ShieldAlert, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, useAuthStore } from "@/store";
 import { authApi } from "@/lib/api";
 import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { openRiskDisclosure } from "@/components/shared/risk-disclosure-modal";
+import { ADMIN_NAV, NAV_GROUPS, isActivePath, type NavItem } from "@/components/layout/nav-config";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/ledger", label: "P&L Ledger", icon: BookOpen },
-  { href: "/live-screener", label: "Live OHL Screener", icon: ScanSearch, badge: "LIVE" },
-  { href: "/swing-scanner", label: "Scanner", icon: Layers },
-  { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
-  { href: "/positions", label: "Positions", icon: Activity },
-  { href: "/orders", label: "Orders", icon: ClipboardList },
-  { href: "/portfolio", label: "Portfolio", icon: Wallet },
-  { href: "/strategies", label: "Strategies", icon: TrendingUp },
-  { href: "/brokers", label: "Brokers", icon: Plug },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
-
-const adminNavItems = [
-  { href: "/admin/users", label: "User Access", icon: ShieldCheck, badge: "ADMIN" },
-];
-
-
-
-
+function NavLink({ item, active, collapsed }: { item: NavItem; active: boolean; collapsed: boolean }) {
+  const { href, label, icon: Icon, live } = item;
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      title={collapsed ? label : undefined}
+      className={cn(
+        "group relative flex items-center gap-3 rounded-md px-2.5 h-9 text-[13px] font-medium transition-colors",
+        active
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        collapsed && "justify-center px-0"
+      )}
+    >
+      {active && <span className="absolute -left-3 top-1.5 bottom-1.5 w-[3px] rounded-r bg-primary" aria-hidden />}
+      <Icon className="h-4 w-4 shrink-0" strokeWidth={active ? 2.25 : 1.9} aria-hidden />
+      {!collapsed && <span className="truncate">{label}</span>}
+      {!collapsed && live && (
+        <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-profit">
+          <span className="h-1.5 w-1.5 rounded-full bg-profit" aria-hidden />
+          Live
+        </span>
+      )}
+    </Link>
+  );
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -69,159 +59,120 @@ export function Sidebar() {
   return (
     <>
       <aside
+        aria-label="Main navigation"
         className={cn(
-          "hidden md:flex flex-col h-screen bg-card border-r border-border transition-all duration-300 ease-in-out w-64 md:relative shrink-0",
-          sidebarCollapsed ? "md:w-16" : "md:w-64"
+          "hidden md:flex flex-col h-screen bg-popover border-r border-border transition-[width] duration-200 ease-out relative shrink-0",
+          sidebarCollapsed ? "w-[60px]" : "w-[220px]"
         )}
       >
-        {/* Logo */}
-        <div className="relative flex items-center justify-between h-16 px-4 border-b border-border">
-          {!sidebarCollapsed && (
-            <Link href="/dashboard" className="flex items-center gap-2 group">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
-                <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
-              </div>
-              <span className="font-bold text-lg bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-indigo-400">Tradeio.site</span>
-            </Link>
-          )}
-          {sidebarCollapsed && (
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 mx-auto shadow-md">
-              <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
-            </div>
-          )}
-          <button
-            onClick={toggleSidebar}
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className={cn(
-              "p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-all hidden md:block",
-              sidebarCollapsed && "absolute -right-3 top-1/2 -translate-y-1/2 bg-card border border-border shadow-md z-50"
+        {/* Brand */}
+        <div className={cn("flex items-center h-12 border-b border-border shrink-0", sidebarCollapsed ? "justify-center" : "px-4")}>
+          <Link href="/dashboard" className="flex items-center gap-2.5 min-w-0" aria-label="Tradeio home">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary shrink-0">
+              <Zap className="h-4 w-4 text-primary-foreground" strokeWidth={2.5} aria-hidden />
+            </span>
+            {!sidebarCollapsed && (
+              <span className="font-semibold text-[15px] tracking-tight text-foreground truncate">
+                Tradeio<span className="text-muted-foreground font-normal">.site</span>
+              </span>
             )}
-          >
-            <ChevronLeft
-              className={cn("h-4 w-4 transition-transform duration-300", sidebarCollapsed && "rotate-180")}
-            />
-          </button>
+          </Link>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {navItems.map(({ href, label, icon: Icon, badge }: any) => {
-            const active = pathname.startsWith(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative",
-                  active
-                    ? "bg-blue-600/5 text-blue-600 border border-blue-600/10 shadow-[0_2px_10px_rgba(37,99,235,0.05)]"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent",
-                  sidebarCollapsed && "justify-center px-0"
-                )}
-                title={sidebarCollapsed ? label : undefined}
-              >
-                <Icon
-                  className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-blue-600" : "group-hover:text-foreground")}
-                />
-                {!sidebarCollapsed && <span className="truncate">{label}</span>}
-                {!sidebarCollapsed && badge && (
-                  <span className="ml-auto text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 flex items-center gap-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                    {badge}
-                  </span>
-                )}
-                {active && !sidebarCollapsed && (
-                  <div className="absolute left-0 w-1 h-5 bg-blue-500 rounded-r-full" />
-                )}
-              </Link>
-            );
-          })}
-
-          {/* Admin Navigation */}
-          {user?.role === "ADMIN" && (
-            <div className="pt-3 mt-3 border-t border-border">
-              {!sidebarCollapsed && (
-                <div className="px-3 pb-1.5 flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">
-                    Administration
-                  </span>
-                  <span className="text-[8px] font-bold uppercase bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200">
-                    Admin
-                  </span>
-                </div>
+        <nav className={cn("flex-1 overflow-y-auto py-3", sidebarCollapsed ? "px-2" : "px-3")}>
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={group.title} className={cn(gi > 0 && "mt-4")}>
+              {sidebarCollapsed ? (
+                gi > 0 && <div className="mx-2 mb-3 border-t border-border" aria-hidden />
+              ) : (
+                <p className="px-2.5 mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-subtle">
+                  {group.title}
+                </p>
               )}
-              {adminNavItems.map(({ href, label, icon: Icon, badge }: any) => {
-                const active = pathname.startsWith(href);
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative",
-                      active
-                        ? "bg-purple-50 text-purple-700 border border-purple-200/80 shadow-[0_2px_10px_rgba(147,51,234,0.08)]"
-                        : "text-foreground/75 hover:bg-purple-50/60 hover:text-purple-700 border border-transparent",
-                      sidebarCollapsed && "justify-center px-0"
-                    )}
-                    title={sidebarCollapsed ? label : undefined}
-                  >
-                    <Icon
-                      className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-purple-600" : "text-purple-500 group-hover:text-purple-700")}
-                    />
-                    {!sidebarCollapsed && <span className="truncate font-semibold">{label}</span>}
-                    {!sidebarCollapsed && badge && (
-                      <span className="ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200">
-                        {badge}
-                      </span>
-                    )}
-                    {active && !sidebarCollapsed && (
-                      <div className="absolute left-0 w-1 h-5 bg-purple-600 rounded-r-full" />
-                    )}
-                  </Link>
-                );
-              })}
+              <div className="space-y-0.5">
+                {group.items.map((item) => (
+                  <NavLink key={item.href} item={item} active={isActivePath(pathname, item.href)} collapsed={sidebarCollapsed} />
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {user?.role === "ADMIN" && (
+            <div className="mt-4">
+              {sidebarCollapsed ? (
+                <div className="mx-2 mb-3 border-t border-border" aria-hidden />
+              ) : (
+                <p className="px-2.5 mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-info">
+                  Administration
+                </p>
+              )}
+              <div className="space-y-0.5">
+                {ADMIN_NAV.map((item) => (
+                  <NavLink key={item.href} item={item} active={isActivePath(pathname, item.href)} collapsed={sidebarCollapsed} />
+                ))}
+              </div>
             </div>
           )}
         </nav>
 
-        {/* User Section */}
-        <div className="px-3 py-4 border-t border-border">
+        {/* Footer: account, disclosure, logout, collapse */}
+        <div className={cn("border-t border-border py-2.5 space-y-0.5 shrink-0", sidebarCollapsed ? "px-2" : "px-3")}>
           {!sidebarCollapsed && user && (
-            <div className="mb-3 px-3 py-2 rounded-lg bg-muted/50 border border-border">
-              <div className="flex items-center justify-between gap-1.5">
-                <p className="text-sm font-semibold text-foreground truncate">{user.name}</p>
-                {user.role === "ADMIN" && (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200 shrink-0">
-                    ADMIN
-                  </span>
-                )}
-              </div>
-              <p className="text-[10px] text-muted-foreground truncate uppercase tracking-wider">{user.email}</p>
-            </div>
+            <Link href="/settings" className="flex items-center gap-2.5 rounded-md px-2 py-2 mb-1 hover:bg-muted transition-colors">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground text-xs font-semibold">
+                {user.name?.charAt(0)?.toUpperCase() || "U"}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[13px] font-medium text-foreground truncate">{user.name}</span>
+                  {user.role === "ADMIN" && (
+                    <span className="text-[9px] font-semibold px-1 py-px rounded bg-accent text-accent-foreground shrink-0">ADMIN</span>
+                  )}
+                </span>
+                <span className="block text-[11px] text-muted-foreground truncate">{user.email}</span>
+              </span>
+            </Link>
           )}
+
           <button
             type="button"
             onClick={openRiskDisclosure}
-            className={cn(
-              "flex w-full items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium text-amber-800 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-300/40 transition-all mb-2 cursor-pointer shadow-2xs",
-              sidebarCollapsed && "justify-center px-0 bg-transparent border-none text-amber-600"
-            )}
             title={sidebarCollapsed ? "SEBI Risk Disclosure" : undefined}
+            className={cn(
+              "flex w-full items-center gap-3 rounded-md px-2.5 h-9 text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer",
+              sidebarCollapsed && "justify-center px-0"
+            )}
           >
-            <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+            <ShieldAlert className="h-4 w-4 shrink-0 text-warn" aria-hidden />
             {!sidebarCollapsed && <span>Risk Disclosure</span>}
           </button>
 
           <button
+            type="button"
             onClick={() => setShowLogoutConfirm(true)}
+            title={sidebarCollapsed ? "Logout" : undefined}
             className={cn(
-              "flex w-full items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-all",
+              "flex w-full items-center gap-3 rounded-md px-2.5 h-9 text-[13px] font-medium text-muted-foreground hover:bg-loss/10 hover:text-loss transition-colors cursor-pointer",
               sidebarCollapsed && "justify-center px-0"
             )}
-            title={sidebarCollapsed ? "Logout" : undefined}
           >
-            <LogOut className="h-4 w-4 shrink-0" />
+            <LogOut className="h-4 w-4 shrink-0" aria-hidden />
             {!sidebarCollapsed && <span>Logout</span>}
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={cn(
+              "flex w-full items-center gap-3 rounded-md px-2.5 h-9 text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer",
+              sidebarCollapsed && "justify-center px-0"
+            )}
+          >
+            <ChevronsLeft className={cn("h-4 w-4 shrink-0 transition-transform", sidebarCollapsed && "rotate-180")} aria-hidden />
+            {!sidebarCollapsed && <span>Collapse</span>}
           </button>
         </div>
       </aside>

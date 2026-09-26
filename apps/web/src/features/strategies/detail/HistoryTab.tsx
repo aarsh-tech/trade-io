@@ -11,10 +11,10 @@ export function HistoryTab({ ctx }: { ctx: DetailCtx }) {
     <>
       {/* ─── TAB 4: EXECUTION HISTORY ─── */}
       {activeTab === "HISTORY" && (
-        <Card className="border-border/60 bg-card rounded-2xl shadow-sm">
+        <Card className="border-border/60 bg-card rounded-lg">
           <CardHeader className="p-5 border-b border-border/60">
-            <CardTitle className="text-sm font-bold flex items-center gap-2">
-              <History className="h-4 w-4 text-blue-500" />
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <History className="h-4 w-4 text-accent-foreground" />
               Past Execution Sessions ({strategy.executions?.length ?? 0})
             </CardTitle>
           </CardHeader>

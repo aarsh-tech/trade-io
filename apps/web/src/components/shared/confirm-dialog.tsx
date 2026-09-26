@@ -51,7 +51,7 @@ export function ConfirmDialog({
             }}
             className={cn(
               "rounded-lg",
-              variant === "destructive" && "bg-rose-600 hover:bg-rose-700 text-white"
+              variant === "destructive" && "bg-loss hover:bg-loss/90 text-on-loss"
             )}
           >
             {confirmText}

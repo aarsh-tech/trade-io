@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import Link from "next/link";
-import { formatINR } from "@/lib/format";
+import { EMPTY, formatINR } from "@/lib/format";
 
 interface Holding {
   symbol: string;
@@ -91,6 +91,8 @@ export default function PortfolioPage() {
     isRenewing,
     getLoginUrl,
   } = usePortfolio(activeBrokerId);
+  // No linked account means no data yet: show "—", not a ₹0.00 that looks like a real balance.
+  const hasAccount = Boolean(activeBrokerId);
 
   // Portfolio metrics calculations
   const metrics = useMemo(() => {
@@ -281,8 +283,8 @@ export default function PortfolioPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <Briefcase className="h-6 w-6 text-blue-500" />
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground flex items-center gap-2">
+            <Briefcase className="h-6 w-6 text-accent-foreground" />
             Portfolio & Holdings
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -293,7 +295,7 @@ export default function PortfolioPage() {
         <div className="flex items-center flex-wrap gap-2.5">
           {/* Broker Selector */}
           <select
-            className="h-9 px-3 rounded-lg border border-border bg-card text-foreground text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm"
+            className="h-9 px-3 rounded-lg border border-border bg-card text-foreground text-xs font-medium focus:outline-none focus:ring-1 focus:ring-primary"
             value={activeBrokerId || ""}
             onChange={(e) => setSelectedBroker(e.target.value)}
           >
@@ -314,7 +316,7 @@ export default function PortfolioPage() {
             <Button
               variant="outline"
               size="sm"
-              className="gap-1.5 border-amber-500/30 text-amber-500 bg-amber-500/10 hover:bg-amber-500/20 text-xs h-9"
+              className="gap-1.5 border-warn/30 text-warn bg-warn/10 hover:bg-warn/20 text-xs h-9"
               onClick={() => setShowRenewModal(true)}
             >
               <Zap className="h-3.5 w-3.5" /> Daily Login
@@ -322,7 +324,7 @@ export default function PortfolioPage() {
           )}
 
           <Button
-            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs h-9 shadow-sm"
+            className="gap-1.5 bg-primary hover:bg-brand-hover text-primary-foreground font-semibold text-xs h-9"
             size="sm"
             onClick={() => openTrade()}
           >
@@ -337,16 +339,16 @@ export default function PortfolioPage() {
             disabled={isDataLoading}
           >
             <RefreshCcw
-              className={cn("h-4 w-4 text-muted-foreground", isDataLoading && "animate-spin text-blue-500")}
+              className={cn("h-4 w-4 text-muted-foreground", isDataLoading && "animate-spin text-accent-foreground")}
             />
           </Button>
         </div>
       </div>
 
       {/* Summary Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Card 1: Total Portfolio Value */}
-        <Card className="border-border bg-card/60 backdrop-blur">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Total Portfolio Value</span>
@@ -354,47 +356,46 @@ export default function PortfolioPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-foreground tracking-tight">
-              {formatINR(metrics.totalCurrentValue)}
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground tracking-tight">
+              {hasAccount ? formatINR(metrics.totalCurrentValue) : EMPTY}
             </div>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
               <span>Invested:</span>
               <span className="font-mono font-medium text-foreground">
-                {formatINR(metrics.totalInvested)}
+                {hasAccount ? formatINR(metrics.totalInvested) : EMPTY}
               </span>
             </div>
           </CardContent>
         </Card>
 
         {/* Card 2: Total Unrealized P&L */}
-        <Card className="border-border bg-card/60 backdrop-blur">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Overall Holdings P&L</span>
               {metrics.totalHoldingPnl >= 0 ? (
-                <TrendingUp className="h-4 w-4 text-emerald-500" />
+                <TrendingUp className="h-4 w-4 text-profit" />
               ) : (
-                <TrendingDown className="h-4 w-4 text-rose-500" />
+                <TrendingDown className="h-4 w-4 text-loss" />
               )}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div
               className={cn(
-                "text-2xl font-bold font-mono flex items-center gap-1.5 tracking-tight",
+                "text-lg sm:text-2xl font-semibold font-mono flex items-center gap-1.5 tracking-tight",
                 metrics.totalHoldingPnl > 0
-                  ? "text-emerald-500"
+                  ? "text-profit"
                   : metrics.totalHoldingPnl < 0
-                  ? "text-rose-500"
+                  ? "text-loss"
                   : "text-foreground"
               )}
             >
-              {metrics.totalHoldingPnl > 0 ? "+" : ""}
-              {formatINR(metrics.totalHoldingPnl)}
+              {hasAccount ? `${metrics.totalHoldingPnl > 0 ? "+" : ""}${formatINR(metrics.totalHoldingPnl)}` : EMPTY}
               {metrics.totalHoldingPnl > 0 ? (
-                <ArrowUpRight className="h-5 w-5 text-emerald-500" />
+                <ArrowUpRight className="h-5 w-5 text-profit" />
               ) : metrics.totalHoldingPnl < 0 ? (
-                <ArrowDownRight className="h-5 w-5 text-rose-500" />
+                <ArrowDownRight className="h-5 w-5 text-loss" />
               ) : null}
             </div>
             <div className="flex items-center gap-2 mt-1">
@@ -413,16 +414,16 @@ export default function PortfolioPage() {
         </Card>
 
         {/* Card 3: Available Margin */}
-        <Card className="border-border bg-card/60 backdrop-blur">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Available Cash / Margin</span>
-              <ShieldCheck className="h-4 w-4 text-blue-500/60" />
+              <ShieldCheck className="h-4 w-4 text-accent-foreground/60" />
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-foreground tracking-tight">
-              {formatINR(metrics.availableCash)}
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground tracking-tight">
+              {margins ? formatINR(metrics.availableCash) : EMPTY}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Live equity trading balance
@@ -431,7 +432,7 @@ export default function PortfolioPage() {
         </Card>
 
         {/* Card 4: Broker Session Status */}
-        <Card className="border-border bg-card/60 backdrop-blur">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
               <span>Broker Session</span>
@@ -443,10 +444,10 @@ export default function PortfolioPage() {
               <div
                 className={cn(
                   "h-3 w-3 rounded-full",
-                  activeBrokerId ? "bg-emerald-500 animate-pulse" : "bg-muted"
+                  activeBrokerId ? "bg-profit animate-pulse" : "bg-muted"
                 )}
               />
-              <span className="text-lg font-bold text-foreground truncate">
+              <span className="text-lg font-semibold text-foreground truncate">
                 {currentBroker ? `${currentBroker.broker}` : "Disconnected"}
               </span>
             </div>
@@ -460,7 +461,7 @@ export default function PortfolioPage() {
       </div>
 
       {/* Main Content Table Card */}
-      <Card className="border-border bg-card shadow-sm overflow-hidden">
+      <Card className="border-border bg-card overflow-hidden">
         {/* Table Controls & Tabs Bar */}
         <CardHeader className="border-b border-border py-4 px-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
           {/* Tabs */}
@@ -470,7 +471,7 @@ export default function PortfolioPage() {
               className={cn(
                 "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-2",
                 activeTab === "holdings"
-                  ? "bg-blue-600 text-white shadow-sm"
+                  ? "bg-primary text-primary-foreground "
                   : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
               )}
             >
@@ -480,7 +481,7 @@ export default function PortfolioPage() {
                 variant={activeTab === "holdings" ? "secondary" : "outline"}
                 className={cn(
                   "text-[10px] px-1.5 py-0 font-mono",
-                  activeTab === "holdings" ? "bg-blue-700 text-white border-transparent" : ""
+                  activeTab === "holdings" ? "bg-primary text-primary-foreground border-transparent" : ""
                 )}
               >
                 {holdings?.length || 0}
@@ -492,7 +493,7 @@ export default function PortfolioPage() {
               className={cn(
                 "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-2",
                 activeTab === "positions"
-                  ? "bg-blue-600 text-white shadow-sm"
+                  ? "bg-primary text-primary-foreground "
                   : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
               )}
             >
@@ -502,7 +503,7 @@ export default function PortfolioPage() {
                 variant={activeTab === "positions" ? "secondary" : "outline"}
                 className={cn(
                   "text-[10px] px-1.5 py-0 font-mono",
-                  activeTab === "positions" ? "bg-blue-700 text-white border-transparent" : ""
+                  activeTab === "positions" ? "bg-primary text-primary-foreground border-transparent" : ""
                 )}
               >
                 {positions?.length || 0}
@@ -519,7 +520,7 @@ export default function PortfolioPage() {
                 className={cn(
                   "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
                   filterType === "ALL"
-                    ? "bg-card text-foreground font-semibold shadow-xs"
+                    ? "bg-card text-foreground font-semibold "
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
@@ -530,7 +531,7 @@ export default function PortfolioPage() {
                 className={cn(
                   "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
                   filterType === "PROFIT"
-                    ? "bg-emerald-500/10 text-emerald-500 font-semibold"
+                    ? "bg-profit/10 text-profit font-semibold"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
@@ -541,7 +542,7 @@ export default function PortfolioPage() {
                 className={cn(
                   "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
                   filterType === "LOSS"
-                    ? "bg-rose-500/10 text-rose-500 font-semibold"
+                    ? "bg-loss/10 text-loss font-semibold"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
@@ -556,7 +557,7 @@ export default function PortfolioPage() {
                 placeholder="Search symbol..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-xs bg-card border-border focus:ring-1 focus:ring-blue-500"
+                className="pl-8 h-8 text-xs bg-card border-border focus:ring-1 focus:ring-primary"
               />
               {searchQuery && (
                 <button
@@ -582,14 +583,14 @@ export default function PortfolioPage() {
                 Connect your trading account to monitor your live holdings, asset valuation, and open positions.
               </p>
               <Link href="/brokers">
-                <Button size="sm" variant="default" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
+                <Button size="sm" variant="default" className="gap-1.5 bg-primary hover:bg-brand-hover">
                   <Zap className="h-4 w-4" /> Manage Brokers
                 </Button>
               </Link>
             </div>
           ) : isDataLoading && ((activeTab === "holdings" && holdings.length === 0) || (activeTab === "positions" && positions.length === 0)) ? (
             <div className="py-24 flex flex-col items-center justify-center gap-3">
-              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+              <Loader2 className="h-8 w-8 text-accent-foreground animate-spin" />
               <p className="text-sm text-muted-foreground">Fetching portfolio data from broker...</p>
             </div>
           ) : activeTab === "holdings" ? (
@@ -611,13 +612,13 @@ export default function PortfolioPage() {
                     className="gap-1.5"
                     onClick={() => setShowRenewModal(true)}
                   >
-                    <Zap className="h-4 w-4 text-amber-500" />
+                    <Zap className="h-4 w-4 text-warn" />
                     Broker Daily Login
                   </Button>
                   <Button
                     size="sm"
                     variant="default"
-                    className="gap-1.5 bg-blue-600 hover:bg-blue-700"
+                    className="gap-1.5 bg-primary hover:bg-brand-hover"
                     onClick={() => openTrade()}
                   >
                     <ShoppingCart className="h-4 w-4" />
@@ -660,7 +661,7 @@ export default function PortfolioPage() {
                           {/* Instrument */}
                           <td className="py-3.5 px-4">
                             <div className="flex items-center gap-2">
-                              <div className="font-semibold text-foreground text-sm group-hover:text-blue-500 transition-colors">
+                              <div className="font-semibold text-foreground text-sm group-hover:text-accent-foreground transition-colors">
                                 {h.symbol}
                               </div>
                               <Badge variant="outline" className="text-[10px] font-medium py-0 px-1">
@@ -688,7 +689,7 @@ export default function PortfolioPage() {
                           </td>
 
                           {/* Current Value */}
-                          <td className="py-3.5 px-4 text-right font-mono font-bold text-foreground">
+                          <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
                             {formatINR(currValue)}
                           </td>
 
@@ -696,8 +697,8 @@ export default function PortfolioPage() {
                           <td className="py-3.5 px-4 text-right">
                             <div
                               className={cn(
-                                "font-mono font-bold flex items-center justify-end gap-1",
-                                isProfit ? "text-emerald-500" : "text-rose-500"
+                                "font-mono font-semibold flex items-center justify-end gap-1",
+                                isProfit ? "text-profit" : "text-loss"
                               )}
                             >
                               {isProfit ? "+" : ""}{formatINR(pnl)}
@@ -710,7 +711,7 @@ export default function PortfolioPage() {
                             <div
                               className={cn(
                                 "text-[11px] font-mono mt-0.5",
-                                isProfit ? "text-emerald-500/80" : "text-rose-500/80"
+                                isProfit ? "text-profit/80" : "text-loss/80"
                               )}
                             >
                               {isProfit ? "+" : ""}
@@ -724,7 +725,7 @@ export default function PortfolioPage() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 px-2.5 text-[11px] font-semibold border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 hover:border-emerald-500/50"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-profit/30 text-profit hover:bg-profit/10 hover:border-profit/50"
                                 onClick={() => openTrade(h, "BUY")}
                               >
                                 BUY
@@ -732,7 +733,7 @@ export default function PortfolioPage() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 px-2.5 text-[11px] font-semibold border-rose-500/30 text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/50"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-loss/30 text-loss hover:bg-loss/10 hover:border-loss/50"
                                 onClick={() => openTrade(h, "SELL")}
                               >
                                 SELL
@@ -761,7 +762,7 @@ export default function PortfolioPage() {
                 </p>
                 <div className="flex items-center justify-center gap-3">
                   <Link href="/live-screener">
-                    <Button size="sm" variant="default" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
+                    <Button size="sm" variant="default" className="gap-1.5 bg-primary hover:bg-brand-hover">
                       <Zap className="h-4 w-4" /> Live OHL Screener
                     </Button>
                   </Link>
@@ -804,15 +805,15 @@ export default function PortfolioPage() {
                               <Badge
                                 variant={isLong ? "default" : "destructive"}
                                 className={cn(
-                                  "text-[10px] font-bold py-0 px-1.5",
+                                  "text-[10px] font-semibold py-0 px-1.5",
                                   isLong
-                                    ? "bg-blue-500/10 text-blue-500 border-blue-500/30"
-                                    : "bg-orange-500/10 text-orange-500 border-orange-500/30"
+                                    ? "bg-primary/10 text-accent-foreground border-primary/30"
+                                    : "bg-warn/10 text-warn border-warn/30"
                                 )}
                               >
                                 {isLong ? "BUY" : "SELL"}
                               </Badge>
-                              <Badge variant="outline" className="text-[10px] font-bold">
+                              <Badge variant="outline" className="text-[10px] font-semibold">
                                 {pos.product || "MIS"}
                               </Badge>
                             </div>
@@ -825,7 +826,7 @@ export default function PortfolioPage() {
                           <td
                             className={cn(
                               "py-3.5 px-4 text-right font-mono font-semibold",
-                              isLong ? "text-emerald-500" : "text-rose-500"
+                              isLong ? "text-profit" : "text-loss"
                             )}
                           >
                             {pos.qty > 0 ? `+${pos.qty}` : pos.qty}
@@ -835,15 +836,15 @@ export default function PortfolioPage() {
                             {formatINR((pos.avgPrice || 0))}
                           </td>
 
-                          <td className="py-3.5 px-4 text-right font-mono font-bold text-foreground">
+                          <td className="py-3.5 px-4 text-right font-mono font-semibold text-foreground">
                             {formatINR((pos.ltp || 0))}
                           </td>
 
                           <td className="py-3.5 px-4 text-right">
                             <div
                               className={cn(
-                                "font-mono font-bold flex items-center justify-end gap-1",
-                                isProfit ? "text-emerald-500" : "text-rose-500"
+                                "font-mono font-semibold flex items-center justify-end gap-1",
+                                isProfit ? "text-profit" : "text-loss"
                               )}
                             >
                               {isProfit ? "+" : ""}{formatINR((pos.pnl || 0))}
@@ -860,7 +861,7 @@ export default function PortfolioPage() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 px-2.5 text-[11px] font-semibold border-blue-500/30 text-blue-500 hover:bg-blue-500/10"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-primary/30 text-accent-foreground hover:bg-primary/10"
                                 onClick={() => openTrade(pos, "BUY")}
                               >
                                 Add
@@ -868,7 +869,7 @@ export default function PortfolioPage() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 px-2.5 text-[11px] font-semibold border-rose-500/30 text-rose-500 hover:bg-rose-500/10"
+                                className="h-7 px-2.5 text-[11px] font-semibold border-loss/30 text-loss hover:bg-loss/10"
                                 onClick={() => openTrade(pos, "SELL")}
                               >
                                 Exit
@@ -891,11 +892,11 @@ export default function PortfolioPage() {
         <DialogContent className="max-w-md p-0 overflow-hidden bg-card text-foreground border border-border shadow-2xl">
           <div className="p-6 pb-2 bg-card">
             <div className="flex items-start gap-3.5 mb-1">
-              <div className="h-10 w-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
-                <Zap className="h-5 w-5 text-amber-600" />
+              <div className="h-10 w-10 rounded-lg bg-warn-subtle border border-warn/30 flex items-center justify-center shrink-0">
+                <Zap className="h-5 w-5 text-warn" />
               </div>
               <div className="pr-6">
-                <DialogTitle className="text-lg font-bold text-foreground">
+                <DialogTitle className="text-lg font-semibold text-foreground">
                   Broker Daily Login
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground mt-1 leading-relaxed">
@@ -907,9 +908,9 @@ export default function PortfolioPage() {
 
           <div className="px-6 py-3 space-y-3.5 bg-card">
             {/* Step 1 Card */}
-            <div className="rounded-xl border border-border bg-muted/40 p-3.5 space-y-2.5">
+            <div className="rounded-lg border border-border bg-muted/40 p-3.5 space-y-2.5">
               <div className="flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-warn text-[10px] font-semibold text-on-warn">
                   1
                 </span>
                 <span className="text-xs font-semibold text-foreground">
@@ -918,16 +919,16 @@ export default function PortfolioPage() {
               </div>
               <Button
                 onClick={handleOpenLogin}
-                className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs gap-1.5 shadow-sm"
+                className="w-full h-9 bg-warn hover:bg-warn/90 text-on-warn font-semibold text-xs gap-1.5"
               >
                 <ExternalLink className="h-3.5 w-3.5" /> Open Broker Login Page
               </Button>
             </div>
 
             {/* Step 2 Card */}
-            <div className="rounded-xl border border-border bg-muted/40 p-3.5 space-y-3">
+            <div className="rounded-lg border border-border bg-muted/40 p-3.5 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">
                   2
                 </span>
                 <span className="text-xs font-semibold text-foreground">
@@ -940,7 +941,7 @@ export default function PortfolioPage() {
                   type="button"
                   onClick={handleAutomatedLogin}
                   disabled={isRenewing}
-                  className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
+                  className="w-full h-9 bg-primary hover:bg-brand-hover text-primary-foreground font-semibold text-xs gap-1.5"
                 >
                   {isRenewing ? (
                     <>
@@ -955,7 +956,7 @@ export default function PortfolioPage() {
 
                 <div className="flex items-center gap-2 py-0.5">
                   <div className="h-px flex-1 bg-border" />
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                     OR PASTE MANUALLY
                   </span>
                   <div className="h-px flex-1 bg-border" />
@@ -972,13 +973,13 @@ export default function PortfolioPage() {
                     setRequestToken(val);
                   }}
                   placeholder="Paste token or redirect URL here..."
-                  className="h-9 border-border bg-card text-foreground text-xs focus:ring-1 focus:ring-blue-500 placeholder:text-muted-foreground"
+                  className="h-9 border-border bg-card text-foreground text-xs focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
                 />
 
                 <Button
                   type="submit"
                   disabled={isRenewing || !requestToken}
-                  className="w-full h-9 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs disabled:opacity-50 shadow-sm"
+                  className="w-full h-9 bg-foreground hover:bg-foreground/90 text-background font-semibold text-xs disabled:opacity-50"
                 >
                   {isRenewing ? "Activating..." : "Activate Manual Session"}
                 </Button>

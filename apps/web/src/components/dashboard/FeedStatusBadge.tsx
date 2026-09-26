@@ -6,12 +6,12 @@ import type { FeedStatus } from "@/hooks/useDashboard";
 const LABEL = { connected: "Live", stale: "Delayed", closed: "Market closed" } as const;
 
 const TONE = {
-  connected: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  stale: "bg-amber-50 text-amber-700 border-amber-200",
-  closed: "bg-muted/50 text-muted-foreground border-border",
+  connected: "bg-profit/10 text-profit border-profit/25",
+  stale: "bg-warn/10 text-warn border-warn/30",
+  closed: "bg-card text-muted-foreground border-border",
 } as const;
 
-const DOT = { connected: "bg-emerald-500", stale: "bg-amber-500 animate-pulse", closed: "bg-slate-400" } as const;
+const DOT = { connected: "bg-profit", stale: "bg-warn animate-pulse", closed: "bg-muted-foreground" } as const;
 
 function clock(iso: string | null) {
   if (!iso) return null;
@@ -25,7 +25,7 @@ export function FeedStatusBadge({ feed }: { feed: FeedStatus }) {
     <span
       role="status"
       title={at ? `Last exchange update ${at} IST` : undefined}
-      className={cn("inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-xs font-medium", TONE[feed.status])}
+      className={cn("inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border text-xs font-medium", TONE[feed.status])}
     >
       <span className={cn("h-1.5 w-1.5 rounded-full", DOT[feed.status])} />
       {LABEL[feed.status]}

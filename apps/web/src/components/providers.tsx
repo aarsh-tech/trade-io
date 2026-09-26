@@ -21,7 +21,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    // Light by default; the user's last explicit choice is kept in localStorage ("theme") across sessions.
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} themes={["light", "dark"]} storageKey="theme" disableTransitionOnChange>
     <QueryClientProvider client={queryClient}>
       {children}
       {/* <ReactQueryDevtools initialIsOpen={false} /> */}

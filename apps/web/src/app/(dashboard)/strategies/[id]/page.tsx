@@ -37,9 +37,9 @@ export default function StrategyDetailPage() {
 
   if (!strategy) {
     return (
-      <div className="text-center py-20 bg-card/30 rounded-2xl border border-border/60 max-w-lg mx-auto mt-10 p-8">
+      <div className="text-center py-20 bg-card/30 rounded-lg border border-border/60 max-w-lg mx-auto mt-10 p-8">
         <Bot className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
-        <h2 className="text-lg font-bold">Strategy Not Found</h2>
+        <h2 className="text-lg font-semibold">Strategy Not Found</h2>
         <p className="text-xs text-muted-foreground mt-1">
           This strategy may have been deleted or moved.
         </p>

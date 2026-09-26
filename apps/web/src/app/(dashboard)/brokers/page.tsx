@@ -15,7 +15,7 @@ import { useBrokers } from "@/hooks/useBrokers";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 const BROKERS_CONFIG = [
-  { key: "ZERODHA", name: "Zerodha", logo: "Z", color: "#387ED1", desc: "Kite Connect API" },
+  { key: "ZERODHA", name: "Zerodha", logo: "Z", color: "hsl(var(--primary))", desc: "Kite Connect API" },
 ];
 
 export default function BrokersPage() {
@@ -63,7 +63,7 @@ export default function BrokersPage() {
   return (
     <div className="space-y-6 animate-[fade-up_0.4s_ease_both]">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Broker Accounts</h1>
+        <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">Broker Accounts</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Connect your broker APIs to enable live trading
         </p>
@@ -73,7 +73,7 @@ export default function BrokersPage() {
       {/* Connected accounts */}
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {[1, 2].map(i => <div key={i} className="h-40 rounded-xl bg-muted animate-pulse" />)}
+          {[1, 2].map(i => <div key={i} className="h-40 rounded-lg bg-muted animate-pulse" />)}
         </div>
       ) : brokers.length > 0 ? (
         <div>
@@ -85,12 +85,12 @@ export default function BrokersPage() {
               const config = BROKERS_CONFIG.find(b => b.key === acc.broker) || BROKERS_CONFIG[0];
               return (
                 <Card key={acc.id} className="relative">
-                  <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ background: config.color }} />
+                  <div className="absolute top-0 left-0 right-0 h-1 rounded-t-lg" style={{ background: config.color }} />
                   <CardContent className="pt-5">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div
-                          className="h-10 w-10 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-sm"
+                          className="h-10 w-10 rounded-lg flex items-center justify-center text-primary-foreground font-semibold text-lg"
                           style={{ background: config.color }}
                         >
                           {config.logo}
@@ -107,7 +107,7 @@ export default function BrokersPage() {
                     <div className="text-xs font-medium mb-4">
                       {acc.tokenExpiry ? (
                         new Date(acc.tokenExpiry) < new Date() ? (
-                          <span className="text-red-500 flex items-center gap-1">
+                          <span className="text-loss flex items-center gap-1">
                             <X className="h-3 w-3" /> Session expired
                           </span>
                         ) : (
@@ -121,25 +121,25 @@ export default function BrokersPage() {
                           </span>
                         )
                       ) : (
-                        <span className="text-amber-600 font-semibold italic">Not logged in today</span>
+                        <span className="text-warn font-semibold italic">Not logged in today</span>
                       )}
                     </div>
                     <div className="flex gap-2 items-center">
                       <Button
                         variant="outline"
                         size="sm"
-                        className="flex-1 h-9 gap-2 text-foreground/75 bg-card border-border hover:bg-muted/50 hover:border-blue-200 transition-all rounded-lg"
+                        className="flex-1 h-9 gap-2 text-foreground/75 bg-card border-border hover:bg-muted/50 hover:border-primary/30 transition-all rounded-lg"
                         asChild
                       >
                         <Link href="/portfolio" className="flex items-center gap-2">
-                          <RefreshCcw className="h-3.5 w-3.5 text-blue-500" />
+                          <RefreshCcw className="h-3.5 w-3.5 text-accent-foreground" />
                           <span className="font-semibold text-xs">Renew Token</span>
                         </Link>
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon" aria-label="Disconnect broker account"
-                        className="text-muted-foreground hover:text-rose-500 hover:bg-rose-50 h-9 w-9 rounded-lg transition-colors"
+                        className="text-muted-foreground hover:text-loss hover:bg-loss-subtle h-9 w-9 rounded-lg transition-colors"
                         onClick={() => askDisconnect(acc.id)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -152,8 +152,8 @@ export default function BrokersPage() {
           </div>
         </div>
       ) : (
-        <div className="p-8 border-2 border-dashed border-border rounded-2xl text-center bg-muted/25">
-          <Plug className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+        <div className="p-8 border-2 border-dashed border-border rounded-lg text-center bg-muted/25">
+          <Plug className="h-10 w-10 text-muted-foreground/50 mx-auto mb-3" />
           <p className="text-muted-foreground text-sm font-medium">No brokers connected yet</p>
         </div>
       )}
@@ -171,13 +171,13 @@ export default function BrokersPage() {
                 key={b.key}
                 className={cn(
                   "transition-all",
-                  isConnected ? "opacity-60 grayscale-[0.5]" : "cursor-pointer hover:scale-[1.02] hover:shadow-md"
+                  isConnected ? "opacity-60 grayscale-[0.5]" : "cursor-pointer  hover:shadow-md"
                 )}
                 onClick={() => !isConnected && openConnect(b)}
               >
                 <CardContent className="flex flex-col items-center text-center gap-3 py-8">
                   <div
-                    className="h-14 w-14 rounded-2xl flex items-center justify-center text-white font-bold text-2xl shadow-sm"
+                    className="h-14 w-14 rounded-lg flex items-center justify-center text-primary-foreground font-semibold text-2xl"
                     style={{ background: b.color }}
                   >
                     {b.logo}
@@ -202,7 +202,7 @@ export default function BrokersPage() {
 
       {/* Connect modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="p-0 border-border overflow-hidden w-[calc(100%-2rem)] sm:max-w-[440px] rounded-2xl max-h-[90vh] overflow-y-auto gap-0">
+        <DialogContent className="p-0 border-border overflow-hidden w-[calc(100%-2rem)] sm:max-w-[440px] rounded-lg max-h-[90vh] overflow-y-auto gap-0">
           <DialogTitle className="sr-only">Connect Broker Account</DialogTitle>
           <DialogDescription className="sr-only">Link your trading account securely</DialogDescription>
           {selectedBroker && (
@@ -211,13 +211,13 @@ export default function BrokersPage() {
               <div className="px-7 py-6 border-b border-border flex justify-between bg-muted/25">
                 <div className="flex items-center gap-4">
                   <div
-                    className="h-11 w-11 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-sm"
+                    className="h-11 w-11 rounded-lg flex items-center justify-center text-primary-foreground font-semibold text-lg"
                     style={{ background: selectedBroker.color }}
                   >
                     {selectedBroker.logo}
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-foreground leading-tight">Connect {selectedBroker.name}</h3>
+                    <h3 className="text-lg font-semibold text-foreground leading-tight">Connect {selectedBroker.name}</h3>
                     <p className="text-xs text-muted-foreground font-medium">Link your trading account securely</p>
                   </div>
                 </div>
@@ -228,9 +228,9 @@ export default function BrokersPage() {
                 <form onSubmit={handleConnect} className="space-y-5">
                   <div className="space-y-4 pt-1">
                     <div>
-                      <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">Client ID</label>
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">Client ID</label>
                       <Input
-                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-lg focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                         style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                         placeholder="e.g. AB1234"
                         value={form.clientId}
@@ -239,9 +239,9 @@ export default function BrokersPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">API Key</label>
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">API Key</label>
                       <Input
-                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-lg focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                         style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                         placeholder="Your App API Key"
                         value={form.apiKey}
@@ -250,9 +250,9 @@ export default function BrokersPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">API Secret</label>
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">API Secret</label>
                       <Input
-                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                        className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-lg focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                         style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                         type="password"
                         placeholder="••••••••••••••••"
@@ -264,9 +264,9 @@ export default function BrokersPage() {
                     {selectedBroker.key === 'ANGEL' && (
                       <>
                         <div>
-                          <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">Trading Password</label>
+                          <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">Trading Password</label>
                           <Input
-                            className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                            className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-lg focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                             style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                             type="password"
                             placeholder="Your Angel Login Password"
@@ -276,9 +276,9 @@ export default function BrokersPage() {
                           />
                         </div>
                         <div>
-                          <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">TOTP Secret Key</label>
+                          <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">TOTP Secret Key</label>
                           <Input
-                            className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-xl focus:ring-2 focus:ring-offset-0 focus:border-transparent"
+                            className="border-border bg-muted/50 hover:bg-card focus:bg-card h-11 text-foreground placeholder:text-muted-foreground transition-all rounded-lg focus:ring-2 focus:ring-offset-0 focus:border-transparent"
                             style={{ '--tw-ring-color': selectedBroker.color } as React.CSSProperties}
                             placeholder="The secret key from QR code"
                             value={form.totpSecret}
@@ -291,14 +291,14 @@ export default function BrokersPage() {
                   </div>
 
                   {selectedBroker.key === 'ZERODHA' && (
-                    <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200/80 text-xs space-y-2.5">
+                    <div className="p-3.5 rounded-lg bg-brand-subtle/70 border border-primary/80 text-xs space-y-2.5">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-blue-900">Kite Developer App Settings:</span>
+                        <span className="font-semibold text-accent-foreground">Kite Developer App Settings:</span>
                         <a
                           href="https://developers.kite.trade/apps"
                           target="_blank"
                           rel="noreferrer"
-                          className="text-[11px] font-semibold text-blue-600 hover:underline inline-flex items-center gap-1"
+                          className="text-[11px] font-semibold text-accent-foreground hover:underline inline-flex items-center gap-1"
                         >
                           <span>Open Console</span>
                           <ExternalLink className="h-3 w-3" />
@@ -313,7 +313,7 @@ export default function BrokersPage() {
                               navigator.clipboard.writeText("https://api.tradeio.site/v1/brokers/callback/zerodha");
                               toast.success("Copied Redirect URL!");
                             }}
-                            className="text-blue-600 hover:underline font-bold text-[11px] cursor-pointer"
+                            className="text-accent-foreground hover:underline font-semibold text-[11px] cursor-pointer"
                           >
                             Copy
                           </button>
@@ -322,19 +322,19 @@ export default function BrokersPage() {
                           https://api.tradeio.site/v1/brokers/callback/zerodha
                         </p>
                       </div>
-                      <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3 space-y-1">
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-blue-900">
+                      <div className="rounded-lg border border-primary/30 bg-brand-subtle/70 p-3 space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-accent-foreground">
                           <span>Static IP in Kite Developer Console:</span>
-                          <span className="text-[10px] text-blue-600 font-medium">Mandatory by Zerodha</span>
+                          <span className="text-[10px] text-accent-foreground font-medium">Mandatory by Zerodha</span>
                         </div>
-                        <p className="text-[11.5px] leading-relaxed text-blue-950/85">
+                        <p className="text-[11.5px] leading-relaxed text-accent-foreground/85">
                           Zerodha requires each developer app to have a unique IP. Enter your designated / assigned <strong>Static IP</strong> in your Kite Connect App settings.
                         </p>
                       </div>
                     </div>
                   )}
 
-                  <div className="flex items-start gap-3 p-4 rounded-xl bg-muted/50 border border-border">
+                  <div className="flex items-start gap-3 p-4 rounded-lg bg-muted/50 border border-border">
                     <div className="pt-0.5 text-muted-foreground">🔒</div>
                     <p className="text-[11.5px] leading-relaxed text-foreground/75 font-medium">
                       Credentials are encrypted with bank-grade AES-256-GCM. We never store them in plain text or share them with third parties.
@@ -344,14 +344,14 @@ export default function BrokersPage() {
                   <div className="flex gap-3 pt-3">
                     <Button
                       variant="outline"
-                      className="flex-1 h-12 rounded-xl border-border text-foreground/75 font-semibold hover:bg-muted/50"
+                      className="flex-1 h-12 rounded-lg border-border text-foreground/75 font-semibold hover:bg-muted/50"
                       onClick={() => setShowModal(false)}
                       type="button"
                     >
                       Cancel
                     </Button>
                     <Button
-                      className="flex-1 h-12 rounded-xl text-white font-semibold transition-all hover:opacity-90 hover:scale-[1.02] shadow-md"
+                      className="flex-1 h-12 rounded-lg text-primary-foreground font-semibold transition-all hover:opacity-90 shadow-md"
                       style={{ backgroundColor: selectedBroker.color }}
                       disabled={isConnecting}
                       type="submit"

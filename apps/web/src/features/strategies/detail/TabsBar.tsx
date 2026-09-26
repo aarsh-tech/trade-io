@@ -17,7 +17,7 @@ export function TabsBar({ ctx }: { ctx: DetailCtx }) {
           onClick={() => setActiveTab("LIVE")}
           className={cn(
             "text-xs h-8 px-3.5 rounded-lg font-semibold gap-1.5",
-            activeTab === "LIVE" && "bg-blue-600 text-white hover:bg-blue-700"
+            activeTab === "LIVE" && "bg-primary text-primary-foreground hover:bg-brand-hover"
           )}
         >
           <Activity className="h-3.5 w-3.5" />
@@ -29,7 +29,7 @@ export function TabsBar({ ctx }: { ctx: DetailCtx }) {
           onClick={() => setActiveTab("CONFIG")}
           className={cn(
             "text-xs h-8 px-3.5 rounded-lg font-semibold gap-1.5",
-            activeTab === "CONFIG" && "bg-blue-600 text-white hover:bg-blue-700"
+            activeTab === "CONFIG" && "bg-primary text-primary-foreground hover:bg-brand-hover"
           )}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -41,7 +41,7 @@ export function TabsBar({ ctx }: { ctx: DetailCtx }) {
           onClick={() => setActiveTab("ANALYTICS")}
           className={cn(
             "text-xs h-8 px-3.5 rounded-lg font-semibold gap-1.5",
-            activeTab === "ANALYTICS" && "bg-blue-600 text-white hover:bg-blue-700"
+            activeTab === "ANALYTICS" && "bg-primary text-primary-foreground hover:bg-brand-hover"
           )}
         >
           <BarChart2 className="h-3.5 w-3.5" />
@@ -53,7 +53,7 @@ export function TabsBar({ ctx }: { ctx: DetailCtx }) {
           onClick={() => setActiveTab("HISTORY")}
           className={cn(
             "text-xs h-8 px-3.5 rounded-lg font-semibold gap-1.5",
-            activeTab === "HISTORY" && "bg-blue-600 text-white hover:bg-blue-700"
+            activeTab === "HISTORY" && "bg-primary text-primary-foreground hover:bg-brand-hover"
           )}
         >
           <History className="h-3.5 w-3.5" />

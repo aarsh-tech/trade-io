@@ -12,7 +12,7 @@ export default function RegisterPage() {
       subtitle="Tradeio.site is an exclusive, private algorithmic trading terminal."
     >
       <div className="space-y-6 text-center py-4">
-        <div className="h-14 w-14 rounded-full bg-amber-50 border border-amber-200/80 flex items-center justify-center mx-auto text-amber-600 shadow-2xs">
+        <div className="h-14 w-14 rounded-full bg-warn-subtle border border-warn/80 flex items-center justify-center mx-auto text-warn">
           <Lock className="h-6 w-6 stroke-[2]" />
         </div>
 
@@ -29,7 +29,7 @@ export default function RegisterPage() {
           <Link href="/login" className="block w-full">
             <Button
               type="button"
-              className="w-full h-[42px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium rounded-[3px] shadow-none cursor-pointer transition-colors"
+              className="w-full h-[42px] bg-primary hover:bg-brand-hover active:bg-brand-hover text-primary-foreground text-sm font-medium rounded-[3px] shadow-none cursor-pointer transition-colors"
             >
               Return to Login
             </Button>

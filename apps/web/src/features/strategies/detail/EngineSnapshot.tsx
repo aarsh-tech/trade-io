@@ -70,7 +70,7 @@ export function EngineSnapshot({ ctx }: { ctx: DetailCtx }) {
         : "Scanning for signals";
 
   return (
-    <Card className="border-border/60 bg-card/60 shadow-xs">
+    <Card className="border-border/60 bg-card/60">
       <CardContent className="p-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-3">
         <Item label="Engine" value={phase} tone={!strategy.isActive ? "text-muted-foreground" : undefined} />
         <Item label="Entry" value={entry ? formatINR(entry) : EMPTY} />

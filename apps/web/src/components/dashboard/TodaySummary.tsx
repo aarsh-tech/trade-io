@@ -19,14 +19,14 @@ interface StrategyRow {
 
 function Tile({ icon, label, children, footer }: { icon: React.ReactNode; label: string; children: React.ReactNode; footer?: React.ReactNode }) {
   return (
-    <Card className="border-border/90 bg-card shadow-xs rounded-xl">
-      <CardContent className="p-3.5">
-        <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+    <Card className="p-0">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
           {icon}
           {label}
         </div>
         <div className="mt-1">{children}</div>
-        {footer && <div className="mt-2 pt-2 border-t border-border text-[11px] text-muted-foreground">{footer}</div>}
+        {footer && <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground">{footer}</div>}
       </CardContent>
     </Card>
   );
@@ -35,7 +35,7 @@ function Tile({ icon, label, children, footer }: { icon: React.ReactNode; label:
 const Row = ({ label, value, className }: { label: string; value: string; className?: string }) => (
   <div className="flex items-center justify-between gap-2">
     <span>{label}</span>
-    <span className={cn("num font-semibold text-foreground", className)}>{value}</span>
+    <span className={cn("num font-medium text-foreground", className)}>{value}</span>
   </div>
 );
 
@@ -62,7 +62,7 @@ export function TodaySummary({ marginAvailable, marginsUsed }: TodaySummaryProps
   const barTone = lossPct >= 80 ? "bg-loss" : lossPct >= 50 ? "bg-warn" : "bg-profit";
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-3.5" aria-label="Today's summary">
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4" aria-label="Today's summary">
       <Tile
         icon={<IndianRupee className="h-3 w-3" aria-hidden />}
         label="Day P&L (net)"
@@ -75,7 +75,7 @@ export function TodaySummary({ marginAvailable, marginsUsed }: TodaySummaryProps
           </div>
         }
       >
-        <div className={cn("text-xl font-bold num tracking-tight", total === undefined ? "text-muted-foreground" : pnlClass(total))}>
+        <div className={cn("text-[22px] leading-7 font-semibold num tracking-tight", total === undefined ? "text-muted-foreground" : pnlClass(total))}>
           {total === undefined ? EMPTY : formatINR(total, { signed: true })}
         </div>
       </Tile>
@@ -93,7 +93,7 @@ export function TodaySummary({ marginAvailable, marginsUsed }: TodaySummaryProps
         }
       >
         <div className="flex items-baseline gap-2">
-          <span className="text-xl font-bold num tracking-tight text-foreground">{risk ? `${lossPct.toFixed(0)}%` : EMPTY}</span>
+          <span className="text-[22px] leading-7 font-semibold num tracking-tight text-foreground">{risk ? `${lossPct.toFixed(0)}%` : EMPTY}</span>
           {risk && <span className="text-[11px] font-semibold text-muted-foreground">{level}</span>}
           {risk?.killSwitchActive && <AlertOctagon className="h-4 w-4 text-loss" aria-label="Kill switch active" />}
         </div>
@@ -114,7 +114,7 @@ export function TodaySummary({ marginAvailable, marginsUsed }: TodaySummaryProps
         label="Equity funds"
         footer={<Row label="Used" value={marginsUsed !== undefined ? formatINR(marginsUsed) : EMPTY} />}
       >
-        <div className="text-xl font-bold num tracking-tight text-foreground">
+        <div className="text-[22px] leading-7 font-semibold num tracking-tight text-foreground">
           {marginAvailable !== undefined ? formatINR(marginAvailable) : EMPTY}
         </div>
       </Tile>
@@ -142,7 +142,7 @@ export function TodaySummary({ marginAvailable, marginsUsed }: TodaySummaryProps
           )
         }
       >
-        <div className="text-xl font-bold num tracking-tight text-foreground">{strategies ? running.length : EMPTY}</div>
+        <div className="text-[22px] leading-7 font-semibold num tracking-tight text-foreground">{strategies ? running.length : EMPTY}</div>
       </Tile>
     </div>
   );

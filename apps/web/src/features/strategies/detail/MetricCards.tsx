@@ -10,18 +10,18 @@ export function MetricCards({ ctx }: { ctx: DetailCtx }) {
     <>
       {/* ─── Top 4 Metric Overview Cards ─── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Instrument
               </span>
-              <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600">
+              <div className="p-1.5 rounded-lg bg-primary/10 text-accent-foreground">
                 <BarChart2 className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-xl font-extrabold text-foreground">
+              <span className="text-xl font-semibold text-foreground">
                 {isStockOptions && (cfg.symbol === "AUTO" || cfg.isAutoStockSelect)
                   ? "AUTO (180+ F&O)"
                   : isGammaBlast
@@ -33,18 +33,18 @@ export function MetricCards({ ctx }: { ctx: DetailCtx }) {
           </CardContent>
         </Card>
 
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Position Sizing
               </span>
-              <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-600">
+              <div className="p-1.5 rounded-lg bg-warn/10 text-warn">
                 <Zap className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-xl font-extrabold text-foreground truncate">
+              <span className="text-xl font-semibold text-foreground truncate">
                 {isNiftyScalper
                   ? "Auto Margin"
                   : isGammaBlast
@@ -78,18 +78,18 @@ export function MetricCards({ ctx }: { ctx: DetailCtx }) {
           </CardContent>
         </Card>
 
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-rose-500/80 uppercase tracking-wider">
+              <span className="text-[11px] font-semibold text-loss/80 uppercase tracking-wider">
                 Stop Loss
               </span>
-              <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600">
+              <div className="p-1.5 rounded-lg bg-loss/10 text-loss">
                 <Shield className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-xl font-extrabold text-rose-600">
+              <span className="text-xl font-semibold text-loss">
                 {cfg.exitExactAtTarget
                   ? (isGammaBlast && cfg.stopLossPoints ? `-${cfg.stopLossPoints} Pts (₹${cfg.stopLossRs ?? 500})` : `Fixed ₹${cfg.stopLossRs ?? "500"}`)
                   : isGammaBlast
@@ -123,18 +123,18 @@ export function MetricCards({ ctx }: { ctx: DetailCtx }) {
           </CardContent>
         </Card>
 
-        <Card className="bg-card/70 border-border/60 shadow-xs relative overflow-hidden">
+        <Card className="bg-card/70 border-border/60 relative overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-emerald-600/80 uppercase tracking-wider">
+              <span className="text-[11px] font-semibold text-profit/80 uppercase tracking-wider">
                 Daily Target
               </span>
-              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600">
+              <div className="p-1.5 rounded-lg bg-profit/10 text-profit">
                 <Target className="h-3.5 w-3.5" />
               </div>
             </div>
             <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-xl font-extrabold text-emerald-600">
+              <span className="text-xl font-semibold text-profit">
                 {cfg.exitExactAtTarget
                   ? (isGammaBlast && cfg.targetPoints ? `+${cfg.targetPoints} Pts (₹${cfg.targetRs ?? 1000})` : `Fixed ₹${cfg.targetRs ?? "500"}`)
                   : isGammaBlast

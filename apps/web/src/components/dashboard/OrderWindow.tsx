@@ -172,9 +172,10 @@ export function OrderWindow({
   if (!isOpen) return null;
 
   const isBuy = type === 'BUY';
-  // Exact Zerodha Kite colors: #4184f3 for Buy, #ff5722 for Sell
-  const themeColor = isBuy ? '#4184f3' : '#ff5722';
-  const themeHover = isBuy ? '#3371dc' : '#ea4c19';
+  // Theme tokens: `buy` / `sell` from the design system, so the ticket follows light/dark.
+  const themeColor = isBuy ? 'hsl(var(--buy))' : 'hsl(var(--sell))';
+  const themeHover = isBuy ? 'hsl(var(--brand-hover))' : 'hsl(var(--sell) / 0.9)';
+  const onTheme = isBuy ? 'text-primary-foreground' : 'text-on-loss';
 
   const onSubmit = (data: OrderFormValues) => {
     const variety = data.activeTab === 'AMO' ? 'amo' : data.activeTab === 'Cover' ? 'co' : data.activeTab === 'Iceberg' ? 'iceberg' : 'regular';
@@ -215,7 +216,7 @@ export function OrderWindow({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 z-0 bg-slate-950/60 backdrop-blur-xs pointer-events-auto"
+            className="fixed inset-0 z-0 bg-secondary/60 backdrop-blur-xs pointer-events-auto"
           />
 
           <motion.div
@@ -226,36 +227,36 @@ export function OrderWindow({
             role="dialog"
             aria-modal="true"
             aria-label={`${type === "BUY" ? "Buy" : "Sell"} ${symbol || "order"}`}
-            className="relative z-10 pointer-events-auto w-full md:w-[480px] md:max-w-lg bg-card rounded-t-3xl md:rounded-2xl shadow-2xl border-t md:border border-border overflow-hidden font-sans select-none max-h-[92vh] flex flex-col mx-0 md:mx-4"
+            className="relative z-10 pointer-events-auto w-full md:w-[480px] md:max-w-lg bg-card rounded-t-xl md:rounded-xl shadow-2xl border-t md:border border-border overflow-hidden font-sans select-none max-h-[92vh] flex flex-col mx-0 md:mx-4"
           >
             {/* ─── HEADER ─── */}
             <div
-              className="px-4 sm:px-5 py-3 sm:py-3.5 flex flex-col text-white transition-colors duration-200 shrink-0"
+              className={`px-4 sm:px-5 py-3 sm:py-3.5 flex flex-col ${onTheme} transition-colors duration-200 shrink-0`}
               style={{ backgroundColor: themeColor }}
             >
               {/* Mobile grab handle */}
-              <div className="w-10 h-1 bg-white/40 rounded-full mx-auto mb-2 md:hidden" />
+              <div className="w-10 h-1 bg-current/40 rounded-full mx-auto mb-2 md:hidden" />
 
               <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-sm sm:text-[15px] uppercase tracking-wide truncate">
+                    <span className="font-semibold text-sm sm:text-[15px] uppercase tracking-wide truncate">
                       {isBuy ? "BUY" : "SELL"} {symbol}
                     </span>
-                    <span className="text-[10px] sm:text-[11px] font-semibold px-1.5 py-0.5 bg-white/20 rounded text-white">
+                    <span className="text-[10px] sm:text-[11px] font-semibold px-1.5 py-0.5 bg-current/20 rounded text-current">
                       x {qty}
                     </span>
                   </div>
-                  <div role="radiogroup" aria-label="Exchange" className="flex items-center gap-3 text-[11px] text-white/90 font-medium">
+                  <div role="radiogroup" aria-label="Exchange" className="flex items-center gap-3 text-[11px] text-current/90 font-medium">
                     <button type="button" role="radio" aria-checked={exchange === "BSE"}
                       className="flex items-center gap-1.5 cursor-pointer hover:opacity-100 transition-opacity"
                       onClick={() => setValue("exchange", "BSE")}
                     >
                       <div className={cn(
                         "h-2 w-2 rounded-full transition-all",
-                        exchange === "BSE" ? "bg-card ring-2 ring-white/40" : "bg-white/40 border border-white/60"
+                        exchange === "BSE" ? "bg-card ring-2 ring-current/40" : "bg-current/40 border border-current/60"
                       )} />
-                      <span className={exchange === "BSE" ? "font-bold text-white" : "text-white/80"}>
+                      <span className={exchange === "BSE" ? "font-semibold text-current" : "text-current/80"}>
                         BSE ₹{ltp > 0 ? ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
                       </span>
                     </button>
@@ -266,9 +267,9 @@ export function OrderWindow({
                     >
                       <div className={cn(
                         "h-2 w-2 rounded-full transition-all",
-                        exchange === "NSE" ? "bg-card ring-2 ring-white/40" : "bg-white/40 border border-white/60"
+                        exchange === "NSE" ? "bg-card ring-2 ring-current/40" : "bg-current/40 border border-current/60"
                       )} />
-                      <span className={exchange === "NSE" ? "font-bold text-white" : "text-white/80"}>
+                      <span className={exchange === "NSE" ? "font-semibold text-current" : "text-current/80"}>
                         NSE ₹{ltp > 0 ? ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
                       </span>
                     </button>
@@ -278,7 +279,7 @@ export function OrderWindow({
                 {/* Toggle Switch (BUY / SELL) & Close Button */}
                 <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
                   <button type="button" role="switch" aria-checked={!isBuy} aria-label="Order side: on for sell, off for buy"
-                    className="w-11 h-6 bg-white/30 rounded-full relative cursor-pointer p-0.5 transition-colors shadow-inner flex items-center"
+                    className="w-11 h-6 bg-current/30 rounded-full relative cursor-pointer p-0.5 transition-colors flex items-center"
                     title={`Switch to ${isBuy ? "SELL" : "BUY"}`}
                     onClick={() => onTypeChange?.(isBuy ? "SELL" : "BUY")}
                   >
@@ -296,7 +297,7 @@ export function OrderWindow({
                     type="button"
                     onClick={onClose}
                     aria-label="Close order window"
-                    className="p-1 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                    className="p-1 rounded-full bg-current/10 hover:bg-current/20 text-current transition-colors"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -316,7 +317,7 @@ export function OrderWindow({
                       onClick={() => setValue("activeTab", tab)}
                       className={cn(
                         "px-3 sm:px-4 py-2 sm:py-2.5 text-[11px] sm:text-[12px] font-semibold cursor-pointer border-b-2 transition-all relative whitespace-nowrap",
-                        isActive ? "text-[#333]" : "text-muted-foreground hover:text-foreground border-transparent"
+                        isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground border-transparent"
                       )}
                       style={{
                         borderBottomColor: isActive ? themeColor : 'transparent',
@@ -348,7 +349,7 @@ export function OrderWindow({
                       exit={{ opacity: 0, y: -5, scale: 0.95 }}
                       className="absolute right-0 top-8 z-50 w-56 bg-card border border-border rounded-xl shadow-xl p-3 text-xs space-y-2 text-foreground/75"
                     >
-                      <div className="flex items-center justify-between font-bold border-b pb-1 text-foreground">
+                      <div className="flex items-center justify-between font-semibold border-b pb-1 text-foreground">
                         <span>Order Preferences</span>
                         <X className="h-3.5 w-3.5 cursor-pointer text-muted-foreground hover:text-foreground/75" onClick={() => setShowSettings(false)} />
                       </div>
@@ -394,7 +395,7 @@ export function OrderWindow({
                   <div
                     className={cn(
                       "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                      product === 'MIS' ? "border-transparent" : "border-border group-hover:border-slate-400"
+                      product === 'MIS' ? "border-transparent" : "border-border group-hover:border-muted-foreground"
                     )}
                     style={{
                       borderColor: product === 'MIS' ? themeColor : undefined,
@@ -421,7 +422,7 @@ export function OrderWindow({
                   <div
                     className={cn(
                       "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                      product === 'NRML' ? "border-transparent" : "border-border group-hover:border-slate-400"
+                      product === 'NRML' ? "border-transparent" : "border-border group-hover:border-muted-foreground"
                     )}
                     style={{
                       borderColor: product === 'NRML' ? themeColor : undefined,
@@ -448,13 +449,13 @@ export function OrderWindow({
                   <label className="text-[10px] sm:text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                     QTY.
                   </label>
-                  <div className="relative flex items-center rounded-lg sm:rounded-xl bg-[#edf2f7] border border-border/80 focus-within:bg-card focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20 transition-all h-9 sm:h-10 overflow-hidden">
+                  <div className="relative flex items-center rounded-lg sm:rounded-xl bg-muted border border-border/80 focus-within:bg-card focus-within:-primary focus-within:ring-1 focus-within:-primary/20 transition-all h-9 sm:h-10 overflow-hidden">
                     <input
                       type="number"
                       min={1}
                       value={qty}
                       onChange={(e) => setValue("qty", Math.max(1, parseInt(e.target.value) || 1), { shouldValidate: true })}
-                      className="w-full h-full bg-transparent pl-2 sm:pl-3 pr-5 sm:pr-6 text-xs sm:text-[14px] font-bold text-foreground outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      className="w-full h-full bg-transparent pl-2 sm:pl-3 pr-5 sm:pr-6 text-xs sm:text-[14px] font-semibold text-foreground outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     />
                     {/* Stepper buttons (+ / -) */}
                     <div className="absolute right-0 top-0 bottom-0 w-5 sm:w-6 flex flex-col border-l border-border/60 bg-muted/50">
@@ -475,7 +476,7 @@ export function OrderWindow({
                       </button>
                     </div>
                   </div>
-                  {qtyError && <p className="text-[10px] text-rose-500 font-semibold">{qtyError}</p>}
+                  {qtyError && <p className="text-[10px] text-loss font-semibold">{qtyError}</p>}
                 </div>
 
                 {/* PRICE FIELD */}
@@ -486,8 +487,8 @@ export function OrderWindow({
                   <div className={cn(
                     "relative flex items-center rounded-lg sm:rounded-xl border transition-all h-9 sm:h-10 overflow-hidden",
                     orderType === 'MARKET'
-                      ? "bg-[#f8f9fa] border-border text-muted-foreground cursor-not-allowed"
-                      : "bg-[#edf2f7] border-border/80 focus-within:bg-card focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
+                      ? "bg-muted border-border text-muted-foreground cursor-not-allowed"
+                      : "bg-muted border-border/80 focus-within:bg-card focus-within:-primary focus-within:ring-1 focus-within:-primary/20"
                   )}>
                     <input
                       type="number"
@@ -496,12 +497,12 @@ export function OrderWindow({
                       value={orderType === 'MARKET' ? (ltp > 0 ? ltp : 0) : price}
                       onChange={(e) => setValue("price", parseFloat(e.target.value) || 0, { shouldValidate: true })}
                       className={cn(
-                        "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+                        "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-semibold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
                         orderType === 'MARKET' ? "text-muted-foreground cursor-not-allowed" : "text-foreground"
                       )}
                     />
                   </div>
-                  {priceError && <p className="text-[10px] text-rose-500 font-semibold">{priceError}</p>}
+                  {priceError && <p className="text-[10px] text-loss font-semibold">{priceError}</p>}
                 </div>
 
                 {/* TRIGGER PRICE FIELD */}
@@ -512,8 +513,8 @@ export function OrderWindow({
                   <div className={cn(
                     "relative flex items-center rounded-lg sm:rounded-xl border transition-all h-9 sm:h-10 overflow-hidden",
                     !orderType.startsWith('SL')
-                      ? "bg-[#f8f9fa] border-border text-muted-foreground cursor-not-allowed"
-                      : "bg-[#edf2f7] border-border/80 focus-within:bg-card focus-within:border-[#4184f3] focus-within:ring-1 focus-within:ring-[#4184f3]/20"
+                      ? "bg-muted border-border text-muted-foreground cursor-not-allowed"
+                      : "bg-muted border-border/80 focus-within:bg-card focus-within:-primary focus-within:ring-1 focus-within:-primary/20"
                   )}>
                     <input
                       type="number"
@@ -522,12 +523,12 @@ export function OrderWindow({
                       value={orderType.startsWith('SL') ? triggerPrice : 0}
                       onChange={(e) => setValue("triggerPrice", parseFloat(e.target.value) || 0, { shouldValidate: true })}
                       className={cn(
-                        "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+                        "w-full h-full bg-transparent px-2 sm:px-3 text-xs sm:text-[14px] font-semibold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
                         !orderType.startsWith('SL') ? "text-muted-foreground cursor-not-allowed" : "text-foreground"
                       )}
                     />
                   </div>
-                  {triggerError && <p className="text-[10px] text-rose-500 font-semibold">{triggerError}</p>}
+                  {triggerError && <p className="text-[10px] text-loss font-semibold">{triggerError}</p>}
                 </div>
               </div>
 
@@ -544,7 +545,7 @@ export function OrderWindow({
                       <div
                         className={cn(
                           "h-4 w-4 rounded-full border flex items-center justify-center transition-all",
-                          isSelected ? "border-transparent" : "border-border group-hover:border-slate-400"
+                          isSelected ? "border-transparent" : "border-border group-hover:border-muted-foreground"
                         )}
                         style={{
                           borderColor: isSelected ? themeColor : undefined,
@@ -574,7 +575,7 @@ export function OrderWindow({
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="flex items-center gap-1 text-[11px] sm:text-[12px] font-semibold text-[#4184f3] hover:underline focus:outline-none"
+                  className="flex items-center gap-1 text-[11px] sm:text-[12px] font-semibold -primary hover:underline focus:outline-none"
                 >
                   <span>Advanced options</span>
                   {showAdvanced ? (
@@ -607,7 +608,7 @@ export function OrderWindow({
                                 type="radio"
                                 checked={validity === v}
                                 onChange={() => setValue("validity", v, { shouldValidate: true })}
-                                className="accent-[#4184f3]"
+                                className="-primary"
                               />
                               <span className="text-foreground/75 font-medium text-xs">{v}</span>
                             </label>
@@ -625,7 +626,7 @@ export function OrderWindow({
                             min={1}
                             value={ttlMinutes}
                             onChange={(e) => setValue("ttlMinutes", parseInt(e.target.value) || 1)}
-                            className="h-8 text-xs bg-[#edf2f7] border-border w-28 rounded-lg"
+                            className="h-8 text-xs bg-muted border-border w-28 rounded-lg"
                           />
                         </div>
                       )}
@@ -640,7 +641,7 @@ export function OrderWindow({
                             min={0}
                             value={disclosedQty}
                             onChange={(e) => setValue("disclosedQty", parseInt(e.target.value) || 0)}
-                            className="h-8 text-xs bg-[#edf2f7] border-border rounded-lg"
+                            className="h-8 text-xs bg-muted border-border rounded-lg"
                             placeholder="Optional"
                           />
                         </div>
@@ -653,10 +654,10 @@ export function OrderWindow({
                             type="text"
                             value={orderTag}
                             onChange={(e) => setValue("orderTag", e.target.value)}
-                            className="h-8 text-xs bg-[#edf2f7] border-border rounded-lg"
+                            className="h-8 text-xs bg-muted border-border rounded-lg"
                             placeholder="e.g. Scalp1"
                           />
-                          {errors.orderTag && <p className="text-[10px] text-rose-500 font-semibold">{errors.orderTag.message}</p>}
+                          {errors.orderTag && <p className="text-[10px] text-loss font-semibold">{errors.orderTag.message}</p>}
                         </div>
                       </div>
                     </motion.div>
@@ -689,12 +690,12 @@ export function OrderWindow({
             )}
 
             {/* ─── FOOTER SECTION ─── */}
-            <div className="bg-[#f9fafb] px-3.5 sm:px-5 py-3 sm:py-3.5 border-t border-border flex items-center justify-between gap-2 shrink-0">
+            <div className="bg-muted/60 px-3.5 sm:px-5 py-3 sm:py-3.5 border-t border-border flex items-center justify-between gap-2 shrink-0">
               {/* Left info column */}
               <div className="flex flex-col gap-0.5 min-w-0">
                 <div className="flex items-center gap-1.5 text-[11px] sm:text-xs">
                   <span className="text-muted-foreground font-normal truncate">Req:</span>
-                  <span className="font-bold text-foreground whitespace-nowrap">
+                  <span className="font-semibold text-foreground whitespace-nowrap">
                     {formatINR(marginRequired)}
                   </span>
                   <button
@@ -703,7 +704,7 @@ export function OrderWindow({
                     className="p-0.5 text-muted-foreground hover:text-foreground/75 transition-colors focus:outline-none shrink-0"
                     title="Refresh Margin"
                   >
-                    <RotateCcw className={cn("h-3 w-3", isRefreshingMargin && "animate-spin text-[#4184f3]")} />
+                    <RotateCcw className={cn("h-3 w-3", isRefreshingMargin && "animate-spin -primary")} />
                   </button>
                 </div>
 
@@ -730,7 +731,7 @@ export function OrderWindow({
                   type="button"
                   onClick={handleSubmit(onSubmit)}
                   disabled={ticket.isSubmitting || ticket.hasErrors}
-                  className="text-white disabled:opacity-50 font-bold px-5 sm:px-8 h-8.5 sm:h-9 rounded-lg sm:rounded-xl text-xs transition-all shadow-sm hover:brightness-105 active:scale-[0.98]"
+                  className={`${onTheme} disabled:opacity-50 font-semibold px-5 sm:px-8 h-8.5 sm:h-9 rounded-lg sm:rounded-xl text-xs transition-all  hover:brightness-105 active:scale-[0.98]`}
                   style={{
                     backgroundColor: themeColor,
                   }}

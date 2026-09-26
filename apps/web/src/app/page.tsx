@@ -26,10 +26,10 @@ export default function HomePage() {
   }, [isAuthenticated, clearAuth, router]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#fbfbfb]">
+    <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-3">
-        <div className="h-8 w-8 border-2 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
-        <p className="text-xs text-[#777777] font-medium">Redirecting...</p>
+        <div className="h-8 w-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+        <p className="text-xs text-muted-foreground font-medium">Redirecting...</p>
       </div>
     </div>
   );

@@ -49,9 +49,9 @@ const getStrategyMeta = (type: string) => {
       return {
         label: "Stock Option Auto-Hunter",
         badge: "🔥 80% WIN-RATE",
-        badgeClass: "bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-extrabold shadow-2xs",
+        badgeClass: "bg-primary text-primary-foreground font-semibold ",
         icon: Flame,
-        iconColor: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
+        iconColor: "text-accent-foreground  bg-primary/10 border-primary/20",
         desc: "Scans 180+ F&O stocks for 5%–10% momentum. Buys ITM options, books 50% at T1 (+50% ROI), trails SL to cost, and rides T2 (+100% ROI).",
         features: [
           "180+ F&O Momentum Scanner",
@@ -65,9 +65,9 @@ const getStrategyMeta = (type: string) => {
       return {
         label: "Intraday Auto Stock Picker",
         badge: "⭐ 5x MIS SCALPER",
-        badgeClass: "bg-emerald-600 text-white font-extrabold shadow-2xs",
+        badgeClass: "bg-profit text-on-profit font-semibold ",
         icon: TrendingUp,
-        iconColor: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+        iconColor: "text-profit  bg-profit/10 border-profit/20",
         desc: "Scans 180+ F&O stocks for highest-momentum mover with 15-EMA + VWAP confirmation. Trades MIS with dynamic ₹500 target & ₹500 SL.",
         features: [
           "Auto 09:15 AM Stock Picker",
@@ -81,9 +81,9 @@ const getStrategyMeta = (type: string) => {
       return {
         label: "Daily Index Scalper (SENSEX & NIFTY)",
         badge: "⚡ DAILY INDEX SCALPER",
-        badgeClass: "bg-amber-600 text-white font-extrabold shadow-2xs",
+        badgeClass: "bg-warn text-on-warn font-semibold ",
         icon: Zap,
-        iconColor: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
+        iconColor: "text-warn  bg-warn/10 border-warn/20",
         desc: "Trades high-probability index breakouts every day (Mon–Fri). Selects high-delta ATM & ITM options with institutional VWAP, 15-EMA & volume confirmation.",
         features: [
           "NIFTY & SENSEX (All Days)",
@@ -97,9 +97,9 @@ const getStrategyMeta = (type: string) => {
       return {
         label: "Nifty Options Scalper",
         badge: "RAPID SCALPER",
-        badgeClass: "bg-purple-600 text-white font-extrabold shadow-2xs",
+        badgeClass: "bg-signal text-on-signal font-semibold ",
         icon: Target,
-        iconColor: "text-purple-600 dark:text-purple-400 bg-purple-500/10 border-purple-500/20",
+        iconColor: "text-signal  bg-signal/10 border-signal/20",
         desc: "Captures rapid Nifty impulses using 3 confluence triggers. Auto-sizes lots dynamically from live Zerodha margin and arms exchange SL.",
         features: [
           "Dynamic Margin Lots",
@@ -113,9 +113,9 @@ const getStrategyMeta = (type: string) => {
       return {
         label: "15-Min Breakout",
         badge: "OPENING RANGE",
-        badgeClass: "bg-cyan-600 text-white font-extrabold shadow-2xs",
+        badgeClass: "bg-primary text-primary-foreground font-semibold ",
         icon: BarChart2,
-        iconColor: "text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
+        iconColor: "text-accent-foreground  bg-primary/10 border-primary/20",
         desc: "Trades 15-Min Opening Range Breakouts & Breakdowns with false-breakout trap reversal and server SL-L at Zerodha.",
         features: [
           "False Breakout Trap Reversal",
@@ -129,7 +129,7 @@ const getStrategyMeta = (type: string) => {
       return {
         label: "Custom Algo Strategy",
         badge: "CONFIGURING",
-        badgeClass: "bg-secondary text-foreground font-bold",
+        badgeClass: "bg-secondary text-foreground font-semibold",
         icon: Sparkles,
         iconColor: "text-primary bg-primary/10 border border-primary/20",
         desc: "Select a strategy algorithm below to automatically load institutional risk and execution parameters.",
@@ -335,7 +335,7 @@ export default function NewStrategyPage() {
             <Button
               variant="outline"
               size="icon" aria-label="Back to strategies"
-              className="h-10 w-10 rounded-xl border-border/80 bg-card hover:bg-accent/60 shadow-2xs shrink-0"
+              className="h-10 w-10 rounded-lg border-border/80 bg-card hover:bg-accent/60 shrink-0"
               title="Return to Strategies"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -343,8 +343,8 @@ export default function NewStrategyPage() {
           </Link>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-black tracking-tight text-foreground">Create Strategy</h1>
-              <Badge variant="secondary" className="text-[10px] font-bold px-2 py-0.5 uppercase tracking-wider bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+              <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">Create Strategy</h1>
+              <Badge variant="secondary" className="text-[10px] font-semibold px-2 py-0.5 uppercase tracking-wider bg-primary/10 text-accent-foreground border-primary/20">
                 Step {step + 1} of {STEPS.length}
               </Badge>
               <Badge variant="outline" className="text-[10px] font-semibold text-muted-foreground hidden md:inline-flex">
@@ -385,27 +385,27 @@ export default function NewStrategyPage() {
               }}
               disabled={i > step}
               className={cn(
-                "relative rounded-2xl border p-3.5 text-left transition-all duration-200 overflow-hidden flex items-center justify-between gap-3 bg-card",
+                "relative rounded-lg border p-3.5 text-left transition-all duration-200 overflow-hidden flex items-center justify-between gap-3 bg-card",
                 isCurrent
-                  ? "border-blue-500/50 shadow-xs ring-1 ring-blue-500/20"
+                  ? "border-primary/50  ring-1 ring-primary/20"
                   : isDone
-                    ? "border-border/70 hover:border-border cursor-pointer shadow-2xs"
+                    ? "border-border/70 hover:border-border cursor-pointer "
                     : "border-border/40 opacity-50 cursor-not-allowed"
               )}
             >
               {isCurrent && (
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-primary" />
               )}
               {isDone && (
-                <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-profit" />
               )}
 
               <div className="flex items-center gap-3 min-w-0">
                 <div
                   className={cn(
-                    "h-8 w-8 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 transition-all",
-                    isDone && "bg-emerald-500/15 text-emerald-600 border border-emerald-500/30",
-                    isCurrent && "bg-blue-600 text-white shadow-2xs shadow-blue-600/30",
+                    "h-8 w-8 rounded-lg flex items-center justify-center text-xs font-semibold shrink-0 transition-all",
+                    isDone && "bg-profit/15 text-profit border border-profit/30",
+                    isCurrent && "bg-primary text-primary-foreground  ",
                     !isDone && !isCurrent && "bg-secondary text-muted-foreground border border-border/50"
                   )}
                 >
@@ -414,7 +414,7 @@ export default function NewStrategyPage() {
                 <div className="min-w-0">
                   <p
                     className={cn(
-                      "text-xs font-bold truncate leading-tight",
+                      "text-xs font-semibold truncate leading-tight",
                       isCurrent ? "text-foreground" : isDone ? "text-foreground/90" : "text-muted-foreground"
                     )}
                   >
@@ -428,11 +428,11 @@ export default function NewStrategyPage() {
 
               <span
                 className={cn(
-                  "text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded shrink-0",
+                  "text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0",
                   isCurrent
-                    ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                    ? "bg-primary/10 text-accent-foreground "
                     : isDone
-                      ? "bg-emerald-500/10 text-emerald-600"
+                      ? "bg-profit/10 text-profit"
                       : "text-muted-foreground/50"
                 )}
               >
@@ -447,14 +447,14 @@ export default function NewStrategyPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Active Wizard Step Card & Nav Buttons */}
         <div className="lg:col-span-8 xl:col-span-8 2xl:col-span-9 space-y-6">
-          <Card className="relative rounded-2xl overflow-hidden border border-border/70 bg-card p-5 sm:p-6 shadow-xs space-y-6">
+          <Card className="relative rounded-lg overflow-hidden border border-border/70 bg-card p-5 sm:p-6 space-y-6">
             {step === 0 && <Step1StrategyType form={form} set={set} />}
             {step === 1 && <Step2InstrumentConfig form={form} set={set} />}
             {step === 2 && <Step3RiskManagement form={form} set={set} />}
             {step === 3 && <Step4BrokerReview form={form} set={set} brokers={brokers} />}
 
             {step >= 1 && configErrors.length > 0 && (
-              <div role="alert" className="rounded-xl border border-loss/40 bg-loss/5 p-3 text-xs space-y-1">
+              <div role="alert" className="rounded-lg border border-loss/40 bg-loss/5 p-3 text-xs space-y-1">
                 <p className="font-semibold text-loss">Fix these before continuing</p>
                 <ul className="list-disc pl-4 text-foreground/80 space-y-0.5">
                   {configErrors.map((e) => (
@@ -471,7 +471,7 @@ export default function NewStrategyPage() {
                 variant="outline"
                 onClick={() => setStep((s) => Math.max(0, s - 1))}
                 disabled={step === 0 || submitting}
-                className="h-9.5 px-4 rounded-xl border-border/70 bg-card hover:bg-accent font-semibold text-xs transition-all"
+                className="h-9.5 px-4 rounded-lg border-border/70 bg-card hover:bg-accent font-semibold text-xs transition-all"
               >
                 <ChevronLeft className="h-4 w-4 mr-1" /> Previous Step
               </Button>
@@ -482,7 +482,7 @@ export default function NewStrategyPage() {
                     type="button"
                     onClick={() => setStep((s) => s + 1)}
                     disabled={!canNext()}
-                    className="h-9.5 px-5 rounded-xl font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 transition-all flex items-center gap-1.5"
+                    className="h-9.5 px-5 rounded-lg font-semibold text-xs bg-primary hover:bg-brand-hover text-primary-foreground shadow-md transition-all flex items-center gap-1.5"
                   >
                     Continue to {STEPS[step + 1].title} <ChevronRight className="h-4 w-4" />
                   </Button>
@@ -491,7 +491,7 @@ export default function NewStrategyPage() {
                     type="button"
                     onClick={handleSubmit}
                     disabled={submitting || !canNext()}
-                    className="h-9.5 px-6 rounded-xl font-extrabold text-xs bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-600/25 transition-all flex items-center gap-2"
+                    className="h-9.5 px-6 rounded-lg font-semibold text-xs bg-profit hover:bg-profit/90 text-on-profit shadow-md transition-all flex items-center gap-2"
                   >
                     {submitting ? (
                       <>
@@ -513,9 +513,9 @@ export default function NewStrategyPage() {
 
         {/* Right: Live Strategy Specification & Blueprint Inspector (Sticky) */}
         <div className="lg:col-span-4 xl:col-span-4 2xl:col-span-3 space-y-4 lg:sticky lg:top-6">
-          <Card className="relative rounded-2xl overflow-hidden border border-border/70 bg-card p-4 sm:p-5 shadow-xs space-y-4">
+          <Card className="relative rounded-lg overflow-hidden border border-border/70 bg-card p-4 sm:p-5 space-y-4">
             {/* Top Ambient Accent Bar */}
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400" />
+            <div className="absolute top-0 left-0 right-0 h-1 bg-primary" />
 
             {/* Top Header */}
             <div className="flex items-center justify-between border-b border-border/50 pb-3 pt-0.5">
@@ -524,20 +524,20 @@ export default function NewStrategyPage() {
                   <MetaIcon className="h-4 w-4" />
                 </div>
                 <div>
-                  <h3 className="text-xs font-bold text-foreground">
+                  <h3 className="text-xs font-semibold text-foreground">
                     Live Configuration
                   </h3>
                   <p className="text-[10px] text-muted-foreground">{meta.label}</p>
                 </div>
               </div>
-              <Badge className={cn("text-[9px] font-extrabold px-2 py-0 uppercase shadow-2xs", meta.badgeClass)}>
+              <Badge className={cn("text-[9px] font-semibold px-2 py-0 uppercase ", meta.badgeClass)}>
                 {meta.badge}
               </Badge>
             </div>
 
             {/* Strategy Title & Description */}
             <div>
-              <p className="text-sm font-extrabold text-foreground leading-tight truncate">
+              <p className="text-sm font-semibold text-foreground leading-tight truncate">
                 {form.name || "Untitled Strategy"}
               </p>
               <p className="text-xs text-foreground mt-1 leading-relaxed font-medium">
@@ -547,18 +547,18 @@ export default function NewStrategyPage() {
 
             {/* 3-Box Matrix (EXACTLY MATCHING StrategyCard in strategies/page.tsx!) */}
             <div className="grid grid-cols-3 gap-2">
-              <div className="p-2.5 rounded-xl bg-muted border border-border text-center flex flex-col justify-center">
-                <span className="text-[10px] font-bold text-foreground/75 uppercase">Sizing</span>
-                <span className="text-xs font-extrabold text-foreground truncate mt-0.5">
+              <div className="p-2.5 rounded-lg bg-muted border border-border text-center flex flex-col justify-center">
+                <span className="text-[10px] font-semibold text-foreground/75 uppercase">Sizing</span>
+                <span className="text-xs font-semibold text-foreground truncate mt-0.5">
                   {form.type === "STOCK_OPTIONS_BUYING"
                     ? `₹${Number(form.sMaxCapital || 25000).toLocaleString("en-IN")}`
                     : `${form.lots || 1} Lot`}
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-rose-100/70 border-2 border-rose-300 text-center flex flex-col justify-center">
-                <span className="text-[10px] font-extrabold text-rose-900 uppercase">Stop Loss</span>
-                <span className="text-xs font-black text-rose-700 mt-0.5 truncate">
+              <div className="p-2.5 rounded-lg bg-loss-subtle/70 border-2 border-loss/30 text-center flex flex-col justify-center">
+                <span className="text-[10px] font-semibold text-loss uppercase">Stop Loss</span>
+                <span className="text-xs font-semibold text-loss mt-0.5 truncate">
                   {form.type === "STOCK_OPTIONS_BUYING"
                     ? "Breakeven Trail"
                     : form.type === "NIFTY_OPTIONS_SCALPER"
@@ -567,9 +567,9 @@ export default function NewStrategyPage() {
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-emerald-100/70 border-2 border-emerald-300 text-center flex flex-col justify-center">
-                <span className="text-[10px] font-extrabold text-emerald-900 uppercase">Target</span>
-                <span className="text-xs font-black text-emerald-700 mt-0.5 truncate">
+              <div className="p-2.5 rounded-lg bg-profit-subtle/70 border-2 border-profit/30 text-center flex flex-col justify-center">
+                <span className="text-[10px] font-semibold text-profit uppercase">Target</span>
+                <span className="text-xs font-semibold text-profit mt-0.5 truncate">
                   {form.type === "STOCK_OPTIONS_BUYING"
                     ? "T1 (+50%) / T2"
                     : form.type === "NIFTY_OPTIONS_SCALPER"
@@ -580,22 +580,22 @@ export default function NewStrategyPage() {
             </div>
 
             {/* Execution & Asset Status Ribbon */}
-            <div className="flex items-center justify-between text-xs py-2 px-3 rounded-xl bg-muted border border-border">
+            <div className="flex items-center justify-between text-xs py-2 px-3 rounded-lg bg-muted border border-border">
               <div className="flex items-center gap-1.5 text-foreground text-xs font-semibold">
                 <Activity className="h-3.5 w-3.5 text-foreground/75 shrink-0" />
                 <span>Mode:</span>
                 <span
                   className={cn(
-                    "font-extrabold uppercase text-[10px] px-2 py-0.5 rounded-md",
+                    "font-semibold uppercase text-[10px] px-2 py-0.5 rounded-md",
                     form.isPaperTrade
-                      ? "bg-amber-200 text-amber-950 border border-amber-400"
-                      : "bg-emerald-200 text-emerald-950 border border-emerald-400"
+                      ? "bg-warn-subtle text-warn border border-warn"
+                      : "bg-profit-subtle text-profit border border-profit"
                   )}
                 >
                   {form.isPaperTrade ? "Paper Trade" : "Live Broker"}
                 </span>
               </div>
-              <span className="text-xs font-extrabold text-foreground">
+              <span className="text-xs font-semibold text-foreground">
                 {form.symbol === "AUTO" || form.sIsAutoStockSelect
                   ? "180+ F&O Auto"
                   : form.symbol || "AUTO"}
@@ -604,12 +604,12 @@ export default function NewStrategyPage() {
 
             {/* Guardrails checklist */}
             <div className="space-y-1.5 pt-1 border-t border-border">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-foreground">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground">
                 Built-In Guardrails
               </p>
               {meta.features.map((feat: string, idx: number) => (
                 <div key={idx} className="flex items-center gap-2 text-xs text-foreground font-medium">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-700 shrink-0" />
+                  <CheckCircle2 className="h-4 w-4 text-profit shrink-0" />
                   <span className="truncate text-foreground">{feat}</span>
                 </div>
               ))}
@@ -617,7 +617,7 @@ export default function NewStrategyPage() {
 
             {/* Pre-Flight Checklist */}
             <div className="space-y-2 pt-1 border-t border-border">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-foreground">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground">
                 Pre-Flight Readiness
               </p>
               <div className="space-y-1 text-xs">
@@ -630,15 +630,15 @@ export default function NewStrategyPage() {
                   <div key={idx} className="flex items-center justify-between text-xs py-1">
                     <span className="flex items-center gap-2">
                       {item.ready ? (
-                        <Check className="h-4 w-4 text-emerald-700 stroke-[3]" />
+                        <Check className="h-4 w-4 text-profit stroke-[3]" />
                       ) : (
-                        <span className="h-2 w-2 rounded-full bg-slate-400 inline-block" />
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground inline-block" />
                       )}
-                      <span className={cn(item.ready ? "text-foreground font-bold" : "text-foreground/75 font-medium")}>
+                      <span className={cn(item.ready ? "text-foreground font-semibold" : "text-foreground/75 font-medium")}>
                         {item.label}
                       </span>
                     </span>
-                    <span className={cn("text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md", item.ready ? "bg-emerald-100 text-emerald-900 border border-emerald-300" : "bg-border text-foreground border border-border")}>
+                    <span className={cn("text-[10px] font-semibold uppercase px-2 py-0.5 rounded-md", item.ready ? "bg-profit-subtle text-profit border border-profit/30" : "bg-border text-foreground border border-border")}>
                       {item.ready ? "Ready" : "Pending"}
                     </span>
                   </div>
@@ -647,9 +647,9 @@ export default function NewStrategyPage() {
             </div>
 
             {/* Trading Edge Note */}
-            <div className="p-3.5 rounded-2xl bg-blue-100/70 border-2 border-blue-300 space-y-1.5">
-              <div className="flex items-center gap-2 text-xs font-black text-blue-950">
-                <Sparkles className="h-4 w-4 text-blue-700 shrink-0" />
+            <div className="p-3.5 rounded-lg bg-brand-subtle/70 border-2 border-primary/30 space-y-1.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-accent-foreground">
+                <Sparkles className="h-4 w-4 text-accent-foreground shrink-0" />
                 <span>Trading Edge</span>
               </div>
               <p className="text-xs text-foreground font-medium leading-relaxed">

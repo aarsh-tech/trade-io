@@ -3,19 +3,19 @@ import { cn } from "@/lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
 
 const badgeVariants = cva(
-  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors",
+  "inline-flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-[11px] font-semibold tracking-wide transition-colors",
   {
     variants: {
       variant: {
-        default:    "bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border border-[hsl(var(--primary)/0.3)]",
+        default:    "bg-brand-subtle text-accent-foreground border border-primary/25",
         secondary:  "bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] border border-[hsl(var(--border))]",
         outline:    "text-[hsl(var(--foreground))] border border-[hsl(var(--border))]",
         running:    "badge-running",
         stopped:    "badge-stopped",
         error:      "badge-error",
-        success:    "bg-[hsl(var(--green)/0.15)] text-[hsl(var(--green))] border border-[hsl(var(--green)/0.3)]",
-        warning:    "bg-[hsl(var(--gold)/0.15)] text-[hsl(var(--gold))] border border-[hsl(var(--gold)/0.3)]",
-        destructive:"bg-[hsl(var(--red)/0.15)] text-[hsl(var(--red))] border border-[hsl(var(--red)/0.3)]",
+        success:    "bg-profit-subtle text-profit border border-profit/25",
+        warning:    "bg-warn-subtle text-warn border border-warn/25",
+        destructive:"bg-loss-subtle text-loss border border-loss/25",
       },
     },
     defaultVariants: { variant: "default" },

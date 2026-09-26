@@ -4,7 +4,6 @@ import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import { LiveAlgoPositionsCard } from "@/components/dashboard/LiveAlgoPositionsCard";
 import { MoversCard } from "@/components/dashboard/MoversCard";
 import { TodaySummary } from "@/components/dashboard/TodaySummary";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -29,7 +28,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import React, { useMemo, useState, useEffect } from "react";
-import { formatINR } from "@/lib/format";
+import { EMPTY, formatINR, formatPct, pnlClass } from "@/lib/format";
 interface Holding {
   symbol: string;
   qty: number;
@@ -72,6 +71,51 @@ interface Broker {
   broker: string;
   clientId: string;
   isActive: boolean;
+}
+
+function FundsCard({
+  icon,
+  title,
+  href,
+  linkLabel,
+  primaryLabel,
+  primary,
+  rows,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  href: string;
+  linkLabel: string;
+  primaryLabel: string;
+  primary: React.ReactNode;
+  rows: { label: string; value: string }[];
+}) {
+  return (
+    <Card className="p-0 overflow-hidden">
+      <CardHeader className="mb-0 py-2.5 px-4 border-b border-border flex flex-row items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          {icon}
+          <CardTitle className="text-[13px] font-semibold">{title}</CardTitle>
+        </div>
+        <Link href={href} className="text-xs font-medium text-primary hover:underline inline-flex items-center gap-0.5">
+          {linkLabel}
+          <ChevronRight className="h-3 w-3" aria-hidden />
+        </Link>
+      </CardHeader>
+      <CardContent className="p-4">
+        <span className="text-[11px] text-muted-foreground">{primaryLabel}</span>
+        <div className="text-xl font-semibold num tracking-tight text-foreground mt-0.5">{primary}</div>
+        <dl className="mt-3 pt-3 border-t border-border grid grid-cols-2 gap-3">
+          {rows.map((r) => (
+            <div key={r.label}>
+              <dt className="text-[11px] text-muted-foreground">{r.label}</dt>
+              <dd className="text-[13px] font-medium num text-foreground mt-0.5">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function DashboardPage() {
@@ -255,293 +299,121 @@ export default function DashboardPage() {
     };
   }, [holdings, margins]);
 
-  // Holdings allocation breakdown
-  const allocationBars = useMemo(() => {
-    const safeHoldings = (holdings || []) as Holding[];
-    if (safeHoldings.length === 0 || stats.currentValue === 0) return [];
-
-    const colors = [
-      "#3b82f6",
-      "#10b981",
-      "#f59e0b",
-      "#8b5cf6",
-      "#ec4899",
-      "#06b6d4",
-      "#64748b",
-    ];
-
-    return safeHoldings
-      .map((h, i) => {
-        const val = (h.ltp || 0) * (h.qty || 0);
-        const pct = (val / stats.currentValue) * 100;
-        return {
-          symbol: h.symbol,
-          pct,
-          color: colors[i % colors.length],
-        };
-      })
-      .sort((a, b) => b.pct - a.pct)
-      .slice(0, 6);
-  }, [holdings, stats.currentValue]);
-
-  const firstName = useMemo(() => {
-    if (user?.name) {
-      return user.name.split(" ")[0];
-    }
-    return "Aarsh";
-  }, [user]);
+  const firstName = user?.name?.split(" ")[0] ?? "";
+  const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+  // Broker funds are only real once the margins call has answered; before that we show "—", never ₹0.
+  const hasMargins = Boolean(margins);
+  const hasHoldings = !isPortfolioLoading && Boolean(activeBroker) && stats.holdingsCount > 0;
 
   if (isDashboardLoading && isPortfolioLoading) {
     return (
-      <div className="flex h-[calc(100vh-64px)] items-center justify-center bg-card">
+      <div className="flex h-[60vh] items-center justify-center" role="status">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Loading Dashboard...
-          </p>
+          <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
+          <p className="text-xs text-muted-foreground">Loading dashboard…</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-3 sm:space-y-3.5 animate-[fade-up_0.3s_ease_both] pb-8 font-sans">
+    <div className="space-y-3 sm:space-y-4 pb-8">
       {/* ── 1. Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-0.5">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            Hi, {firstName}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">
+            {firstName ? `Hi, ${firstName}` : "Dashboard"}
           </h1>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            Real-time algorithmic trading capital, execution telemetry, and market movers
-          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">{today} · Funds, live algo positions and market movers</p>
         </div>
 
         <div className="flex items-center flex-wrap gap-2">
           <FeedStatusBadge feed={feed} />
           {activeBroker && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1 border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 text-xs h-8 font-medium shadow-2xs rounded-lg"
-              onClick={() => setShowRenewModal(true)}
-            >
-              <Zap className="h-3 w-3 text-amber-600" /> Daily Login
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setShowRenewModal(true)}>
+              <Zap className="h-3.5 w-3.5 text-warn" aria-hidden /> Daily login
             </Button>
           )}
-
           <Button
             size="sm"
-            className="gap-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs h-8 shadow-xs rounded-lg"
-            onClick={() =>
-              setOrderState({
-                isOpen: true,
-                type: "BUY",
-                symbol: "",
-                ltp: 0,
-              })
-            }
+            className="h-8 gap-1.5"
+            onClick={() => setOrderState({ isOpen: true, type: "BUY", symbol: "", ltp: 0 })}
           >
-            <ShoppingCart className="h-3 w-3" /> Place Order
+            <ShoppingCart className="h-3.5 w-3.5" aria-hidden /> Place order
           </Button>
-
           <Button
             variant="outline"
-            size="icon" aria-label="Refresh dashboard"
-            className="h-8 w-8 border-border bg-card hover:bg-muted/50 shadow-2xs rounded-lg"
+            size="icon-sm"
+            aria-label="Refresh dashboard"
+            title="Refresh"
             onClick={handleManualRefresh}
             disabled={isRefreshing}
           >
-            <RefreshCcw
-              className={cn(
-                "h-3.5 w-3.5 text-muted-foreground",
-                isRefreshing && "animate-spin text-blue-600"
-              )}
-            />
+            <RefreshCcw className={cn("h-3.5 w-3.5 text-muted-foreground", isRefreshing && "animate-spin text-primary")} aria-hidden />
           </Button>
         </div>
       </div>
 
       {/* ── 1b. Today: day P&L, loss-limit meter, funds, running strategies ── */}
       <TodaySummary
-        marginAvailable={margins ? stats.marginAvailable : undefined}
-        marginsUsed={margins ? stats.marginsUsed : undefined}
+        marginAvailable={hasMargins ? stats.marginAvailable : undefined}
+        marginsUsed={hasMargins ? stats.marginsUsed : undefined}
       />
 
       {/* ── 2. Live Algo Execution & Positions Card ── */}
       <LiveAlgoPositionsCard activeBroker={activeBroker} />
 
-      {/* ── 3. Unified Financial Capital & Holdings Row (3-Grid) ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-3.5">
-        {/* Equity Margin */}
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden hover:border-border transition-colors">
-          <CardHeader className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-6 w-6 rounded-md bg-blue-50 text-blue-600 flex items-center justify-center">
-                <LayoutGrid className="h-3.5 w-3.5" />
-              </div>
-              <CardTitle className="text-xs font-bold text-foreground tracking-tight">
-                Equity Margin
-              </CardTitle>
-            </div>
-            <Link
-              href="/portfolio"
-              className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5 group"
-            >
-              <span>Statement</span>
-              <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-          </CardHeader>
-
-          <CardContent className="p-3.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <div>
-                <span className="text-[10px] font-medium text-muted-foreground block uppercase tracking-wider">
-                  Margin Available
-                </span>
-                <div className="text-xl font-bold font-mono text-foreground tracking-tight mt-0.5">
-                  {formatINR(stats.marginAvailable)}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-border grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-[10px] text-muted-foreground block">Margins Used</span>
-                <span className="font-mono font-semibold text-foreground text-xs">
-                  {formatINR(stats.marginsUsed)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-muted-foreground block">Opening Balance</span>
-                <span className="font-mono font-semibold text-foreground text-xs">
-                  {formatINR(stats.openingBalance)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Commodity Margin */}
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden hover:border-border transition-colors">
-          <CardHeader className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-6 w-6 rounded-md bg-amber-50 text-amber-600 flex items-center justify-center">
-                <History className="h-3.5 w-3.5" />
-              </div>
-              <CardTitle className="text-xs font-bold text-foreground tracking-tight">
-                Commodity Margin
-              </CardTitle>
-            </div>
-            <Link
-              href="/portfolio"
-              className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5 group"
-            >
-              <span>Statement</span>
-              <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-          </CardHeader>
-
-          <CardContent className="p-3.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <div>
-                <span className="text-[10px] font-medium text-muted-foreground block uppercase tracking-wider">
-                  Margin Available
-                </span>
-                <div className="text-xl font-bold font-mono text-foreground tracking-tight mt-0.5">
-                  {formatINR(stats.commodityMarginAvailable)}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-border grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-[10px] text-muted-foreground block">Margins Used</span>
-                <span className="font-mono font-semibold text-foreground text-xs">
-                  {formatINR(stats.commodityMarginsUsed)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-muted-foreground block">Opening Balance</span>
-                <span className="font-mono font-semibold text-foreground text-xs">
-                  {formatINR(stats.commodityOpeningBalance)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Portfolio Holdings & Net P&L */}
-        <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden hover:border-border transition-colors">
-          <CardHeader className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-6 w-6 rounded-md bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <PieChartIcon className="h-3.5 w-3.5" />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CardTitle className="text-xs font-bold text-foreground tracking-tight">
-                  Holdings
-                </CardTitle>
-                <Badge variant="secondary" className="text-[9.5px] font-mono py-0 px-1 bg-muted text-foreground/75">
-                  {stats.holdingsCount} Assets
-                </Badge>
-              </div>
-            </div>
-
-            <Link
-              href="/portfolio"
-              className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5 group"
-            >
-              <span>Portfolio</span>
-              <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-          </CardHeader>
-
-          <CardContent className="p-3.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <div>
-                <span className="text-[10px] font-medium text-muted-foreground block uppercase tracking-wider">
-                  Unrealized P&L
-                </span>
-                <div
-                  className={cn(
-                    "text-xl font-bold font-mono tracking-tight mt-0.5 flex items-center gap-1",
-                    stats.pnl > 0
-                      ? "text-emerald-600"
-                      : stats.pnl < 0
-                        ? "text-rose-600"
-                        : "text-foreground"
-                  )}
-                >
-                  {stats.pnl > 0 ? "+" : ""}
-                  {formatINR(stats.pnl)}
-                  <span className="text-[11px] font-bold">
-                    ({stats.pnl >= 0 ? "+" : ""}{stats.pnlPercent.toFixed(2)}%)
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-border grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-[10px] text-muted-foreground block">Current Value</span>
-                <span className="font-mono font-semibold text-foreground text-xs">
-                  {formatINR(stats.currentValue)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-muted-foreground block">Invested Value</span>
-                <span className="font-mono font-semibold text-foreground/75 text-xs">
-                  {formatINR(stats.totalInvestment)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* ── 3. Funds & holdings ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+        <FundsCard
+          icon={<LayoutGrid className="h-3.5 w-3.5" aria-hidden />}
+          title="Equity"
+          href="/portfolio"
+          linkLabel="Funds"
+          primaryLabel="Margin available"
+          primary={hasMargins ? formatINR(stats.marginAvailable) : EMPTY}
+          rows={[
+            { label: "Margin used", value: hasMargins ? formatINR(stats.marginsUsed) : EMPTY },
+            { label: "Opening balance", value: hasMargins ? formatINR(stats.openingBalance) : EMPTY },
+          ]}
+        />
+        <FundsCard
+          icon={<History className="h-3.5 w-3.5" aria-hidden />}
+          title="Commodity"
+          href="/portfolio"
+          linkLabel="Funds"
+          primaryLabel="Margin available"
+          primary={hasMargins ? formatINR(stats.commodityMarginAvailable) : EMPTY}
+          rows={[
+            { label: "Margin used", value: hasMargins ? formatINR(stats.commodityMarginsUsed) : EMPTY },
+            { label: "Opening balance", value: hasMargins ? formatINR(stats.commodityOpeningBalance) : EMPTY },
+          ]}
+        />
+        <FundsCard
+          icon={<PieChartIcon className="h-3.5 w-3.5" aria-hidden />}
+          title={activeBroker && !isPortfolioLoading ? `Holdings (${stats.holdingsCount})` : "Holdings"}
+          href="/portfolio"
+          linkLabel="Portfolio"
+          primaryLabel="Unrealised P&L"
+          primary={
+            hasHoldings ? (
+              <span className={pnlClass(stats.pnl)}>
+                {formatINR(stats.pnl, { signed: true })}
+                <span className="ml-1.5 text-xs font-medium">{formatPct(stats.pnlPercent)}</span>
+              </span>
+            ) : (
+              EMPTY
+            )
+          }
+          rows={[
+            { label: "Current value", value: hasHoldings ? formatINR(stats.currentValue) : EMPTY },
+            { label: "Invested", value: hasHoldings ? formatINR(stats.totalInvestment) : EMPTY },
+          ]}
+        />
       </div>
 
       {/* ── 4. Market Movers: Top Gainers & Top Losers (2-Grid) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-3.5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
         <MoversCard kind="gainers" items={movers?.topGainers || []} onSelect={openOrderFor} />
         <MoversCard kind="losers" items={movers?.topLosers || []} onSelect={openOrderFor} />
       </div>
@@ -551,11 +423,11 @@ export default function DashboardPage() {
         <DialogContent className="max-w-md p-0 overflow-hidden bg-card text-foreground border border-border shadow-2xl">
           <div className="p-6 pb-2 bg-card">
             <div className="flex items-start gap-3.5 mb-1">
-              <div className="h-10 w-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
-                <Zap className="h-5 w-5 text-amber-600" />
+              <div className="h-10 w-10 rounded-lg bg-warn-subtle border border-warn/30 flex items-center justify-center shrink-0">
+                <Zap className="h-5 w-5 text-warn" />
               </div>
               <div className="pr-6">
-                <DialogTitle className="text-lg font-bold text-foreground">
+                <DialogTitle className="text-lg font-semibold text-foreground">
                   Broker Daily Login
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground mt-1 leading-relaxed">
@@ -567,9 +439,9 @@ export default function DashboardPage() {
 
           <div className="px-6 py-3 space-y-3.5 bg-card">
             {/* Step 1 Card */}
-            <div className="rounded-xl border border-border bg-muted/40 p-3.5 space-y-2.5">
+            <div className="rounded-lg border border-border bg-muted/40 p-3.5 space-y-2.5">
               <div className="flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-warn text-[10px] font-semibold text-on-warn">
                   1
                 </span>
                 <span className="text-xs font-semibold text-foreground">
@@ -578,16 +450,16 @@ export default function DashboardPage() {
               </div>
               <Button
                 onClick={handleOpenLogin}
-                className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs gap-1.5 shadow-sm"
+                className="w-full h-9 bg-warn hover:bg-warn/90 text-on-warn font-semibold text-xs gap-1.5"
               >
                 <ExternalLink className="h-3.5 w-3.5" /> Open Broker Login Page
               </Button>
             </div>
 
             {/* Step 2 Card */}
-            <div className="rounded-xl border border-border bg-muted/40 p-3.5 space-y-3">
+            <div className="rounded-lg border border-border bg-muted/40 p-3.5 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">
                   2
                 </span>
                 <span className="text-xs font-semibold text-foreground">
@@ -600,7 +472,7 @@ export default function DashboardPage() {
                   type="button"
                   onClick={handleAutomatedLogin}
                   disabled={isRenewing}
-                  className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs gap-1.5 shadow-sm"
+                  className="w-full h-9 bg-primary hover:bg-brand-hover text-primary-foreground font-semibold text-xs gap-1.5"
                 >
                   {isRenewing ? (
                     <>
@@ -615,7 +487,7 @@ export default function DashboardPage() {
 
                 <div className="flex items-center gap-2 py-0.5">
                   <div className="h-px flex-1 bg-border" />
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                     OR PASTE MANUALLY
                   </span>
                   <div className="h-px flex-1 bg-border" />
@@ -632,13 +504,13 @@ export default function DashboardPage() {
                     setRequestToken(val);
                   }}
                   placeholder="Paste token or redirect URL here..."
-                  className="h-9 border-border bg-card text-foreground text-xs focus:ring-1 focus:ring-blue-500 placeholder:text-muted-foreground"
+                  className="h-9 border-border bg-card text-foreground text-xs focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
                 />
 
                 <Button
                   type="submit"
                   disabled={isRenewing || !requestToken}
-                  className="w-full h-9 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs disabled:opacity-50 shadow-sm"
+                  className="w-full h-9 bg-foreground hover:bg-foreground/90 text-background font-semibold text-xs disabled:opacity-50"
                 >
                   {isRenewing ? "Activating..." : "Activate Manual Session"}
                 </Button>

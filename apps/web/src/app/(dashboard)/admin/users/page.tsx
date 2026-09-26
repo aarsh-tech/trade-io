@@ -331,19 +331,19 @@ export default function AdminUsersPage() {
           return (
             <div className="flex items-center gap-3">
               <div
-                className={`h-9 w-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs ${
+                className={`h-9 w-9 rounded-full flex items-center justify-center font-semibold text-xs shrink-0  ${
                   u.role === "ADMIN"
-                    ? "bg-purple-100 text-purple-700 border border-purple-200"
-                    : "bg-blue-100 text-blue-700 border border-blue-200"
+                    ? "bg-signal-subtle text-signal border border-signal/30"
+                    : "bg-brand-subtle text-accent-foreground border border-primary/30"
                 }`}
               >
                 {u.name.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-foreground truncate">{u.name}</span>
+                  <span className="font-semibold text-foreground truncate">{u.name}</span>
                   {isSelf && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-muted text-foreground/75 border border-border">
+                    <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-muted text-foreground/75 border border-border">
                       YOU
                     </span>
                   )}
@@ -364,7 +364,7 @@ export default function AdminUsersPage() {
         cell: ({ row }) => {
           const role = row.getValue("role") as string;
           return role === "ADMIN" ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-signal-subtle text-signal border border-signal/30">
               <Shield className="h-3 w-3" />
               ADMIN
             </span>
@@ -383,13 +383,13 @@ export default function AdminUsersPage() {
         cell: ({ row }) => {
           const isActive = row.getValue("isActive") as boolean;
           return isActive ? (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-profit bg-profit-subtle px-2 py-0.5 rounded-full border border-profit/30">
+              <span className="h-1.5 w-1.5 rounded-full bg-profit" />
               Active
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-loss bg-loss-subtle px-2 py-0.5 rounded-full border border-loss/30">
+              <span className="h-1.5 w-1.5 rounded-full bg-loss" />
               Suspended
             </span>
           );
@@ -404,8 +404,8 @@ export default function AdminUsersPage() {
           const u = row.original;
           return u.hasActiveSession ? (
             <div>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping" />
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-warn bg-warn-subtle px-2 py-0.5 rounded-full border border-warn/30">
+                <span className="h-1.5 w-1.5 rounded-full bg-warn animate-ping" />
                 Online
               </span>
               <span className="text-[10px] text-muted-foreground block mt-0.5">
@@ -456,8 +456,8 @@ export default function AdminUsersPage() {
                 disabled={isSelf}
                 className={`p-1.5 rounded-lg border transition-colors ${
                   u.isActive
-                    ? "hover:bg-amber-50 hover:text-amber-700 border-border text-foreground/75"
-                    : "hover:bg-emerald-50 hover:text-emerald-700 border-border text-foreground/75"
+                    ? "hover:bg-warn-subtle hover:text-warn border-border text-foreground/75"
+                    : "hover:bg-profit-subtle hover:text-profit border-border text-foreground/75"
                 } ${isSelf ? "opacity-30 cursor-not-allowed" : ""}`}
                 title={u.isActive ? "Suspend Access" : "Activate Access"}
               >
@@ -472,7 +472,7 @@ export default function AdminUsersPage() {
                   setCustomNewPass("");
                   setGeneratedPassResult(null);
                 }}
-                className="p-1.5 rounded-lg border border-border hover:bg-purple-50 hover:text-purple-700 text-foreground/75 transition-colors"
+                className="p-1.5 rounded-lg border border-border hover:bg-signal-subtle hover:text-signal text-foreground/75 transition-colors"
                 title="Reset Password"
               >
                 <KeyRound className="h-3.5 w-3.5" />
@@ -482,7 +482,7 @@ export default function AdminUsersPage() {
               <button
                 type="button"
                 onClick={() => handleForceLogout(u)}
-                className="p-1.5 rounded-lg border border-border hover:bg-orange-50 hover:text-orange-700 text-foreground/75 transition-colors"
+                className="p-1.5 rounded-lg border border-border hover:bg-warn-subtle hover:text-warn text-foreground/75 transition-colors"
                 title="Terminate Active Sessions"
               >
                 <LogOut className="h-3.5 w-3.5" />
@@ -493,7 +493,7 @@ export default function AdminUsersPage() {
                 type="button"
                 onClick={() => handleToggleRole(u)}
                 disabled={isSelf}
-                className={`p-1.5 rounded-lg border border-border hover:bg-blue-50 hover:text-blue-700 text-foreground/75 transition-colors ${
+                className={`p-1.5 rounded-lg border border-border hover:bg-brand-subtle hover:text-accent-foreground text-foreground/75 transition-colors ${
                   isSelf ? "opacity-30 cursor-not-allowed" : ""
                 }`}
                 title={u.role === "ADMIN" ? "Demote to Trader" : "Promote to Admin"}
@@ -506,7 +506,7 @@ export default function AdminUsersPage() {
                 type="button"
                 onClick={() => handleDeleteUser(u)}
                 disabled={isSelf}
-                className={`p-1.5 rounded-lg border border-border hover:bg-rose-50 hover:text-rose-700 text-foreground/75 transition-colors ${
+                className={`p-1.5 rounded-lg border border-border hover:bg-loss-subtle hover:text-loss text-foreground/75 transition-colors ${
                   isSelf ? "opacity-30 cursor-not-allowed" : ""
                 }`}
                 title="Delete Account"
@@ -525,16 +525,16 @@ export default function AdminUsersPage() {
   if (!loading && currentUser?.role !== "ADMIN") {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] p-6 text-center">
-        <div className="h-16 w-16 rounded-2xl bg-rose-100 border border-rose-200 flex items-center justify-center text-rose-600 mb-4 shadow-sm">
+        <div className="h-16 w-16 rounded-lg bg-loss-subtle border border-loss/30 flex items-center justify-center text-loss mb-4">
           <AlertTriangle className="h-8 w-8" />
         </div>
-        <h1 className="text-2xl font-bold text-foreground mb-2">Administrator Access Required</h1>
+        <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground mb-2">Administrator Access Required</h1>
         <p className="text-sm text-muted-foreground max-w-md mb-6">
           This portal is restricted to system administrators. Your account does not have permission to manage user credentials or access controls.
         </p>
         <Link
           href="/dashboard"
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors"
+          className="px-4 py-2 bg-primary hover:bg-brand-hover text-primary-foreground text-sm font-semibold rounded-lg transition-colors"
         >
           Return to Dashboard
         </Link>
@@ -548,15 +548,15 @@ export default function AdminUsersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-purple-600 text-white shadow-md shadow-purple-600/20">
+            <div className="p-2 rounded-lg bg-signal text-on-signal shadow-md">
               <ShieldCheck className="h-6 w-6" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight">
+                <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">
                   User & Access Management
                 </h1>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200">
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-signal-subtle text-signal border border-signal/30">
                   ADMIN ONLY
                 </span>
               </div>
@@ -572,10 +572,10 @@ export default function AdminUsersPage() {
             type="button"
             onClick={fetchUsers}
             disabled={refreshing}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-border hover:bg-muted/50 text-foreground/75 transition-colors shadow-2xs"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-border hover:bg-muted/50 text-foreground/75 transition-colors"
             title="Refresh list"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin text-purple-600" : ""}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin text-signal" : ""}`} />
             <span className="hidden sm:inline">Refresh</span>
           </button>
 
@@ -585,7 +585,7 @@ export default function AdminUsersPage() {
               setCreatedCredentials(null);
               setShowCreateModal(true);
             }}
-            className="flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-md shadow-purple-600/20 transition-all active:scale-98"
+            className="flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-signal hover:bg-signal/90 text-on-signal shadow-md transition-all active:scale-98"
           >
             <UserPlus className="h-4 w-4" />
             <span>Provision User</span>
@@ -596,15 +596,15 @@ export default function AdminUsersPage() {
       {/* KPI Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Total Users */}
-        <div className="bg-card rounded-xl border border-border/80 p-4 shadow-2xs relative overflow-hidden">
+        <div className="bg-card rounded-lg border border-border/80 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Accounts</span>
-            <div className="p-2 rounded-lg bg-blue-50 text-blue-600 border border-blue-100">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Accounts</span>
+            <div className="p-2 rounded-lg bg-brand-subtle text-accent-foreground border border-primary/30">
               <Users className="h-4 w-4" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-foreground">
+            <span className="text-2xl sm:text-3xl font-semibold text-foreground">
               {loading ? "..." : stats.totalUsers}
             </span>
             <span className="text-xs text-muted-foreground">Registered</span>
@@ -612,15 +612,15 @@ export default function AdminUsersPage() {
         </div>
 
         {/* Active Accounts */}
-        <div className="bg-card rounded-xl border border-border/80 p-4 shadow-2xs relative overflow-hidden">
+        <div className="bg-card rounded-lg border border-border/80 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Active Users</span>
-            <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Active Users</span>
+            <div className="p-2 rounded-lg bg-profit-subtle text-profit border border-profit/30">
               <UserCheck className="h-4 w-4" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-emerald-600">
+            <span className="text-2xl sm:text-3xl font-semibold text-profit">
               {loading ? "..." : stats.activeUsers}
             </span>
             <span className="text-xs text-muted-foreground">Allowed Login</span>
@@ -628,15 +628,15 @@ export default function AdminUsersPage() {
         </div>
 
         {/* Live Active Sessions */}
-        <div className="bg-card rounded-xl border border-border/80 p-4 shadow-2xs relative overflow-hidden">
+        <div className="bg-card rounded-lg border border-border/80 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Active Sessions</span>
-            <div className="p-2 rounded-lg bg-amber-50 text-amber-600 border border-amber-100">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Active Sessions</span>
+            <div className="p-2 rounded-lg bg-warn-subtle text-warn border border-warn/30">
               <Radio className="h-4 w-4 animate-pulse" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-amber-600">
+            <span className="text-2xl sm:text-3xl font-semibold text-warn">
               {loading ? "..." : stats.activeSessions}
             </span>
             <span className="text-xs text-muted-foreground">Online Now</span>
@@ -644,15 +644,15 @@ export default function AdminUsersPage() {
         </div>
 
         {/* Administrators */}
-        <div className="bg-card rounded-xl border border-border/80 p-4 shadow-2xs relative overflow-hidden">
+        <div className="bg-card rounded-lg border border-border/80 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">System Admins</span>
-            <div className="p-2 rounded-lg bg-purple-50 text-purple-600 border border-purple-100">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">System Admins</span>
+            <div className="p-2 rounded-lg bg-signal-subtle text-signal border border-signal/30">
               <Shield className="h-4 w-4" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-purple-700">
+            <span className="text-2xl sm:text-3xl font-semibold text-signal">
               {loading ? "..." : stats.totalAdmins}
             </span>
             <span className="text-xs text-muted-foreground">Full Privileges</span>
@@ -661,7 +661,7 @@ export default function AdminUsersPage() {
       </div>
 
       {/* Standard TanStack DataTable */}
-      <div className="bg-card rounded-xl border border-border/80 shadow-2xs p-4">
+      <div className="bg-card rounded-lg border border-border/80 p-4">
         <DataTable
           columns={columns}
           data={filteredUsers}
@@ -678,7 +678,7 @@ export default function AdminUsersPage() {
                   type="button"
                   onClick={() => setRoleFilter("ALL")}
                   className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
-                    roleFilter === "ALL" ? "bg-card text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                    roleFilter === "ALL" ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   All Roles
@@ -687,7 +687,7 @@ export default function AdminUsersPage() {
                   type="button"
                   onClick={() => setRoleFilter("ADMIN")}
                   className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
-                    roleFilter === "ADMIN" ? "bg-purple-600 text-white shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                    roleFilter === "ADMIN" ? "bg-signal text-on-signal " : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   Admins
@@ -696,7 +696,7 @@ export default function AdminUsersPage() {
                   type="button"
                   onClick={() => setRoleFilter("USER")}
                   className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
-                    roleFilter === "USER" ? "bg-card text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                    roleFilter === "USER" ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   Traders
@@ -709,7 +709,7 @@ export default function AdminUsersPage() {
                   type="button"
                   onClick={() => setStatusFilter("ALL")}
                   className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
-                    statusFilter === "ALL" ? "bg-card text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                    statusFilter === "ALL" ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   All Status
@@ -718,7 +718,7 @@ export default function AdminUsersPage() {
                   type="button"
                   onClick={() => setStatusFilter("ACTIVE")}
                   className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
-                    statusFilter === "ACTIVE" ? "bg-emerald-600 text-white shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                    statusFilter === "ACTIVE" ? "bg-profit text-on-profit " : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   Active
@@ -727,7 +727,7 @@ export default function AdminUsersPage() {
                   type="button"
                   onClick={() => setStatusFilter("INACTIVE")}
                   className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
-                    statusFilter === "INACTIVE" ? "bg-rose-600 text-white shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                    statusFilter === "INACTIVE" ? "bg-loss text-on-loss " : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   Suspended
@@ -742,9 +742,9 @@ export default function AdminUsersPage() {
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
         <DialogContent className="sm:max-w-md p-6">
           <DialogHeader>
-            <div className="flex items-center gap-2 text-purple-600 mb-1">
+            <div className="flex items-center gap-2 text-signal mb-1">
               <UserPlus className="h-5 w-5" />
-              <DialogTitle className="text-lg font-bold text-foreground">Provision New Account</DialogTitle>
+              <DialogTitle className="text-lg font-semibold text-foreground">Provision New Account</DialogTitle>
             </div>
             <DialogDescription className="text-xs text-muted-foreground">
               Create an authorized account. If you leave the password blank, the system will generate a secure random password.
@@ -753,23 +753,23 @@ export default function AdminUsersPage() {
 
           {createdCredentials ? (
             <div className="space-y-4 py-3">
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200/80 space-y-2.5">
-                <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
-                  <Check className="h-4 w-4 text-emerald-600" />
+              <div className="p-4 rounded-lg bg-profit-subtle border border-profit/80 space-y-2.5">
+                <div className="flex items-center gap-2 text-profit font-semibold text-sm">
+                  <Check className="h-4 w-4 text-profit" />
                   Account Ready to Deliver!
                 </div>
-                <p className="text-xs text-emerald-700">
-                  Provide these credentials to the user. They can log in immediately at <code className="font-mono bg-emerald-100/70 px-1 py-0.5 rounded">/login</code>.
+                <p className="text-xs text-profit">
+                  Provide these credentials to the user. They can log in immediately at <code className="font-mono bg-profit-subtle/70 px-1 py-0.5 rounded">/login</code>.
                 </p>
 
-                <div className="bg-card p-3 rounded-lg border border-emerald-200 text-xs font-mono space-y-1.5 mt-2">
+                <div className="bg-card p-3 rounded-lg border border-profit/30 text-xs font-mono space-y-1.5 mt-2">
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Email:</span>
-                    <span className="font-bold text-foreground">{createdCredentials.email}</span>
+                    <span className="font-semibold text-foreground">{createdCredentials.email}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Password:</span>
-                    <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                    <span className="font-semibold text-signal bg-signal-subtle px-2 py-0.5 rounded border border-signal/30">
                       {createdCredentials.password}
                     </span>
                   </div>
@@ -783,7 +783,7 @@ export default function AdminUsersPage() {
                       "new-user"
                     )
                   }
-                  className="w-full mt-2 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg flex items-center justify-center gap-1.5 transition-colors"
+                  className="w-full mt-2 py-2 px-3 bg-profit hover:bg-profit/90 text-on-profit font-semibold text-xs rounded-lg flex items-center justify-center gap-1.5 transition-colors"
                 >
                   {copiedKey === "new-user" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                   <span>{copiedKey === "new-user" ? "Copied to Clipboard!" : "Copy User Credentials"}</span>
@@ -806,31 +806,31 @@ export default function AdminUsersPage() {
           ) : (
             <form onSubmit={handleCreateUserSubmit} className="space-y-4 py-2">
               <div>
-                <label className="block text-xs font-bold text-foreground/75 mb-1">Full Name</label>
+                <label className="block text-xs font-semibold text-foreground/75 mb-1">Full Name</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. John Doe"
                   value={createForm.name}
                   onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
-                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-signal/20 focus:border-signal"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-foreground/75 mb-1">Email Address</label>
+                <label className="block text-xs font-semibold text-foreground/75 mb-1">Email Address</label>
                 <input
                   type="email"
                   required
                   placeholder="trader@domain.com"
                   value={createForm.email}
                   onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
-                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-signal/20 focus:border-signal"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-foreground/75 mb-1">
+                <label className="block text-xs font-semibold text-foreground/75 mb-1">
                   Initial Password <span className="font-normal text-muted-foreground">(Optional - auto-generated if blank)</span>
                 </label>
                 <input
@@ -838,16 +838,16 @@ export default function AdminUsersPage() {
                   placeholder="Leave empty for auto-generated password"
                   value={createForm.password}
                   onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-signal/20 focus:border-signal"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-foreground/75 mb-1">Initial Role</label>
+                <label className="block text-xs font-semibold text-foreground/75 mb-1">Initial Role</label>
                 <select
                   value={createForm.role}
                   onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as "USER" | "ADMIN" })}
-                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-signal/20 focus:border-signal"
                 >
                   <option value="USER">TRADER (Standard user with algo & broker tools)</option>
                   <option value="ADMIN">ADMINISTRATOR (Full user management rights)</option>
@@ -864,7 +864,7 @@ export default function AdminUsersPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow-sm transition-colors"
+                  className="px-4 py-2 text-xs font-semibold bg-signal hover:bg-signal/90 text-on-signal rounded-lg transition-colors"
                 >
                   Create & Generate Access
                 </button>
@@ -878,9 +878,9 @@ export default function AdminUsersPage() {
       <Dialog open={Boolean(resetModalUser)} onOpenChange={(open) => !open && setResetModalUser(null)}>
         <DialogContent className="sm:max-w-md p-6">
           <DialogHeader>
-            <div className="flex items-center gap-2 text-purple-600 mb-1">
+            <div className="flex items-center gap-2 text-signal mb-1">
               <KeyRound className="h-5 w-5" />
-              <DialogTitle className="text-lg font-bold text-foreground">Reset User Password</DialogTitle>
+              <DialogTitle className="text-lg font-semibold text-foreground">Reset User Password</DialogTitle>
             </div>
             <DialogDescription className="text-xs text-muted-foreground">
               Reset credentials for <strong className="text-foreground">{resetModalUser?.email}</strong>. This will immediately terminate all their active sessions.
@@ -889,16 +889,16 @@ export default function AdminUsersPage() {
 
           {generatedPassResult ? (
             <div className="space-y-4 py-3">
-              <div className="p-4 rounded-xl bg-purple-50 border border-purple-200 space-y-2">
-                <p className="text-xs font-semibold text-purple-900">
+              <div className="p-4 rounded-lg bg-signal-subtle border border-signal/30 space-y-2">
+                <p className="text-xs font-semibold text-signal">
                   New Password Generated Successfully:
                 </p>
-                <div className="flex items-center justify-between bg-card p-3 rounded-lg border border-purple-200 font-mono text-sm font-bold text-purple-800">
+                <div className="flex items-center justify-between bg-card p-3 rounded-lg border border-signal/30 font-mono text-sm font-semibold text-signal">
                   <span>{generatedPassResult}</span>
                   <button
                     type="button"
                     onClick={() => copyToClipboard(generatedPassResult, "reset-pass")}
-                    className="p-1.5 hover:bg-purple-50 rounded text-purple-600 transition-colors"
+                    className="p-1.5 hover:bg-signal-subtle rounded text-signal transition-colors"
                     title="Copy"
                   >
                     {copiedKey === "reset-pass" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
@@ -922,7 +922,7 @@ export default function AdminUsersPage() {
           ) : (
             <form onSubmit={handleResetPasswordSubmit} className="space-y-4 py-2">
               <div>
-                <label className="block text-xs font-bold text-foreground/75 mb-1">
+                <label className="block text-xs font-semibold text-foreground/75 mb-1">
                   New Password <span className="font-normal text-muted-foreground">(Optional - auto-generated if blank)</span>
                 </label>
                 <input
@@ -930,7 +930,7 @@ export default function AdminUsersPage() {
                   placeholder="Leave empty to auto-generate"
                   value={customNewPass}
                   onChange={(e) => setCustomNewPass(e.target.value)}
-                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                  className="w-full px-3 py-2 text-xs sm:text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-signal/20 focus:border-signal"
                 />
               </div>
 
@@ -944,7 +944,7 @@ export default function AdminUsersPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow-sm transition-colors"
+                  className="px-4 py-2 text-xs font-semibold bg-signal hover:bg-signal/90 text-on-signal rounded-lg transition-colors"
                 >
                   Confirm & Reset
                 </button>

@@ -140,35 +140,35 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100%-1.5rem)] sm:max-w-xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden border border-border/90 shadow-2xl rounded-2xl bg-card">
+      <DialogContent className="w-[calc(100%-1.5rem)] sm:max-w-xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden border border-border/90 shadow-2xl rounded-xl bg-card">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-600/10 via-indigo-500/10 to-blue-600/5 px-5 sm:px-6 pt-5 pb-4 border-b border-blue-200/60 flex items-start gap-3.5">
-          <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 text-white shadow-xs">
+        <div className="bg--50 px-5 sm:px-6 pt-5 pb-4 border-b border-primary/60 flex items-start gap-3.5">
+          <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-primary flex items-center justify-center shrink-0 text-primary-foreground">
             <Key className="h-5 w-5 sm:h-6 sm:w-6" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-blue-700 bg-blue-100/90 border border-blue-300/80 px-2 py-0.5 rounded-full">
+              <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-accent-foreground bg-brand-subtle/90 border border-primary/80 px-2 py-0.5 rounded-full">
                 Zerodha Kite Connect
               </span>
               <span
                 className={cn(
                   "text-[10px] sm:text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1",
                   isSessionValid
-                    ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                    : "bg-amber-100 text-amber-800 border border-amber-300"
+                    ? "bg-profit-subtle text-profit border border-profit/30"
+                    : "bg-warn-subtle text-warn border border-warn/30"
                 )}
               >
                 <span
                   className={cn(
                     "h-1.5 w-1.5 rounded-full",
-                    isSessionValid ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
+                    isSessionValid ? "bg-profit" : "bg-warn animate-pulse"
                   )}
                 />
                 {isSessionValid ? "Session Active" : "Daily Login Needed"}
               </span>
             </div>
-            <DialogTitle className="text-base sm:text-lg font-bold text-foreground mt-1">
+            <DialogTitle className="text-base sm:text-lg font-semibold text-foreground mt-1">
               Kite Daily Session &amp; API Manager
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground mt-0.5">
@@ -182,8 +182,8 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
           {/* Section 1: Daily Login & Token Activation */}
           <div className="bg-muted/40 border border-border rounded-xl p-4 space-y-3.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-accent-foreground" />
                 Step 1: Daily Kite Authentication
               </span>
               {zerodhaAccount?.clientId && (
@@ -200,7 +200,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
             <Button
               type="button"
               onClick={handleLoginClick}
-              className="w-full h-10 bg-[#387ed1] hover:bg-[#2d6bb3] text-white text-xs sm:text-sm font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-all"
+              className="w-full h-10 bg-primary hover:bg-primary/90 text-primary-foreground text-xs sm:text-sm font-semibold rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-all"
             >
               <ExternalLink className="h-4 w-4" />
               <span>1-Click Open Zerodha Kite Login</span>
@@ -215,7 +215,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                 <button
                   type="button"
                   onClick={handlePasteClipboard}
-                  className="text-[11px] text-blue-600 hover:text-blue-700 hover:underline font-medium cursor-pointer flex items-center gap-1"
+                  className="text-[11px] text-accent-foreground hover:text-accent-foreground hover:underline font-medium cursor-pointer flex items-center gap-1"
                 >
                   <Copy className="h-3 w-3" />
                   <span>Paste from clipboard</span>
@@ -227,12 +227,12 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                   value={requestToken}
                   onChange={(e) => setRequestToken(e.target.value)}
                   placeholder="e.g. 8pM9x... or https://tradeio.site/dashboard?request_token=..."
-                  className="h-10 text-xs font-mono bg-card border-border focus:border-blue-500"
+                  className="h-10 text-xs font-mono bg-card border-border focus:border-primary"
                 />
                 <Button
                   type="submit"
                   disabled={isRenewing || !requestToken.trim()}
-                  className="h-10 px-4 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shrink-0 cursor-pointer disabled:opacity-50"
+                  className="h-10 px-4 bg-foreground hover:bg-foreground/90 text-background text-xs font-semibold shrink-0 cursor-pointer disabled:opacity-50"
                 >
                   {isRenewing ? (
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -246,23 +246,23 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
           </div>
 
           {/* Section 2: Zerodha Developer Console Copy-Paste Settings */}
-          <div className="bg-amber-50/50 border border-amber-200/80 rounded-xl p-4 space-y-3">
+          <div className="bg-warn-subtle/50 border border-warn/80 rounded-xl p-4 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
-                <Globe className="h-3.5 w-3.5 text-amber-600" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-warn flex items-center gap-1.5">
+                <Globe className="h-3.5 w-3.5 text-warn" />
                 Step 2: Kite Developer Console URLs
               </span>
               <div className="flex items-center gap-2">
                 {/* Environment Selector Toggle */}
-                <div className="flex items-center bg-amber-100/80 p-0.5 rounded-lg text-[10px] font-semibold border border-amber-200">
+                <div className="flex items-center bg-warn-subtle/80 p-0.5 rounded-lg text-[10px] font-semibold border border-warn/30">
                   <button
                     type="button"
                     onClick={() => setEnvMode("production")}
                     className={cn(
                       "px-2 py-0.5 rounded-md transition-all cursor-pointer",
                       envMode === "production"
-                        ? "bg-card text-blue-700 shadow-2xs font-bold"
-                        : "text-amber-900/70 hover:text-amber-950"
+                        ? "bg-card text-accent-foreground  font-semibold"
+                        : "text-warn/70 hover:text-warn"
                     )}
                   >
                     Live (tradeio.site)
@@ -273,8 +273,8 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                     className={cn(
                       "px-2 py-0.5 rounded-md transition-all cursor-pointer",
                       envMode === "local"
-                        ? "bg-card text-blue-700 shadow-2xs font-bold"
-                        : "text-amber-900/70 hover:text-amber-950"
+                        ? "bg-card text-accent-foreground  font-semibold"
+                        : "text-warn/70 hover:text-warn"
                     )}
                   >
                     Localhost
@@ -285,7 +285,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                   href="https://developers.kite.trade/apps"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[11px] font-semibold text-blue-600 hover:underline flex items-center gap-1"
+                  className="text-[11px] font-semibold text-accent-foreground hover:underline flex items-center gap-1"
                 >
                   <span>Open Console</span>
                   <ExternalLink className="h-3 w-3" />
@@ -293,7 +293,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
               </div>
             </div>
 
-            <p className="text-xs text-amber-950/80 leading-relaxed">
+            <p className="text-xs text-warn/80 leading-relaxed">
               Replace <strong>http://localhost:5000</strong> in your Kite Connect App settings at{" "}
               <strong>developers.kite.trade</strong> with:
             </p>
@@ -302,7 +302,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px] font-medium text-foreground/75">
                 <span>Redirect URL (Primary):</span>
-                <span className="text-[10px] text-emerald-600 font-semibold">Recommended</span>
+                <span className="text-[10px] text-profit font-semibold">Recommended</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <div className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-xs font-mono text-foreground truncate select-all">
@@ -316,7 +316,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                   className="h-9 px-3 shrink-0 cursor-pointer hover:bg-muted"
                 >
                   {copiedField === "Redirect URL" ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    <Check className="h-3.5 w-3.5 text-profit" />
                   ) : (
                     <Copy className="h-3.5 w-3.5 text-foreground/75" />
                   )}
@@ -343,7 +343,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
                   className="h-9 px-3 shrink-0 cursor-pointer hover:bg-muted"
                 >
                   {copiedField === "Dashboard URL" ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    <Check className="h-3.5 w-3.5 text-profit" />
                   ) : (
                     <Copy className="h-3.5 w-3.5 text-foreground/75" />
                   )}
@@ -353,12 +353,12 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
             </div>
 
             {/* Field 3: Kite Developer Static IP Notice */}
-            <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3 space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-blue-900">
+            <div className="rounded-lg border border-primary/30 bg-brand-subtle/70 p-3 space-y-1">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-accent-foreground">
                 <span>Static IP in Kite Developer Console:</span>
-                <span className="text-[10px] text-blue-600 font-medium">Mandatory by Zerodha</span>
+                <span className="text-[10px] text-accent-foreground font-medium">Mandatory by Zerodha</span>
               </div>
-              <p className="text-[11.5px] leading-relaxed text-blue-950/85">
+              <p className="text-[11.5px] leading-relaxed text-accent-foreground/85">
                 Zerodha requires each developer app to have a unique IP. Enter your designated / assigned <strong>Static IP</strong> in your Kite Connect App settings.
               </p>
             </div>

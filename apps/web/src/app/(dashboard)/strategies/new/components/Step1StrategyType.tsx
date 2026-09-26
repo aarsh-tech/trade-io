@@ -29,13 +29,13 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       type: "STOCK_OPTIONS_BUYING" as const,
       label: "Stock Option Auto-Hunter (Banker & Runner)",
       badge: "🔥 80% WIN-RATE",
-      badgeClass: "bg-blue-600 hover:bg-blue-600 text-white font-extrabold shadow-xs",
+      badgeClass: "bg-primary hover:bg-brand-hover text-primary-foreground font-semibold ",
       timing: "09:15 AM",
       tag: "180+ F&O Scanner",
-      tagColor: "text-indigo-950 bg-indigo-100 border border-indigo-300 font-bold",
+      tagColor: "text-accent-foreground bg-brand-subtle border border-primary/30 font-semibold",
       desc: "Scans 180+ F&O stocks for 5%–10% momentum. Buys ITM options, books 50% at T1 (+50% ROI), trails SL to cost, and rides T2 (+100% ROI).",
       icon: Flame,
-      iconColor: "text-blue-700 bg-blue-100 border border-blue-300",
+      iconColor: "text-accent-foreground bg-brand-subtle border border-primary/30",
       features: [
         "180+ F&O Auto Stock Picker",
         "50% Cash Lock @ T1 (+50% ROI)",
@@ -48,13 +48,13 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       type: "EMA_VWAP_CROSSOVER" as const,
       label: "Intraday Auto Stock Picker (₹500 Target)",
       badge: "⭐ RECOMMENDED PRESET",
-      badgeClass: "bg-emerald-600 hover:bg-emerald-600 text-white font-extrabold shadow-xs",
+      badgeClass: "bg-profit hover:bg-profit/90 text-on-profit font-semibold ",
       timing: "09:15 AM",
       tag: "5x MIS Leverage",
-      tagColor: "text-emerald-950 bg-emerald-100 border border-emerald-300 font-bold",
+      tagColor: "text-profit bg-profit-subtle border border-profit/30 font-semibold",
       desc: "Scans 180+ F&O stocks for highest-momentum mover with 15-EMA + VWAP confirmation. Trades MIS with dynamic ₹500 target & ₹500 SL.",
       icon: TrendingUp,
-      iconColor: "text-emerald-700 bg-emerald-100 border border-emerald-300",
+      iconColor: "text-profit bg-profit-subtle border border-profit/30",
       features: [
         "Auto 09:15 AM Stock Picker",
         "Strict Risk Sizing (Max 25% Capital)",
@@ -67,13 +67,13 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       type: "GAMMA_BLAST_EXPIRY" as const,
       label: "Daily Index Scalper (SENSEX & NIFTY)",
       badge: "⚡ DAILY INDEX SCALPER",
-      badgeClass: "bg-amber-600 hover:bg-amber-600 text-white font-extrabold shadow-xs",
+      badgeClass: "bg-warn hover:bg-warn/90 text-on-warn font-semibold ",
       timing: "09:20 AM – 03:25 PM",
       tag: "NIFTY & SENSEX (ALL DAYS)",
-      tagColor: "text-amber-950 bg-amber-100 border border-amber-300 font-bold",
+      tagColor: "text-warn bg-warn-subtle border border-warn/30 font-semibold",
       desc: "Trades high-probability index breakouts every day (Mon–Fri). Selects high-delta ATM & ITM options with institutional VWAP, 15-EMA & volume confirmation.",
       icon: Zap,
-      iconColor: "text-amber-700 bg-amber-100 border border-amber-300",
+      iconColor: "text-warn bg-warn-subtle border border-warn/30",
       features: [
         "NIFTY & SENSEX (All Days)",
         "High-Delta ATM & ITM (Zero Cheap OTM)",
@@ -86,13 +86,13 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       type: "NIFTY_OPTIONS_SCALPER" as const,
       label: "Nifty Options Scalper (Dynamic Margin)",
       badge: "RAPID SCALPER",
-      badgeClass: "bg-purple-600 hover:bg-purple-600 text-white font-extrabold shadow-xs",
+      badgeClass: "bg-signal hover:bg-signal/90 text-on-signal font-semibold ",
       timing: "09:20 AM",
       tag: "Uncapped Trail",
-      tagColor: "text-purple-950 bg-purple-100 border border-purple-300 font-bold",
+      tagColor: "text-signal bg-signal-subtle border border-signal/30 font-semibold",
       desc: "Captures rapid Nifty impulses using 3 confluence triggers. Auto-sizes lots dynamically from live Zerodha margin and arms exchange SL.",
       icon: Target,
-      iconColor: "text-purple-700 bg-purple-100 border border-purple-300",
+      iconColor: "text-signal bg-signal-subtle border border-signal/30",
       features: [
         "Dynamic Margin Lots",
         "Exchange Server SL Armed",
@@ -105,13 +105,13 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       type: "BREAKOUT_15MIN" as const,
       label: "15-Min Breakout (Dynamic Margin + Server SL)",
       badge: "OPENING RANGE",
-      badgeClass: "bg-sky-600 hover:bg-sky-600 text-white font-extrabold shadow-xs",
+      badgeClass: "bg-primary hover:bg-brand-hover text-primary-foreground font-semibold ",
       timing: "09:30 AM",
       tag: "Trap Reversal",
-      tagColor: "text-sky-950 bg-sky-100 border border-sky-300 font-bold",
+      tagColor: "text-accent-foreground bg-brand-subtle border border-primary/30 font-semibold",
       desc: "Trades 15-Min Opening Range Breakouts & Breakdowns with false-breakout trap reversal and server SL-L at Zerodha.",
       icon: BarChart2,
-      iconColor: "text-sky-700 bg-sky-100 border border-sky-300",
+      iconColor: "text-accent-foreground bg-brand-subtle border border-primary/30",
       features: [
         "False Breakout Trap Reversal",
         "Server SL-L Placed on Kite",
@@ -125,14 +125,14 @@ export function Step1StrategyType({ form, set }: Step1Props) {
   return (
     <div className="space-y-5">
       {/* ─── Strategy Identifier Name Card ─── */}
-      <div className="rounded-2xl border-2 border-border bg-card p-4 sm:p-5 shadow-xs">
+      <div className="rounded-lg border-2 border-border bg-card p-4 sm:p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-blue-100 text-blue-800 border border-blue-300 shrink-0">
+            <div className="p-2.5 rounded-lg bg-brand-subtle text-accent-foreground border border-primary/30 shrink-0">
               <Bot className="h-5 w-5" />
             </div>
             <div>
-              <label htmlFor="strategy-name" className="text-xs sm:text-sm font-extrabold text-foreground block">
+              <label htmlFor="strategy-name" className="text-xs sm:text-sm font-semibold text-foreground block">
                 Strategy Identifier Name
               </label>
               <p className="text-xs text-foreground/75 font-medium mt-0.5">
@@ -146,7 +146,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
               placeholder="e.g. Stock Options Hunter"
-              className="h-10 text-xs font-bold bg-card border-2 border-border focus:border-blue-600 rounded-xl text-foreground placeholder:text-muted-foreground shadow-xs"
+              className="h-10 text-xs font-semibold bg-card border-2 border-border focus:border-primary rounded-lg text-foreground placeholder:text-muted-foreground"
             />
           </div>
         </div>
@@ -155,7 +155,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
       {/* ─── Strategy Algorithm Cards Grid ─── */}
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-extrabold uppercase tracking-wider text-foreground block">
+          <label className="text-xs font-semibold uppercase tracking-wider text-foreground block">
             Select Strategy Algorithm
           </label>
           <span className="text-xs font-semibold text-foreground/75">
@@ -260,15 +260,15 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                     }
                   }, { role: "radio" })}
                   className={cn(
-                    "relative overflow-hidden rounded-2xl border-2 p-5 flex flex-col justify-between gap-3.5 transition-all duration-200 text-left cursor-pointer group bg-card shadow-xs",
+                    "relative overflow-hidden rounded-lg border-2 p-5 flex flex-col justify-between gap-3.5 transition-all duration-200 text-left cursor-pointer group bg-card ",
                     isSelected
-                      ? "border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/30"
-                      : "border-border hover:border-blue-400 hover:bg-muted/40"
+                      ? "border-primary bg-brand-subtle/60 shadow-md ring-2 ring-primary/30"
+                      : "border-border hover:border-primary hover:bg-muted/40"
                   )}
                 >
                   {/* Top Ambient Bar when selected */}
                   {isSelected && (
-                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500" />
+                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-primary" />
                   )}
 
                   <div className="space-y-3">
@@ -277,7 +277,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge
                           className={cn(
-                            "text-[10px] font-extrabold px-2.5 py-0.5 tracking-wider uppercase border-0",
+                            "text-[10px] font-semibold px-2.5 py-0.5 tracking-wider uppercase border-0",
                             badgeClass
                           )}
                         >
@@ -285,7 +285,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                         </Badge>
                         <Badge
                           variant="outline"
-                          className="text-[10px] font-bold border-border text-foreground bg-muted gap-1 py-0.5"
+                          className="text-[10px] font-semibold border-border text-foreground bg-muted gap-1 py-0.5"
                         >
                           <Clock className="h-3 w-3 text-foreground/75" />
                           {timing}
@@ -295,14 +295,14 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                       <div className="flex items-center gap-1.5">
                         <span
                           className={cn(
-                            "text-[11px] font-extrabold px-2.5 py-0.5 rounded-md",
+                            "text-[11px] font-semibold px-2.5 py-0.5 rounded-md",
                             tagColor
                           )}
                         >
                           {tag}
                         </span>
                         {isSelected && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-blue-900 bg-blue-100 px-2 py-0.5 rounded-full border border-blue-400">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-accent-foreground bg-brand-subtle px-2 py-0.5 rounded-full border border-primary">
                             <Check className="h-3 w-3 stroke-[3]" /> SELECTED
                           </span>
                         )}
@@ -313,14 +313,14 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                     <div className="flex items-start gap-3 mt-1">
                       <div
                         className={cn(
-                          "p-2.5 rounded-xl shrink-0 transition-colors border",
+                          "p-2.5 rounded-lg shrink-0 transition-colors border",
                           iconColor
                         )}
                       >
                         <Icon className="h-5 w-5" />
                       </div>
                       <div className="min-w-0">
-                        <p className="font-extrabold text-sm sm:text-base text-foreground leading-snug group-hover:text-blue-700 transition-colors">
+                        <p className="font-semibold text-sm sm:text-base text-foreground leading-snug group-hover:text-accent-foreground transition-colors">
                           {label}
                         </p>
                         <p className="text-xs text-foreground leading-relaxed mt-1 font-medium line-clamp-3">
@@ -336,7 +336,7 @@ export function Step1StrategyType({ form, set }: Step1Props) {
                           <CheckCircle2
                             className={cn(
                               "h-4 w-4 shrink-0",
-                              isSelected ? "text-blue-700" : "text-emerald-700"
+                              isSelected ? "text-accent-foreground" : "text-profit"
                             )}
                           />
                           <span className="truncate text-foreground font-semibold">{feat}</span>

@@ -16,18 +16,17 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
         (liveState?.entryTriggered ||
           liveState?.stateType === "ACTIVE_POSITION" ||
           (liveState?.currentLtp && liveState?.entryPrice)) && (
-          <Card className="border-2 border-emerald-500/40 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 text-white shadow-2xl overflow-hidden relative rounded-2xl ring-1 ring-emerald-500/30">
-            <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
+          <Card className="p-0 border-profit/40 bg-card overflow-hidden relative">
             <CardContent className="p-5 sm:p-6 relative z-10 space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-4">
                 <div className="flex items-center gap-3">
                   <span className="relative flex h-4 w-4">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500" />
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit opacity-60" />
+                    <span className="relative inline-flex rounded-full h-4 w-4 bg-profit" />
                   </span>
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-xl font-black tracking-tight text-white">
+                      <h3 className="text-lg font-semibold tracking-tight text-foreground">
                         {liveState.activeSymbol ||
                           liveState.optionSymbol ||
                           liveState.futureSymbol ||
@@ -35,27 +34,27 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
                       </h3>
                       <Badge
                         className={cn(
-                          "text-[10px] font-black uppercase px-2.5 py-0.5",
+                          "text-[10px] font-semibold uppercase px-2 py-0.5",
                           liveState.entryTriggered === "LONG" || liveState.signalSide === "CALL"
-                            ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                            : "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                            ? "bg-profit/10 text-profit border border-profit/25"
+                            : "bg-loss/10 text-loss border border-loss/25"
                         )}
                       >
                         {liveState.entryTriggered || liveState.signalSide || "ACTIVE POSITION"}
                       </Badge>
-                      <Badge variant="outline" className="text-[10px] border-slate-700 text-slate-300">
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground">
                         {liveState.qty || strategy.config.qty || 1}{" "}
                         {strategy.type.includes("OPTION") ? "Contracts" : "Shares"}
                       </Badge>
                     </div>
-                    <p className="text-xs text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                    <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
                       <span>
                         {strategy.isPaperTrade
                           ? "📝 Paper Trade Engine"
                           : "⚡ Live Broker Real Execution"}
                       </span>
                       <span>•</span>
-                      <span className="text-amber-400 font-medium">
+                      <span className="text-warn font-medium">
                         ⏰ 03:15 PM IST Auto Square-Off Guaranteed
                       </span>
                     </p>
@@ -65,16 +64,16 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
                 {/* Running P&L Display */}
                 <div className="flex items-center gap-4 flex-wrap md:flex-nowrap justify-between md:justify-end">
                   <div className="text-left md:text-right">
-                    <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    <p className="text-[11px] font-medium text-muted-foreground">
                       Unrealized Live P&L
                     </p>
                     <div className="flex items-baseline gap-2 justify-start md:justify-end">
                       <span
                         className={cn(
-                          "text-3xl sm:text-4xl font-black tracking-tight",
+                          "text-2xl sm:text-3xl font-semibold tracking-tight num",
                           (displayPnlRs ?? 0) >= 0
-                            ? "text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.4)]"
-                            : "text-rose-400 drop-shadow-[0_0_15px_rgba(248,113,113,0.4)]"
+                            ? "text-profit"
+                            : "text-loss"
                         )}
                       >
                         {(displayPnlRs ?? 0) >= 0 ? "+" : ""}₹
@@ -82,8 +81,8 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
                       </span>
                       <span
                         className={cn(
-                          "text-sm font-bold",
-                          (displayPnlPct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"
+                          "text-sm font-medium num",
+                          (displayPnlPct ?? 0) >= 0 ? "text-profit" : "text-loss"
                         )}
                       >
                         ({(displayPnlPct ?? 0) >= 0 ? "+" : ""}
@@ -91,9 +90,9 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
                       </span>
                     </div>
                     {(liveState.peakPnlRs ?? 0) > 0 && (
-                      <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
                         Peak High:{" "}
-                        <span className="text-emerald-400 font-bold">
+                        <span className="text-profit font-medium num">
                           +₹{Number(liveState.peakPnlRs).toFixed(2)}
                         </span>
                       </p>
@@ -107,12 +106,13 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
                       isSquareOffBusy ||
                       (!liveState.entryTriggered && liveState.stateType !== "ACTIVE_POSITION")
                     }
-                    className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-4 h-11 rounded-xl shadow-lg shadow-rose-900/30 border border-rose-500/30 transition-all hover:scale-105 active:scale-95 whitespace-nowrap"
+                    variant="danger"
+                    className="font-semibold text-xs px-4 h-10 whitespace-nowrap"
                   >
                     {isSquareOffBusy ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
                     ) : (
-                      <Zap className="h-4 w-4 mr-1.5 fill-current text-amber-300" />
+                      <Zap className="h-4 w-4 mr-1.5" />
                     )}
                     Instant Square Off
                   </Button>
@@ -121,32 +121,32 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
 
               {/* 4-Box Telemetry Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-                <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-800/80">
-                  <p className="text-[10px] uppercase font-bold text-slate-400">Entry Price</p>
-                  <p className="text-base font-bold text-white mt-0.5">
+                <div className="p-3 rounded-lg bg-muted/60 border border-border">
+                  <p className="text-[11px] font-medium text-muted-foreground">Entry Price</p>
+                  <p className="text-base font-semibold num text-foreground mt-0.5">
                     ₹{Number(liveState.entryPrice ?? 0).toFixed(2)}
                   </p>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-800/80">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
+                <div className="p-3 rounded-lg bg-muted/60 border border-border">
+                  <p className="text-[11px] font-medium text-muted-foreground flex items-center justify-between">
                     <span>Current LTP</span>
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-profit animate-pulse" />
                   </p>
-                  <p className="text-base font-bold text-emerald-400 mt-0.5">
+                  <p className="text-base font-semibold num text-foreground mt-0.5">
                     ₹{Number(displayLtp).toFixed(2)}
                   </p>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-800/80">
-                  <p className="text-[10px] uppercase font-bold text-slate-400">Target (1:1.5 RR)</p>
-                  <p className="text-base font-bold text-emerald-300 mt-0.5">
+                <div className="p-3 rounded-lg bg-muted/60 border border-border">
+                  <p className="text-[11px] font-medium text-muted-foreground">Target (1:1.5 RR)</p>
+                  <p className="text-base font-semibold num text-profit mt-0.5">
                     ₹{Number(liveState.targetPrice ?? 0).toFixed(2)}
                   </p>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-800/80">
-                  <p className="text-[10px] uppercase font-bold text-slate-400">
+                <div className="p-3 rounded-lg bg-muted/60 border border-border">
+                  <p className="text-[11px] font-medium text-muted-foreground">
                     {liveState.isTrailingEma ? "Trailing SL (15-EMA)" : "Stop Loss"}
                   </p>
-                  <p className="text-base font-bold text-rose-300 mt-0.5">
+                  <p className="text-base font-semibold num text-loss mt-0.5">
                     ₹{Number(liveState.stopLossPrice ?? 0).toFixed(2)}
                   </p>
                 </div>
@@ -154,12 +154,12 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
 
               {/* Trailing Status Banner */}
               {liveState.isTrailingEma && (
-                <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
+                <div className="p-2.5 rounded-lg bg-profit/10 border border-profit/25 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-medium text-profit">
                     <TrendingUp className="h-4 w-4" />
                     <span>Dynamic 15-EMA Line Trailing Active — Riding Open Trend</span>
                   </div>
-                  <span className="text-xs font-mono font-black text-emerald-200">
+                  <span className="text-xs font-mono font-semibold text-profit">
                     Trail Stop: ₹{Number(liveState.stopLossPrice ?? 0).toFixed(2)}
                   </span>
                 </div>

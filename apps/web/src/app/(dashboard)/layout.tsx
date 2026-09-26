@@ -18,13 +18,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       >
         Skip to main content
       </a>
-      <div className="flex h-screen overflow-hidden bg-muted/25">
+      <div className="flex h-dvh overflow-hidden bg-background">
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden relative">
           <TopBar />
           <OfflineBanner />
-          <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none overflow-y-auto overflow-x-hidden p-3.5 sm:p-5 md:p-6 pb-24 md:pb-6">
-            {children}
+          <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4 lg:px-5 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-6">
+            <div className="mx-auto w-full max-w-[1600px]">{children}</div>
           </main>
           <MobileBottomNav />
         </div>

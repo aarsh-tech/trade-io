@@ -257,8 +257,8 @@ export default function OrdersPage() {
         return (
           <Badge
             className={cn(
-              "text-[10.5px] font-bold px-2.5 py-0.5 border-0 shadow-2xs",
-              isBuy ? "bg-blue-600 text-white" : "bg-rose-600 text-white"
+              "text-[10.5px] font-semibold px-2.5 py-0.5 border-0 ",
+              isBuy ? "bg-primary text-primary-foreground" : "bg-loss text-on-loss"
             )}
           >
             {row.original.side}
@@ -274,7 +274,7 @@ export default function OrdersPage() {
         const formatted = formatTradingSymbol(row.original.symbol);
         return (
           <div>
-            <div className="font-bold text-foreground flex items-center gap-1.5">
+            <div className="font-semibold text-foreground flex items-center gap-1.5">
               <span>{formatted.displayName}</span>
               <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
                 {row.original.exchange || (formatted.isDerivative ? "NFO" : "NSE")}
@@ -287,7 +287,7 @@ export default function OrdersPage() {
                 </span>
               )}
               {row.original.execution?.strategy?.name ? (
-                <span className="text-[11px] text-blue-500 font-medium truncate max-w-[180px]">
+                <span className="text-[11px] text-accent-foreground font-medium truncate max-w-[180px]">
                   • {row.original.execution.strategy.name}
                 </span>
               ) : (
@@ -306,11 +306,11 @@ export default function OrdersPage() {
       header: "Product",
       cell: ({ row }) => (
         <div className="flex items-center gap-1.5">
-          <Badge variant="outline" className="text-[10.5px] font-bold bg-muted/30">
+          <Badge variant="outline" className="text-[10.5px] font-semibold bg-muted/30">
             {row.original.productType || "MIS"}
           </Badge>
           {row.original.isPaperTrade && (
-            <Badge variant="outline" className="text-[9.5px] font-bold border-amber-500/40 text-amber-600 bg-amber-500/10">
+            <Badge variant="outline" className="text-[9.5px] font-semibold border-warn/40 text-warn bg-warn/10">
               PAPER
             </Badge>
           )}
@@ -337,7 +337,7 @@ export default function OrdersPage() {
           <div className="text-right font-mono font-semibold text-foreground">
             {filledQty > 0 ? (
               <span>
-                <span className="text-emerald-500 font-bold">{filledQty}</span>
+                <span className="text-profit font-semibold">{filledQty}</span>
                 <span className="text-muted-foreground text-[11px]">/{qty}</span>
               </span>
             ) : (
@@ -359,7 +359,7 @@ export default function OrdersPage() {
               {price && price > 0 ? `₹${price.toFixed(2)}` : "MARKET"}
             </div>
             {triggerPrice && triggerPrice > 0 && (
-              <div className="text-[10px] text-amber-500 font-mono">
+              <div className="text-[10px] text-warn font-mono">
                 Trig: ₹{triggerPrice.toFixed(2)}
               </div>
             )}
@@ -395,10 +395,10 @@ export default function OrdersPage() {
               className={cn(
                 "text-[11px] font-semibold inline-flex items-center gap-1 px-2.5 py-0.5",
                 status === "COMPLETE"
-                  ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/10"
+                  ? "border-profit/30 text-profit bg-profit/10"
                   : isOpen
-                  ? "border-amber-500/30 text-amber-600 bg-amber-500/10"
-                  : "border-rose-500/30 text-rose-600 bg-rose-500/10"
+                  ? "border-warn/30 text-warn bg-warn/10"
+                  : "border-loss/30 text-loss bg-loss/10"
               )}
             >
               {status === "COMPLETE" && <CheckCircle2 className="h-3 w-3" />}
@@ -425,7 +425,7 @@ export default function OrdersPage() {
                 size="sm"
                 onClick={() => setCancellingOrder(ord)}
                 disabled={isCancelling}
-                className="h-7 px-2.5 text-xs text-rose-500 border-rose-500/30 hover:bg-rose-500/10"
+                className="h-7 px-2.5 text-xs text-loss border-loss/30 hover:bg-loss/10"
               >
                 Cancel
               </Button>
@@ -446,11 +446,11 @@ export default function OrdersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              <ClipboardList className="h-6 w-6 text-blue-500" />
+            <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground flex items-center gap-2">
+              <ClipboardList className="h-6 w-6 text-accent-foreground" />
               Order Book & Live Execution Log
             </h1>
-            <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20 font-medium">
+            <Badge variant="outline" className="text-xs bg-profit/10 text-profit border-profit/20 font-medium">
               Zerodha Live
             </Badge>
           </div>
@@ -461,8 +461,8 @@ export default function OrdersPage() {
 
         <div className="flex items-center flex-wrap gap-2.5">
           <Link href="/ledger">
-            <Button variant="outline" size="sm" className="gap-1.5 border-emerald-500/30 text-emerald-600 bg-emerald-50/50 hover:bg-emerald-100/50 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40">
-              <BookOpen className="h-4 w-4 text-emerald-500" />
+            <Button variant="outline" size="sm" className="gap-1.5 border-profit/30 text-profit bg-profit-subtle/50 hover:bg-profit-subtle/50">
+              <BookOpen className="h-4 w-4 text-profit" />
               Monthly P&L Ledger
             </Button>
           </Link>
@@ -472,9 +472,9 @@ export default function OrdersPage() {
             size="sm"
             onClick={() => syncMutation.mutate()}
             disabled={syncMutation.isPending || isFetching}
-            className="gap-1.5 border-blue-500/30 text-blue-600 bg-blue-50/50 hover:bg-blue-100/50 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
+            className="gap-1.5 border-primary/30 text-accent-foreground bg-brand-subtle/50 hover:bg-brand-subtle/50"
           >
-            <RefreshCcw className={cn("h-3.5 w-3.5", syncMutation.isPending && "animate-spin text-blue-500")} />
+            <RefreshCcw className={cn("h-3.5 w-3.5", syncMutation.isPending && "animate-spin text-accent-foreground")} />
             {syncMutation.isPending ? "Syncing Zerodha..." : "Sync Broker Orders"}
           </Button>
 
@@ -483,7 +483,7 @@ export default function OrdersPage() {
             size="sm"
             onClick={() => refetch()}
             disabled={isFetching}
-            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+            className="gap-1.5 bg-primary hover:bg-brand-hover text-primary-foreground"
           >
             <RefreshCcw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
             Refresh
@@ -492,7 +492,7 @@ export default function OrdersPage() {
       </div>
 
       {/* Date Scope Selector & Session Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-card border border-border">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg bg-card border border-border">
         <div className="flex items-center gap-2">
           <Calendar className="h-4 w-4 text-muted-foreground" />
           <span className="text-xs font-medium text-muted-foreground">Session View:</span>
@@ -502,7 +502,7 @@ export default function OrdersPage() {
               className={cn(
                 "px-3 py-1 text-xs font-semibold rounded-md transition-all",
                 dateScope === "TODAY"
-                  ? "bg-blue-600 text-white shadow-xs"
+                  ? "bg-primary text-primary-foreground "
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               )}
             >
@@ -513,7 +513,7 @@ export default function OrdersPage() {
               className={cn(
                 "px-3 py-1 text-xs font-semibold rounded-md transition-all",
                 dateScope === "ALL"
-                  ? "bg-blue-600 text-white shadow-xs"
+                  ? "bg-primary text-primary-foreground "
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               )}
             >
@@ -523,21 +523,21 @@ export default function OrdersPage() {
         </div>
 
         <div className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <ShieldCheck className="h-4 w-4 text-emerald-500" />
+          <ShieldCheck className="h-4 w-4 text-profit" />
           <span>Showing {dateScope === "TODAY" ? "today's active Zerodha session" : "all persistent database orders"}</span>
         </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-border bg-card/60 backdrop-blur shadow-2xs">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               {dateScope === "TODAY" ? "Today's Orders" : "Total Orders"}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-foreground">
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
               {stats.total}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -546,14 +546,14 @@ export default function OrdersPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card/60 backdrop-blur shadow-2xs">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Open / Pending Orders
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className={cn("text-2xl font-bold font-mono", stats.open > 0 ? "text-amber-500" : "text-foreground")}>
+            <div className={cn("text-lg sm:text-2xl font-semibold font-mono", stats.open > 0 ? "text-warn" : "text-foreground")}>
               {stats.open}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -562,14 +562,14 @@ export default function OrdersPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card/60 backdrop-blur shadow-2xs">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Executed Trades
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-emerald-500">
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-profit">
               {stats.completed}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -578,14 +578,14 @@ export default function OrdersPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card/60 backdrop-blur shadow-2xs">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Cancelled / Rejected
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-muted-foreground">
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-muted-foreground">
               {stats.cancelledOrRejected}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -596,7 +596,7 @@ export default function OrdersPage() {
       </div>
 
       {/* Main Table Card */}
-      <Card className="border-border bg-card shadow-xs">
+      <Card className="border-border bg-card">
         <CardHeader className="border-b border-border py-4 px-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
           {/* Status Tabs with Counts */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
@@ -615,16 +615,16 @@ export default function OrdersPage() {
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-1.5",
                   filterStatus === tab.id
-                    ? "bg-blue-600 text-white shadow-xs"
+                    ? "bg-primary text-primary-foreground "
                     : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
                 )}
               >
                 <span>{tab.label}</span>
                 <span
                   className={cn(
-                    "text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold",
+                    "text-[10px] px-1.5 py-0.2 rounded-full font-mono font-semibold",
                     filterStatus === tab.id
-                      ? "bg-white/20 text-white"
+                      ? "bg-primary-foreground/20 text-primary-foreground"
                       : "bg-muted text-muted-foreground"
                   )}
                 >
@@ -642,7 +642,7 @@ export default function OrdersPage() {
               placeholder="Search symbol, strike, order ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-muted/40 border border-border text-foreground text-xs rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-muted/40 border border-border text-foreground text-xs rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
         </CardHeader>
@@ -652,7 +652,7 @@ export default function OrdersPage() {
             <QueryError what="orders" error={error} onRetry={() => refetch()} retrying={isFetching} />
           ) : isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center gap-3">
-              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+              <Loader2 className="h-8 w-8 text-accent-foreground animate-spin" />
               <p className="text-sm text-muted-foreground">Loading orders from database & Zerodha...</p>
             </div>
           ) : filteredOrders.length === 0 ? (
@@ -685,7 +685,7 @@ export default function OrdersPage() {
                   variant="default"
                   onClick={() => syncMutation.mutate()}
                   disabled={syncMutation.isPending}
-                  className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                  className="gap-1.5 bg-primary hover:bg-brand-hover text-primary-foreground"
                 >
                   <RefreshCcw className={cn("h-4 w-4", syncMutation.isPending && "animate-spin")} />
                   Sync Broker Orders
@@ -709,8 +709,8 @@ export default function OrdersPage() {
                         <div className="flex items-center gap-2">
                           <Badge
                             className={cn(
-                              "text-[10.5px] font-bold px-2 py-0.5 border-0 shadow-2xs",
-                              isBuy ? "bg-blue-600 text-white" : "bg-rose-600 text-white"
+                              "text-[10.5px] font-semibold px-2 py-0.5 border-0 ",
+                              isBuy ? "bg-primary text-primary-foreground" : "bg-loss text-on-loss"
                             )}
                           >
                             {ord.side}
@@ -718,12 +718,12 @@ export default function OrdersPage() {
                           <Badge
                             variant="secondary"
                             className={cn(
-                              "text-[10px] font-bold px-2 py-0.5 inline-flex items-center gap-1",
+                              "text-[10px] font-semibold px-2 py-0.5 inline-flex items-center gap-1",
                               ord.status === "COMPLETE"
-                                ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/10"
+                                ? "border-profit/30 text-profit bg-profit/10"
                                 : isOpen
-                                ? "border-amber-500/30 text-amber-600 bg-amber-500/10"
-                                : "border-rose-500/30 text-rose-600 bg-rose-500/10"
+                                ? "border-warn/30 text-warn bg-warn/10"
+                                : "border-loss/30 text-loss bg-loss/10"
                             )}
                           >
                             {ord.status === "COMPLETE" && <CheckCircle2 className="h-3 w-3" />}
@@ -738,7 +738,7 @@ export default function OrdersPage() {
 
                       {/* Middle: Instrument & Tags */}
                       <div>
-                        <div className="font-bold text-sm text-foreground flex items-center gap-1.5 flex-wrap">
+                        <div className="font-semibold text-sm text-foreground flex items-center gap-1.5 flex-wrap">
                           <span>{formatted.displayName}</span>
                           <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
                             {ord.exchange || (formatted.isDerivative ? "NFO" : "NSE")}
@@ -748,19 +748,19 @@ export default function OrdersPage() {
                           </span>
                         </div>
                         {ord.execution?.strategy?.name && (
-                          <p className="text-[11px] text-blue-500 font-medium mt-0.5 truncate">
+                          <p className="text-[11px] text-accent-foreground font-medium mt-0.5 truncate">
                             ⚡ {ord.execution.strategy.name}
                           </p>
                         )}
                       </div>
 
                       {/* Bottom Grid: Qty, Price, Avg Executed, and Action */}
-                      <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded-xl border border-border/60 text-xs">
+                      <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded-lg border border-border/60 text-xs">
                         <div>
                           <span className="text-[10px] text-muted-foreground block">Qty Filled</span>
-                          <span className="font-mono font-bold text-foreground">
+                          <span className="font-mono font-semibold text-foreground">
                             {ord.filledQty > 0 ? (
-                              <span className="text-emerald-600 font-bold">{ord.filledQty}</span>
+                              <span className="text-profit font-semibold">{ord.filledQty}</span>
                             ) : (
                               "0"
                             )}
@@ -789,7 +789,7 @@ export default function OrdersPage() {
                               size="sm"
                               onClick={() => setCancellingOrder(ord)}
                               disabled={isCancelling}
-                              className="h-7 text-xs text-rose-500 border-rose-300 hover:bg-rose-50 px-3"
+                              className="h-7 text-xs text-loss border-loss/30 hover:bg-loss-subtle px-3"
                             >
                               Cancel
                             </Button>

@@ -50,11 +50,11 @@ export default function ForgotPasswordPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="peer w-full h-[46px] px-3.5 pt-1 text-sm bg-card text-[#424242] border border-[#dcdcdc] rounded-[3px] focus:outline-none focus:border-blue-600 transition-colors"
+              className="peer w-full h-[46px] px-3.5 pt-1 text-sm bg-card text-foreground border border-input rounded-[3px] focus:outline-none focus:border-primary transition-colors"
             />
             <label
               htmlFor="email"
-              className="absolute left-2.5 -top-2.5 px-1 bg-card text-xs text-[#888888] transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:text-[#999999] peer-placeholder-shown:top-3 peer-placeholder-shown:left-3.5 peer-focus:-top-2.5 peer-focus:left-2.5 peer-focus:text-xs peer-focus:text-blue-600 pointer-events-none"
+              className="absolute left-2.5 -top-2.5 px-1 bg-card text-xs text-muted-foreground transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:text-muted-foreground peer-placeholder-shown:top-3 peer-placeholder-shown:left-3.5 peer-focus:-top-2.5 peer-focus:left-2.5 peer-focus:text-xs peer-focus:text-accent-foreground pointer-events-none"
             >
               Registered Email ID
             </label>
@@ -62,7 +62,7 @@ export default function ForgotPasswordPage() {
 
           <Button
             type="submit"
-            className="w-full h-[42px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium rounded-[3px] shadow-none cursor-pointer transition-colors mt-2"
+            className="w-full h-[42px] bg-primary hover:bg-brand-hover active:bg-brand-hover text-primary-foreground text-sm font-medium rounded-[3px] shadow-none cursor-pointer transition-colors mt-2"
             disabled={loading}
           >
             {loading ? "Sending..." : "Reset"}
@@ -71,7 +71,7 @@ export default function ForgotPasswordPage() {
           <div className="text-center pt-2">
             <Link
               href="/login"
-              className="text-xs text-[#777777] hover:text-blue-600 transition-colors"
+              className="text-xs text-muted-foreground hover:text-accent-foreground transition-colors"
             >
               Back to login
             </Link>
@@ -79,22 +79,22 @@ export default function ForgotPasswordPage() {
         </form>
       ) : (
         <div className="text-center py-2 space-y-4">
-          <div className="h-12 w-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+          <div className="h-12 w-12 bg-brand-subtle text-accent-foreground rounded-full flex items-center justify-center mx-auto">
             <Mail className="h-6 w-6" />
           </div>
 
           <div>
-            <h2 className="text-base font-medium text-[#424242]">Check your email</h2>
-            <p className="text-xs text-[#777777] mt-1 leading-relaxed">
+            <h2 className="text-base font-medium text-foreground">Check your email</h2>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
               We&apos;ve sent password reset instructions to{" "}
-              <span className="font-medium text-[#444444]">{email}</span>.
+              <span className="font-medium text-foreground">{email}</span>.
             </p>
           </div>
 
           <div className="pt-2 space-y-3">
             <Button
               variant="outline"
-              className="w-full h-[40px] border-[#dcdcdc] text-[#555555] font-medium rounded-[3px] text-xs hover:bg-[#f5f5f5] cursor-pointer"
+              className="w-full h-[40px] border-input text-foreground/80 font-medium rounded-[3px] text-xs hover:bg-muted cursor-pointer"
               onClick={() => setSent(false)}
             >
               Resend email
@@ -102,7 +102,7 @@ export default function ForgotPasswordPage() {
 
             <Link
               href="/login"
-              className="flex items-center justify-center gap-1.5 text-xs text-[#777777] hover:text-blue-600 transition-colors"
+              className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-accent-foreground transition-colors"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Back to login
             </Link>

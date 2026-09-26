@@ -382,7 +382,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
   return (
     <div className="space-y-3">
       {/* ─── Main Unified Card ─── */}
-      <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden">
+      <Card className="border-border/90 bg-card rounded-lg overflow-hidden">
         {/* ── 1. Top Header: Zerodha Style ── */}
         <div className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between gap-3 bg-card">
           <div className="flex items-center gap-2.5 flex-wrap">
@@ -394,10 +394,10 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
             {openPositions.length > 0 && (
               <span
                 className={cn(
-                  "font-mono font-bold text-xs px-2 py-0.5 rounded",
+                  "font-mono font-semibold text-xs px-2 py-0.5 rounded",
                   totalNetMtm >= 0
-                    ? "text-emerald-700 bg-emerald-50 border border-emerald-200"
-                    : "text-rose-700 bg-rose-50 border border-rose-200"
+                    ? "text-profit bg-profit-subtle border border-profit/30"
+                    : "text-loss bg-loss-subtle border border-loss/30"
                 )}
               >
                 MTM: {totalNetMtm >= 0 ? "+" : ""}
@@ -408,11 +408,11 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
             {/* Active / Scheduled Quick Counters */}
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
               <span>•</span>
-              <span className="font-semibold text-emerald-600">
+              <span className="font-semibold text-profit">
                 {activeStrategies.length} Live
               </span>
               <span>•</span>
-              <span className="font-semibold text-amber-600">
+              <span className="font-semibold text-warn">
                 {scheduledStrategies.length} Scheduled (09:15 AM)
               </span>
             </div>
@@ -422,15 +422,15 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
               className={cn(
                 "inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded",
                 isConnected
-                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                  : "bg-amber-50 text-amber-700 border border-amber-200"
+                  ? "bg-profit-subtle text-profit border border-profit/30"
+                  : "bg-warn-subtle text-warn border border-warn/30"
               )}
               title={isConnected ? "WebSocket streaming live ticks" : "Connecting..."}
             >
               <span
                 className={cn(
                   "h-1.5 w-1.5 rounded-full",
-                  isConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
+                  isConnected ? "bg-profit animate-pulse" : "bg-warn"
                 )}
               />
               {isConnected ? "Live Ticks" : "Connecting"}
@@ -445,7 +445,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                 size="sm"
                 onClick={() => setShowBulkSquareOff(true)}
                 disabled={isBulkSquaringOff}
-                className="h-7 px-2.5 text-xs font-semibold gap-1.5 border-rose-200 text-rose-600 hover:bg-rose-50 rounded"
+                className="h-7 px-2.5 text-xs font-semibold gap-1.5 border-loss/30 text-loss hover:bg-loss-subtle rounded"
               >
                 <ShieldAlert className="h-3.5 w-3.5" />
                 <span>Square Off All</span>
@@ -495,7 +495,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
               {isPositionsLoading ? (
                 <tr>
                   <td colSpan={8} className="py-6 text-center text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin mx-auto mb-1 text-blue-600" />
+                    <Loader2 className="h-4 w-4 animate-spin mx-auto mb-1 text-accent-foreground" />
                     Loading open positions...
                   </td>
                 </tr>
@@ -519,12 +519,12 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                       <td className="py-2.5 px-4">
                         <span
                           className={cn(
-                            "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider",
+                            "text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wider",
                             pos.product === "MIS"
-                              ? "bg-blue-50 text-blue-600 border border-blue-200"
+                              ? "bg-brand-subtle text-accent-foreground border border-primary/30"
                               : pos.product === "PAPER"
-                                ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                : "bg-purple-50 text-purple-600 border border-purple-200"
+                                ? "bg-warn-subtle text-warn border border-warn/30"
+                                : "bg-signal-subtle text-signal border border-signal/30"
                           )}
                         >
                           {pos.product || "NRML"}
@@ -539,13 +539,13 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                             {formatted.exchange}
                           </span>
                           {pos.hasLiveTick && (
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+                            <span className="h-1.5 w-1.5 rounded-full bg-profit animate-ping" />
                           )}
                         </div>
                       </td>
 
                       {/* Qty (Blue like Zerodha) */}
-                      <td className="py-2.5 px-4 text-right font-mono font-medium text-blue-600 whitespace-nowrap">
+                      <td className="py-2.5 px-4 text-right font-mono font-medium text-accent-foreground whitespace-nowrap">
                         {pos.qty}
                       </td>
 
@@ -562,8 +562,8 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                       {/* P&L (Red / Green like Zerodha) */}
                       <td
                         className={cn(
-                          "py-2.5 px-4 text-right font-mono font-bold whitespace-nowrap",
-                          isProfitable ? "text-emerald-600" : "text-[#df514c]"
+                          "py-2.5 px-4 text-right font-mono font-semibold whitespace-nowrap",
+                          isProfitable ? "text-profit" : "text-loss"
                         )}
                       >
                         {isProfitable ? "+" : ""}
@@ -574,7 +574,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                       <td
                         className={cn(
                           "py-2.5 px-4 text-right font-mono font-medium whitespace-nowrap",
-                          isProfitable ? "text-emerald-600" : "text-[#df514c]"
+                          isProfitable ? "text-profit" : "text-loss"
                         )}
                       >
                         {isProfitable ? "+" : ""}
@@ -588,12 +588,12 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                           size="sm"
                           disabled={actionInProgress === `exit-${pos.symbol}`}
                           onClick={() => handleSquareOffSinglePosition(pos)}
-                          className="h-6 px-2 text-[11px] font-semibold text-rose-600 border-rose-200 hover:bg-rose-50 rounded"
+                          className="h-6 px-2 text-[11px] font-semibold text-loss border-loss/30 hover:bg-loss-subtle rounded"
                         >
                           {actionInProgress === `exit-${pos.symbol}` ? (
                             <Loader2 className="h-2.5 w-2.5 animate-spin" />
                           ) : (
-                            <Square className="h-2.5 w-2.5 fill-rose-600 mr-1" />
+                            <Square className="h-2.5 w-2.5 fill-loss mr-1" />
                           )}
                           Square Off
                         </Button>
@@ -612,8 +612,8 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                   </td>
                   <td
                     className={cn(
-                      "py-2 px-4 text-right font-mono font-bold text-sm",
-                      totalNetMtm >= 0 ? "text-emerald-600" : "text-[#df514c]"
+                      "py-2 px-4 text-right font-mono font-semibold text-sm",
+                      totalNetMtm >= 0 ? "text-profit" : "text-loss"
                     )}
                   >
                     {totalNetMtm >= 0 ? "+" : ""}
@@ -630,14 +630,14 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
         <div className="border-t border-border bg-muted/40 p-3.5 space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Bot className="h-4 w-4 text-blue-600" />
-              <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">
+              <Bot className="h-4 w-4 text-accent-foreground" />
+              <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">
                 Active Algorithmic Strategies ({strategies.length})
               </h3>
             </div>
             <Link
               href="/strategies"
-              className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5"
+              className="text-xs font-semibold text-accent-foreground hover:text-accent-foreground inline-flex items-center gap-0.5"
             >
               <span>Manage all ({strategies.length})</span>
               <ChevronRight className="h-3 w-3" />
@@ -651,7 +651,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
           ) : strategies.length === 0 ? (
             <div className="py-3 text-center text-xs text-muted-foreground">
               No strategies configured.{" "}
-              <Link href="/strategies/new" className="text-blue-600 underline font-semibold">
+              <Link href="/strategies/new" className="text-accent-foreground underline font-semibold">
                 Create one now
               </Link>
             </div>
@@ -671,9 +671,9 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                     className={cn(
                       "p-2.5 rounded-lg border bg-card transition-all flex items-center justify-between gap-2.5",
                       s.isActive
-                        ? "border-emerald-300 shadow-2xs"
+                        ? "border-profit/30 "
                         : s.autoStart
-                          ? "border-amber-300 shadow-2xs"
+                          ? "border-warn/30 "
                           : "border-border"
                     )}
                   >
@@ -681,12 +681,12 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                       {/* Status Badges */}
                       <div className="flex items-center gap-1.5 flex-wrap mb-1">
                         {s.isActive ? (
-                          <span className="inline-flex items-center gap-1 text-[9.5px] font-extrabold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+                          <span className="inline-flex items-center gap-1 text-[9.5px] font-semibold px-1.5 py-0.2 rounded bg-profit-subtle text-profit border border-profit/30">
+                            <span className="h-1.5 w-1.5 rounded-full bg-profit animate-ping" />
                             LIVE ACTIVE
                           </span>
                         ) : s.autoStart ? (
-                          <span className="inline-flex items-center gap-1 text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                          <span className="inline-flex items-center gap-1 text-[9.5px] font-semibold px-1.5 py-0.2 rounded bg-warn-subtle text-warn border border-warn/30">
                             <AlarmClock className="h-3 w-3" />
                             09:15 AM ARMED
                           </span>
@@ -699,10 +699,10 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                         <span
                           className={cn(
                             "text-[9.5px] font-semibold px-1.5 py-0.2 rounded border",
-                            isStockOptions && "bg-amber-50 text-amber-700 border-amber-200",
-                            isNiftyScalper && "bg-purple-50 text-purple-700 border-purple-200",
-                            is15Min && "bg-blue-50 text-blue-700 border-blue-200",
-                            isEmaVwap && "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            isStockOptions && "bg-warn-subtle text-warn border-warn/30",
+                            isNiftyScalper && "bg-signal-subtle text-signal border-signal/30",
+                            is15Min && "bg-brand-subtle text-accent-foreground border-primary/30",
+                            isEmaVwap && "bg-profit-subtle text-profit border-profit/30"
                           )}
                         >
                           {isStockOptions
@@ -717,7 +717,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                         </span>
                       </div>
 
-                      <h4 className="text-xs font-bold text-foreground truncate" title={s.name}>
+                      <h4 className="text-xs font-semibold text-foreground truncate" title={s.name}>
                         {s.name}
                       </h4>
 
@@ -738,8 +738,8 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                         className={cn(
                           "h-6 px-2 text-[10.5px] font-semibold rounded",
                           s.isActive
-                            ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                            : "border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                            ? "border-warn/30 text-warn hover:bg-warn-subtle"
+                            : "border-profit/30 text-profit hover:bg-profit-subtle"
                         )}
                       >
                         {actionInProgress === `toggle-${s.id}` ? (
@@ -751,7 +751,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                           </>
                         ) : (
                           <>
-                            <Play className="h-2.5 w-2.5 mr-0.5 fill-emerald-600" />
+                            <Play className="h-2.5 w-2.5 mr-0.5 fill-profit" />
                             Start
                           </>
                         )}
@@ -761,7 +761,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-6 w-6 p-0 text-muted-foreground hover:text-blue-600 rounded"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-accent-foreground rounded"
                           title="View Execution Telemetry & Logs"
                         >
                           <ExternalLink className="h-3 w-3" />

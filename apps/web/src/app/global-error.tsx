@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import "./globals.css";
 import Link from "next/link";
 import { AlertOctagon, RotateCcw, Home, Terminal } from "lucide-react";
 
@@ -10,24 +11,26 @@ interface GlobalErrorProps {
 }
 
 export default function GlobalError({ error, reset }: GlobalErrorProps) {
+  // This page replaces the root layout (and its theme provider), so apply the saved theme here.
+  const [dark, setDark] = useState(false);
   useEffect(() => {
     console.error("Global Layout Error:", error);
+    try {
+      setDark(localStorage.getItem("theme") === "dark");
+    } catch {}
   }, [error]);
 
   return (
-    <html lang="en">
-      <body className="bg-[#07090e] text-white min-h-screen flex items-center justify-center p-6 relative overflow-hidden font-sans">
-        {/* Decorative glows */}
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-[120px] pointer-events-none" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-destructive/10 rounded-full blur-[120px] pointer-events-none" />
+    <html lang="en" className={dark ? "dark" : undefined}>
+      <body className="bg-background text-foreground min-h-screen flex items-center justify-center p-6 relative overflow-hidden font-sans">
 
         {/* Outer glass panel */}
-        <div className="glass max-w-xl w-full p-8 md:p-10 rounded-2xl relative z-10 border border-white/5 shadow-2xl flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center text-destructive mb-6 animate-pulse ring-4 ring-destructive/5">
+        <div className="max-w-xl w-full p-8 md:p-10 rounded-lg bg-card border border-border flex flex-col items-center text-center">
+          <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center text-destructive mb-6">
             <AlertOctagon size={36} />
           </div>
 
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-3">
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-foreground mb-3">
             Critical System Error
           </h1>
           <p className="text-muted-foreground text-sm md:text-base mb-8 max-w-md">
@@ -35,7 +38,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
           </p>
 
           {/* Error Message code box */}
-          <div className="w-full bg-slate-950/70 border border-white/5 rounded-lg p-4 mb-8 text-left font-mono text-xs text-slate-300 overflow-x-auto max-h-40 custom-scrollbar flex items-start gap-3">
+          <div className="w-full bg-muted/60 border border-border rounded-md p-4 mb-8 text-left font-code text-xs text-foreground overflow-x-auto max-h-40 custom-scrollbar flex items-start gap-3">
             <Terminal size={16} className="text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
               <span className="text-destructive font-semibold">Critical: </span>
@@ -52,7 +55,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
           <div className="flex flex-col sm:flex-row gap-3 w-full justify-center">
             <button
               onClick={() => reset()}
-              className="flex items-center justify-center gap-2 px-6 py-3 bg-primary hover:bg-primary/95 text-white font-medium text-sm rounded-lg transition-all shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer"
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-sm rounded-md transition-colors cursor-pointer"
             >
               <RotateCcw size={16} />
               Reset System
@@ -60,7 +63,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
             
             <Link
               href="/"
-              className="flex items-center justify-center gap-2 px-6 py-3 bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 hover:border-white/20 font-medium text-sm rounded-lg transition-all active:scale-[0.98]"
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-card hover:bg-muted text-foreground border border-border font-medium text-sm rounded-md transition-colors"
             >
               <Home size={16} />
               Go to Dashboard

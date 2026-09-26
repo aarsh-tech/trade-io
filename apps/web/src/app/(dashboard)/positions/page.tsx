@@ -21,7 +21,7 @@ import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import Link from "next/link";
-import { formatINR } from "@/lib/format";
+import { EMPTY, formatINR } from "@/lib/format";
 
 interface Position {
   symbol: string;
@@ -53,6 +53,8 @@ export default function PositionsPage() {
     positionsError,
     refreshPositions,
   } = usePortfolio(activeBrokerId);
+  // No linked account means no data yet: show "—", not a ₹0.00 that looks like a real balance.
+  const hasAccount = Boolean(activeBrokerId);
 
   // Extract symbols for real-time WebSocket market data streaming
   const positionSymbols = useMemo(() => {
@@ -175,7 +177,7 @@ export default function PositionsPage() {
       meta: { title: "Product" },
       header: "Product",
       cell: ({ row }) => (
-        <Badge variant="secondary" className="text-[11px] font-bold">
+        <Badge variant="secondary" className="text-[11px] font-semibold">
           {row.original.product || "MIS"}
         </Badge>
       ),
@@ -199,7 +201,7 @@ export default function PositionsPage() {
         return (
           <div className={cn(
             "text-right font-mono font-semibold",
-            isLong ? "text-emerald-500" : "text-rose-500"
+            isLong ? "text-profit" : "text-loss"
           )}>
             {row.original.qty > 0 ? `+${row.original.qty}` : row.original.qty}
           </div>
@@ -234,8 +236,8 @@ export default function PositionsPage() {
         const pnl = row.original.pnl || 0;
         return (
           <div className={cn(
-            "text-right font-mono font-bold",
-            pnl > 0 ? "text-emerald-500" : pnl < 0 ? "text-rose-500" : "text-muted-foreground"
+            "text-right font-mono font-semibold",
+            pnl > 0 ? "text-profit" : pnl < 0 ? "text-loss" : "text-muted-foreground"
           )}>
             {pnl > 0 ? "+" : ""}₹{pnl.toFixed(2)}
           </div>
@@ -251,7 +253,7 @@ export default function PositionsPage() {
         return (
           <div className={cn(
             "text-right font-mono font-medium",
-            pct >= 0 ? "text-emerald-500" : "text-rose-500"
+            pct >= 0 ? "text-profit" : "text-loss"
           )}>
             {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
           </div>
@@ -283,8 +285,8 @@ export default function PositionsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <Activity className="h-6 w-6 text-blue-500" />
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground flex items-center gap-2">
+            <Activity className="h-6 w-6 text-accent-foreground" />
             Live Positions
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -298,7 +300,7 @@ export default function PositionsPage() {
             <select
               value={activeBrokerId || ""}
               onChange={(e) => setSelectedBroker(e.target.value)}
-              className="bg-card border border-border text-foreground text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="bg-card border border-border text-foreground text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
             >
               {(brokers as any[]).map((b) => (
                 <option key={b.id} value={b.id}>
@@ -315,7 +317,7 @@ export default function PositionsPage() {
             disabled={isPositionsLoading}
             className="gap-1.5"
           >
-            <RefreshCcw className={cn("h-3.5 w-3.5", isPositionsLoading && "animate-spin text-blue-500")} />
+            <RefreshCcw className={cn("h-3.5 w-3.5", isPositionsLoading && "animate-spin text-accent-foreground")} />
             Refresh
           </Button>
 
@@ -335,8 +337,8 @@ export default function PositionsPage() {
       </div>
 
       {/* Summary Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-border bg-card/60 backdrop-blur">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Total Realized + Unrealized P&L
@@ -344,14 +346,14 @@ export default function PositionsPage() {
           </CardHeader>
           <CardContent>
             <div className={cn(
-              "text-2xl font-bold font-mono flex items-center gap-1.5",
-              totalPnl > 0 ? "text-emerald-500" : totalPnl < 0 ? "text-rose-500" : "text-foreground"
+              "text-lg sm:text-2xl font-semibold font-mono flex items-center gap-1.5",
+              totalPnl > 0 ? "text-profit" : totalPnl < 0 ? "text-loss" : "text-foreground"
             )}>
-              {totalPnl > 0 ? "+" : ""}{formatINR(totalPnl)}
+              {hasAccount ? `${totalPnl > 0 ? "+" : ""}${formatINR(totalPnl)}` : EMPTY}
               {totalPnl > 0 ? (
-                <ArrowUpRight className="h-5 w-5 text-emerald-500" />
+                <ArrowUpRight className="h-5 w-5 text-profit" />
               ) : totalPnl < 0 ? (
-                <ArrowDownRight className="h-5 w-5 text-rose-500" />
+                <ArrowDownRight className="h-5 w-5 text-loss" />
               ) : null}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -360,15 +362,15 @@ export default function PositionsPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card/60 backdrop-blur">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Open Positions Count
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-foreground">
-              {positions.length}
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
+              {hasAccount ? positions.length : EMPTY}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               {profitableCount} Green / {losingCount} Red
@@ -376,15 +378,15 @@ export default function PositionsPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card/60 backdrop-blur">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Total Capital Deployed
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-foreground">
-              {formatINR(totalInvestment)}
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
+              {hasAccount ? formatINR(totalInvestment) : EMPTY}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Gross open exposure value
@@ -392,15 +394,15 @@ export default function PositionsPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card/60 backdrop-blur">
+        <Card className="border-border bg-card/60">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Win / Loss Ratio
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono text-foreground">
-              {positions.length > 0 ? `${((profitableCount / positions.length) * 100).toFixed(0)}%` : "N/A"}
+            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
+              {positions.length > 0 ? `${((profitableCount / positions.length) * 100).toFixed(0)}%` : EMPTY}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Profitable positions proportion
@@ -413,7 +415,7 @@ export default function PositionsPage() {
       <Card className="border-border bg-card">
         <CardHeader className="border-b border-border py-4 px-6 flex flex-row items-center justify-between">
           <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-blue-500" />
+            <Layers className="h-4 w-4 text-accent-foreground" />
             <CardTitle className="text-base font-semibold">Open Market Positions</CardTitle>
           </div>
           {positions.length > 0 && (
@@ -427,7 +429,7 @@ export default function PositionsPage() {
             <QueryError what="positions" error={positionsError} onRetry={() => refreshPositions()} retrying={isPositionsLoading} />
           ) : isPositionsLoading && positions.length === 0 ? (
             <div className="py-20 flex flex-col items-center justify-center gap-3">
-              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+              <Loader2 className="h-8 w-8 text-accent-foreground animate-spin" />
               <p className="text-sm text-muted-foreground">Fetching live positions from broker...</p>
             </div>
           ) : positions.length === 0 ? (
@@ -441,7 +443,7 @@ export default function PositionsPage() {
               </p>
               <div className="flex items-center justify-center gap-3">
                 <Link href="/live-screener">
-                  <Button size="sm" variant="default" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
+                  <Button size="sm" variant="default" className="gap-1.5 bg-primary hover:bg-brand-hover">
                     <Zap className="h-4 w-4" />
                     Live OHL Screener
                   </Button>
@@ -468,15 +470,15 @@ export default function PositionsPage() {
                       {/* Top Row: Symbol, Product, Qty */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="font-bold text-sm text-foreground">{pos.symbol}</span>
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                          <span className="font-semibold text-sm text-foreground">{pos.symbol}</span>
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                             {pos.product || "MIS"}
                           </span>
                         </div>
                         <Badge
                           className={cn(
-                            "font-mono text-xs font-bold px-2 py-0.5 border-0 shadow-2xs",
-                            isLong ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+                            "font-mono text-xs font-semibold px-2 py-0.5 border-0 ",
+                            isLong ? "bg-profit text-on-profit" : "bg-loss text-on-loss"
                           )}
                         >
                           {isLong ? "BUY" : "SELL"} {Math.abs(pos.qty)} Qty
@@ -484,7 +486,7 @@ export default function PositionsPage() {
                       </div>
 
                       {/* Middle Row: Avg vs LTP & P&L */}
-                      <div className="flex items-end justify-between bg-muted/40 p-3 rounded-xl border border-border/60">
+                      <div className="flex items-end justify-between bg-muted/40 p-3 rounded-lg border border-border/60">
                         <div className="space-y-1 text-xs">
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <span>Avg: <strong className="text-foreground font-mono">₹{pos.avgPrice?.toFixed(2) || "0.00"}</strong></span>
@@ -492,17 +494,17 @@ export default function PositionsPage() {
                             <span>LTP: <PriceFreshness symbol={pos.symbol} /> <strong className="text-foreground font-mono">₹{pos.ltp?.toFixed(2) || "0.00"}</strong></span>
                           </div>
                           <div className="flex items-center gap-1 text-[11px]">
-                            <span className={cn("font-semibold font-mono", pos.pnlPct >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                            <span className={cn("font-semibold font-mono", pos.pnlPct >= 0 ? "text-profit" : "text-loss")}>
                               {pos.pnlPct >= 0 ? "+" : ""}{pos.pnlPct.toFixed(2)}%
                             </span>
                           </div>
                         </div>
 
                         <div className="text-right">
-                          <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">P&L</div>
+                          <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">P&L</div>
                           <div className={cn(
-                            "text-lg font-bold font-mono",
-                            isProfit ? "text-emerald-600" : isLoss ? "text-rose-600" : "text-muted-foreground"
+                            "text-lg font-semibold font-mono",
+                            isProfit ? "text-profit" : isLoss ? "text-loss" : "text-muted-foreground"
                           )}>
                             {isProfit ? "+" : ""}₹{pos.pnl?.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}
                           </div>

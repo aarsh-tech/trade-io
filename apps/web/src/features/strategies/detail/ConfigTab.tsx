@@ -13,10 +13,10 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
     <>
       {/* ─── TAB 2: STRATEGY CONFIGURATION & RISK RULES ─── */}
       {activeTab === "CONFIG" && (
-        <Card className="border-border/60 bg-card rounded-2xl shadow-sm">
+        <Card className="border-border/60 bg-card rounded-lg">
           <CardHeader className="p-5 border-b border-border/60 flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-sm font-bold">Strategy Parameters & Execution Rules</CardTitle>
+              <CardTitle className="text-sm font-semibold">Strategy Parameters & Execution Rules</CardTitle>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Adjust sizing, stop-loss limits, target thresholds, and indicator parameters.
               </p>
@@ -50,7 +50,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
                     size="sm"
                     disabled={busy}
                     onClick={saveConfig}
-                    className="gap-1.5 text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="gap-1.5 text-xs h-8 bg-profit hover:bg-profit/90 text-on-profit"
                   >
                     <Check className="h-3.5 w-3.5" /> Save Changes
                   </Button>
@@ -155,31 +155,31 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
                   />
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Morning ORB Trigger (09:20–11:30)</p>
-                    <p className="text-sm font-bold text-emerald-600">
+                    <p className="text-sm font-semibold text-profit">
                       {cfg.enableOrbMorningTrigger !== false ? "Active (High/Low Breakout + VWAP)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Channel Breakout (11:30–13:30)</p>
-                    <p className="text-sm font-bold text-amber-600">
+                    <p className="text-sm font-semibold text-warn">
                       {cfg.enableMiddayBreakout !== false ? "Active (25-30m Compression Expansion)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Live OI Unwinding Confirmation</p>
-                    <p className="text-sm font-bold text-blue-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableOiFilter !== false ? "Active (Confirms Writer Panic)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Ratchet Zero-Decay Trailing</p>
-                    <p className="text-sm font-bold text-indigo-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableRatchetTrailing !== false ? "Active (1.5x, 2.0x, 3.0x Milestone Locks)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">2.0x Partial Profit Booking</p>
-                    <p className="text-sm font-bold text-purple-600">
+                    <p className="text-sm font-semibold text-signal">
                       {cfg.enablePartialProfitBooking !== false ? "Active (50% booked @ 2x, runner trailed)" : "Disabled"}
                     </p>
                   </div>
@@ -218,31 +218,31 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
                   />
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">The Banker &amp; The Runner</p>
-                    <p className="text-sm font-bold text-emerald-600">
+                    <p className="text-sm font-semibold text-profit">
                       {cfg.enablePartialBooking !== false ? `Active (${cfg.partialBookingPct ?? 50}% booked at T1, runner trailed)` : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Dead-Zone Shield</p>
-                    <p className="text-sm font-bold text-amber-600">
+                    <p className="text-sm font-semibold text-warn">
                       {cfg.enableMiddayChopFilter !== false ? "Active (11:45 - 13:00 European Lull Paused)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Volume Surge / RVOL</p>
-                    <p className="text-sm font-bold text-blue-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableVolumeSurge !== false ? `Active (RVOL >= ${cfg.minRvol ?? 1.15}x)` : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Day VWAP Trend Bias</p>
-                    <p className="text-sm font-bold text-purple-600">
+                    <p className="text-sm font-semibold text-signal">
                       {cfg.enableTrendBiasFilter !== false ? "Active (CE above VWAP, PE below VWAP)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Scalping Timeframe</p>
-                    <p className="text-sm font-bold text-indigo-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.timeframe || "5minute"} Candles
                     </p>
                   </div>
@@ -288,37 +288,37 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
                   />
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">The Banker &amp; The Runner</p>
-                    <p className="text-sm font-bold text-emerald-600">
+                    <p className="text-sm font-semibold text-profit">
                       {cfg.enablePartialBooking !== false ? `Active (${cfg.partialBookingPct ?? 50}% booked @ T1 -> COST)` : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">NIFTY 50 Macro Trend Gate</p>
-                    <p className="text-sm font-bold text-indigo-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableMarketTrendFilter !== false ? "Active (Aligned with NIFTY VWAP)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Dead-Zone Shield</p>
-                    <p className="text-sm font-bold text-amber-600">
+                    <p className="text-sm font-semibold text-warn">
                       {cfg.enableMiddayChopFilter !== false ? `Active (${cfg.middayDeadZoneStart ?? "11:30"} - ${cfg.middayDeadZoneEnd ?? "13:00"} IST)` : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Volume Surge / RVOL</p>
-                    <p className="text-sm font-bold text-blue-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       Active (RVOL &ge; {cfg.minRvol ?? 1.25}x)
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Theta Stagnancy Cutoff</p>
-                    <p className="text-sm font-bold text-purple-600">
+                    <p className="text-sm font-semibold text-signal">
                       {cfg.maxStagnantTimeMin ?? 25} Minutes
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">1-Loss &amp; Done Capital Shield</p>
-                    <p className="text-sm font-bold text-red-600">
+                    <p className="text-sm font-semibold text-loss">
                       Max {cfg.maxLossesPerDay ?? 1} SL / Day
                     </p>
                   </div>
@@ -349,61 +349,61 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
                   />
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Structural Candle SL</p>
-                    <p className="text-sm font-bold text-emerald-600">
+                    <p className="text-sm font-semibold text-profit">
                       {cfg.useStructuralCandleSl !== false ? "Active (Tight 45–80 pt Risk)" : "Wide 15m Range Extreme"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Early Breakeven Lock</p>
-                    <p className="text-sm font-bold text-amber-600">
+                    <p className="text-sm font-semibold text-warn">
                       +{cfg.breakevenTriggerR ?? 0.7}R -&gt; COST (Risk-Free)
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">RSI(14) Momentum Filter</p>
-                    <p className="text-sm font-bold text-indigo-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableRsiFilter !== false ? "Active (>55 Long, <45 Short)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Liquidity Sweep Trap Trading</p>
-                    <p className="text-sm font-bold text-purple-600">
+                    <p className="text-sm font-semibold text-signal">
                       {cfg.enableTrapReversal !== false ? "Active (Turtle Soup / 2B Reversal)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Breakout Retest Confirmation</p>
-                    <p className="text-sm font-bold text-sky-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableRetestConfirmation !== false ? "Active (Body >= 40% & Retest)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">CPR Trend Day Filter</p>
-                    <p className="text-sm font-bold text-blue-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableCprFilter !== false ? `Active (Narrow CPR < ${cfg.cprNarrowThresholdPct ?? 0.18}%)` : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Live Zerodha CPR S/R &amp; Regime</p>
-                    <p className="text-sm font-bold text-indigo-600">
+                    <p className="text-sm font-semibold text-accent-foreground">
                       {cfg.enableCprSupportResistance !== false ? "Active (Pivot/TC/BC/R1/S1 + Regime Gate)" : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Banker &amp; Runner Partial Booking</p>
-                    <p className="text-sm font-bold text-amber-600">
+                    <p className="text-sm font-semibold text-warn">
                       {cfg.enablePartialBooking !== false ? `Active (${cfg.partialBookingPct ?? 50}% @ +${cfg.partialBookingR ?? 1.8}R -> COST)` : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Midday Dead-Zone Chop Filter</p>
-                    <p className="text-sm font-bold text-foreground/75">
+                    <p className="text-sm font-semibold text-foreground/75">
                       {cfg.enableMiddayChopFilter !== false ? `Active (${cfg.middayDeadZoneStart ?? "11:45"} - ${cfg.middayDeadZoneEnd ?? "13:00"} IST)` : "Disabled"}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">1-Loss &amp; Done Capital Shield</p>
-                    <p className="text-sm font-bold text-red-600">
+                    <p className="text-sm font-semibold text-loss">
                       Max {cfg.maxLossesPerDay ?? 1} SL / Day
                     </p>
                   </div>

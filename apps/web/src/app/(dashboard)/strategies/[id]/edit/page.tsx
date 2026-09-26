@@ -408,7 +408,7 @@ export default function EditStrategyPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold">Edit Strategy</h1>
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">Edit Strategy</h1>
           <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">
             Modify configuration for {form.name}
           </p>
@@ -433,7 +433,7 @@ export default function EditStrategyPage() {
             <select
               value={form.type}
               onChange={(e) => set("type", e.target.value)}
-              className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm font-bold text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
+              className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm font-semibold text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)]"
             >
               <option value="EMA_VWAP_CROSSOVER">15-EMA &amp; VWAP Crossover (Intraday Stocks &amp; Options)</option>
               <option value="BREAKOUT_15MIN">15-Min Opening Range Breakout (ORB)</option>
@@ -467,10 +467,10 @@ export default function EditStrategyPage() {
         <CardContent className="space-y-4">
           {isGammaBlast && (
             <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-amber-500/10 border-2 border-amber-500/30">
+              <div className="p-4 rounded-lg bg-warn/10 border-2 border-warn/30">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <Sparkles className="h-4 w-4 text-amber-500" />
-                  <p className="text-sm font-bold text-amber-600 dark:text-amber-400">
+                  <Sparkles className="h-4 w-4 text-warn" />
+                  <p className="text-sm font-semibold text-warn">
                     ⚡ Daily Index Scalper (SENSEX &amp; NIFTY — Full-Day Price Action)
                   </p>
                 </div>
@@ -499,13 +499,13 @@ export default function EditStrategyPage() {
                           set("lotSize", item.lotSize);
                         }}
                         className={cn(
-                          "text-left p-3 rounded-xl border text-xs transition-all",
+                          "text-left p-3 rounded-lg border text-xs transition-all",
                           isSelected
-                            ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/30 font-bold shadow-xs text-amber-700 dark:text-amber-300"
-                            : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-amber-400/40"
+                            ? "border-warn bg-warn-subtle/70  font-semibold  text-warn "
+                            : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-warn/40"
                         )}
                       >
-                        <p className="font-bold">{item.label}</p>
+                        <p className="font-semibold">{item.label}</p>
                         <p className="text-[10px] opacity-80 mt-1">{item.desc}</p>
                       </button>
                     );
@@ -525,15 +525,15 @@ export default function EditStrategyPage() {
                       set("gbEndTime", "15:25");
                     }}
                     className={cn(
-                      "p-3.5 rounded-xl border text-left transition-all",
+                      "p-3.5 rounded-lg border text-left transition-all",
                       form.gbTradingMode === "FULL_DAY"
-                        ? "border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30 font-bold shadow-xs text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/40"
-                        : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-emerald-400/40"
+                        ? "border-profit bg-profit-subtle/70  font-semibold  text-profit  ring-1 ring-profit/40"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-profit/40"
                     )}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-bold">🚀 Full Day Scalper</span>
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600">
+                      <span className="text-xs font-semibold">🚀 Full Day Scalper</span>
+                      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-profit/20 text-profit">
                         RECOMMENDED
                       </span>
                     </div>
@@ -551,15 +551,15 @@ export default function EditStrategyPage() {
                       set("gbEndTime", "15:25");
                     }}
                     className={cn(
-                      "p-3.5 rounded-xl border text-left transition-all",
+                      "p-3.5 rounded-lg border text-left transition-all",
                       form.gbTradingMode === "AFTERNOON_ONLY"
-                        ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/30 font-bold shadow-xs text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/40"
-                        : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-amber-400/40"
+                        ? "border-warn bg-warn-subtle/70  font-semibold  text-warn  ring-1 ring-warn/40"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-warn/40"
                     )}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-bold">⏰ Afternoon Only</span>
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">
+                      <span className="text-xs font-semibold">⏰ Afternoon Only</span>
+                      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-warn/20 text-warn">
                         AFTERNOON TREND
                       </span>
                     </div>
@@ -602,10 +602,10 @@ export default function EditStrategyPage() {
                     type="checkbox"
                     checked={form.gbEnableOrbMorningTrigger}
                     onChange={(e) => set("gbEnableOrbMorningTrigger", e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500"
+                    className="rounded text-warn focus:ring-warn"
                   />
                   <div>
-                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Morning ORB Trigger</span>
+                    <span className="text-xs font-semibold text-[hsl(var(--foreground))] block">Morning ORB Trigger</span>
                     <span className="text-[10px] text-[hsl(var(--muted-foreground))]">09:20–11:30 Opening Range breakouts</span>
                   </div>
                 </label>
@@ -615,10 +615,10 @@ export default function EditStrategyPage() {
                     type="checkbox"
                     checked={form.gbEnableMiddayBreakout}
                     onChange={(e) => set("gbEnableMiddayBreakout", e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500"
+                    className="rounded text-warn focus:ring-warn"
                   />
                   <div>
-                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Midday Breakout</span>
+                    <span className="text-xs font-semibold text-[hsl(var(--foreground))] block">Midday Breakout</span>
                     <span className="text-[10px] text-[hsl(var(--muted-foreground))]">11:30–13:30 25-min channel breakthrough</span>
                   </div>
                 </label>
@@ -628,10 +628,10 @@ export default function EditStrategyPage() {
                     type="checkbox"
                     checked={form.gbEnableOiFilter}
                     onChange={(e) => set("gbEnableOiFilter", e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500"
+                    className="rounded text-warn focus:ring-warn"
                   />
                   <div>
-                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Live OI Unwinding Filter</span>
+                    <span className="text-xs font-semibold text-[hsl(var(--foreground))] block">Live OI Unwinding Filter</span>
                     <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Confirms short-covering &amp; writer panic</span>
                   </div>
                 </label>
@@ -641,10 +641,10 @@ export default function EditStrategyPage() {
                     type="checkbox"
                     checked={form.gbEnableRatchetTrailing}
                     onChange={(e) => set("gbEnableRatchetTrailing", e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500"
+                    className="rounded text-warn focus:ring-warn"
                   />
                   <div>
-                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">Ratchet Zero-Decay Trailing</span>
+                    <span className="text-xs font-semibold text-[hsl(var(--foreground))] block">Ratchet Zero-Decay Trailing</span>
                     <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Locks gains at 1.5x, 2.0x, 3.0x milestones</span>
                   </div>
                 </label>
@@ -654,10 +654,10 @@ export default function EditStrategyPage() {
                     type="checkbox"
                     checked={form.gbEnableHighConvictionBoost}
                     onChange={(e) => set("gbEnableHighConvictionBoost", e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500"
+                    className="rounded text-warn focus:ring-warn"
                   />
                   <div>
-                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">A+ Conviction Lot Boost</span>
+                    <span className="text-xs font-semibold text-[hsl(var(--foreground))] block">A+ Conviction Lot Boost</span>
                     <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Boosts lots to {form.gbMaxConvictionLots} on high conviction</span>
                   </div>
                 </label>
@@ -667,10 +667,10 @@ export default function EditStrategyPage() {
                     type="checkbox"
                     checked={form.gbEnablePartialProfitBooking}
                     onChange={(e) => set("gbEnablePartialProfitBooking", e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500"
+                    className="rounded text-warn focus:ring-warn"
                   />
                   <div>
-                    <span className="text-xs font-bold text-[hsl(var(--foreground))] block">2.0x Partial Profit Booking</span>
+                    <span className="text-xs font-semibold text-[hsl(var(--foreground))] block">2.0x Partial Profit Booking</span>
                     <span className="text-[10px] text-[hsl(var(--muted-foreground))]">Banks 50% lots @ 2x; trails runner</span>
                   </div>
                 </label>
@@ -689,14 +689,14 @@ export default function EditStrategyPage() {
                     set("symbol", "AUTO");
                   }}
                   className={cn(
-                    "p-3 rounded-xl border text-left transition-all",
+                    "p-3 rounded-lg border text-left transition-all",
                     form.sIsAutoStockSelect || form.symbol === "AUTO"
-                      ? "border-blue-500 bg-blue-50/70 dark:bg-blue-950/30 shadow-xs font-bold text-blue-700 dark:text-blue-300"
-                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-blue-400/40"
+                      ? "border-primary bg-brand-subtle/70   font-semibold text-accent-foreground "
+                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-primary/40"
                   )}
                 >
                   <div className="flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                    <Sparkles className="h-3.5 w-3.5 text-accent-foreground" />
                     <span className="text-xs">🎯 Auto F&O Scanner</span>
                   </div>
                   <p className="text-[10px] font-normal opacity-80 mt-1">
@@ -711,14 +711,14 @@ export default function EditStrategyPage() {
                     if (form.symbol === "AUTO") set("symbol", "APOLLOHOSP");
                   }}
                   className={cn(
-                    "p-3 rounded-xl border text-left transition-all",
+                    "p-3 rounded-lg border text-left transition-all",
                     !form.sIsAutoStockSelect && form.symbol !== "AUTO"
-                      ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30 shadow-xs font-bold text-indigo-700 dark:text-indigo-300"
-                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-indigo-400/40"
+                      ? "border-primary bg-brand-subtle/70   font-semibold text-accent-foreground "
+                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-primary/40"
                   )}
                 >
                   <div className="flex items-center gap-1.5">
-                    <Target className="h-3.5 w-3.5 text-indigo-600" />
+                    <Target className="h-3.5 w-3.5 text-accent-foreground" />
                     <span className="text-xs">📌 Manual Stock</span>
                   </div>
                   <p className="text-[10px] font-normal opacity-80 mt-1">
@@ -737,10 +737,10 @@ export default function EditStrategyPage() {
                   value={form.symbol}
                   onChange={(e) => set("symbol", e.target.value.toUpperCase())}
                   disabled={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO")}
-                  className={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") ? "bg-blue-50/50 dark:bg-blue-950/20 font-bold text-blue-600" : ""}
+                  className={isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") ? "bg-brand-subtle/50  font-semibold text-accent-foreground" : ""}
                 />
                 {isStockOptionsBuying && (form.sIsAutoStockSelect || form.symbol === "AUTO") && (
-                  <p className="text-[10px] text-blue-600 font-semibold mt-1">
+                  <p className="text-[10px] text-accent-foreground font-semibold mt-1">
                     ✨ Dynamic: Auto-resolves top F&O breakout symbol in real-time
                   </p>
                 )}
@@ -764,7 +764,7 @@ export default function EditStrategyPage() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium block">Lots</label>
-                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400 px-2 py-0.5 rounded-full">
+                <span className="text-[10px] font-semibold text-warn bg-warn-subtle px-2 py-0.5 rounded-full">
                   1 Lot = {form.lotSize || getLotSize(form.symbol, form.lotSize)} Qty
                 </span>
               </div>
@@ -796,13 +796,13 @@ export default function EditStrategyPage() {
               </div>
               <div>
                 <label className="text-sm font-semibold mb-2 block">Trading Instrument</label>
-                <div className="p-1 rounded-xl bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))] grid grid-cols-2 gap-1">
+                <div className="p-1 rounded-lg bg-[hsl(var(--secondary)/0.3)] border border-[hsl(var(--border))] grid grid-cols-2 gap-1">
                   <button
                     type="button"
                     onClick={() => set("isOptionBuyingOnly", false)}
                     className={cn(
                       "py-2 rounded-lg text-xs font-semibold transition-all",
-                      !form.isOptionBuyingOnly ? "bg-[hsl(var(--background))] border shadow-sm text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"
+                      !form.isOptionBuyingOnly ? "bg-[hsl(var(--background))] border  text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"
                     )}
                   >
                     Equity / Stock
@@ -812,7 +812,7 @@ export default function EditStrategyPage() {
                     onClick={() => set("isOptionBuyingOnly", true)}
                     className={cn(
                       "py-2 rounded-lg text-xs font-semibold transition-all",
-                      form.isOptionBuyingOnly ? "bg-[hsl(var(--background))] border shadow-sm text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"
+                      form.isOptionBuyingOnly ? "bg-[hsl(var(--background))] border  text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"
                     )}
                   >
                     Options (CE/PE)
@@ -848,9 +848,9 @@ export default function EditStrategyPage() {
 
           {isStockOptionsBuying && (
             <>
-              <div className="flex gap-3 p-3 rounded-xl bg-blue-50 border border-blue-100 mb-4">
-                <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
-                <p className="text-xs text-blue-600 leading-relaxed font-semibold">
+              <div className="flex gap-3 p-3 rounded-lg bg-brand-subtle border border-primary/30 mb-4">
+                <Info className="h-4 w-4 text-accent-foreground mt-0.5 shrink-0" />
+                <p className="text-xs text-accent-foreground leading-relaxed font-semibold">
                   Risk Management: Stop Loss is dynamically set to the Option's Mother Candle Low. Target is determined using the Risk-Reward Ratio.
                 </p>
               </div>
@@ -872,15 +872,15 @@ export default function EditStrategyPage() {
                         type="button"
                         onClick={() => set("sDirectionBias", item.val)}
                         className={cn(
-                          "text-left p-2.5 rounded-xl border text-xs transition-all",
+                          "text-left p-2.5 rounded-lg border text-xs transition-all",
                           isSelected
-                            ? "border-blue-500 bg-blue-50/70 dark:bg-blue-950/30 font-bold shadow-xs"
-                            : "border-[hsl(var(--border))] hover:border-blue-400/40"
+                            ? "border-primary bg-brand-subtle/70  font-semibold "
+                            : "border-[hsl(var(--border))] hover:border-primary/40"
                         )}
                       >
                         <div className="flex items-center justify-between">
                           <span>{item.label}</span>
-                          <Icon className={cn("h-3.5 w-3.5", isSelected ? "text-blue-600" : "text-slate-400")} />
+                          <Icon className={cn("h-3.5 w-3.5", isSelected ? "text-accent-foreground" : "text-muted-foreground")} />
                         </div>
                         <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-0.5">{item.desc}</p>
                       </button>
@@ -903,10 +903,10 @@ export default function EditStrategyPage() {
                       type="button"
                       onClick={() => set("sSetupType", item.val)}
                       className={cn(
-                        "text-left p-2.5 rounded-xl border text-xs transition-all",
+                        "text-left p-2.5 rounded-lg border text-xs transition-all",
                         form.sSetupType === item.val
-                          ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30 font-bold shadow-xs"
-                          : "border-[hsl(var(--border))] hover:border-indigo-400/40"
+                          ? "border-primary bg-brand-subtle/70  font-semibold "
+                          : "border-[hsl(var(--border))] hover:border-primary/40"
                       )}
                     >
                       <p>{item.label}</p>
@@ -919,7 +919,7 @@ export default function EditStrategyPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                    <Shield className="h-4 w-4 text-red-500" />
+                    <Shield className="h-4 w-4 text-loss" />
                     Max Capital Budget (₹)
                   </label>
                   <Input
@@ -927,7 +927,7 @@ export default function EditStrategyPage() {
                     min={1000}
                     value={form.sMaxCapital}
                     onChange={(e) => set("sMaxCapital", e.target.value)}
-                    className="border-red-200 focus:ring-red-300 font-semibold"
+                    className="border-loss/30 focus:ring-loss/30 font-semibold"
                   />
                   <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
                     Failsafe: Skips trade if 1 lot exceeds this capital (e.g. 20000).
@@ -935,13 +935,13 @@ export default function EditStrategyPage() {
                 </div>
                 <div>
                   <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                    <Target className="h-4 w-4 text-green-500" />
+                    <Target className="h-4 w-4 text-profit" />
                     Option Strike Type (Moneyness)
                   </label>
                   <select
                     value={form.sMoneyness}
                     onChange={(e) => set("sMoneyness", e.target.value)}
-                    className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)] font-semibold text-green-700"
+                    className="flex h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.5)] font-semibold text-profit"
                   >
                     <option value="ITM">In The Money (High Delta ~0.60, Lower Decay)</option>
                     <option value="ATM">At The Money (ATM Strike)</option>
@@ -1049,13 +1049,13 @@ export default function EditStrategyPage() {
           {!isStockOptionsBuying && (
             <>
               {is15Min && (
-                <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40 space-y-4">
+                <div className="p-4 rounded-lg border border-primary/30 bg-brand-subtle/40 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-indigo-600" />
-                      <span className="text-sm font-bold text-indigo-950">Dynamic Volatility & Trap Reversal</span>
+                      <Zap className="h-4 w-4 text-accent-foreground" />
+                      <span className="text-sm font-semibold text-accent-foreground">Dynamic Volatility & Trap Reversal</span>
                     </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-subtle text-accent-foreground">
                       High Accuracy Mode
                     </span>
                   </div>
@@ -1063,7 +1063,7 @@ export default function EditStrategyPage() {
                   <div className="grid grid-cols-2 gap-4 pt-1">
                     <div>
                       <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-foreground/75">
-                        <Target className="h-3.5 w-3.5 text-green-600" />
+                        <Target className="h-3.5 w-3.5 text-profit" />
                         Risk : Reward Ratio
                       </label>
                       <Input
@@ -1073,78 +1073,78 @@ export default function EditStrategyPage() {
                         max={5}
                         value={form.b15RiskRewardRatio}
                         onChange={(e) => set("b15RiskRewardRatio", e.target.value)}
-                        className="bg-card border-indigo-200 font-semibold text-xs"
+                        className="bg-card border-primary/30 font-semibold text-xs"
                       />
-                      <p className="text-[10px] text-slate-500 mt-1">Default 1:2.0 RR (Target = 2x ATR Risk)</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">Default 1:2.0 RR (Target = 2x ATR Risk)</p>
                     </div>
 
                     <div>
                       <label className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-foreground/75">
-                        <TrendingUp className="h-3.5 w-3.5 text-blue-600" />
+                        <TrendingUp className="h-3.5 w-3.5 text-accent-foreground" />
                         Strike Moneyness
                       </label>
                       <select
                         value={form.b15Moneyness}
                         onChange={(e) => set("b15Moneyness", e.target.value)}
-                        className="w-full h-9 rounded-md border border-indigo-200 bg-card px-3 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full h-9 rounded-md border border-primary/30 bg-card px-3 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
                       >
                         <option value="ITM">1-Strike ITM (Recommended - High Delta)</option>
                         <option value="ATM">ATM (At-The-Money)</option>
                       </select>
-                      <p className="text-[10px] text-slate-500 mt-1">ITM options reduce theta decay drag</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">ITM options reduce theta decay drag</p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-indigo-100">
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-primary/30">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-primary/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableDynamicAtr}
                         onChange={(e) => set("b15EnableDynamicAtr", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-primary/30 text-accent-foreground focus:ring-primary"
                       />
                       <div>
-                        <span className="text-xs font-bold text-foreground block">Dynamic ATR Scaling</span>
-                        <span className="text-[9px] text-slate-500">Auto-calibrates buffer & SL to volatility</span>
+                        <span className="text-xs font-semibold text-foreground block">Dynamic ATR Scaling</span>
+                        <span className="text-[9px] text-muted-foreground">Auto-calibrates buffer & SL to volatility</span>
                       </div>
                     </label>
 
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-primary/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableFakeoutReversal}
                         onChange={(e) => set("b15EnableFakeoutReversal", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-primary/30 text-accent-foreground focus:ring-primary"
                       />
                       <div>
-                        <span className="text-xs font-bold text-foreground block">⚡ Fakeout Trap Reversal</span>
-                        <span className="text-[9px] text-slate-500">Auto-flips trade on failed breakout traps</span>
+                        <span className="text-xs font-semibold text-foreground block">⚡ Fakeout Trap Reversal</span>
+                        <span className="text-[9px] text-muted-foreground">Auto-flips trade on failed breakout traps</span>
                       </div>
                     </label>
 
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-primary/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableBreakevenTrail}
                         onChange={(e) => set("b15EnableBreakevenTrail", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-primary/30 text-accent-foreground focus:ring-primary"
                       />
                       <div>
-                        <span className="text-xs font-bold text-foreground block">🛡 Breakeven Lock (+1R)</span>
-                        <span className="text-[9px] text-slate-500">Trails SL to Cost once in profit</span>
+                        <span className="text-xs font-semibold text-foreground block">🛡 Breakeven Lock (+1R)</span>
+                        <span className="text-[9px] text-muted-foreground">Trails SL to Cost once in profit</span>
                       </div>
                     </label>
 
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-indigo-100/60 cursor-pointer">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-card/80 border border-primary/60 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={form.b15EnableVwapFilter}
                         onChange={(e) => set("b15EnableVwapFilter", e.target.checked)}
-                        className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-primary/30 text-accent-foreground focus:ring-primary"
                       />
                       <div>
-                        <span className="text-xs font-bold text-foreground block">VWAP / EMA Filter</span>
-                        <span className="text-[9px] text-slate-500">Only trades with macro trend</span>
+                        <span className="text-xs font-semibold text-foreground block">VWAP / EMA Filter</span>
+                        <span className="text-[9px] text-muted-foreground">Only trades with macro trend</span>
                       </div>
                     </label>
                   </div>
@@ -1175,26 +1175,26 @@ export default function EditStrategyPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                    <Shield className="h-4 w-4 text-red-500" />
+                    <Shield className="h-4 w-4 text-loss" />
                     Stop Loss (₹)
                   </label>
                   <Input
                     type="number"
                     value={form.stopLossRs}
                     onChange={(e) => set("stopLossRs", e.target.value)}
-                    className="border-red-200"
+                    className="border-loss/30"
                   />
                 </div>
                 <div>
                   <label className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                    <Target className="h-4 w-4 text-green-500" />
+                    <Target className="h-4 w-4 text-profit" />
                     Target (₹)
                   </label>
                   <Input
                     type="number"
                     value={form.targetRs}
                     onChange={(e) => set("targetRs", e.target.value)}
-                    className="border-green-200"
+                    className="border-profit/30"
                   />
                 </div>
               </div>
@@ -1227,11 +1227,11 @@ export default function EditStrategyPage() {
 
               {/* Exit Exact at Target */}
               {!isGammaBlast && (
-                <div className="p-4 rounded-xl bg-[hsl(var(--card))] border border-[hsl(var(--border))] space-y-3 mt-4 shadow-sm">
+                <div className="p-4 rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] space-y-3 mt-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Target className="h-4 w-4 text-emerald-500 shrink-0" />
-                      <span className="text-sm font-bold text-[hsl(var(--foreground))]">Exit Exact at Target (Fixed Profit Target)</span>
+                      <Target className="h-4 w-4 text-profit shrink-0" />
+                      <span className="text-sm font-semibold text-[hsl(var(--foreground))]">Exit Exact at Target (Fixed Profit Target)</span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
@@ -1240,7 +1240,7 @@ export default function EditStrategyPage() {
                         onChange={(e) => set("exitExactAtTarget", e.target.checked)}
                         className="sr-only peer"
                       />
-                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                      <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
                     </label>
                   </div>
                   <p className="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
@@ -1251,8 +1251,8 @@ export default function EditStrategyPage() {
                     <div className="pt-3 mt-2 border-t border-[hsl(var(--border))] flex items-center justify-between">
                       <div className="space-y-0.5 pr-4">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-semibold text-emerald-500">Option B: Hybrid 15-EMA & VWAP Trailing</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-medium">Recommended</span>
+                          <span className="text-xs font-semibold text-profit">Option B: Hybrid 15-EMA & VWAP Trailing</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-profit/10 text-profit font-medium">Recommended</span>
                         </div>
                         <p className="text-[11px] text-[hsl(var(--muted-foreground))] leading-relaxed">
                           Locks Break-Even at 50% target (+₹{Math.round(Number(form.targetRs || 500) / 2)}). As the trade approaches target, dynamically trails broker SL behind 15-EMA & VWAP with a 0.30% noise buffer to lock in intermediate gains if a reversal occurs.
@@ -1265,7 +1265,7 @@ export default function EditStrategyPage() {
                           onChange={(e) => set("enableHybridTrailing", e.target.checked)}
                           className="sr-only peer"
                         />
-                        <div className="w-8 h-4 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
+                        <div className="w-8 h-4 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-card after:border-input after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-profit"></div>
                       </label>
                     </div>
                   )}
@@ -1273,11 +1273,11 @@ export default function EditStrategyPage() {
               )}
 
               {isEmaVwap && !isGammaBlast && (
-                <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5 mt-4">
+                <div className="p-4 rounded-lg bg-profit/10 border border-profit/30 space-y-2.5 mt-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Lock className="h-4 w-4 text-emerald-500 shrink-0" />
-                      <span className="text-sm font-bold text-[hsl(var(--foreground))]">Profit Floor Locking & Peak Trailing</span>
+                      <Lock className="h-4 w-4 text-profit shrink-0" />
+                      <span className="text-sm font-semibold text-[hsl(var(--foreground))]">Profit Floor Locking & Peak Trailing</span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
@@ -1286,7 +1286,7 @@ export default function EditStrategyPage() {
                         onChange={(e) => set("enableProfitFloor", e.target.checked)}
                         className="sr-only peer"
                       />
-                      <div className="w-9 h-5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                      <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
                     </label>
                   </div>
                   <p className="text-xs text-[hsl(var(--foreground))] opacity-90 leading-relaxed">

@@ -81,15 +81,15 @@ export function DataTableColumnHeader<TData, TValue>({
           "inline-flex items-center gap-1.5 py-1 px-1.5 rounded hover:bg-muted text-xs font-semibold text-muted-foreground transition-colors group cursor-pointer select-none",
           !isRight && !isCenter && "-ml-1.5",
           isRight && "-mr-1.5",
-          isSorted && "text-foreground font-bold",
+          isSorted && "text-foreground font-semibold",
           className
         )}
       >
         <span>{title}</span>
         {isSorted === "desc" ? (
-          <ArrowDown className="h-3 w-3 text-blue-600 shrink-0" />
+          <ArrowDown className="h-3 w-3 text-accent-foreground shrink-0" />
         ) : isSorted === "asc" ? (
-          <ArrowUp className="h-3 w-3 text-blue-600 shrink-0" />
+          <ArrowUp className="h-3 w-3 text-accent-foreground shrink-0" />
         ) : (
           <ArrowUpDown className="h-3 w-3 opacity-40 group-hover:opacity-100 transition-opacity shrink-0" />
         )}
@@ -231,7 +231,7 @@ export function DataTable<TData, TValue>({
                 onChange={(e) =>
                   table.getColumn(searchKey)?.setFilterValue(e.target.value)
                 }
-                className="pl-9 h-9 text-xs border-border bg-background shadow-2xs"
+                className="pl-9 h-9 text-xs border-border bg-background"
               />
             </div>
           ) : (
@@ -241,7 +241,7 @@ export function DataTable<TData, TValue>({
                 placeholder={searchPlaceholder}
                 value={globalFilter ?? ""}
                 onChange={(e) => setGlobalFilter(e.target.value)}
-                className="pl-9 h-9 text-xs border-border bg-background shadow-2xs"
+                className="pl-9 h-9 text-xs border-border bg-background"
               />
             </div>
           )}
@@ -255,15 +255,15 @@ export function DataTable<TData, TValue>({
               variant="outline"
               size="sm"
               onClick={() => setShowColumnMenu((prev) => !prev)}
-              className="h-9 gap-1.5 text-xs text-muted-foreground hover:text-foreground border-border bg-card shadow-2xs"
+              className="h-9 gap-1.5 text-xs text-muted-foreground hover:text-foreground border-border bg-card"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
               <span>Columns</span>
             </Button>
 
             {showColumnMenu && (
-              <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl border border-border dark:border-slate-800 bg-card dark:bg-slate-900 p-2 shadow-2xl z-50 animate-in fade-in-50 zoom-in-95 space-y-1">
-                <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border dark:border-slate-800">
+              <div className="absolute right-0 top-full mt-1.5 w-52 rounded-lg border border-border bg-card p-2 shadow-2xl z-50 animate-in fade-in-50 zoom-in-95 space-y-1">
+                <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
                   <span>Toggle Columns</span>
                   <button
                     type="button"
@@ -272,7 +272,7 @@ export function DataTable<TData, TValue>({
                         if (col.getCanHide()) col.toggleVisibility(true);
                       });
                     }}
-                    className="text-[10px] text-blue-600 hover:underline font-semibold cursor-pointer lowercase first-letter:uppercase"
+                    className="text-[10px] text-accent-foreground hover:underline font-semibold cursor-pointer lowercase first-letter:uppercase"
                   >
                     Reset
                   </button>
@@ -301,8 +301,8 @@ export function DataTable<TData, TValue>({
                             className={cn(
                               "h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-colors",
                               isVisible
-                                ? "bg-blue-600 border-blue-600 text-white"
-                                : "border-border dark:border-slate-700 bg-transparent"
+                                ? "bg-primary border-primary text-primary-foreground"
+                                : "border-border bg-transparent"
                             )}
                           >
                             {isVisible && <Check className="h-3 w-3 stroke-[3]" />}
@@ -320,7 +320,7 @@ export function DataTable<TData, TValue>({
       </div>
 
       {/* ── Table Container ── */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden shadow-2xs">
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -386,7 +386,7 @@ export function DataTable<TData, TValue>({
           <select
             value={table.getState().pagination.pageSize}
             onChange={(e) => table.setPageSize(Number(e.target.value))}
-            className="h-8 px-2 rounded-lg border border-border bg-background text-foreground text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="h-8 px-2 rounded-lg border border-border bg-background text-foreground text-xs font-medium focus:outline-none focus:ring-1 focus:ring-primary"
           >
             {[10, 20, 30, 50, 100].map((size) => (
               <option key={size} value={size}>
@@ -426,7 +426,7 @@ export function DataTable<TData, TValue>({
             size="icon-sm"
             onClick={() => table.setPageIndex(0)}
             disabled={!table.getCanPreviousPage()}
-            className="h-8 w-8 border-border bg-background text-foreground shadow-2xs"
+            className="h-8 w-8 border-border bg-background text-foreground"
           >
             <ChevronsLeft className="h-4 w-4" />
           </Button>
@@ -435,7 +435,7 @@ export function DataTable<TData, TValue>({
             size="icon-sm"
             onClick={() => table.previousPage()}
             disabled={!table.getCanPreviousPage()}
-            className="h-8 w-8 border-border bg-background text-foreground shadow-2xs"
+            className="h-8 w-8 border-border bg-background text-foreground"
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -444,7 +444,7 @@ export function DataTable<TData, TValue>({
             size="icon-sm"
             onClick={() => table.nextPage()}
             disabled={!table.getCanNextPage()}
-            className="h-8 w-8 border-border bg-background text-foreground shadow-2xs"
+            className="h-8 w-8 border-border bg-background text-foreground"
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -453,7 +453,7 @@ export function DataTable<TData, TValue>({
             size="icon-sm"
             onClick={() => table.setPageIndex(table.getPageCount() - 1)}
             disabled={!table.getCanNextPage()}
-            className="h-8 w-8 border-border bg-background text-foreground shadow-2xs"
+            className="h-8 w-8 border-border bg-background text-foreground"
           >
             <ChevronsRight className="h-4 w-4" />
           </Button>

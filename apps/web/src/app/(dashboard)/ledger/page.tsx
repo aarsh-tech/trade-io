@@ -383,11 +383,11 @@ export default function MonthlyLedgerPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              <BookOpen className="h-5 w-5 sm:h-6 sm:w-6 text-emerald-500 shrink-0" />
+            <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground flex items-center gap-2">
+              <BookOpen className="h-5 w-5 sm:h-6 sm:w-6 text-profit shrink-0" />
               <span>Monthly P&L Ledger & Journal</span>
             </h1>
-            <Badge variant="outline" className="text-[10px] sm:text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20 font-medium">
+            <Badge variant="outline" className="text-[10px] sm:text-xs bg-profit/10 text-profit border-profit/20 font-medium">
               Verified Executions
             </Badge>
           </div>
@@ -398,7 +398,7 @@ export default function MonthlyLedgerPage() {
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2.5">
           {/* Month Navigation Toolbar */}
-          <div className="flex items-center justify-between sm:justify-start bg-card border border-border rounded-xl p-1 shadow-2xs">
+          <div className="flex items-center justify-between sm:justify-start bg-card border border-border rounded-lg p-1">
             <Button
               variant="ghost"
               size="icon" aria-label="Previous month"
@@ -416,7 +416,7 @@ export default function MonthlyLedgerPage() {
                   setSelectedMonth(Number(e.target.value));
                   setSelectedDateFilter(null);
                 }}
-                className="bg-transparent text-xs font-bold text-foreground focus:outline-none cursor-pointer"
+                className="bg-transparent text-xs font-semibold text-foreground focus:outline-none cursor-pointer"
               >
                 {MONTH_NAMES.map((name, idx) => (
                   <option key={name} value={idx + 1} className="bg-popover text-foreground">
@@ -431,7 +431,7 @@ export default function MonthlyLedgerPage() {
                   setSelectedYear(Number(e.target.value));
                   setSelectedDateFilter(null);
                 }}
-                className="bg-transparent text-xs font-bold text-foreground focus:outline-none cursor-pointer"
+                className="bg-transparent text-xs font-semibold text-foreground focus:outline-none cursor-pointer"
               >
                 {[2025, 2026, 2027].map((yr) => (
                   <option key={yr} value={yr} className="bg-popover text-foreground">
@@ -479,9 +479,9 @@ export default function MonthlyLedgerPage() {
               size="sm"
               onClick={() => syncMutation.mutate()}
               disabled={syncMutation.isPending || isFetching}
-              className="gap-1.5 border-emerald-500/30 text-emerald-600 bg-emerald-50/50 hover:bg-emerald-100/50 dark:bg-emerald-950/20 text-xs h-9"
+              className="gap-1.5 border-profit/30 text-profit bg-profit-subtle/50 hover:bg-profit-subtle/50 text-xs h-9"
             >
-              <RefreshCcw className={cn("h-3.5 w-3.5 shrink-0", syncMutation.isPending && "animate-spin text-emerald-500")} />
+              <RefreshCcw className={cn("h-3.5 w-3.5 shrink-0", syncMutation.isPending && "animate-spin text-profit")} />
               <span>{syncMutation.isPending ? "Syncing..." : "Sync"}</span>
             </Button>
 
@@ -490,7 +490,7 @@ export default function MonthlyLedgerPage() {
               size="sm"
               onClick={() => refetch()}
               disabled={isFetching}
-              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs h-9"
+              className="gap-1.5 bg-primary hover:bg-brand-hover text-primary-foreground text-xs h-9"
             >
               <RefreshCcw className={cn("h-3.5 w-3.5 shrink-0", isFetching && "animate-spin")} />
               <span>Refresh</span>
@@ -500,11 +500,11 @@ export default function MonthlyLedgerPage() {
       </div>
 
       {/* ── 2. Top Summary Metric Cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Card 1: Net Realized P&L */}
         <Card className={cn(
-          "border relative overflow-hidden shadow-2xs backdrop-blur",
-          isNetProfit ? "border-emerald-500/30 bg-emerald-500/5" : "border-rose-500/30 bg-rose-500/5"
+          "border relative overflow-hidden  ",
+          isNetProfit ? "border-profit/30 bg-profit/5" : "border-loss/30 bg-loss/5"
         )}>
           <CardHeader className="p-4 sm:p-6 pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-[11px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -512,27 +512,27 @@ export default function MonthlyLedgerPage() {
             </CardTitle>
             <div className={cn(
               "h-6 w-6 rounded-md flex items-center justify-center shrink-0",
-              isNetProfit ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/15 text-rose-600"
+              isNetProfit ? "bg-profit/15 text-profit" : "bg-loss/15 text-loss"
             )}>
               {isNetProfit ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
             </div>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">
             <div className={cn(
-              "text-2xl sm:text-3xl font-black font-mono tracking-tight",
-              isNetProfit ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+              "text-2xl sm:text-3xl font-semibold font-mono tracking-tight",
+              isNetProfit ? "text-profit " : "text-loss "
             )}>
               {isNetProfit ? "+" : ""}{formatINR(summary.totalRealizedPnl)}
             </div>
             <div className="flex items-center gap-2 mt-2 text-[11px] sm:text-xs text-muted-foreground flex-wrap">
-              <span>Gross Profit: <span className="text-emerald-500 font-mono font-semibold">+₹{summary.totalGrossProfit.toFixed(0)}</span></span>
+              <span>Gross Profit: <span className="text-profit font-mono font-semibold">+₹{summary.totalGrossProfit.toFixed(0)}</span></span>
               <span>•</span>
-              <span>Loss: <span className="text-rose-500 font-mono font-semibold">-₹{summary.totalGrossLoss.toFixed(0)}</span></span>
+              <span>Loss: <span className="text-loss font-mono font-semibold">-₹{summary.totalGrossLoss.toFixed(0)}</span></span>
             </div>
             <div className="flex items-center gap-2 mt-1 text-[11px] sm:text-xs text-muted-foreground flex-wrap">
               <span>Gross: <span className="font-mono font-semibold">₹{summary.totalGrossPnl.toFixed(0)}</span></span>
               <span>•</span>
-              <span>Charges: <span className="text-amber-500 font-mono font-semibold">-₹{summary.totalCharges.toFixed(0)}</span></span>
+              <span>Charges: <span className="text-warn font-mono font-semibold">-₹{summary.totalCharges.toFixed(0)}</span></span>
               <span>•</span>
               <span>Algo: <span className="font-mono font-semibold">₹{summary.algo.pnl.toFixed(0)}</span> ({summary.algo.trades})</span>
               <span>•</span>
@@ -542,26 +542,26 @@ export default function MonthlyLedgerPage() {
         </Card>
 
         {/* Card 2: Win Rate & Profit Factor */}
-        <Card className="border-border bg-card/60 backdrop-blur shadow-2xs">
+        <Card className="border-border bg-card/60">
           <CardHeader className="p-4 sm:p-6 pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-[11px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               Win Rate & Profit Factor
             </CardTitle>
-            <div className="h-6 w-6 rounded-md bg-blue-500/15 text-blue-600 flex items-center justify-center shrink-0">
+            <div className="h-6 w-6 rounded-md bg-primary/15 text-accent-foreground flex items-center justify-center shrink-0">
               <Award className="h-3.5 w-3.5" />
             </div>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">
-            <div className="text-2xl sm:text-3xl font-black font-mono text-foreground flex items-baseline gap-2">
+            <div className="text-2xl sm:text-3xl font-semibold font-mono text-foreground flex items-baseline gap-2">
               <span>{summary.winRate}%</span>
-              <Badge variant="outline" className="text-[10px] font-bold border-blue-500/30 text-blue-600 bg-blue-500/5">
+              <Badge variant="outline" className="text-[10px] font-semibold border-primary/30 text-accent-foreground bg-primary/5">
                 PF: {summary.profitFactor}x
               </Badge>
             </div>
             <div className="flex items-center gap-2 mt-2 text-[11px] sm:text-xs text-muted-foreground flex-wrap">
-              <span>Wins: <strong className="text-emerald-500 font-mono">{summary.winningTrades}</strong></span>
+              <span>Wins: <strong className="text-profit font-mono">{summary.winningTrades}</strong></span>
               <span>•</span>
-              <span>Losses: <strong className="text-rose-500 font-mono">{summary.losingTrades}</strong></span>
+              <span>Losses: <strong className="text-loss font-mono">{summary.losingTrades}</strong></span>
               <span>•</span>
               <span>Total: <strong className="text-foreground font-mono">{summary.totalTrades}</strong></span>
             </div>
@@ -569,31 +569,31 @@ export default function MonthlyLedgerPage() {
         </Card>
 
         {/* Card 3: Trading Days Breakdown */}
-        <Card className="border-border bg-card/60 backdrop-blur shadow-2xs">
+        <Card className="border-border bg-card/60">
           <CardHeader className="p-4 sm:p-6 pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-[11px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               Sessions Result
             </CardTitle>
-            <div className="h-6 w-6 rounded-md bg-purple-500/15 text-purple-600 flex items-center justify-center shrink-0">
+            <div className="h-6 w-6 rounded-md bg-signal/15 text-signal flex items-center justify-center shrink-0">
               <CalendarDays className="h-3.5 w-3.5" />
             </div>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">
-            <div className="text-2xl sm:text-3xl font-black font-mono text-foreground flex items-baseline gap-1.5 flex-wrap">
-              <span className="text-emerald-500">{summary.profitableDays}G</span>
+            <div className="text-2xl sm:text-3xl font-semibold font-mono text-foreground flex items-baseline gap-1.5 flex-wrap">
+              <span className="text-profit">{summary.profitableDays}G</span>
               <span className="text-muted-foreground text-sm font-normal">/</span>
-              <span className="text-rose-500">{summary.lossDays}R</span>
+              <span className="text-loss">{summary.lossDays}R</span>
               <span className="text-[11px] sm:text-xs font-normal text-muted-foreground">({summary.tradingDaysCount} Active)</span>
             </div>
             <div className="w-full bg-muted rounded-full h-1.5 mt-3 flex overflow-hidden">
               <div
-                className="bg-emerald-500 h-full transition-all"
+                className="bg-profit h-full transition-all"
                 style={{
                   width: `${summary.tradingDaysCount > 0 ? (summary.profitableDays / summary.tradingDaysCount) * 100 : 0}%`,
                 }}
               />
               <div
-                className="bg-rose-500 h-full transition-all"
+                className="bg-loss h-full transition-all"
                 style={{
                   width: `${summary.tradingDaysCount > 0 ? (summary.lossDays / summary.tradingDaysCount) * 100 : 0}%`,
                 }}
@@ -603,37 +603,37 @@ export default function MonthlyLedgerPage() {
         </Card>
 
         {/* Card 4: Trade Performance Metrics */}
-        <Card className="border-border bg-card/60 backdrop-blur shadow-2xs">
+        <Card className="border-border bg-card/60">
           <CardHeader className="p-4 sm:p-6 pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-[11px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               Avg Win vs Avg Loss
             </CardTitle>
-            <div className="h-6 w-6 rounded-md bg-amber-500/15 text-amber-600 flex items-center justify-center shrink-0">
+            <div className="h-6 w-6 rounded-md bg-warn/15 text-warn flex items-center justify-center shrink-0">
               <Flame className="h-3.5 w-3.5" />
             </div>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">
-            <div className="text-xs sm:text-sm font-bold font-mono text-foreground flex items-center justify-between">
-              <span className="text-emerald-500">+₹{summary.avgWin.toFixed(0)} <span className="text-[10px] text-muted-foreground font-normal">avg win</span></span>
-              <span className="text-rose-500">-₹{summary.avgLoss.toFixed(0)} <span className="text-[10px] text-muted-foreground font-normal">avg loss</span></span>
+            <div className="text-xs sm:text-sm font-semibold font-mono text-foreground flex items-center justify-between">
+              <span className="text-profit">+₹{summary.avgWin.toFixed(0)} <span className="text-[10px] text-muted-foreground font-normal">avg win</span></span>
+              <span className="text-loss">-₹{summary.avgLoss.toFixed(0)} <span className="text-[10px] text-muted-foreground font-normal">avg loss</span></span>
             </div>
             <div className="text-[11px] sm:text-xs text-muted-foreground mt-2 flex items-center justify-between border-t border-border pt-2">
-              <span>Best: <strong className="text-emerald-500 font-mono">+{summary.bestTrade ? `₹${summary.bestTrade.realizedPnl.toFixed(2)}` : "₹0"}</strong></span>
-              <span>Worst: <strong className="text-rose-500 font-mono">{summary.worstTrade ? `₹${summary.worstTrade.realizedPnl.toFixed(2)}` : "₹0"}</strong></span>
+              <span>Best: <strong className="text-profit font-mono">+{summary.bestTrade ? `₹${summary.bestTrade.realizedPnl.toFixed(2)}` : "₹0"}</strong></span>
+              <span>Worst: <strong className="text-loss font-mono">{summary.worstTrade ? `₹${summary.worstTrade.realizedPnl.toFixed(2)}` : "₹0"}</strong></span>
             </div>
           </CardContent>
         </Card>
       </div>
 
       {/* ── 3. Interactive Monthly P&L Calendar Matrix ── */}
-      <Card className="border-border bg-card shadow-xs overflow-hidden">
+      <Card className="border-border bg-card overflow-hidden">
         <CardHeader className="py-3.5 sm:py-4 px-4 sm:px-6 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-muted/20">
           <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+            <div className="h-8 w-8 rounded-lg bg-profit/10 text-profit flex items-center justify-center shrink-0">
               <Calendar className="h-4 w-4" />
             </div>
             <div>
-              <CardTitle className="text-sm font-bold text-foreground">
+              <CardTitle className="text-sm font-semibold text-foreground">
                 {MONTH_NAMES[selectedMonth - 1]} {selectedYear} Day-by-Day P&L Heat-Matrix
               </CardTitle>
               <p className="text-[11px] text-muted-foreground">
@@ -644,9 +644,9 @@ export default function MonthlyLedgerPage() {
 
           <div className="flex items-center gap-2 flex-wrap">
             {selectedDateFilter && (
-              <Badge variant="outline" className="text-[11px] sm:text-xs bg-blue-500/10 text-blue-600 border-blue-500/20 gap-1.5 py-1">
+              <Badge variant="outline" className="text-[11px] sm:text-xs bg-primary/10 text-accent-foreground border-primary/20 gap-1.5 py-1">
                 Filtered Day: <strong>{selectedDateFilter}</strong>
-                <button onClick={() => setSelectedDateFilter(null)} className="ml-1 text-muted-foreground hover:text-foreground font-bold">
+                <button onClick={() => setSelectedDateFilter(null)} className="ml-1 text-muted-foreground hover:text-foreground font-semibold">
                   ✕
                 </button>
               </Badge>
@@ -662,7 +662,7 @@ export default function MonthlyLedgerPage() {
         <CardContent className="p-3 sm:p-6 overflow-x-auto">
           <div className="min-w-[560px] sm:min-w-0">
             {/* Day of Week Headers */}
-            <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5 text-center text-[10px] sm:text-xs font-bold text-muted-foreground mb-2 sm:mb-3">
+            <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5 text-center text-[10px] sm:text-xs font-semibold text-muted-foreground mb-2 sm:mb-3">
               <span className="py-1">MON</span>
               <span className="py-1">TUE</span>
               <span className="py-1">WED</span>
@@ -679,7 +679,7 @@ export default function MonthlyLedgerPage() {
                   return (
                     <div
                       key={`empty-${idx}`}
-                      className="h-16 sm:h-24 rounded-xl bg-muted/10 border border-border/20 opacity-30"
+                      className="h-16 sm:h-24 rounded-lg bg-muted/10 border border-border/20 opacity-30"
                     />
                   );
                 }
@@ -698,14 +698,14 @@ export default function MonthlyLedgerPage() {
                       }
                     }, { pressed: isSelected })}
                     className={cn(
-                      "h-16 sm:h-24 p-1.5 sm:p-2.5 rounded-xl border flex flex-col justify-between transition-all select-none relative group",
-                      hasData ? "cursor-pointer hover:scale-[1.02] shadow-2xs" : "bg-card/40 border-border/40 opacity-70",
-                      isSelected ? "ring-2 ring-blue-500 border-blue-500 z-10 shadow-md" : "",
-                      cell.isToday && !isSelected ? "ring-1 ring-emerald-500/50" : "",
+                      "h-16 sm:h-24 p-1.5 sm:p-2.5 rounded-lg border flex flex-col justify-between transition-all select-none relative group",
+                      hasData ? "cursor-pointer  " : "bg-card/40 border-border/40 opacity-70",
+                      isSelected ? "ring-2 ring-primary border-primary z-10 shadow-md" : "",
+                      cell.isToday && !isSelected ? "ring-1 ring-profit/50" : "",
                       hasData && isProfit
-                        ? "bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500 dark:bg-emerald-950/20"
+                        ? "bg-profit/10 border-profit/30 hover:border-profit "
                         : hasData && isLoss
-                          ? "bg-rose-500/10 border-rose-500/30 hover:border-rose-500 dark:bg-rose-950/20"
+                          ? "bg-loss/10 border-loss/30 hover:border-loss "
                           : hasData
                             ? "bg-muted/40 border-border"
                             : ""
@@ -713,19 +713,19 @@ export default function MonthlyLedgerPage() {
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1">
-                        <span className="text-[10px] sm:text-xs font-bold text-foreground font-mono">
+                        <span className="text-[10px] sm:text-xs font-semibold text-foreground font-mono">
                           {cell.dayNum}
                         </span>
                         {cell.isToday && (
-                          <span className="text-[7.5px] sm:text-[8.5px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-500/15 px-1 py-0.2 rounded">
+                          <span className="text-[7.5px] sm:text-[8.5px] font-semibold uppercase tracking-wider text-profit bg-profit/15 px-1 py-0.2 rounded">
                             Today
                           </span>
                         )}
                       </div>
                       {hasData && (
                         <span className={cn(
-                          "text-[8px] sm:text-[9px] font-bold px-1 sm:px-1.5 py-0.2 rounded-full truncate",
-                          isProfit ? "bg-emerald-500 text-white" : isLoss ? "bg-rose-500 text-white" : "bg-muted text-muted-foreground"
+                          "text-[8px] sm:text-[9px] font-semibold px-1 sm:px-1.5 py-0.2 rounded-full truncate",
+                          isProfit ? "bg-profit text-on-profit" : isLoss ? "bg-loss text-on-loss" : "bg-muted text-muted-foreground"
                         )}>
                           {cell.item?.tradesCount}T
                         </span>
@@ -735,8 +735,8 @@ export default function MonthlyLedgerPage() {
                     {hasData ? (
                       <div>
                         <div className={cn(
-                          "text-[11px] sm:text-sm font-bold font-mono text-right truncate",
-                          isProfit ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
+                          "text-[11px] sm:text-sm font-semibold font-mono text-right truncate",
+                          isProfit ? "text-profit " : isLoss ? "text-loss " : "text-muted-foreground"
                         )}>
                           {isProfit ? "+" : ""}{formatINR((cell.item?.pnl || 0), { decimals: 0 })}
                         </div>
@@ -758,14 +758,14 @@ export default function MonthlyLedgerPage() {
       </Card>
 
       {/* ── 4. Closed Trades Round-Trip Journal ── */}
-      <Card className="border-border bg-card shadow-xs">
+      <Card className="border-border bg-card">
         <CardHeader className="border-b border-border py-3.5 sm:py-4 px-4 sm:px-6 flex flex-col gap-3 sm:gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
+            <div className="h-8 w-8 rounded-lg bg-primary/10 text-accent-foreground flex items-center justify-center shrink-0">
               <BarChart3 className="h-4 w-4" />
             </div>
             <div>
-              <CardTitle className="text-sm font-bold text-foreground">
+              <CardTitle className="text-sm font-semibold text-foreground">
                 Round-Trip Closed Trades Journal ({pagination.total})
               </CardTitle>
               <p className="text-[11px] text-muted-foreground">
@@ -778,7 +778,7 @@ export default function MonthlyLedgerPage() {
             {/* Segment & Status Filters */}
             <div className="flex flex-col xs:flex-row items-stretch gap-2 flex-wrap">
               {/* Segment Filter */}
-              <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-muted/80 dark:bg-muted/40 p-1 rounded-xl border border-border shadow-2xs">
+              <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-muted/80 dark:bg-muted/40 p-1 rounded-lg border border-border">
                 {(
                   [
                     { id: "ALL", label: "All", count: segmentCounts.all },
@@ -794,14 +794,14 @@ export default function MonthlyLedgerPage() {
                       className={cn(
                         "px-2 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold transition-all inline-flex items-center justify-center gap-1 select-none",
                         isActive
-                          ? "bg-card text-foreground shadow-xs ring-1 ring-border/80 font-bold dark:bg-accent dark:text-foreground"
+                          ? "bg-card text-foreground  ring-1 ring-border/80 font-semibold dark:bg-accent dark:text-foreground"
                           : "text-muted-foreground hover:text-foreground hover:bg-card/40"
                       )}
                     >
                       <span>{seg.label}</span>
                       <span
                         className={cn(
-                          "text-[9px] sm:text-[10px] px-1 sm:px-1.5 py-0.2 rounded-full font-mono font-bold transition-colors",
+                          "text-[9px] sm:text-[10px] px-1 sm:px-1.5 py-0.2 rounded-full font-mono font-semibold transition-colors",
                           isActive
                             ? "bg-muted text-foreground"
                             : "bg-muted/60 text-muted-foreground"
@@ -815,29 +815,29 @@ export default function MonthlyLedgerPage() {
               </div>
 
               {/* Status Filter Tabs */}
-              <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-muted/80 dark:bg-muted/40 p-1 rounded-xl border border-border shadow-2xs">
+              <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-muted/80 dark:bg-muted/40 p-1 rounded-lg border border-border">
                 {(
                   [
                     {
                       id: "ALL",
                       label: "All",
                       count: statusCounts.all,
-                      activeClass: "bg-blue-600 text-white shadow-xs font-bold",
-                      activeBadge: "bg-white/25 text-white",
+                      activeClass: "bg-primary text-primary-foreground  font-semibold",
+                      activeBadge: "bg-primary-foreground/25 text-primary-foreground",
                     },
                     {
                       id: "PROFIT",
                       label: "Wins",
                       count: statusCounts.wins,
-                      activeClass: "bg-emerald-600 text-white shadow-xs font-bold",
-                      activeBadge: "bg-white/25 text-white",
+                      activeClass: "bg-profit text-on-profit  font-semibold",
+                      activeBadge: "bg-on-profit/25 text-on-profit",
                     },
                     {
                       id: "LOSS",
                       label: "Losses",
                       count: statusCounts.losses,
-                      activeClass: "bg-rose-600 text-white shadow-xs font-bold",
-                      activeBadge: "bg-white/25 text-white",
+                      activeClass: "bg-loss text-on-loss  font-semibold",
+                      activeBadge: "bg-on-loss/25 text-on-loss",
                     },
                   ] as const
                 ).map((tab) => {
@@ -856,7 +856,7 @@ export default function MonthlyLedgerPage() {
                       <span>{tab.label}</span>
                       <span
                         className={cn(
-                          "text-[9px] sm:text-[10px] px-1 sm:px-1.5 py-0.2 rounded-full font-mono font-bold transition-colors",
+                          "text-[9px] sm:text-[10px] px-1 sm:px-1.5 py-0.2 rounded-full font-mono font-semibold transition-colors",
                           isActive
                             ? tab.activeBadge
                             : "bg-muted/60 text-muted-foreground"
@@ -878,12 +878,12 @@ export default function MonthlyLedgerPage() {
                 placeholder="Search symbol / strategy..."
                 value={searchSymbol}
                 onChange={(e) => setSearchSymbol(e.target.value)}
-                className="w-full bg-background border border-border text-foreground text-xs rounded-xl pl-8 pr-7 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs placeholder:text-muted-foreground/60"
+                className="w-full bg-background border border-border text-foreground text-xs rounded-lg pl-8 pr-7 py-2 focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/60"
               />
               {searchSymbol && (
                 <button
                   onClick={() => setSearchSymbol("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs font-bold"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs font-semibold"
                   title="Clear search"
                 >
                   ✕
@@ -898,7 +898,7 @@ export default function MonthlyLedgerPage() {
             <QueryError what="the ledger" error={error} onRetry={() => refetch()} retrying={isFetching} />
           ) : isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center gap-3">
-              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+              <Loader2 className="h-8 w-8 text-accent-foreground animate-spin" />
               <p className="text-xs sm:text-sm text-muted-foreground">Calculating closed trade ledger from broker records...</p>
             </div>
           ) : filteredTrades.length === 0 ? (
@@ -944,13 +944,13 @@ export default function MonthlyLedgerPage() {
                       {/* Top Row: Symbol, Side Badge, Status */}
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="font-bold text-xs sm:text-sm text-foreground truncate">
+                          <span className="font-semibold text-xs sm:text-sm text-foreground truncate">
                             {formatted.displayName}
                           </span>
                           <span className="text-[9px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded shrink-0">
                             {t.exchange}
                           </span>
-                          <Badge variant="outline" className="text-[8.5px] font-bold px-1 py-0 bg-muted/40 shrink-0">
+                          <Badge variant="outline" className="text-[8.5px] font-semibold px-1 py-0 bg-muted/40 shrink-0">
                             {t.product}
                           </Badge>
                         </div>
@@ -958,8 +958,8 @@ export default function MonthlyLedgerPage() {
                         <div className="flex items-center gap-1.5 shrink-0">
                           <Badge
                             className={cn(
-                              "text-[10px] font-bold px-2 py-0.5 border-0 shadow-2xs",
-                              t.side === "LONG" ? "bg-blue-600 text-white" : "bg-purple-600 text-white"
+                              "text-[10px] font-semibold px-2 py-0.5 border-0 ",
+                              t.side === "LONG" ? "bg-primary text-primary-foreground" : "bg-signal text-on-signal"
                             )}
                           >
                             {t.side}
@@ -967,11 +967,11 @@ export default function MonthlyLedgerPage() {
                           <Badge
                             variant="secondary"
                             className={cn(
-                              "text-[10px] font-bold px-1.5 py-0.5 inline-flex items-center gap-1",
+                              "text-[10px] font-semibold px-1.5 py-0.5 inline-flex items-center gap-1",
                               isWin
-                                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                ? "bg-profit/10 text-profit border border-profit/20"
                                 : isLoss
-                                  ? "bg-rose-500/10 text-rose-600 border border-rose-500/20"
+                                  ? "bg-loss/10 text-loss border border-loss/20"
                                   : "bg-muted text-muted-foreground"
                             )}
                           >
@@ -983,7 +983,7 @@ export default function MonthlyLedgerPage() {
                       </div>
 
                       {/* Middle Row: Qty, Prices, Duration */}
-                      <div className="flex items-center justify-between text-xs bg-muted/30 p-2 rounded-xl">
+                      <div className="flex items-center justify-between text-xs bg-muted/30 p-2 rounded-lg">
                         <div className="flex items-center gap-1 text-muted-foreground">
                           <span>Qty: <strong className="text-foreground font-mono">{t.qty}</strong></span>
                           <span>•</span>
@@ -992,7 +992,7 @@ export default function MonthlyLedgerPage() {
                         <div className="flex items-center gap-1 font-mono text-[11px]">
                           <span className="text-muted-foreground">₹{t.entryPrice.toFixed(2)}</span>
                           <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                          <span className="font-bold text-foreground">₹{t.exitPrice.toFixed(2)}</span>
+                          <span className="font-semibold text-foreground">₹{t.exitPrice.toFixed(2)}</span>
                         </div>
                       </div>
 
@@ -1005,14 +1005,14 @@ export default function MonthlyLedgerPage() {
 
                         <div className="text-right">
                           <div className={cn(
-                            "font-mono font-black text-sm",
-                            isWin ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
+                            "font-mono font-semibold text-sm",
+                            isWin ? "text-profit " : isLoss ? "text-loss " : "text-muted-foreground"
                           )}>
                             {isWin ? "+" : ""}{formatINR(t.realizedPnl)}
                           </div>
                           <span className={cn(
-                            "text-[10px] font-mono font-bold",
-                            isWin ? "text-emerald-600" : isLoss ? "text-rose-600" : "text-muted-foreground"
+                            "text-[10px] font-mono font-semibold",
+                            isWin ? "text-profit" : isLoss ? "text-loss" : "text-muted-foreground"
                           )}>
                             ({isWin ? "+" : ""}{t.pnlPct.toFixed(2)}%)
                           </span>
@@ -1056,14 +1056,14 @@ export default function MonthlyLedgerPage() {
                       return (
                         <tr key={t.id} className="hover:bg-muted/30 transition-colors">
                           <td className="py-3.5 px-4 whitespace-nowrap">
-                            <div className="font-mono text-xs font-bold text-foreground">{t.date}</div>
+                            <div className="font-mono text-xs font-semibold text-foreground">{t.date}</div>
                             <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
                               <Clock className="h-3 w-3" />
                               {formattedExitTime} IST
                             </div>
                           </td>
                           <td className="py-3.5 px-4">
-                            <div className="font-bold text-foreground flex items-center gap-1.5">
+                            <div className="font-semibold text-foreground flex items-center gap-1.5">
                               <span>{formatted.displayName}</span>
                               <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
                                 {t.exchange}
@@ -1075,7 +1075,7 @@ export default function MonthlyLedgerPage() {
                                   {t.symbol}
                                 </span>
                               )}
-                              <Badge variant="outline" className="text-[9px] font-bold px-1 py-0 bg-muted/40">
+                              <Badge variant="outline" className="text-[9px] font-semibold px-1 py-0 bg-muted/40">
                                 {t.product}
                               </Badge>
                             </div>
@@ -1083,10 +1083,10 @@ export default function MonthlyLedgerPage() {
                           <td className="py-3.5 px-4">
                             <Badge
                               className={cn(
-                                "text-[10.5px] font-bold px-2.5 py-0.5 border-0 shadow-2xs",
+                                "text-[10.5px] font-semibold px-2.5 py-0.5 border-0 ",
                                 t.side === "LONG"
-                                  ? "bg-blue-600 text-white"
-                                  : "bg-purple-600 text-white"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-signal text-on-signal"
                               )}
                             >
                               {t.side}
@@ -1104,7 +1104,7 @@ export default function MonthlyLedgerPage() {
                             <div className="flex items-center justify-end gap-1.5">
                               <span className="text-muted-foreground font-medium">₹{t.entryPrice.toFixed(2)}</span>
                               <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                              <span className="font-bold text-foreground">₹{t.exitPrice.toFixed(2)}</span>
+                              <span className="font-semibold text-foreground">₹{t.exitPrice.toFixed(2)}</span>
                             </div>
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono text-xs text-muted-foreground">
@@ -1112,14 +1112,14 @@ export default function MonthlyLedgerPage() {
                           </td>
                           <td className="py-3.5 px-4 text-right whitespace-nowrap">
                             <div className={cn(
-                              "font-mono font-black text-sm",
-                              isWin ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
+                              "font-mono font-semibold text-sm",
+                              isWin ? "text-profit " : isLoss ? "text-loss " : "text-muted-foreground"
                             )}>
                               {isWin ? "+" : ""}{formatINR(t.realizedPnl)}
                             </div>
                             <div className={cn(
-                              "text-[10.5px] font-mono font-bold mt-0.5",
-                              isWin ? "text-emerald-600" : isLoss ? "text-rose-600" : "text-muted-foreground"
+                              "text-[10.5px] font-mono font-semibold mt-0.5",
+                              isWin ? "text-profit" : isLoss ? "text-loss" : "text-muted-foreground"
                             )}>
                               {isWin ? "+" : ""}{t.pnlPct.toFixed(2)}%
                             </div>
@@ -1128,11 +1128,11 @@ export default function MonthlyLedgerPage() {
                             <Badge
                               variant="secondary"
                               className={cn(
-                                "text-[10.5px] font-bold px-2.5 py-0.5 inline-flex items-center gap-1",
+                                "text-[10.5px] font-semibold px-2.5 py-0.5 inline-flex items-center gap-1",
                                 isWin
-                                  ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                  ? "bg-profit/10 text-profit border border-profit/20"
                                   : isLoss
-                                    ? "bg-rose-500/10 text-rose-600 border border-rose-500/20"
+                                    ? "bg-loss/10 text-loss border border-loss/20"
                                     : "bg-muted text-muted-foreground"
                               )}
                             >
@@ -1168,10 +1168,10 @@ export default function MonthlyLedgerPage() {
       </Card>
 
       {/* ── 5. Daily Aggregated Ledger Table ── */}
-      <Card className="border-border bg-card shadow-xs">
+      <Card className="border-border bg-card">
         <CardHeader className="py-3.5 sm:py-4 px-4 sm:px-6 border-b border-border flex flex-row items-center justify-between bg-muted/20">
           <div>
-            <CardTitle className="text-sm font-bold text-foreground">
+            <CardTitle className="text-sm font-semibold text-foreground">
               Daily Consolidated P&L Breakdown
             </CardTitle>
             <p className="text-[11px] text-muted-foreground">
@@ -1200,28 +1200,28 @@ export default function MonthlyLedgerPage() {
                       {...pressable(() => setSelectedDateFilter(selectedDateFilter === d.date ? null : d.date), { pressed: selectedDateFilter === d.date })}
                       className={cn(
                         "p-3.5 space-y-2 hover:bg-muted/20 transition-colors cursor-pointer",
-                        selectedDateFilter === d.date ? "bg-muted/30 border-l-4 border-l-blue-500" : ""
+                        selectedDateFilter === d.date ? "bg-muted/30 border-l-4 border-l-primary" : ""
                       )}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-foreground">{d.formattedDate}</span>
+                          <span className="font-mono text-xs font-semibold text-foreground">{d.formattedDate}</span>
                           <span className="text-xs text-muted-foreground">({d.dayOfWeek})</span>
                         </div>
                         <Badge
                           variant="secondary"
                           className={cn(
-                            "text-[9px] font-bold px-2 py-0.5",
-                            isProfit ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20" : isLoss ? "bg-rose-500/10 text-rose-600 border border-rose-500/20" : "bg-muted text-muted-foreground"
+                            "text-[9px] font-semibold px-2 py-0.5",
+                            isProfit ? "bg-profit/10 text-profit border border-profit/20" : isLoss ? "bg-loss/10 text-loss border border-loss/20" : "bg-muted text-muted-foreground"
                           )}
                         >
                           {isProfit ? "GREEN DAY" : isLoss ? "RED DAY" : "FLAT"}
                         </Badge>
                       </div>
 
-                      <div className="flex items-center justify-between text-xs bg-muted/30 p-2 rounded-xl">
+                      <div className="flex items-center justify-between text-xs bg-muted/30 p-2 rounded-lg">
                         <span className="text-muted-foreground">
-                          Trades: <strong className="text-foreground">{d.tradesCount}</strong> (<span className="text-emerald-500 font-semibold">{d.wins}W</span> • <span className="text-rose-500 font-semibold">{d.losses}L</span>)
+                          Trades: <strong className="text-foreground">{d.tradesCount}</strong> (<span className="text-profit font-semibold">{d.wins}W</span> • <span className="text-loss font-semibold">{d.losses}L</span>)
                         </span>
                         <span className="text-muted-foreground">
                           Win Rate: <strong className="text-foreground font-mono">{d.winRate}%</strong>
@@ -1230,14 +1230,14 @@ export default function MonthlyLedgerPage() {
 
                       <div className="flex items-center justify-between text-xs pt-0.5">
                         <div className="text-[11px] text-muted-foreground">
-                          Cumul: <span className={cn("font-mono font-bold", isCumulProfit ? "text-emerald-600" : "text-rose-600")}>
+                          Cumul: <span className={cn("font-mono font-semibold", isCumulProfit ? "text-profit" : "text-loss")}>
                             {isCumulProfit ? "+" : ""}{formatINR(d.cumulativePnl)}
                           </span>
                         </div>
 
                         <div className={cn(
-                          "font-mono font-black text-sm",
-                          isProfit ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
+                          "font-mono font-semibold text-sm",
+                          isProfit ? "text-profit " : isLoss ? "text-loss " : "text-muted-foreground"
                         )}>
                           {isProfit ? "+" : ""}{formatINR(d.pnl)}
                         </div>
@@ -1276,16 +1276,16 @@ export default function MonthlyLedgerPage() {
                             selectedDateFilter === d.date ? "bg-muted/40 font-semibold" : ""
                           )}
                         >
-                          <td className="py-3.5 px-4 font-mono text-xs font-bold text-foreground">
+                          <td className="py-3.5 px-4 font-mono text-xs font-semibold text-foreground">
                             {d.formattedDate}
                           </td>
                           <td className="py-3.5 px-4 text-xs text-muted-foreground">
                             {d.dayOfWeek}
                           </td>
                           <td className="py-3.5 px-4 text-center font-mono text-xs">
-                            <span className="font-bold text-foreground">{d.tradesCount}</span>
+                            <span className="font-semibold text-foreground">{d.tradesCount}</span>
                             <span className="text-muted-foreground text-[11px] ml-1.5">
-                              (<span className="text-emerald-500 font-semibold">{d.wins}W</span> • <span className="text-rose-500 font-semibold">{d.losses}L</span>)
+                              (<span className="text-profit font-semibold">{d.wins}W</span> • <span className="text-loss font-semibold">{d.losses}L</span>)
                             </span>
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono text-xs font-semibold text-foreground">
@@ -1293,16 +1293,16 @@ export default function MonthlyLedgerPage() {
                           </td>
                           <td className="py-3.5 px-4 text-right whitespace-nowrap">
                             <span className={cn(
-                              "font-mono font-bold text-xs sm:text-sm",
-                              isProfit ? "text-emerald-600 dark:text-emerald-400" : isLoss ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
+                              "font-mono font-semibold text-xs sm:text-sm",
+                              isProfit ? "text-profit " : isLoss ? "text-loss " : "text-muted-foreground"
                             )}>
                               {isProfit ? "+" : ""}{formatINR(d.pnl)}
                             </span>
                           </td>
                           <td className="py-3.5 px-4 text-right whitespace-nowrap">
                             <span className={cn(
-                              "font-mono font-bold text-xs",
-                              isCumulProfit ? "text-emerald-600" : "text-rose-600"
+                              "font-mono font-semibold text-xs",
+                              isCumulProfit ? "text-profit" : "text-loss"
                             )}>
                               {isCumulProfit ? "+" : ""}{formatINR(d.cumulativePnl)}
                             </span>
@@ -1311,11 +1311,11 @@ export default function MonthlyLedgerPage() {
                             <Badge
                               variant="secondary"
                               className={cn(
-                                "text-[10px] font-bold px-2.5 py-0.5",
+                                "text-[10px] font-semibold px-2.5 py-0.5",
                                 isProfit
-                                  ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                  ? "bg-profit/10 text-profit border border-profit/20"
                                   : isLoss
-                                    ? "bg-rose-500/10 text-rose-600 border border-rose-500/20"
+                                    ? "bg-loss/10 text-loss border border-loss/20"
                                     : "bg-muted text-muted-foreground"
                               )}
                             >

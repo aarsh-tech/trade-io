@@ -18,24 +18,24 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
       {form.type === "GAMMA_BLAST_EXPIRY" && (
         <div className="space-y-5">
           {/* Info Card */}
-          <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 space-y-3">
+          <div className="p-4 rounded-lg bg-warn-subtle border-2 border-warn/30 space-y-3">
             <div className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-amber-600 " />
-              <p className="text-xs font-bold text-amber-950 font-black">
+              <Zap className="h-4 w-4 text-warn" />
+              <p className="text-xs font-semibold text-warn font-semibold">
                 Sub-Second Ratchet Trailing &amp; Profit Lock Mechanism
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2.5 pt-0.5">
-              <div className="p-2.5 rounded-xl bg-card border-2 border-border shadow-xs">
-                <span className="font-bold block text-xs text-emerald-700 ">2x Spike (100% ROI)</span>
+              <div className="p-2.5 rounded-lg bg-card border-2 border-border">
+                <span className="font-semibold block text-xs text-profit">2x Spike (100% ROI)</span>
                 <span className="text-[11px] text-foreground font-medium font-normal">SL moves to Cost + ₹1 (Risk-Free)</span>
               </div>
-              <div className="p-2.5 rounded-xl bg-card border-2 border-border shadow-xs">
-                <span className="font-bold block text-xs text-blue-700 ">3x Spike (200% ROI)</span>
+              <div className="p-2.5 rounded-lg bg-card border-2 border-border">
+                <span className="font-semibold block text-xs text-accent-foreground">3x Spike (200% ROI)</span>
                 <span className="text-[11px] text-foreground font-medium font-normal">SL locks at 2x profit floor</span>
               </div>
-              <div className="p-2.5 rounded-xl bg-card border-2 border-border shadow-xs">
-                <span className="font-bold block text-xs text-purple-700 ">5x+ Multi-Bagger</span>
+              <div className="p-2.5 rounded-lg bg-card border-2 border-border">
+                <span className="font-semibold block text-xs text-signal">5x+ Multi-Bagger</span>
                 <span className="text-[11px] text-foreground font-medium font-normal">Peak Trail (20% below high)</span>
               </div>
             </div>
@@ -45,7 +45,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Target className="h-4 w-4 text-emerald-500" />
+                <Target className="h-4 w-4 text-profit" />
                 Target Profit Goal (₹)
               </label>
               <Input
@@ -61,7 +61,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </div>
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Shield className="h-4 w-4 text-red-500" />
+                <Shield className="h-4 w-4 text-loss" />
                 Max Daily Loss Limit (₹)
               </label>
               <Input
@@ -78,16 +78,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           </div>
 
           {/* Confluence Checkboxes */}
-          <div className="p-4 rounded-2xl border border-border bg-card shadow-xs space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="p-4 rounded-lg border border-border bg-card space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               High Win-Rate Confluence Filters
             </p>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <Activity className="h-4 w-4 text-indigo-500" />
+                <Activity className="h-4 w-4 text-accent-foreground" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">Live Open Interest (OI) &amp; PCR Filter</p>
+                  <p className="text-xs font-semibold text-foreground">Live Open Interest (OI) &amp; PCR Filter</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Confirms institutional Call/Put unwinding using Zerodha Quote API
                   </p>
@@ -97,15 +97,15 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.gbEnableOiFilter}
                 onChange={(e) => set("gbEnableOiFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <TrendingUp className="h-4 w-4 text-amber-500" />
+                <TrendingUp className="h-4 w-4 text-warn" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">Volume Surge Confirmation (≥ 2.5x)</p>
+                  <p className="text-xs font-semibold text-foreground">Volume Surge Confirmation (≥ 2.5x)</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Eliminates fake breakouts by requiring 3x volume on the option contract
                   </p>
@@ -115,15 +115,15 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.gbEnableVolumeSurge}
                 onChange={(e) => set("gbEnableVolumeSurge", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <Zap className="h-4 w-4 text-emerald-500" />
+                <Zap className="h-4 w-4 text-profit" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">Sub-Second Zero-Latency Ratchet Trailing</p>
+                  <p className="text-xs font-semibold text-foreground">Sub-Second Zero-Latency Ratchet Trailing</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Evaluated on live ticks to lock explosive multi-bagger profits instantly
                   </p>
@@ -133,16 +133,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.gbEnableRatchetTrailing}
                 onChange={(e) => set("gbEnableRatchetTrailing", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </label>
           </div>
 
           {/* Exact Target Mode Toggle */}
-          <div className="p-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50/50 shadow-xs space-y-2">
+          <div className="p-4 rounded-lg border-2 border-profit/30 bg-profit-subtle/50 space-y-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs sm:text-sm font-bold text-foreground">Fixed Rupee Target &amp; Loss Cutoff</p>
+                <p className="text-xs sm:text-sm font-semibold text-foreground">Fixed Rupee Target &amp; Loss Cutoff</p>
                 <p className="text-xs text-foreground/75 font-medium mt-0.5">
                   Exit immediately when ₹{form.targetRs || "1500"} target or -₹{form.stopLossRs || "500"} SL is hit; locks profits at +50% milestone
                 </p>
@@ -151,7 +151,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.exitExactAtTarget}
                 onChange={(e) => set("exitExactAtTarget", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-profit focus:ring-profit cursor-pointer"
               />
             </div>
           </div>
@@ -177,7 +177,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="text"
                 disabled
                 value={`${form.gbEndTime || "15:25"} IST (Square-Off)`}
-                className="font-bold text-amber-700 bg-amber-500/10 border-amber-500/30"
+                className="font-semibold text-warn bg-warn/10 border-warn/30"
               />
               <p className="text-xs text-foreground/75 font-medium mt-1">
                 Holds &amp; trails through closing candle; hard exit @ 15:29:30
@@ -190,15 +190,15 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
       {/* ── NIFTY SCALPER RISK CONTROLS ── */}
       {form.type === "NIFTY_OPTIONS_SCALPER" && (
         <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-purple-50 border-2 border-purple-300 space-y-2.5">
+          <div className="p-4 rounded-lg bg-signal-subtle border-2 border-signal/30 space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Zap className="h-4 w-4 text-purple-600 " />
-                <p className="text-xs font-bold text-purple-950 font-black">
+                <Zap className="h-4 w-4 text-signal" />
+                <p className="text-xs font-semibold text-signal font-semibold">
                   Institutional Scalper Risk &amp; Momentum Trailing Active
                 </p>
               </div>
-              <Badge className="bg-purple-600/20 text-purple-700  text-[10px] font-bold border-0">
+              <Badge className="bg-signal/20 text-signal text-[10px] font-semibold border-0">
                 2:1 R:R Asymmetry
               </Badge>
             </div>
@@ -214,7 +214,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Target className="h-4 w-4 text-emerald-500" />
+                <Target className="h-4 w-4 text-profit" />
                 Target 1 Milestone (Points)
               </label>
               <Input
@@ -230,7 +230,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </div>
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Shield className="h-4 w-4 text-red-500" />
+                <Shield className="h-4 w-4 text-loss" />
                 Initial Stop Loss Points
               </label>
               <Input
@@ -249,7 +249,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <TrendingUp className="h-4 w-4 text-purple-500" />
+                <TrendingUp className="h-4 w-4 text-signal" />
                 Breakeven Trail Trigger (Points)
               </label>
               <Input
@@ -265,7 +265,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </div>
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Shield className="h-4 w-4 text-amber-500" />
+                <Shield className="h-4 w-4 text-warn" />
                 Daily Loss Circuit Breaker (Max Losses)
               </label>
               <Input
@@ -283,11 +283,11 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           </div>
 
           {/* Partial Profit Booking ("The Banker & The Runner") */}
-          <div className="p-4 rounded-2xl border border-border bg-card shadow-xs space-y-3">
+          <div className="p-4 rounded-lg border border-border bg-card space-y-3">
             <div className="flex items-center justify-between">
               <div className="space-y-0.5 pr-4">
-                <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <Activity className="h-3.5 w-3.5 text-emerald-500" />
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Activity className="h-3.5 w-3.5 text-profit" />
                   The Banker &amp; The Runner (Partial Profit Booking)
                 </p>
                 <p className="text-xs text-foreground/75 font-medium leading-relaxed">
@@ -298,7 +298,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.dsEnablePartialBooking !== false}
                 onChange={(e) => set("dsEnablePartialBooking", e.target.checked)}
-                className="h-4 w-4 rounded accent-purple-600 shrink-0 cursor-pointer"
+                className="h-4 w-4 rounded accent-signal shrink-0 cursor-pointer"
               />
             </div>
 
@@ -310,7 +310,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 <select
                   value={form.dsPartialBookingPct || "50"}
                   onChange={(e) => set("dsPartialBookingPct", e.target.value)}
-                  className="h-9 rounded-xl border border-border bg-background px-3 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary/20"
+                  className="h-9 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="50">50% (Recommended — Equal Split)</option>
                   <option value="33">33% (Aggressive Runner Bias)</option>
@@ -325,10 +325,10 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
       {/* ── 15-MIN BREAKOUT RISK & DYNAMIC TRAILING CONTROLS ── */}
       {form.type === "BREAKOUT_15MIN" && (
         <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-blue-50 border-2 border-blue-300 space-y-2.5">
+          <div className="p-4 rounded-lg bg-brand-subtle border-2 border-primary/30 space-y-2.5">
             <div className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-blue-600 " />
-              <p className="text-xs font-bold text-blue-950 font-black">
+              <Zap className="h-4 w-4 text-accent-foreground" />
+              <p className="text-xs font-semibold text-accent-foreground font-semibold">
                 Institutional Edge &amp; Systematic Profitability Engine Active
               </p>
             </div>
@@ -343,22 +343,22 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           </div>
 
           {/* Institutional Edge Toggles */}
-          <div className="p-4 rounded-2xl border border-border bg-card shadow-xs space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="p-4 rounded-lg border border-border bg-card space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Stop-Loss Elimination &amp; High-Conviction Filters
             </p>
 
             {/* Live Zerodha CPR S/R & Regime Filter */}
-            <div className="p-3.5 rounded-xl border-2 border-indigo-300 bg-indigo-50  space-y-2">
+            <div className="p-3.5 rounded-lg border-2 border-primary/30 bg-brand-subtle space-y-2">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2.5">
-                  <Target className="h-4 w-4 text-indigo-600  shrink-0" />
+                  <Target className="h-4 w-4 text-accent-foreground shrink-0" />
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-bold text-indigo-950 font-black">
+                      <p className="text-xs font-semibold text-accent-foreground font-semibold">
                         Live Zerodha CPR Support / Resistance &amp; Regime Gate
                       </p>
-                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-indigo-500/40 text-indigo-700 ">
+                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-primary/40 text-accent-foreground">
                         Live Kite Data
                       </Badge>
                     </div>
@@ -371,22 +371,22 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   type="checkbox"
                   checked={form.b15EnableCprSupportResistance ?? true}
                   onChange={(e) => set("b15EnableCprSupportResistance", e.target.checked)}
-                  className="h-4 w-4 rounded border-indigo-400 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0 ml-3"
+                  className="h-4 w-4 rounded border-primary text-accent-foreground focus:ring-primary cursor-pointer shrink-0 ml-3"
                 />
               </label>
             </div>
 
             {/* Banker & Runner Partial Profit Booking */}
-            <div className="p-3.5 rounded-xl border-2 border-amber-300 bg-amber-50  space-y-3">
+            <div className="p-3.5 rounded-lg border-2 border-warn/30 bg-warn-subtle space-y-3">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2.5">
-                  <Shield className="h-4 w-4 text-amber-600  shrink-0" />
+                  <Shield className="h-4 w-4 text-warn shrink-0" />
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-bold text-amber-950 font-black">
+                      <p className="text-xs font-semibold text-warn font-semibold">
                         Multi-Lot Partial Profit Booking (&ldquo;The Banker &amp; The Runner&rdquo;)
                       </p>
-                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-amber-500/40 text-amber-800 ">
+                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-warn/40 text-warn">
                         Guaranteed Green Day
                       </Badge>
                     </div>
@@ -399,12 +399,12 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   type="checkbox"
                   checked={form.b15EnablePartialBooking ?? true}
                   onChange={(e) => set("b15EnablePartialBooking", e.target.checked)}
-                  className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0 ml-3"
+                  className="h-4 w-4 rounded border-warn text-warn focus:ring-warn cursor-pointer shrink-0 ml-3"
                 />
               </label>
 
               {(form.b15EnablePartialBooking ?? true) && (
-                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-amber-500/30">
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-warn/30">
                   <div>
                     <label className="text-xs font-semibold block mb-1 text-foreground">The Banker Booking Target (R)</label>
                     <Input
@@ -414,7 +414,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                       max={4.0}
                       value={form.b15PartialBookingR || "1.8"}
                       onChange={(e) => set("b15PartialBookingR", e.target.value)}
-                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-xl"
+                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-lg"
                     />
                     <p className="text-xs text-foreground/75 font-medium mt-1">
                       Target R-multiple to lock first batch (default: +1.8R)
@@ -429,7 +429,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                       max={75}
                       value={form.b15PartialBookingPct || "50"}
                       onChange={(e) => set("b15PartialBookingPct", e.target.value)}
-                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-xl"
+                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-lg"
                     />
                     <p className="text-xs text-foreground/75 font-medium mt-1">
                       % lots squared off at Target (default: 50% Banker, 50% Runner)
@@ -440,16 +440,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </div>
 
             {/* Midday Dead-Zone Filter */}
-            <div className="p-3.5 rounded-xl border border-border bg-secondary/40 space-y-3">
+            <div className="p-3.5 rounded-lg border border-border bg-secondary/40 space-y-3">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2.5">
-                  <Activity className="h-4 w-4 text-foreground/75  shrink-0" />
+                  <Activity className="h-4 w-4 text-foreground/75 shrink-0" />
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-bold text-foreground">
+                      <p className="text-xs font-semibold text-foreground">
                         Midday Dead-Zone Chop Shield (11:45 AM – 13:00 PM)
                       </p>
-                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-border text-foreground/75 ">
+                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-border text-foreground/75">
                         Anti-Whipsaw
                       </Badge>
                     </div>
@@ -462,7 +462,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   type="checkbox"
                   checked={form.b15EnableMiddayChopFilter ?? true}
                   onChange={(e) => set("b15EnableMiddayChopFilter", e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-400 text-foreground/75 focus:ring-slate-500 cursor-pointer shrink-0 ml-3"
+                  className="h-4 w-4 rounded border-input text-foreground/75 focus:ring-border cursor-pointer shrink-0 ml-3"
                 />
               </label>
 
@@ -474,7 +474,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                       type="text"
                       value={form.b15MiddayDeadZoneStart || "11:45"}
                       onChange={(e) => set("b15MiddayDeadZoneStart", e.target.value)}
-                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-xl"
+                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-lg"
                     />
                   </div>
                   <div>
@@ -483,18 +483,18 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                       type="text"
                       value={form.b15MiddayDeadZoneEnd || "13:00"}
                       onChange={(e) => set("b15MiddayDeadZoneEnd", e.target.value)}
-                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-xl"
+                      className="font-semibold text-xs h-9 bg-background border-border text-foreground rounded-lg"
                     />
                   </div>
                 </div>
               )}
             </div>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <Shield className="h-4 w-4 text-emerald-500 shrink-0" />
+                <Shield className="h-4 w-4 text-profit shrink-0" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">Structural Candle Stop Loss (Tight Risk)</p>
+                  <p className="text-xs font-semibold text-foreground">Structural Candle Stop Loss (Tight Risk)</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Sets SL to breakout candle extreme (45–80 pts) instead of opposite 15m range (200–350 pts)
                   </p>
@@ -504,15 +504,15 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15UseStructuralCandleSl ?? true}
                 onChange={(e) => set("b15UseStructuralCandleSl", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-profit focus:ring-profit cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <Activity className="h-4 w-4 text-indigo-500 shrink-0" />
+                <Activity className="h-4 w-4 text-accent-foreground shrink-0" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">RSI(14) Momentum Trend Alignment</p>
+                  <p className="text-xs font-semibold text-foreground">RSI(14) Momentum Trend Alignment</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Confirms active momentum expansion (RSI &gt; 55 for Long, &lt; 45 for Short)
                   </p>
@@ -522,15 +522,15 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableRsiFilter ?? true}
                 onChange={(e) => set("b15EnableRsiFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </label>
 
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <Zap className="h-4 w-4 text-amber-500 shrink-0" />
+                <Zap className="h-4 w-4 text-warn shrink-0" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">Early Breakeven Trailing (+0.7R -&gt; COST)</p>
+                  <p className="text-xs font-semibold text-foreground">Early Breakeven Trailing (+0.7R -&gt; COST)</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Locks ₹0 risk-free trade at +0.7R profit before normal pullback retests
                   </p>
@@ -540,21 +540,21 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableBreakevenTrail ?? true}
                 onChange={(e) => set("b15EnableBreakevenTrail", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-warn focus:ring-warn cursor-pointer"
               />
             </label>
 
             {/* 9/15 EMA & VWAP Dynamic Trailing */}
-            <div className="p-3.5 rounded-xl border-2 border-emerald-300 bg-emerald-50  space-y-3">
+            <div className="p-3.5 rounded-lg border-2 border-profit/30 bg-profit-subtle space-y-3">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2.5">
-                  <TrendingUp className="h-4 w-4 text-emerald-600  shrink-0" />
+                  <TrendingUp className="h-4 w-4 text-profit shrink-0" />
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-bold text-emerald-950 font-black">
+                      <p className="text-xs font-semibold text-profit font-semibold">
                         Dynamic EMA &amp; VWAP Trend Trailing (Uncapped Runner)
                       </p>
-                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-emerald-500/40 text-emerald-700 ">
+                      <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-profit/40 text-profit">
                         Zero Greed
                       </Badge>
                     </div>
@@ -567,18 +567,18 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   type="checkbox"
                   checked={form.b15EnableEmaVwapTrailing ?? true}
                   onChange={(e) => set("b15EnableEmaVwapTrailing", e.target.checked)}
-                  className="h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0 ml-3"
+                  className="h-4 w-4 rounded border-profit text-profit focus:ring-profit cursor-pointer shrink-0 ml-3"
                 />
               </label>
 
               {(form.b15EnableEmaVwapTrailing ?? true) && (
-                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-emerald-500/30">
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-profit/30">
                   <div>
                     <label className="text-xs font-semibold block mb-1 text-foreground">Trailing EMA Period</label>
                     <select
                       value={form.b15TrailingEmaPeriod || "9"}
                       onChange={(e) => set("b15TrailingEmaPeriod", e.target.value)}
-                      className="flex h-9 w-full rounded-xl border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      className="flex h-9 w-full rounded-lg border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-profit/30"
                     >
                       <option value="9">9 EMA (Fast Dynamic Trailing)</option>
                       <option value="15">15 EMA (Smooth Trend Rider — Chart Match)</option>
@@ -590,7 +590,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                     <select
                       value={form.b15TrailingVwapSource || "both"}
                       onChange={(e) => set("b15TrailingVwapSource", e.target.value)}
-                      className="flex h-9 w-full rounded-xl border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      className="flex h-9 w-full rounded-lg border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-profit/30"
                     >
                       <option value="both">Both (Max of EMA &amp; VWAP for Longs)</option>
                       <option value="ema">EMA Only</option>
@@ -602,15 +602,15 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </div>
 
             {/* Dual-Edge: Liquidity Sweep Trap Trading */}
-            <label className="flex items-center justify-between p-3.5 rounded-xl bg-purple-50 border-2 border-purple-300 cursor-pointer">
+            <label className="flex items-center justify-between p-3.5 rounded-lg bg-signal-subtle border-2 border-signal/30 cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <TrendingUp className="h-4 w-4 text-purple-600  shrink-0" />
+                <TrendingUp className="h-4 w-4 text-signal shrink-0" />
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <p className="text-xs font-bold text-purple-950 font-black">
+                    <p className="text-xs font-semibold text-signal font-semibold">
                       ⚡ Institutional Liquidity Sweep Trap Trading (Turtle Soup / 2B)
                     </p>
-                    <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-purple-500/40 text-purple-700 ">
+                    <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5 border-signal/40 text-signal">
                       High Win-Rate
                     </Badge>
                   </div>
@@ -623,16 +623,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableTrapReversal ?? true}
                 onChange={(e) => set("b15EnableTrapReversal", e.target.checked)}
-                className="h-4 w-4 rounded border-purple-400 text-purple-600 focus:ring-purple-500 cursor-pointer shrink-0 ml-3"
+                className="h-4 w-4 rounded border-signal text-signal focus:ring-signal cursor-pointer shrink-0 ml-3"
               />
             </label>
 
             {/* Breakout Retest Confirmation */}
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <Shield className="h-4 w-4 text-sky-500 shrink-0" />
+                <Shield className="h-4 w-4 text-accent-foreground shrink-0" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">Breakout Retest &amp; Body Conviction Filter</p>
+                  <p className="text-xs font-semibold text-foreground">Breakout Retest &amp; Body Conviction Filter</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Requires candle body &ge; 40% and confirmed retest bounce (eliminates wick traps)
                   </p>
@@ -642,16 +642,16 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableRetestConfirmation ?? true}
                 onChange={(e) => set("b15EnableRetestConfirmation", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-sky-600 focus:ring-sky-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </label>
 
             {/* CPR Trend Day Filter */}
-            <label className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
+            <label className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors cursor-pointer">
               <div className="flex items-center gap-2.5">
-                <Target className="h-4 w-4 text-blue-500 shrink-0" />
+                <Target className="h-4 w-4 text-accent-foreground shrink-0" />
                 <div>
-                  <p className="text-xs font-bold text-foreground">Central Pivot Range (CPR) Narrow Trend Filter</p>
+                  <p className="text-xs font-semibold text-foreground">Central Pivot Range (CPR) Narrow Trend Filter</p>
                   <p className="text-xs text-foreground/75 font-medium mt-0.5">
                     Identifies high-momentum trending sessions using CPR bandwidth
                   </p>
@@ -661,7 +661,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.b15EnableCprFilter ?? true}
                 onChange={(e) => set("b15EnableCprFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </label>
           </div>
@@ -675,7 +675,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 max={3}
                 value={form.b15MaxLossesPerDay || "1"}
                 onChange={(e) => set("b15MaxLossesPerDay", e.target.value)}
-                className="font-bold text-xs text-red-600 bg-red-500/10 border-red-500/30 rounded-xl h-9"
+                className="font-semibold text-xs text-loss bg-loss/10 border-loss/30 rounded-lg h-9"
               />
               <p className="text-xs text-foreground/75 font-medium mt-1">
                 1-Loss Shield: stops after 1 SL hit
@@ -689,7 +689,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 max={1000}
                 value={form.b15MaxOpeningRangePts || "300"}
                 onChange={(e) => set("b15MaxOpeningRangePts", e.target.value)}
-                className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
+                className="font-semibold text-xs bg-background border-border text-foreground rounded-lg h-9"
               />
               <p className="text-xs text-foreground/75 font-medium mt-1">
                 Skip day if 15m bar &gt; limit
@@ -701,7 +701,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="text"
                 value={form.b15PrimeWindowEndTime || "15:00"}
                 onChange={(e) => set("b15PrimeWindowEndTime", e.target.value)}
-                className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
+                className="font-semibold text-xs bg-background border-border text-foreground rounded-lg h-9"
               />
               <p className="text-xs text-foreground/75 font-medium mt-1">
                 No new entries after (IST)
@@ -716,7 +716,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 max={2.0}
                 value={form.b15BreakevenTriggerR || "0.7"}
                 onChange={(e) => set("b15BreakevenTriggerR", e.target.value)}
-                className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
+                className="font-semibold text-xs bg-background border-border text-foreground rounded-lg h-9"
               />
               <p className="text-xs text-foreground/75 font-medium mt-1">
                 R-multiple to trail to COST
@@ -734,7 +734,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 max={0.50}
                 value={form.b15CprNarrowThresholdPct || "0.18"}
                 onChange={(e) => set("b15CprNarrowThresholdPct", e.target.value)}
-                className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
+                className="font-semibold text-xs bg-background border-border text-foreground rounded-lg h-9"
               />
               <p className="text-xs text-foreground/75 font-medium mt-1">
                 CPR width &lt; threshold = Trend Day Candidate
@@ -748,7 +748,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 max={50}
                 value={form.b15TrapSlBufferPts || "10"}
                 onChange={(e) => set("b15TrapSlBufferPts", e.target.value)}
-                className="font-semibold text-xs bg-background border-border text-foreground rounded-xl h-9"
+                className="font-semibold text-xs bg-background border-border text-foreground rounded-lg h-9"
               />
               <p className="text-xs text-foreground/75 font-medium mt-1">
                 Buffer beyond sweep extreme for tight trap SL
@@ -759,7 +759,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Target className="h-4 w-4 text-emerald-500" />
+                <Target className="h-4 w-4 text-profit" />
                 Daily Target Goal (₹)
               </label>
               <Input
@@ -775,7 +775,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </div>
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Shield className="h-4 w-4 text-red-500" />
+                <Shield className="h-4 w-4 text-loss" />
                 Max Daily Loss (₹)
               </label>
               <Input
@@ -797,10 +797,10 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
       {form.type === "STOCK_OPTIONS_BUYING" && (
         <div className="space-y-5">
           {/* Institutional Profitability Banner */}
-          <div className="p-4 rounded-2xl bg-blue-50 border-2 border-blue-300 space-y-2">
+          <div className="p-4 rounded-lg bg-brand-subtle border-2 border-primary/30 space-y-2">
             <div className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-blue-600 " />
-              <p className="text-xs font-bold text-blue-950 font-black">
+              <Zap className="h-4 w-4 text-accent-foreground" />
+              <p className="text-xs font-semibold text-accent-foreground font-semibold">
                 Systematic 80% Profitability Engine &amp; Capital Shield Active
               </p>
             </div>
@@ -829,7 +829,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               <select
                 value={form.sMaxStagnantTimeMin || "25"}
                 onChange={(e) => set("sMaxStagnantTimeMin", e.target.value)}
-                className="flex h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
               >
                 <option value="20">20 Minutes (Ultra-Fast Scalp)</option>
                 <option value="25">25 Minutes (Recommended — High Win Rate)</option>
@@ -844,19 +844,19 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
 
           {/* Asymmetric Risk:Reward Targets */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="p-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50  space-y-1.5">
+            <div className="p-4 rounded-lg border-2 border-profit/30 bg-profit-subtle space-y-1.5">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-bold text-emerald-950 font-black">Target 1 (+50% ROI / 1:1.5R)</span>
-                <Badge className="bg-emerald-600/20 text-emerald-800  text-[10px] font-bold border-0">The Banker</Badge>
+                <span className="text-xs font-semibold text-profit font-semibold">Target 1 (+50% ROI / 1:1.5R)</span>
+                <Badge className="bg-profit/20 text-profit text-[10px] font-semibold border-0">The Banker</Badge>
               </div>
               <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                 Books 50% lots and moves Stop-Loss to Entry Price + ₹0.50 cushion (100% Risk-Free).
               </p>
             </div>
-            <div className="p-4 rounded-2xl border-2 border-indigo-300 bg-indigo-50  space-y-1.5">
+            <div className="p-4 rounded-lg border-2 border-primary/30 bg-brand-subtle space-y-1.5">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-bold text-indigo-950 font-black">Target 2 (+100% ROI / 1:3.0R)</span>
-                <Badge className="bg-indigo-600/20 text-indigo-800  text-[10px] font-bold border-0">The Runner</Badge>
+                <span className="text-xs font-semibold text-accent-foreground font-semibold">Target 2 (+100% ROI / 1:3.0R)</span>
+                <Badge className="bg-primary/20 text-accent-foreground text-[10px] font-semibold border-0">The Runner</Badge>
               </div>
               <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                 Trails remainder dynamically behind 15-EMA for peak trend continuation gains.
@@ -865,15 +865,15 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           </div>
 
           {/* Profitability Pillars: Toggles */}
-          <div className="p-4 rounded-2xl border border-border bg-card shadow-xs space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="p-4 rounded-lg border border-border bg-card space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Profitability Pillars &amp; Capital Shields
             </p>
 
             {/* The Banker Partial Booking */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors">
               <div>
-                <p className="text-xs font-bold text-foreground">
+                <p className="text-xs font-semibold text-foreground">
                   &ldquo;The Banker &amp; The Runner&rdquo; Partial Profit Booking
                 </p>
                 <p className="text-xs text-foreground/75 font-medium mt-0.5">
@@ -884,14 +884,14 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.sEnablePartialBooking !== false}
                 onChange={(e) => set("sEnablePartialBooking", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </div>
 
             {/* Macro Market Gate */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors">
               <div>
-                <p className="text-xs font-bold text-foreground">
+                <p className="text-xs font-semibold text-foreground">
                   NIFTY 50 Macro Trend Gate
                 </p>
                 <p className="text-xs text-foreground/75 font-medium mt-0.5">
@@ -902,14 +902,14 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.sEnableMarketTrendFilter !== false}
                 onChange={(e) => set("sEnableMarketTrendFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </div>
 
             {/* Midday Chop Dead Zone */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-card border-2 border-border hover:bg-accent/40 transition-colors">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-card border-2 border-border hover:bg-accent/40 transition-colors">
               <div>
-                <p className="text-xs font-bold text-foreground">
+                <p className="text-xs font-semibold text-foreground">
                   Midday Chop Dead-Zone Filter (11:30 AM – 01:00 PM IST)
                 </p>
                 <p className="text-xs text-foreground/75 font-medium mt-0.5">
@@ -920,30 +920,30 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                 type="checkbox"
                 checked={form.sEnableMiddayChopFilter !== false}
                 onChange={(e) => set("sEnableMiddayChopFilter", e.target.checked)}
-                className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="h-4 w-4 rounded border-border text-accent-foreground focus:ring-primary cursor-pointer"
               />
             </div>
 
             {/* 1 Win & Done / 1 Loss & Done */}
             <div className="grid grid-cols-2 gap-3 pt-1">
-              <div className="p-3 rounded-xl bg-card border-2 border-border">
-                <label className="text-xs font-bold block mb-1 text-foreground">&ldquo;1 Win &amp; Done&rdquo; Daily Rule</label>
+              <div className="p-3 rounded-lg bg-card border-2 border-border">
+                <label className="text-xs font-semibold block mb-1 text-foreground">&ldquo;1 Win &amp; Done&rdquo; Daily Rule</label>
                 <select
                   value={form.sMaxWinsPerDay || "1"}
                   onChange={(e) => set("sMaxWinsPerDay", e.target.value)}
-                  className="flex h-9 w-full rounded-xl border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex h-9 w-full rounded-lg border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="1">Stop after 1 Win (Disciplined)</option>
                   <option value="2">Stop after 2 Wins</option>
                   <option value="3">No Win Limit</option>
                 </select>
               </div>
-              <div className="p-3 rounded-xl bg-card border-2 border-border">
-                <label className="text-xs font-bold block mb-1 text-foreground">&ldquo;1 Loss &amp; Done&rdquo; Shield</label>
+              <div className="p-3 rounded-lg bg-card border-2 border-border">
+                <label className="text-xs font-semibold block mb-1 text-foreground">&ldquo;1 Loss &amp; Done&rdquo; Shield</label>
                 <select
                   value={form.sMaxLossesPerDay || "1"}
                   onChange={(e) => set("sMaxLossesPerDay", e.target.value)}
-                  className="flex h-9 w-full rounded-xl border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex h-9 w-full rounded-lg border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="1">Halt on 1 Loss (Capital Shield)</option>
                   <option value="2">Halt on 2 Losses</option>
@@ -958,10 +958,10 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
       {(form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
         <div className="space-y-4">
           {form.type === "EMA_VWAP_CROSSOVER" ? (
-            <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-300 space-y-1.5">
+            <div className="p-4 rounded-lg bg-profit-subtle border-2 border-profit/30 space-y-1.5">
               <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-emerald-600  shrink-0" />
-                <p className="text-xs font-bold text-emerald-950 font-black">
+                <TrendingUp className="h-4 w-4 text-profit shrink-0" />
+                <p className="text-xs font-semibold text-profit font-semibold">
                   Strict Risk-Based Sizing &amp; 15-EMA Live Trailing Active
                 </p>
               </div>
@@ -970,7 +970,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
               </p>
             </div>
           ) : (
-            <div className="p-4 rounded-2xl bg-secondary/40 border border-border flex gap-3">
+            <div className="p-4 rounded-lg bg-secondary/40 border border-border flex gap-3">
               <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
               <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
                 Orders are placed as <strong className="text-foreground font-semibold">Limit</strong> orders for Entry, Stop-Loss (SL-Limit), and Target.
@@ -982,7 +982,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Target className="h-4 w-4 text-emerald-500" />
+                <Target className="h-4 w-4 text-profit" />
                 Target Profit (₹)
               </label>
               <Input
@@ -995,7 +995,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
             </div>
             <div>
               <label className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-foreground">
-                <Shield className="h-4 w-4 text-red-500" />
+                <Shield className="h-4 w-4 text-loss" />
                 Stop Loss (₹)
               </label>
               <Input
@@ -1009,10 +1009,10 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
           </div>
 
           {/* Exit Exact at Target Toggle */}
-          <div className="p-4 rounded-2xl bg-card border-2 border-border space-y-2.5 shadow-xs">
+          <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Target className="h-4 w-4 text-emerald-500 shrink-0" />
+                <Target className="h-4 w-4 text-profit shrink-0" />
                 <span className="text-sm font-semibold text-foreground">Exit Exact at Target (Fixed Profit Target)</span>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
@@ -1022,7 +1022,7 @@ export function Step3RiskManagement({ form, set }: Step3Props) {
                   onChange={(e) => set("exitExactAtTarget", e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-9 h-5 bg-gray-300  peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
               </label>
             </div>
             <p className="text-xs text-foreground font-medium leading-relaxed font-normal">

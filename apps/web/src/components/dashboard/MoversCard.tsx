@@ -58,13 +58,13 @@ export function MoversCard({ kind, items, onSelect }: MoversCardProps) {
   const Arrow = gainers ? ChevronUp : ChevronDown;
 
   return (
-    <Card className="border-border/90 bg-card shadow-xs rounded-xl overflow-hidden hover:border-border transition-colors">
-      <CardHeader className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
+    <Card className="p-0 overflow-hidden">
+      <CardHeader className="mb-0 py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
         <div className="flex items-center gap-2">
           <div className={cn("h-6 w-6 rounded-md flex items-center justify-center", gainers ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss")}>
             <Icon className="h-3.5 w-3.5" aria-hidden />
           </div>
-          <CardTitle className="text-xs font-bold text-foreground tracking-tight">{gainers ? "Top Gainers" : "Top Losers"}</CardTitle>
+          <CardTitle className="text-[13px] font-semibold text-foreground">{gainers ? "Top Gainers" : "Top Losers"}</CardTitle>
         </div>
         <div className="flex items-center gap-1">
           <Badge variant="outline" className="text-[9.5px] font-semibold text-muted-foreground bg-muted/50 py-0 px-1.5">1D</Badge>
@@ -83,18 +83,17 @@ export function MoversCard({ kind, items, onSelect }: MoversCardProps) {
                 type="button"
                 key={item.symbol}
                 onClick={() => onSelect(item.symbol, ltp || 0)}
-                className="w-full py-2 px-4 flex items-center justify-between text-left hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none transition-colors group"
+                title="Place order" className="w-full h-12 px-4 flex items-center justify-between text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none transition-colors group cursor-pointer"
               >
                 <div>
-                  <div className="font-bold text-foreground text-xs uppercase flex items-center gap-1.5">
+                  <div className="font-medium text-foreground text-[13px] uppercase flex items-center gap-1.5">
                     {item.symbol}
-                    <span className="text-[9.5px] font-semibold text-muted-foreground bg-muted px-1 rounded">{item.exchange || "NSE"}</span>
+                    <span className="text-[10px] font-normal text-muted-foreground">{item.exchange || "NSE"}</span>
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">Click to place order</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs font-bold num text-foreground">{ltp > 0 ? formatINR(ltp) : EMPTY}</div>
-                  <div className={cn("text-[11px] num font-bold flex items-center justify-end gap-0.5 mt-0.5", pnlClass(pct))}>
+                  <div className="text-[13px] font-medium num text-foreground">{ltp > 0 ? formatINR(ltp) : EMPTY}</div>
+                  <div className={cn("text-[11px] num font-medium flex items-center justify-end gap-0.5", pnlClass(pct))}>
                     <Arrow className="h-3 w-3 stroke-[2.5]" aria-hidden />
                     {formatPct(pct)}
                   </div>

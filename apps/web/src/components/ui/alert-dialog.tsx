@@ -18,7 +18,7 @@ const AlertDialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Overlay
     className={cn(
-      "fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=fade-in]:fade-in-0 data-[state=fade-out]:fade-out-0",
+      "fixed inset-0 z-50 bg-scrim/50  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=fade-in]:fade-in-0 data-[state=fade-out]:fade-out-0",
       className
     )}
     {...props}
@@ -36,7 +36,7 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] sm:max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card p-5 sm:p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=zoom-in]:zoom-in-95 data-[state=zoom-out]:zoom-out-95 data-[state=slide-in-from-left-1/2]:slide-in-from-left-1/2 data-[state=slide-in-from-top-48%]:slide-in-from-top-48% rounded-2xl",
+        "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] sm:max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card p-5 sm:p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=zoom-in]:zoom-in-95 data-[state=zoom-out]:zoom-out-95 data-[state=slide-in-from-left-1/2]:slide-in-from-left-1/2 data-[state=slide-in-from-top-48%]:slide-in-from-top-48% rounded-xl",
         className
       )}
       {...props}

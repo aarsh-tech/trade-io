@@ -21,7 +21,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
             <Button
               variant="outline"
               size="icon" aria-label="Back to strategies"
-              className="h-10 w-10 rounded-xl bg-card border-border/80 hover:bg-accent shrink-0 shadow-xs"
+              className="h-10 w-10 rounded-lg bg-card border-border/80 hover:bg-accent shrink-0"
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -29,23 +29,23 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
 
           <div className="min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-2xl font-extrabold tracking-tight truncate max-w-[320px] sm:max-w-md">
+              <h1 className="text-2xl font-semibold tracking-tight truncate max-w-[320px] sm:max-w-md">
                 {strategy.name}
               </h1>
 
               {/* Status Pill */}
               <div
                 className={cn(
-                  "inline-flex items-center gap-1.5 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border shadow-2xs",
+                  "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ",
                   strategy.isActive
-                    ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30"
+                    ? "bg-profit/15 text-profit border-profit/30"
                     : "bg-muted text-muted-foreground border-border/70"
                 )}
               >
                 <span
                   className={cn(
                     "h-1.5 w-1.5 rounded-full",
-                    strategy.isActive ? "bg-emerald-500 animate-ping" : "bg-slate-400"
+                    strategy.isActive ? "bg-profit animate-ping" : "bg-muted-foreground"
                   )}
                 />
                 {strategy.isActive ? "LIVE RUNNING" : "PAUSED"}
@@ -54,7 +54,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
               {strategy.isPaperTrade && (
                 <Badge
                   variant="outline"
-                  className="bg-amber-500/10 text-amber-600 border-amber-500/30 text-[10px] font-bold"
+                  className="bg-warn/10 text-warn border-warn/30 text-[10px] font-semibold"
                 >
                   Paper Trade
                 </Badge>
@@ -63,10 +63,10 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
               {/* WebSocket Telemetry Status Pill */}
               <div
                 className={cn(
-                  "inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-2xs",
+                  "inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ",
                   isWsConnected
-                    ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
-                    : "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                    ? "bg-profit/10 text-profit border-profit/30"
+                    : "bg-warn/10 text-warn border-warn/30"
                 )}
                 title={
                   isWsConnected
@@ -74,7 +74,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                     : "Connecting to real-time WebSocket..."
                 }
               >
-                <Radio className={cn("h-3 w-3", isWsConnected ? "text-emerald-500 animate-pulse" : "text-amber-500")} />
+                <Radio className={cn("h-3 w-3", isWsConnected ? "text-profit animate-pulse" : "text-warn")} />
                 <span>{isWsConnected ? "WS Live" : "Connecting..."}</span>
               </div>
             </div>
@@ -87,7 +87,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
               <span>{cfg.exchange || "NSE"}</span>
               <span>•</span>
               <span className="flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
+                <span className="h-1.5 w-1.5 rounded-full bg-profit inline-block" />
                 {strategy.brokerAccount
                   ? `${strategy.brokerAccount.broker} (${strategy.brokerAccount.clientId})`
                   : "Virtual Paper Broker"}
@@ -103,7 +103,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
             size="sm"
             onClick={load}
             disabled={busy}
-            className="h-9 px-3 text-xs gap-1.5 bg-card border-border/80 hover:bg-accent/60 shadow-xs"
+            className="h-9 px-3 text-xs gap-1.5 bg-card border-border/80 hover:bg-accent/60"
             title="Refresh Status & Telemetry"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
@@ -122,10 +122,10 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                 : "Auto-Start Disarmed — Click to arm for 09:15 AM"
             }
             className={cn(
-              "h-9 px-3 text-xs gap-1.5 rounded-xl transition-all border font-semibold shadow-xs",
+              "h-9 px-3 text-xs gap-1.5 rounded-lg transition-all border font-semibold ",
               strategy.autoStart
-                ? "bg-amber-500/15 text-amber-600 border-amber-500/30 hover:bg-amber-500/20"
-                : "text-muted-foreground hover:text-amber-600 hover:border-amber-500/30 bg-card"
+                ? "bg-warn/15 text-warn border-warn/30 hover:bg-warn/20"
+                : "text-muted-foreground hover:text-warn hover:border-warn/30 bg-card"
             )}
           >
             <AlarmClock className="h-3.5 w-3.5" />
@@ -140,16 +140,16 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 px-3 text-xs gap-1.5 border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 shadow-xs font-semibold rounded-xl"
+                className="h-9 px-3 text-xs gap-1.5 border-warn/30 bg-warn/10 text-warn hover:bg-warn/20 font-semibold rounded-lg"
               >
                 <Send className="h-3.5 w-3.5" />
                 <span>Test Order</span>
               </Button>
             </DialogTrigger>
-            <DialogContent className="w-[calc(100%-2rem)] sm:max-w-[480px] p-5 sm:p-6 rounded-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="w-[calc(100%-2rem)] sm:max-w-[480px] p-5 sm:p-6 rounded-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle className="text-lg font-bold flex items-center gap-2">
-                  <Send className="h-5 w-5 text-amber-500" />
+                <DialogTitle className="text-lg font-semibold flex items-center gap-2">
+                  <Send className="h-5 w-5 text-warn" />
                   Place Broker Test Order
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
@@ -160,7 +160,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
 
               <div className="py-3 space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Search Instrument
                   </label>
                   <div className="relative">
@@ -172,13 +172,13 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                     />
                     {isTestSearching && (
                       <div className="absolute right-3 top-2.5">
-                        <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                        <Loader2 className="h-4 w-4 animate-spin text-warn" />
                       </div>
                     )}
                   </div>
 
                   {testSearchResults.length > 0 && (
-                    <div className="mt-1 bg-card border border-border rounded-xl shadow-xl max-h-48 overflow-y-auto divide-y divide-border/60 z-50">
+                    <div className="mt-1 bg-card border border-border rounded-lg shadow-xl max-h-48 overflow-y-auto divide-y divide-border/60 z-50">
                       {testSearchResults.map((item) => {
                         const itemPrice = item.ltp || item.ltpNSE || item.price;
                         return (
@@ -188,7 +188,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                             className="w-full flex items-center justify-between p-2.5 hover:bg-accent transition-colors text-left group text-xs"
                           >
                             <div>
-                              <p className="font-bold text-foreground group-hover:text-amber-500">
+                              <p className="font-semibold text-foreground group-hover:text-warn">
                                 {item.symbol}
                               </p>
                               <p className="text-[10px] text-muted-foreground uppercase truncate max-w-[180px]">
@@ -197,7 +197,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                             </div>
                             <div className="flex items-center gap-2">
                               {itemPrice && (
-                                <span className="font-bold text-emerald-500">
+                                <span className="font-semibold text-profit">
                                   ₹{Number(itemPrice).toFixed(2)}
                                 </span>
                               )}
@@ -212,23 +212,23 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                   )}
 
                   {/* Selected Instrument Pill */}
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-warn/10 border border-warn/20">
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-warn">
                         Selected Symbol
                       </p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <p className="text-sm font-extrabold text-foreground">
+                        <p className="text-sm font-semibold text-foreground">
                           {testSymbol || "AUTO"}
                         </p>
                         {currentLiveTestPrice && (
-                          <span className="text-xs font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                          <span className="text-xs font-semibold text-profit bg-profit/10 px-2 py-0.5 rounded-full border border-profit/20">
                             LTP ₹{Number(currentLiveTestPrice).toFixed(2)}
                           </span>
                         )}
                       </div>
                     </div>
-                    <Badge className="bg-amber-500 text-white font-bold text-[10px]">
+                    <Badge className="bg-warn text-on-warn font-semibold text-[10px]">
                       {testExchange}
                     </Badge>
                   </div>
@@ -236,13 +236,13 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Product
                     </label>
                     <select
                       value={testProduct}
                       onChange={(e) => setTestProduct(e.target.value)}
-                      className="flex h-9 w-full rounded-lg border border-border bg-secondary/30 px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      className="flex h-9 w-full rounded-lg border border-border bg-secondary/30 px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-warn"
                     >
                       <option value="MIS">MIS (Intraday)</option>
                       <option value="NRML">NRML (Delivery)</option>
@@ -250,13 +250,13 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Order Type
                     </label>
                     <select
                       value={testOrderType}
                       onChange={(e) => setTestOrderType(e.target.value)}
-                      className="flex h-9 w-full rounded-lg border border-border bg-secondary/30 px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      className="flex h-9 w-full rounded-lg border border-border bg-secondary/30 px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-warn"
                     >
                       <option value="LIMIT">LIMIT Order</option>
                       <option value="MARKET">MARKET Order</option>
@@ -266,13 +266,13 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Variety
                     </label>
                     <select
                       value={testVariety}
                       onChange={(e) => setTestVariety(e.target.value)}
-                      className="flex h-9 w-full rounded-lg border border-border bg-secondary/30 px-3 py-1 text-xs font-bold text-amber-600 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      className="flex h-9 w-full rounded-lg border border-border bg-secondary/30 px-3 py-1 text-xs font-semibold text-warn focus:outline-none focus:ring-1 focus:ring-warn"
                     >
                       <option value="regular">REGULAR (Live Market)</option>
                       <option value="amo">AMO (After Market)</option>
@@ -280,7 +280,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Limit Price (₹)
                     </label>
                     <Input
@@ -296,12 +296,12 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
 
                 <div className="space-y-1 pt-2 border-t border-border/70">
                   <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Lots / Multiplier
                     </label>
                     <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
                       {(testLotSize || getLotSize(testSymbol)) > 1 && (
-                        <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] font-semibold text-warn bg-warn/10 px-1.5 py-0.5 rounded">
                           1 Lot = {testLotSize || getLotSize(testSymbol)}
                         </span>
                       )}
@@ -313,14 +313,14 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
                     min={1}
                     value={testOrderLots}
                     onChange={(e) => setTestOrderLots(Number(e.target.value))}
-                    className="h-9 text-xs font-bold bg-secondary/30"
+                    className="h-9 text-xs font-semibold bg-secondary/30"
                   />
                 </div>
               </div>
 
               <DialogFooter className="pt-2">
                 <Button
-                  className="w-full h-10 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20"
+                  className="w-full h-10 text-xs font-semibold bg-profit hover:bg-profit/90 text-on-profit shadow-md"
                   disabled={testOrderBusy}
                   onClick={handleTestOrder}
                 >
@@ -343,7 +343,7 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
             <Button
               variant="outline"
               size="sm"
-              className="h-9 px-3 text-xs gap-1.5 border-border/80 bg-card hover:bg-accent/60 shadow-xs font-semibold rounded-xl"
+              className="h-9 px-3 text-xs gap-1.5 border-border/80 bg-card hover:bg-accent/60 font-semibold rounded-lg"
               title="Edit Complete Strategy Configuration"
             >
               <Pencil className="h-3.5 w-3.5 text-primary" />
@@ -357,10 +357,10 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
             disabled={busy}
             onClick={toggleEngine}
             className={cn(
-              "h-9 px-4 text-xs font-bold gap-2 rounded-xl transition-all shadow-md",
+              "h-9 px-4 text-xs font-semibold gap-2 rounded-lg transition-all shadow-md",
               strategy.isActive
-                ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/25"
-                : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/25"
+                ? "bg-loss hover:bg-loss/90 text-on-loss "
+                : "bg-profit hover:bg-profit/90 text-on-profit "
             )}
           >
             {busy ? (

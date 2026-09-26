@@ -29,82 +29,213 @@
   --color-loss: hsl(var(--loss));
   --color-warn: hsl(var(--warn));
   --color-info: hsl(var(--info));
+  --color-sunken: hsl(var(--sunken));
+  --color-line-subtle: hsl(var(--line-subtle));
+  --color-subtle: hsl(var(--subtle-foreground));
+  --color-brand-hover: hsl(var(--brand-hover));
+  --color-brand-subtle: hsl(var(--brand-subtle));
+  --color-buy: hsl(var(--buy));
+  --color-sell: hsl(var(--sell));
+  --color-on-profit: hsl(var(--on-profit));
+  --color-on-loss: hsl(var(--on-loss));
+  --color-profit-subtle: hsl(var(--profit-subtle));
+  --color-loss-subtle: hsl(var(--loss-subtle));
+  --color-warn-subtle: hsl(var(--warn-subtle));
+  --color-info-subtle: hsl(var(--info-subtle));
+  --color-signal: hsl(var(--signal));
+  --color-signal-subtle: hsl(var(--signal-subtle));
+  --color-on-warn: hsl(var(--on-warn));
+  --color-on-signal: hsl(var(--on-signal));
+  --color-scrim: hsl(var(--scrim));
+  --color-log-bg: hsl(var(--log-bg));
+  --color-log-gutter: hsl(var(--log-gutter));
+  --color-log-text: hsl(var(--log-text));
+  --color-log-time: hsl(var(--log-time));
+  --color-log-info: hsl(var(--log-info));
+  --color-log-signal: hsl(var(--log-signal));
+  --color-log-order: hsl(var(--log-order));
+  --color-log-pnl: hsl(var(--log-pnl));
+  --color-log-warn: hsl(var(--log-warn));
+  --color-log-error: hsl(var(--log-error));
+  --color-log-error-row: hsl(var(--log-error-row));
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+  --color-chart-6: hsl(var(--chart-6));
+}
+
+/* Semantic colours only: components use the tokens below (bg-primary, text-profit, ...), never Tailwind palette scales. */
+@theme {
+  --font-sans: var(--font-plex-sans), "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Numbers use the UI font with fixed-width digits (as broker terminals do); font-code is the true monospace for logs. */
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-code: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+
+
+  /* Flatter, trading-terminal corners (Tailwind defaults are 12px / 16px). */
+  --radius-xl: 0.75rem;
+  --radius-2xl: 0.75rem;
+  --radius-3xl: 1rem;
 }
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    color-scheme: light;
+    --background: 216 29.4% 96.7%;
+    --foreground: 212 30.6% 9.6%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 212 30.6% 9.6%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 221 83% 53%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222 47% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222 47% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221 83% 53%;
-    --radius: 0.75rem;
+    --popover-foreground: 212 30.6% 9.6%;
+    --primary: 215.9 83.1% 41.8%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 214.3 30.4% 95.5%;
+    --secondary-foreground: 212 30.6% 9.6%;
+    --muted: 214.3 30.4% 95.5%;
+    --muted-foreground: 214.3 15.9% 34.5%;
+    --accent: 215 92.3% 94.9%;
+    --accent-foreground: 216.1 85.4% 40.4%;
+    --destructive: 352.2 64% 46.9%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 213.3 20.9% 83.1%;
+    --input: 213.1 12.3% 53.9%;
+    --ring: 216.1 85.4% 40.4%;
+    --radius: 0.5rem;
 
-    /* Trading specific */
-    --green: 142 71% 45%;
-    --green-muted: 142 71% 45% / 0.15;
-    --red: 0 84.2% 60.2%;
-    --red-muted: 0 84.2% 60.2% / 0.15;
-    --gold: 45 93% 58%;
-    --chart-1: 221 83% 53%;
-    --chart-2: 262 80% 65%;
-    --chart-3: 142 71% 45%;
-    --chart-4: 45 93% 58%;
-    --chart-5: 0 84.2% 60.2%;
+    /* Trading semantics (Tradeio Terminal design system) */
+    --green: 154.6 83.5% 26.1%;
+    --green-muted: 154.6 83.5% 26.1% / 0.14;
+    --red: 352.2 64% 46.9%;
+    --red-muted: 352.2 64% 46.9% / 0.14;
+    --gold: 38.6 100% 28%;
+    --surface: 0 0% 100%;
+    --profit: 154.6 83.5% 26.1%;
+    --loss: 352.2 64% 46.9%;
+    --warn: 38.6 100% 28%;
+    --info: 216.1 85.4% 40.4%;
+    --sunken: 214.3 24.1% 94.3%;
+    --line-subtle: 212.7 24.4% 91.2%;
+    --subtle-foreground: 213.3 12.9% 41%;
+    --brand-hover: 215.8 84.2% 34.7%;
+    --brand-subtle: 215 92.3% 94.9%;
+    --buy: 215.9 83.1% 41.8%;
+    --sell: 352.2 64% 46.9%;
+    --on-profit: 0 0% 100%;
+    --on-loss: 0 0% 100%;
+    --profit-subtle: 151.6 46.3% 92%;
+    --loss-subtle: 351 71.4% 94.5%;
+    --warn-subtle: 42.4 100% 92%;
+    --info-subtle: 215 92.3% 94.9%;
+    --signal: 256.8 55% 52.9%;
+    --signal-subtle: 258.9 76% 95.1%;
+    --on-warn: 0 0% 100%;
+    --on-signal: 0 0% 100%;
+    --scrim: 222.2 47.4% 11.2%;
 
-    /* Semantic tokens (text-profit, bg-surface, ...). Text tones are darker than --green/--red to pass AA on white. */
-    --surface: 210 40% 98%;
-    --profit: 142 72% 29%;
-    --loss: 0 72% 46%;
-    --warn: 32 95% 36%;
-    --info: 221 83% 53%;
+    /* Log console */
+    --log-bg: 210 33.3% 97.6%;
+    --log-gutter: 210 30.8% 94.9%;
+    --log-text: 213 26.3% 14.9%;
+    --log-time: 213.3 12.9% 41%;
+    --log-info: 214.3 15.9% 34.5%;
+    --log-signal: 256.8 55% 52.9%;
+    --log-order: 216.1 85.4% 40.4%;
+    --log-pnl: 154.6 83.5% 26.1%;
+    --log-warn: 38.6 100% 28%;
+    --log-error: 352.2 64% 46.9%;
+    --log-error-row: 351 71.4% 94.5%;
+
+    /* Charts */
+    --chart-1: 215.9 83.1% 41.8%;
+    --chart-2: 38.5 100% 30.6%;
+    --chart-3: 256.8 55% 52.9%;
+    --chart-4: 187.2 86.9% 30%;
+    --chart-5: 25.2 84.9% 39%;
+    --chart-6: 213.3 12.9% 41%;
+    --chart-grid: 212.7 24.4% 91.2%;
+    --chart-axis: 213.3 12.9% 41%;
   }
 
+  /* Dark is the default terminal theme. */
   .dark {
     color-scheme: dark;
-    --background: 222 47% 6%;
-    --foreground: 210 40% 96%;
-    --card: 222 40% 9%;
-    --card-foreground: 210 40% 96%;
-    --popover: 222 40% 9%;
-    --popover-foreground: 210 40% 96%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47% 8%;
-    --secondary: 217 30% 15%;
-    --secondary-foreground: 210 40% 96%;
-    --muted: 217 30% 15%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 30% 17%;
-    --accent-foreground: 210 40% 96%;
-    --destructive: 0 72% 55%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 25% 20%;
-    --input: 217 25% 20%;
-    --ring: 217 91% 60%;
+    --background: 210 21.4% 5.5%;
+    --foreground: 213.3 24.3% 92.7%;
+    --card: 213.3 20% 8.8%;
+    --card-foreground: 213.3 24.3% 92.7%;
+    --popover: 215 20.7% 11.4%;
+    --popover-foreground: 213.3 24.3% 92.7%;
+    --primary: 213.9 100% 64.9%;
+    --primary-foreground: 211.2 67.6% 7.3%;
+    --secondary: 216 21.1% 13.9%;
+    --secondary-foreground: 213.3 24.3% 92.7%;
+    --muted: 216 21.1% 13.9%;
+    --muted-foreground: 214.3 17.9% 69.4%;
+    --accent: 213.9 56.1% 16.1%;
+    --accent-foreground: 212.5 100% 71.4%;
+    --destructive: 349.6 89.3% 67.1%;
+    --destructive-foreground: 348.6 67.7% 6.1%;
+    --border: 213.9 21.1% 21.4%;
+    --input: 213.2 17.4% 42.7%;
+    --ring: 212.5 100% 71.4%;
+    --radius: 0.5rem;
 
-    --green: 142 70% 50%;
-    --red: 0 90% 68%;
-    --surface: 222 40% 11%;
-    --profit: 142 70% 50%;
-    --loss: 0 90% 68%;
-    --warn: 43 96% 56%;
-    --info: 217 91% 65%;
+    /* Trading semantics (Tradeio Terminal design system) */
+    --green: 156.5 60.9% 46.1%;
+    --green-muted: 156.5 60.9% 46.1% / 0.14;
+    --red: 349.6 89.3% 67.1%;
+    --red-muted: 349.6 89.3% 67.1% / 0.14;
+    --gold: 45.6 91.2% 49.2%;
+    --surface: 215 20.7% 11.4%;
+    --profit: 156.5 60.9% 46.1%;
+    --loss: 349.6 89.3% 67.1%;
+    --warn: 45.6 91.2% 49.2%;
+    --info: 212.5 100% 71.4%;
+    --sunken: 216 23.8% 4.1%;
+    --line-subtle: 215.3 21.5% 15.5%;
+    --subtle-foreground: 214 14% 58%;
+    --brand-hover: 213.9 100% 72.5%;
+    --brand-subtle: 213.3 55.6% 15.9%;
+    --buy: 213.9 100% 64.9%;
+    --sell: 349.6 89.3% 67.1%;
+    --on-profit: 155.3 68% 4.9%;
+    --on-loss: 348.6 67.7% 6.1%;
+    --profit-subtle: 162.2 47.4% 11.2%;
+    --loss-subtle: 341.5 39.4% 12.9%;
+    --warn-subtle: 46.3 68.6% 10%;
+    --info-subtle: 213.3 55.6% 15.9%;
+    --signal: 256.4 100% 80.6%;
+    --signal-subtle: 255 38.1% 16.5%;
+    --on-warn: 43.8 100% 5.1%;
+    --on-signal: 257.1 58.3% 9.4%;
+    --scrim: 0 0% 0%;
+
+    /* Log console */
+    --log-bg: 216 23.8% 4.1%;
+    --log-gutter: 213.3 25.7% 6.9%;
+    --log-text: 214.3 20% 86.3%;
+    --log-time: 214 14% 58%;
+    --log-info: 214.3 17.9% 69.4%;
+    --log-signal: 256.4 100% 80.6%;
+    --log-order: 212.5 100% 71.4%;
+    --log-pnl: 156.5 60.9% 46.1%;
+    --log-warn: 45.6 91.2% 49.2%;
+    --log-error: 349.6 89.3% 67.1%;
+    --log-error-row: 341.5 39.4% 12.9%;
+
+    /* Charts */
+    --chart-1: 213.9 100% 64.9%;
+    --chart-2: 45.6 91.2% 49.2%;
+    --chart-3: 256.4 100% 80.6%;
+    --chart-4: 186.4 67.2% 51%;
+    --chart-5: 25.1 100% 67.6%;
+    --chart-6: 214 14% 58%;
+    --chart-grid: 215.3 21.5% 15.5%;
+    --chart-axis: 214 14% 58%;
   }
-
 }
 
 
@@ -123,8 +254,10 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-family: var(--font-sans);
+    font-feature-settings: "tnum" 1, "rlig" 1, "calt" 1;
+    font-size: 13px;
+    line-height: 20px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -136,7 +269,7 @@
   }
 
   ::-webkit-scrollbar-track {
-    background: hsl(var(--background));
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
@@ -153,41 +286,35 @@
 
   /* Glass card */
   .glass {
-    background: hsl(var(--card) / 0.7);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid hsl(var(--border) / 0.4);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
   }
 
 }
 
 /* Glow effects */
 .glow-blue {
-  box-shadow: 0 0 20px hsl(var(--primary) / 0.3), 0 0 40px hsl(var(--primary) / 0.1);
+  box-shadow: none;
 }
 
 .glow-green {
-  box-shadow: 0 0 20px hsl(var(--green) / 0.3), 0 0 40px hsl(var(--green) / 0.1);
+  box-shadow: none;
 }
 
 .glow-red {
-  box-shadow: 0 0 20px hsl(var(--red) / 0.3), 0 0 40px hsl(var(--red) / 0.1);
+  box-shadow: none;
 }
 
 /* Gradient text */
 .gradient-text {
-  background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: hsl(var(--primary));
 }
 
 /* Status badge */
 .badge-running {
   background: hsl(var(--green-muted));
   color: hsl(var(--green));
-  border: 1px solid hsl(var(--green) / 0.3);
+  border: 1px solid hsl(var(--green) / 0.35);
 }
 
 .badge-stopped {
@@ -228,19 +355,14 @@
 }
 
 /* Numbers that update or sit in columns: fixed-width digits so they don't jitter. */
+.font-mono,
 .num {
   font-variant-numeric: tabular-nums;
 }
 
 /* Animated gradient background */
 .animated-gradient {
-  background: linear-gradient(-45deg,
-      hsl(222 47% 5%),
-      hsl(222 47% 7%),
-      hsl(230 50% 8%),
-      hsl(240 45% 6%));
-  background-size: 400% 400%;
-  animation: gradient-shift 15s ease infinite;
+  background: hsl(var(--background));
 }
 
 /* Ticker tape animation */
@@ -349,93 +471,10 @@
   animation-play-state: paused;
 }
 
-/* Dark mode: the light-tuned accent scales (tinted backgrounds, dark text) are re-pointed here so the
-   existing bg-*-50/100/200 and text-*-700/800/900 utilities stay legible without per-class dark: variants. */
-.dark {
-  --color-emerald-50: color-mix(in oklab, var(--color-emerald-500) 10%, transparent);
-  --color-emerald-100: color-mix(in oklab, var(--color-emerald-500) 16%, transparent);
-  --color-emerald-200: color-mix(in oklab, var(--color-emerald-500) 26%, transparent);
-  --color-emerald-700: var(--color-emerald-300);
-  --color-emerald-800: var(--color-emerald-200);
-  --color-emerald-900: var(--color-emerald-200);
-  --color-green-50: color-mix(in oklab, var(--color-green-500) 10%, transparent);
-  --color-green-100: color-mix(in oklab, var(--color-green-500) 16%, transparent);
-  --color-green-200: color-mix(in oklab, var(--color-green-500) 26%, transparent);
-  --color-green-700: var(--color-green-300);
-  --color-green-800: var(--color-green-200);
-  --color-green-900: var(--color-green-200);
-  --color-rose-50: color-mix(in oklab, var(--color-rose-500) 10%, transparent);
-  --color-rose-100: color-mix(in oklab, var(--color-rose-500) 16%, transparent);
-  --color-rose-200: color-mix(in oklab, var(--color-rose-500) 26%, transparent);
-  --color-rose-700: var(--color-rose-300);
-  --color-rose-800: var(--color-rose-200);
-  --color-rose-900: var(--color-rose-200);
-  --color-red-50: color-mix(in oklab, var(--color-red-500) 10%, transparent);
-  --color-red-100: color-mix(in oklab, var(--color-red-500) 16%, transparent);
-  --color-red-200: color-mix(in oklab, var(--color-red-500) 26%, transparent);
-  --color-red-700: var(--color-red-300);
-  --color-red-800: var(--color-red-200);
-  --color-red-900: var(--color-red-200);
-  --color-blue-50: color-mix(in oklab, var(--color-blue-500) 10%, transparent);
-  --color-blue-100: color-mix(in oklab, var(--color-blue-500) 16%, transparent);
-  --color-blue-200: color-mix(in oklab, var(--color-blue-500) 26%, transparent);
-  --color-blue-700: var(--color-blue-300);
-  --color-blue-800: var(--color-blue-200);
-  --color-blue-900: var(--color-blue-200);
-  --color-amber-50: color-mix(in oklab, var(--color-amber-500) 10%, transparent);
-  --color-amber-100: color-mix(in oklab, var(--color-amber-500) 16%, transparent);
-  --color-amber-200: color-mix(in oklab, var(--color-amber-500) 26%, transparent);
-  --color-amber-700: var(--color-amber-300);
-  --color-amber-800: var(--color-amber-200);
-  --color-amber-900: var(--color-amber-200);
-  --color-indigo-50: color-mix(in oklab, var(--color-indigo-500) 10%, transparent);
-  --color-indigo-100: color-mix(in oklab, var(--color-indigo-500) 16%, transparent);
-  --color-indigo-200: color-mix(in oklab, var(--color-indigo-500) 26%, transparent);
-  --color-indigo-700: var(--color-indigo-300);
-  --color-indigo-800: var(--color-indigo-200);
-  --color-indigo-900: var(--color-indigo-200);
-  --color-purple-50: color-mix(in oklab, var(--color-purple-500) 10%, transparent);
-  --color-purple-100: color-mix(in oklab, var(--color-purple-500) 16%, transparent);
-  --color-purple-200: color-mix(in oklab, var(--color-purple-500) 26%, transparent);
-  --color-purple-700: var(--color-purple-300);
-  --color-purple-800: var(--color-purple-200);
-  --color-purple-900: var(--color-purple-200);
-  --color-violet-50: color-mix(in oklab, var(--color-violet-500) 10%, transparent);
-  --color-violet-100: color-mix(in oklab, var(--color-violet-500) 16%, transparent);
-  --color-violet-200: color-mix(in oklab, var(--color-violet-500) 26%, transparent);
-  --color-violet-700: var(--color-violet-300);
-  --color-violet-800: var(--color-violet-200);
-  --color-violet-900: var(--color-violet-200);
-  --color-sky-50: color-mix(in oklab, var(--color-sky-500) 10%, transparent);
-  --color-sky-100: color-mix(in oklab, var(--color-sky-500) 16%, transparent);
-  --color-sky-200: color-mix(in oklab, var(--color-sky-500) 26%, transparent);
-  --color-sky-700: var(--color-sky-300);
-  --color-sky-800: var(--color-sky-200);
-  --color-sky-900: var(--color-sky-200);
-  --color-teal-50: color-mix(in oklab, var(--color-teal-500) 10%, transparent);
-  --color-teal-100: color-mix(in oklab, var(--color-teal-500) 16%, transparent);
-  --color-teal-200: color-mix(in oklab, var(--color-teal-500) 26%, transparent);
-  --color-teal-700: var(--color-teal-300);
-  --color-teal-800: var(--color-teal-200);
-  --color-teal-900: var(--color-teal-200);
-  --color-cyan-50: color-mix(in oklab, var(--color-cyan-500) 10%, transparent);
-  --color-cyan-100: color-mix(in oklab, var(--color-cyan-500) 16%, transparent);
-  --color-cyan-200: color-mix(in oklab, var(--color-cyan-500) 26%, transparent);
-  --color-cyan-700: var(--color-cyan-300);
-  --color-cyan-800: var(--color-cyan-200);
-  --color-cyan-900: var(--color-cyan-200);
-  --color-orange-50: color-mix(in oklab, var(--color-orange-500) 10%, transparent);
-  --color-orange-100: color-mix(in oklab, var(--color-orange-500) 16%, transparent);
-  --color-orange-200: color-mix(in oklab, var(--color-orange-500) 26%, transparent);
-  --color-orange-700: var(--color-orange-300);
-  --color-orange-800: var(--color-orange-200);
-  --color-orange-900: var(--color-orange-200);
-  --color-yellow-50: color-mix(in oklab, var(--color-yellow-500) 10%, transparent);
-  --color-yellow-100: color-mix(in oklab, var(--color-yellow-500) 16%, transparent);
-  --color-yellow-200: color-mix(in oklab, var(--color-yellow-500) 26%, transparent);
-  --color-yellow-700: var(--color-yellow-300);
-  --color-yellow-800: var(--color-yellow-200);
-  --color-yellow-900: var(--color-yellow-200);
+/* Phones: 15px reading size and 44px tap targets for controls. */
+@media (max-width: 767px) {
+  :root { --text-sm: 0.9375rem; --text-sm--line-height: 1.375rem; }
+  body { font-size: 15px; line-height: 22px; }
 }
 
 /* Respect the OS "reduce motion" setting: no pulsing dots, slides or fades. */

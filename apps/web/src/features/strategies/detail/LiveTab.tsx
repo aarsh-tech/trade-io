@@ -19,10 +19,10 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
 
           {/* Live Engine Status Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="border-border/60 bg-card/60 shadow-xs">
+            <Card className="border-border/60 bg-card/60">
               <CardHeader className="p-4 pb-2 border-b border-border/50">
-                <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                  <Activity className="h-3.5 w-3.5 text-blue-500" />
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                  <Activity className="h-3.5 w-3.5 text-accent-foreground" />
                   Strategy Signal & Trend Status
                 </CardTitle>
               </CardHeader>
@@ -31,7 +31,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                   <div className="space-y-2.5 text-xs">
                     <div className="flex justify-between items-center py-1 border-b border-border/40">
                       <span className="text-muted-foreground">Target Instrument</span>
-                      <span className="font-bold text-foreground">
+                      <span className="font-semibold text-foreground">
                         {liveState.futureSymbol || strategy.config.symbol || "Resolving..."}
                       </span>
                     </div>
@@ -40,7 +40,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                       <>
                         <div className="flex justify-between items-center py-1 border-b border-border/40">
                           <span className="text-muted-foreground">15-Min Range</span>
-                          <span className="font-bold text-foreground">
+                          <span className="font-semibold text-foreground">
                             {liveState.refLow
                               ? `₹${liveState.refLow} — ₹${liveState.refHigh}`
                               : "Scanning 9:15-9:30 AM Range"}
@@ -49,7 +49,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                         {liveState.dynamicAtr !== undefined && (
                           <div className="flex justify-between items-center py-1 border-b border-border/40">
                             <span className="text-muted-foreground">Dynamic ATR(14)</span>
-                            <span className="font-bold text-blue-600 dark:text-blue-400">
+                            <span className="font-semibold text-accent-foreground">
                               ₹{Number(liveState.dynamicAtr).toFixed(2)}
                             </span>
                           </div>
@@ -57,7 +57,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                         {liveState.isDynamicTrailingActive && (
                           <div className="flex justify-between items-center py-1 border-b border-border/40">
                             <span className="text-muted-foreground">Trailing Mode</span>
-                            <span className="font-bold text-purple-600 dark:text-purple-400">
+                            <span className="font-semibold text-signal">
                               🚀 Uncapped Momentum Trail Active
                             </span>
                           </div>
@@ -65,7 +65,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                         {liveState.isProfitLockTrailed && !liveState.isDynamicTrailingActive && (
                           <div className="flex justify-between items-center py-1 border-b border-border/40">
                             <span className="text-muted-foreground">Trailing Mode</span>
-                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            <span className="font-semibold text-profit">
                               🔒 +1.5R Profit Locked (+0.75R)
                             </span>
                           </div>
@@ -73,7 +73,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                         {liveState.isBreakevenTrailed && !liveState.isProfitLockTrailed && (
                           <div className="flex justify-between items-center py-1 border-b border-border/40">
                             <span className="text-muted-foreground">Trailing Mode</span>
-                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            <span className="font-semibold text-profit">
                               🛡 Cost SL Trailed (Risk-Free)
                             </span>
                           </div>
@@ -81,7 +81,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                         {liveState.dailyRealizedPnlRs !== undefined && liveState.dailyRealizedPnlRs !== 0 && (
                           <div className="flex justify-between items-center py-1 border-b border-border/40">
                             <span className="text-muted-foreground">Realized Daily P&L</span>
-                            <span className={cn("font-bold", liveState.dailyRealizedPnlRs >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                            <span className={cn("font-semibold", liveState.dailyRealizedPnlRs >= 0 ? "text-profit" : "text-loss")}>
                               {liveState.dailyRealizedPnlRs >= 0 ? "+" : ""}₹{Number(liveState.dailyRealizedPnlRs).toFixed(2)}
                             </span>
                           </div>
@@ -99,7 +99,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                               ? "warning"
                               : "outline"
                         }
-                        className="text-[10px] font-bold"
+                        className="text-[10px] font-semibold"
                       >
                         {liveState.entryTriggered
                           ? `Position Open (${liveState.entryTriggered})`
@@ -112,7 +112,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                     {liveState.optionSymbol && (
                       <div className="flex justify-between items-center py-1">
                         <span className="text-muted-foreground">Selected Strike</span>
-                        <span className="font-black text-purple-600">{liveState.optionSymbol}</span>
+                        <span className="font-semibold text-signal">{liveState.optionSymbol}</span>
                       </div>
                     )}
                   </div>
@@ -128,10 +128,10 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
             </Card>
 
             {/* Active Run Orders */}
-            <Card className="border-border/60 bg-card/60 shadow-xs">
+            <Card className="border-border/60 bg-card/60">
               <CardHeader className="p-4 pb-2 border-b border-border/50">
-                <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                  <ShoppingCart className="h-3.5 w-3.5 text-amber-500" />
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                  <ShoppingCart className="h-3.5 w-3.5 text-warn" />
                   Active Execution Orders
                 </CardTitle>
               </CardHeader>
@@ -146,21 +146,21 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                     activeOrders.map((order) => (
                       <div
                         key={order.id}
-                        className="flex items-center justify-between p-2.5 rounded-xl bg-card border border-border shadow-2xs"
+                        className="flex items-center justify-between p-2.5 rounded-lg bg-card border border-border"
                       >
                         <div className="flex items-center gap-2">
                           <Badge
                             className={cn(
-                              "text-[9px] px-1.5 py-0.2 font-bold",
+                              "text-[9px] px-1.5 py-0.2 font-semibold",
                               order.side === "BUY"
-                                ? "bg-blue-600 text-white"
-                                : "bg-rose-600 text-white"
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-loss text-on-loss"
                             )}
                           >
                             {order.side}
                           </Badge>
                           <div>
-                            <p className="text-xs font-bold text-foreground leading-tight">
+                            <p className="text-xs font-semibold text-foreground leading-tight">
                               {order.symbol}
                             </p>
                             <p className="text-[10px] text-muted-foreground uppercase">
@@ -169,7 +169,7 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-xs font-bold text-foreground">
+                          <p className="text-xs font-semibold text-foreground">
                             ₹{order.price || order.triggerPrice || "Market"}
                           </p>
                           <Badge

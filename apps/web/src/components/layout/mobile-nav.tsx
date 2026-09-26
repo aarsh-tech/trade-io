@@ -1,49 +1,56 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  LayoutDashboard,
-  Activity,
-  ClipboardList,
-  TrendingUp,
-  Menu,
-  X,
-  Zap,
-  ScanSearch,
-  Layers,
-  Wallet,
-  BookOpen,
-  Plug,
-  Settings,
-  LogOut,
-  ChevronRight,
-  User,
-  ShieldCheck,
-} from "lucide-react";
+import { useTheme } from "next-themes";
+import { ChevronRight, LogOut, Menu, Moon, ShieldAlert, Sun, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store";
 import { authApi } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { openRiskDisclosure } from "@/components/shared/risk-disclosure-modal";
+import {
+  ADMIN_NAV,
+  ALL_NAV_ITEMS,
+  MOBILE_PRIMARY_HREFS,
+  NAV_GROUPS,
+  isActivePath,
+} from "@/components/layout/nav-config";
 
-const primaryNav = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/strategies", label: "Strategies", icon: TrendingUp },
-  { href: "/positions", label: "Positions", icon: Activity },
-  { href: "/orders", label: "Orders", icon: ClipboardList },
-];
+const primaryNav = MOBILE_PRIMARY_HREFS.map((href) => ALL_NAV_ITEMS.find((i) => i.href === href)!);
 
-const secondaryNav = [
-  { href: "/live-screener", label: "Live OHL Screener", icon: ScanSearch, badge: "LIVE" },
-  { href: "/swing-scanner", label: "Swing Scanner", icon: Layers },
-  { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
-  { href: "/portfolio", label: "Portfolio & Margins", icon: Wallet },
-  { href: "/ledger", label: "P&L Ledger", icon: BookOpen },
-  { href: "/brokers", label: "Connected Brokers", icon: Plug },
-  { href: "/settings", label: "Settings & Security", icon: Settings },
-];
+function ThemeSwitch() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const current = mounted ? resolvedTheme : undefined;
+
+  return (
+    <div role="radiogroup" aria-label="Theme" className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
+      {([
+        { value: "light", label: "Light", icon: Sun },
+        { value: "dark", label: "Dark", icon: Moon },
+      ] as const).map(({ value, label, icon: Icon }) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={current === value}
+          onClick={() => setTheme(value)}
+          className={cn(
+            "flex items-center justify-center gap-1.5 h-8 rounded text-xs font-medium transition-colors cursor-pointer",
+            current === value ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" aria-hidden />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function MobileBottomNav() {
   const pathname = usePathname();
@@ -52,8 +59,14 @@ export function MobileBottomNav() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // Check if current route is in secondary nav
-  const isSecondaryActive = secondaryNav.some((item) => pathname.startsWith(item.href));
+  const isSecondaryActive = !primaryNav.some((item) => isActivePath(pathname, item.href));
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawerOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
 
   async function handleLogout() {
     try {
@@ -64,192 +77,160 @@ export function MobileBottomNav() {
     toast.success("Logged out successfully");
   }
 
+  const tabClass = (active: boolean) =>
+    cn(
+      "relative flex flex-col items-center justify-center gap-0.5 h-full text-[11px] font-medium select-none transition-colors",
+      active ? "text-accent-foreground" : "text-muted-foreground active:text-foreground"
+    );
+
   return (
     <>
-      {/* ─── 1. Fixed Bottom Navigation Bar ─── */}
-      <nav className="fixed bottom-0 inset-x-0 z-40 bg-card/95 backdrop-blur-md border-t border-border/90 md:hidden shadow-[0_-4px_20px_rgba(0,0,0,0.05)] pb-[env(safe-area-inset-bottom,0px)]">
-        <div className="grid grid-cols-5 h-16 max-w-lg mx-auto items-center px-1">
+      {/* Bottom tab bar */}
+      <nav
+        aria-label="Primary"
+        className="fixed bottom-0 inset-x-0 z-40 bg-popover border-t border-border md:hidden pb-[env(safe-area-inset-bottom,0px)]"
+      >
+        <div className="grid grid-cols-5 h-14 max-w-lg mx-auto">
           {primaryNav.map(({ href, label, icon: Icon }) => {
-            const active = pathname.startsWith(href);
+            const active = isActivePath(pathname, href);
             return (
               <Link
                 key={href}
                 href={href}
+                aria-current={active ? "page" : undefined}
                 onClick={() => setDrawerOpen(false)}
-                className={cn(
-                  "flex flex-col items-center justify-center h-full py-1 gap-1 text-[10px] font-semibold transition-all relative select-none",
-                  active
-                    ? "text-blue-600 font-bold"
-                    : "text-muted-foreground hover:text-foreground active:scale-95"
-                )}
+                className={tabClass(active)}
               >
-                {active && (
-                  <span className="absolute top-0 w-8 h-1 bg-blue-600 rounded-b-full shadow-[0_2px_6px_rgba(37,99,235,0.4)]" />
-                )}
-                <div className={cn(
-                  "p-1 rounded-lg transition-transform",
-                  active && "scale-110"
-                )}>
-                  <Icon className="h-5 w-5" strokeWidth={active ? 2.4 : 1.8} />
-                </div>
-                <span className="truncate max-w-[64px] tracking-tight">{label}</span>
+                {active && <span className="absolute top-0 h-0.5 w-8 rounded-b bg-primary" aria-hidden />}
+                <Icon className="h-5 w-5" strokeWidth={active ? 2.25 : 1.8} aria-hidden />
+                <span className="truncate max-w-[64px]">{label}</span>
               </Link>
             );
           })}
 
-          {/* 5th Tab: Menu / More Drawer Trigger */}
           <button
             type="button"
-            onClick={() => setDrawerOpen(!drawerOpen)}
-            className={cn(
-              "flex flex-col items-center justify-center h-full py-1 gap-1 text-[10px] font-semibold transition-all relative select-none",
-              isSecondaryActive || drawerOpen
-                ? "text-blue-600 font-bold"
-                : "text-muted-foreground hover:text-foreground active:scale-95"
-            )}
+            onClick={() => setDrawerOpen((o) => !o)}
+            aria-expanded={drawerOpen}
+            aria-controls="mobile-more-sheet"
+            className={tabClass(isSecondaryActive || drawerOpen)}
           >
-            {(isSecondaryActive || drawerOpen) && (
-              <span className="absolute top-0 w-8 h-1 bg-blue-600 rounded-b-full shadow-[0_2px_6px_rgba(37,99,235,0.4)]" />
-            )}
-            <div className={cn(
-              "p-1 rounded-lg transition-transform",
-              (isSecondaryActive || drawerOpen) && "scale-110"
-            )}>
-              {drawerOpen ? (
-                <X className="h-5 w-5 text-blue-600" strokeWidth={2.4} />
-              ) : (
-                <Menu className="h-5 w-5" strokeWidth={isSecondaryActive ? 2.4 : 1.8} />
-              )}
-            </div>
-            <span className="truncate max-w-[64px] tracking-tight">
-              {drawerOpen ? "Close" : "More"}
-            </span>
+            {(isSecondaryActive || drawerOpen) && <span className="absolute top-0 h-0.5 w-8 rounded-b bg-primary" aria-hidden />}
+            {drawerOpen ? <X className="h-5 w-5" strokeWidth={2.25} aria-hidden /> : <Menu className="h-5 w-5" strokeWidth={1.8} aria-hidden />}
+            <span>{drawerOpen ? "Close" : "More"}</span>
           </button>
         </div>
       </nav>
 
-      {/* ─── 2. Slide-up "More" Drawer for Secondary Links ─── */}
+      {/* "More" bottom sheet */}
       {drawerOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-xs md:hidden transition-opacity"
-          onClick={() => setDrawerOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-scrim/40 md:hidden" onClick={() => setDrawerOpen(false)}>
           <div
-            className="fixed inset-x-0 bottom-16 z-50 bg-card rounded-t-2xl border-t border-border shadow-2xl max-h-[75vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-250"
+            id="mobile-more-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="More"
+            className="fixed inset-x-0 bottom-0 z-50 bg-card rounded-t-lg border-t border-border shadow-2xl max-h-[85vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom,0px)] animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Drawer Handle & Header */}
-            <div className="pt-3 pb-2 px-5 border-b border-border flex items-center justify-between bg-muted/35">
-              <div className="flex items-center gap-2.5">
-                <div className="h-7 w-7 rounded-lg bg-blue-600 flex items-center justify-center shadow-xs">
-                  <Zap className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
-                </div>
-                <div>
-                  <span className="font-bold text-sm text-foreground">Tradeio.site Hub</span>
-                  <p className="text-[10px] text-muted-foreground font-medium">All Tools & Features</p>
-                </div>
-              </div>
+            <div className="flex justify-center pt-2 pb-1" aria-hidden>
+              <span className="h-1 w-9 rounded-full bg-border" />
+            </div>
+
+            <div className="flex items-center justify-between px-4 pb-2">
+              <span className="text-sm font-semibold text-foreground">Menu</span>
               <button
+                type="button"
                 onClick={() => setDrawerOpen(false)}
-                className="p-1.5 rounded-full hover:bg-border/60 text-muted-foreground hover:text-foreground/75 transition-colors"
+                aria-label="Close menu"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" aria-hidden />
               </button>
             </div>
 
-            {/* User Profile Mini Card */}
-            {user && (
-              <div className="px-5 py-3 bg-blue-50/50 border-b border-blue-100/50 flex items-center justify-between">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="h-9 w-9 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
-                    {user.name?.charAt(0) || "U"}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-foreground truncate">{user.name}</p>
-                    <p className="text-[10px] text-muted-foreground truncate">{user.email}</p>
-                  </div>
-                </div>
+            <div className="overflow-y-auto flex-1 px-4 pb-4 space-y-4">
+              {user && (
                 <Link
                   href="/settings"
                   onClick={() => setDrawerOpen(false)}
-                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 bg-card px-2.5 py-1 rounded-md border border-blue-200 shadow-2xs shrink-0"
+                  className="flex items-center gap-3 rounded-lg border border-border p-3 hover:bg-muted transition-colors"
                 >
-                  Profile
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-sm font-semibold">
+                    {user.name?.charAt(0)?.toUpperCase() || "U"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-foreground truncate">{user.name}</span>
+                    <span className="block text-xs text-muted-foreground truncate">{user.email}</span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
                 </Link>
-              </div>
-            )}
+              )}
 
-            {/* Admin Banner if Admin */}
-            {user?.role === "ADMIN" && (
-              <div className="px-4 py-2 bg-purple-50 border-b border-purple-200/80">
-                <Link
-                  href="/admin/users"
-                  onClick={() => setDrawerOpen(false)}
-                  className="flex items-center justify-between p-2 rounded-lg bg-card border border-purple-200 shadow-2xs hover:bg-purple-50/50 transition-colors"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-md bg-purple-600 text-white">
-                      <ShieldCheck className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-foreground">User Access Control</span>
-                        <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-purple-100 text-purple-700">ADMIN</span>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground">Provision & manage accounts</p>
+              {[...NAV_GROUPS, ...(user?.role === "ADMIN" ? [{ title: "Administration", items: ADMIN_NAV }] : [])].map((group) => {
+                const items = group.items.filter((i) => !MOBILE_PRIMARY_HREFS.includes(i.href));
+                if (items.length === 0) return null;
+                return (
+                  <div key={group.title}>
+                    <p className="mb-1 px-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">{group.title}</p>
+                    <div className="rounded-lg border border-border divide-y divide-border overflow-hidden">
+                      {items.map(({ href, label, icon: Icon, live }) => {
+                        const active = isActivePath(pathname, href);
+                        return (
+                          <Link
+                            key={href}
+                            href={href}
+                            aria-current={active ? "page" : undefined}
+                            onClick={() => setDrawerOpen(false)}
+                            className={cn(
+                              "flex items-center gap-3 px-3 h-11 text-sm transition-colors",
+                              active ? "bg-primary/10 text-primary font-medium" : "text-foreground hover:bg-muted"
+                            )}
+                          >
+                            <Icon className={cn("h-4 w-4 shrink-0", !active && "text-muted-foreground")} aria-hidden />
+                            <span className="flex-1 truncate">{label}</span>
+                            {live && (
+                              <span className="flex items-center gap-1 text-[10px] font-semibold uppercase text-profit">
+                                <span className="h-1.5 w-1.5 rounded-full bg-profit" aria-hidden />
+                                Live
+                              </span>
+                            )}
+                            <ChevronRight className="h-4 w-4 text-muted-foreground/60 shrink-0" aria-hidden />
+                          </Link>
+                        );
+                      })}
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-purple-400" />
-                </Link>
-              </div>
-            )}
+                );
+              })}
 
-            {/* Links Grid */}
-            <div className="p-3 overflow-y-auto space-y-1 divide-y divide-slate-50 flex-1">
-              <div className="grid grid-cols-2 gap-1.5 pt-1">
-                {secondaryNav.map(({ href, label, icon: Icon, badge }: any) => {
-                  const active = pathname.startsWith(href);
-                  return (
-                    <Link
-                      key={href}
-                      href={href}
-                      onClick={() => setDrawerOpen(false)}
-                      className={cn(
-                        "flex items-center gap-2.5 p-2.5 rounded-xl text-xs font-semibold transition-all border",
-                        active
-                          ? "bg-blue-600/10 text-blue-600 border-blue-600/20 shadow-2xs"
-                          : "bg-muted/40 text-foreground/75 hover:bg-muted border-border/80 active:scale-98"
-                      )}
-                    >
-                      <div className={cn(
-                        "p-1.5 rounded-lg shrink-0",
-                        active ? "bg-blue-600 text-white" : "bg-card text-foreground/75 border border-border/60"
-                      )}>
-                        <Icon className="h-3.5 w-3.5" />
-                      </div>
-                      <span className="truncate flex-1">{label}</span>
-                      {badge && (
-                        <span className="text-[8px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30">
-                          {badge}
-                        </span>
-                      )}
-                    </Link>
-                  );
-                })}
+              <div>
+                <p className="mb-1 px-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Appearance</p>
+                <ThemeSwitch />
               </div>
 
-              {/* Logout Row */}
-              <div className="pt-3 pb-1">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDrawerOpen(false);
+                    openRiskDisclosure();
+                  }}
+                  className="flex items-center justify-center gap-2 h-10 rounded-md border border-border text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <ShieldAlert className="h-4 w-4 text-warn" aria-hidden />
+                  Risk disclosure
+                </button>
                 <button
                   type="button"
                   onClick={() => {
                     setDrawerOpen(false);
                     setShowLogoutConfirm(true);
                   }}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200/60 transition-colors"
+                  className="flex items-center justify-center gap-2 h-10 rounded-md border border-loss/30 text-xs font-medium text-loss hover:bg-loss/10"
                 >
-                  <LogOut className="h-4 w-4" />
-                  <span>Logout from Account</span>
+                  <LogOut className="h-4 w-4" aria-hidden />
+                  Logout
                 </button>
               </div>
             </div>
@@ -257,7 +238,6 @@ export function MobileBottomNav() {
         </div>
       )}
 
-      {/* Logout Confirmation Dialog */}
       <ConfirmDialog
         open={showLogoutConfirm}
         onOpenChange={setShowLogoutConfirm}
