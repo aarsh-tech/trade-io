@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Copy, Download, Search, Terminal, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowDownToLine, Copy, Download, Search, Terminal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,9 @@ import type { DetailCtx } from "./useStrategyDetail";
 
 const FILTERS: { id: LogFilter; label: string }[] = [
   { id: "ALL", label: "All" },
-  { id: "SIGNAL", label: "Signals" },
   { id: "ORDER", label: "Orders" },
-  { id: "ERROR", label: "Warnings & errors" },
-  { id: "PNL", label: "P&L ticks" },
+  { id: "SIGNAL", label: "Signals" },
+  { id: "ERROR", label: "Errors" },
 ];
 
 const KIND_STYLE: Record<LogKind, string> = {
@@ -98,10 +97,19 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
             {strategy.isActive && <span className="inline-flex h-2 w-2 rounded-full bg-profit animate-ping" aria-label="Engine running" />}
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={copy} className="h-7 px-2 text-[11px] gap-1 text-muted-foreground" aria-label="Copy shown log lines">
+            <Button
+              variant={following ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => (following ? setFollowing(false) : jumpToLatest())}
+              aria-pressed={following}
+              className="gap-1 text-[11px]"
+            >
+              <ArrowDownToLine className="h-3 w-3" aria-hidden /> Auto-scroll {following ? "on" : "off"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={copy} className="px-2 text-[11px] gap-1 text-muted-foreground" aria-label="Copy shown log lines">
               <Copy className="h-3 w-3" aria-hidden /> <span className="hidden sm:inline">Copy</span>
             </Button>
-            <Button variant="ghost" size="sm" onClick={download} className="h-7 px-2 text-[11px] gap-1 text-muted-foreground" aria-label="Download shown log lines">
+            <Button variant="ghost" size="sm" onClick={download} className="px-2 text-[11px] gap-1 text-muted-foreground" aria-label="Download shown log lines">
               <Download className="h-3 w-3" aria-hidden /> <span className="hidden sm:inline">Download</span>
             </Button>
             <Button
@@ -111,7 +119,7 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
                 setLiveLogs([]);
                 toast.success("Console cleared (engine keeps running)");
               }}
-              className="h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-loss"
+              className="px-2 text-[11px] gap-1 text-muted-foreground hover:text-loss"
               aria-label="Clear console"
             >
               <Trash2 className="h-3 w-3" aria-hidden /> <span className="hidden sm:inline">Clear</span>
@@ -128,7 +136,7 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
                 onClick={() => setFilter(f.id)}
                 aria-pressed={filter === f.id}
                 className={cn(
-                  "h-7 px-2.5 rounded-md text-[11px] font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "h-10 md:h-8 px-3 rounded-md text-xs font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   filter === f.id ? "bg-accent text-accent-foreground border-primary" : "bg-transparent text-muted-foreground border-border hover:text-foreground hover:bg-muted",
                 )}
               >
@@ -143,7 +151,7 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search logs"
-              className="h-7 w-full rounded-md border border-input bg-sunken pl-7 pr-2 text-[11px] placeholder:text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-10 md:h-8 w-full rounded-md border border-input bg-sunken pl-7 pr-2 text-xs placeholder:text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
         </div>
@@ -157,7 +165,7 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
           aria-live="off"
           aria-label="Engine log"
           tabIndex={0}
-          className="h-80 overflow-y-auto bg-log-bg border-t border-border px-3 py-2 font-code text-xs select-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-72 sm:h-80 overflow-y-auto bg-log-bg border-t border-border px-3 py-2 font-code text-xs select-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {shown.length === 0 ? (
             <p className="text-muted-foreground italic py-4 text-sm">
@@ -181,7 +189,7 @@ export function EngineConsole({ ctx }: { ctx: DetailCtx }) {
           <Button
             size="sm"
             onClick={jumpToLatest}
-            className="absolute bottom-3 right-4 h-7 gap-1 text-[11px] rounded-full shadow-md"
+            className="absolute bottom-3 right-4 gap-1 text-[11px] rounded-full shadow-md"
           >
             <ArrowDown className="h-3 w-3" aria-hidden /> Jump to latest
           </Button>

@@ -375,52 +375,77 @@ export class Breakout15MinEngine {
   }
 
   async stop(strategyId: string): Promise<void> {
-    const state = this.running.get(strategyId);
-    if (state) {
-      this.stopRealtimeMonitor(state);
-      clearInterval(this.timers.get(strategyId));
-      this.timers.delete(strategyId);
-      this.running.delete(strategyId);
-      this.log(state, '⏹ Strategy stopped by user');
-
-      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
-        try {
-          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-          if (account?.accessToken) {
-            const client = this.factory.createClient(account);
-            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
-            await this.cancelBrokerOrderSafe(client, state.slOrderId);
-            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-          }
-        } catch { }
-      }
-
-      await this.prisma.strategyExecution.update({
-        where: { id: state.executionId },
-        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-500)) },
-      });
-    }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
+    await this.stopWithStatus(strategyId, 'STOPPED', '⏹ Strategy stopped by user');
   }
 
+  /**
+   * Safe shutdown. A live position is NEVER left unprotected:
+   *  1. If a live position is open, flatten it first (protective orders stay in place until flat).
+   *  2. Only cancel SL/target orders once the position is confirmed flat.
+   *  3. If flatten fails, leave the broker-side SL order active and warn loudly.
+   */
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
+      this.log(state, logReason);
+      let client: any = null;
+      if (!state.isPaperTrade) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) client = this.factory.createClient(account);
+        } catch (e: any) {
+          this.log(state, `⚠ Could not create broker client during shutdown: ${e?.message || e}`);
+        }
+      }
+
+      // Remember protective order ids: exitPosition() clears them from state.
+      const slIdBefore = state.slOrderId;
+      const targetIdBefore = state.targetOrderId;
+
+      // A pending (unfilled) entry order is safe to cancel right away.
+      if (client && !state.isPaperTrade && state.entryOrderId && !state.entryFilled) {
+        try { await this.cancelBrokerOrderSafe(client, state.entryOrderId); } catch { }
+      }
+
+      let stillOpen = false;
+      if (!state.isPaperTrade && state.entryTriggered && state.entryFilled) {
+        if (client) {
+          this.log(state, `🧯 Position still open on shutdown — squaring off before stopping.`);
+          const kite = client?.['kite'] || client;
+          const symbol = state.optionSymbol || state.futureSymbol || state.config.symbol;
+          try {
+            const px = state.currentLtp || state.entryPrice || 0;
+            await this.exitPosition(state, client, px, 'FORCE_CLOSE');
+          } catch (e: any) {
+            this.log(state, `❌ Shutdown square-off failed: ${e?.message || e}`);
+          }
+          // exitPosition swallows order errors, so confirm flat against the broker.
+          stillOpen = !!state.entryTriggered;
+          if (!stillOpen) {
+            try {
+              const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger);
+              stillOpen = !!(finalPos.isOpen && finalPos.netQty !== 0);
+            } catch {
+              stillOpen = true; // cannot verify -> assume open
+            }
+          }
+        } else {
+          stillOpen = true;
+        }
+        if (stillOpen) {
+          this.log(state, `🚨 POSITION NOT CONFIRMED FLAT. Broker-side stop-loss order is left ACTIVE. Verify and close manually in Kite if needed.`);
+        }
+      }
+
       this.stopRealtimeMonitor(state);
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
-      this.log(state, logReason);
 
-      if (!state.isPaperTrade && (state.entryOrderId || state.slOrderId || state.targetOrderId)) {
+      if (client && !state.isPaperTrade && !stillOpen && (slIdBefore || targetIdBefore)) {
         try {
-          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-          if (account?.accessToken) {
-            const client = this.factory.createClient(account);
-            await this.cancelBrokerOrderSafe(client, state.entryOrderId);
-            await this.cancelBrokerOrderSafe(client, state.slOrderId);
-            await this.cancelBrokerOrderSafe(client, state.targetOrderId);
-          }
+          await this.cancelBrokerOrderSafe(client, slIdBefore);
+          await this.cancelBrokerOrderSafe(client, targetIdBefore);
         } catch { }
       }
 
@@ -718,7 +743,7 @@ export class Breakout15MinEngine {
             const breakevenPoints = (state.initialRiskPoints ?? 5) * (state.config.breakevenTriggerR ?? 0.7);
 
             if (!state.isBreakevenTrailed && currentPnlPoints >= breakevenPoints && state.entryPrice) {
-              state.stopLossPrice = state.entryPrice;
+              state.stopLossPrice = this.ratchetSl(state, state.entryPrice, isLong);
               state.isBreakevenTrailed = true;
               this.log(state, `🛡 (Catch-up Protection) Position reached +${(state.config.breakevenTriggerR ?? 0.7).toFixed(1)}R profit! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free!`);
             }
@@ -738,7 +763,7 @@ export class Breakout15MinEngine {
               if (bookQty > 0 && remainingQty > 0) {
                 state.isPartialBooked = true;
                 state.executedQty = remainingQty;
-                state.stopLossPrice = state.entryPrice;
+                state.stopLossPrice = this.ratchetSl(state, state.entryPrice, isLong);
                 state.isBreakevenTrailed = true;
                 this.log(state, `💰 (Catch-up) [THE BANKER & RUNNER] Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ +${partialR}R (+₹${(currentPnlPoints * bookQty).toFixed(2)})! Remaining ${remainingQty} qty SL moved to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free! Trailing along 9/15-EMA & VWAP.`);
               }
@@ -1776,7 +1801,7 @@ export class Breakout15MinEngine {
       // ── 2. Breakeven Lock (+0.7R profit -> SL to COST) ─────────────────────
       const breakevenPoints = risk * (state.config.breakevenTriggerR ?? 0.7);
       if (!state.config.exitExactAtTarget && state.config.enableBreakevenTrail !== false && !state.isBreakevenTrailed && pnlPoints >= breakevenPoints && state.entryPrice) {
-        state.stopLossPrice = state.entryPrice;
+        state.stopLossPrice = this.ratchetSl(state, state.entryPrice, isLong);
         state.isBreakevenTrailed = true;
         this.log(state, `🛡 (Dynamic Protection) Position hit +${(state.config.breakevenTriggerR ?? 0.7).toFixed(1)}R profit (+₹${pnlPoints.toFixed(2)} pts)! Trailed SL to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free Trade!`);
         await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
@@ -1843,7 +1868,7 @@ export class Breakout15MinEngine {
           }
 
           // Move Stop Loss of remaining runner to Cost (Risk-Free)
-          state.stopLossPrice = state.entryPrice;
+          state.stopLossPrice = this.ratchetSl(state, state.entryPrice, isLong);
           state.isBreakevenTrailed = true;
           this.log(state, `🛡 [THE RUNNER ACTIVATED] Remaining ${remainingQty} qty SL moved to COST (₹${state.entryPrice.toFixed(2)}) — Risk-Free Trade! Trailing on 9/15-EMA & VWAP.`);
           await this.updateBrokerSlSafe(client, client?.['kite'], state, symbol);
@@ -1975,6 +2000,13 @@ export class Breakout15MinEngine {
     }
   }
 
+  /** Returns the tighter of the current stop and a candidate (never loosens). */
+  private ratchetSl(state: StrategyState, candidate: number, isLong: boolean): number | null {
+    const cur = state.stopLossPrice;
+    if (cur === null || cur === undefined || !cur) return candidate;
+    return isLong ? Math.max(cur, candidate) : Math.min(cur, candidate);
+  }
+
   private async updateBrokerSlSafe(client: any, kite: any, state: StrategyState, symbol: string) {
     if (state.isPaperTrade || !state.slOrderId || state.slOrderId === 'FAILED' || !state.stopLossPrice) return;
     try {
@@ -1988,33 +2020,33 @@ export class Breakout15MinEngine {
         return;
       }
 
+      // Never loosen the exchange stop: only tighten (raise for longs / lower for shorts).
+      if (state.lastBrokerSlTrigger !== undefined && (isLong ? triggerPrice < state.lastBrokerSlTrigger : triggerPrice > state.lastBrokerSlTrigger)) {
+        return;
+      }
+
       const now = Date.now();
       if (state.lastBrokerSlModifyTime && (now - state.lastBrokerSlModifyTime) < 2000) {
         return;
       }
 
       const k = kite || client?.['kite'] || client;
+      let modifyError: any = null;
       if (client && client.modifyOrder) {
-        await client.modifyOrder(state.slOrderId, {
-          triggerPrice,
-          price: limitPrice,
-        }).catch((e: any) => {
-          this.logger.warn(`Broker SL modify notice: ${e.message}`);
-        });
-        state.lastBrokerSlTrigger = triggerPrice;
-        state.lastBrokerSlModifyTime = now;
-        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+        await client.modifyOrder(state.slOrderId, { triggerPrice, price: limitPrice }).catch((e: any) => { modifyError = e; });
       } else if (k && k.modifyOrder) {
-        await k.modifyOrder('regular', state.slOrderId, {
-          trigger_price: triggerPrice,
-          price: limitPrice,
-        }).catch((e: any) => {
-          this.logger.warn(`Broker SL modify notice: ${e.message}`);
-        });
-        state.lastBrokerSlTrigger = triggerPrice;
-        state.lastBrokerSlModifyTime = now;
-        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+        await k.modifyOrder('regular', state.slOrderId, { trigger_price: triggerPrice, price: limitPrice }).catch((e: any) => { modifyError = e; });
+      } else {
+        return;
       }
+      state.lastBrokerSlModifyTime = now;
+      if (modifyError) {
+        // Do NOT record as synced — next tick retries. Broker keeps the previous (safe, looser) stop meanwhile.
+        this.logger.warn(`Broker SL modify failed (will retry): ${modifyError.message}`);
+        return;
+      }
+      state.lastBrokerSlTrigger = triggerPrice;
+      this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
     } catch (e: any) {
       this.logger.warn(`Failed to update broker SL order: ${e.message}`);
     }
@@ -2529,6 +2561,11 @@ export class Breakout15MinEngine {
       this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping duplicate trade.`);
       return;
     }
+    // Live safety: no fresh entries at/after 14:45 IST (not enough room before the 15:05 square-off).
+    if (!state.isPaperTrade && this.getIstHhmm(new Date()) >= 14 * 60 + 45) {
+      this.log(state, `⏱ Late-session guard: no new entries after 14:45 IST. Skipping ${side} signal.`);
+      return;
+    }
     state.isPlacingTrade = true;
 
     try {
@@ -2841,7 +2878,7 @@ export class Breakout15MinEngine {
       const triggerPrice = this.roundTick(state.stopLossPrice || sl, symTickSize);
       const slLimitPrice = this.roundTick(isLong ? triggerPrice - symTickSize * 3 : triggerPrice + symTickSize * 3, symTickSize);
 
-      const slId = await this.placeOrder(state, {
+      const placeProtectiveSl = () => this.placeOrder(state, {
         symbol,
         exchange,
         side: exitSide,
@@ -2851,10 +2888,26 @@ export class Breakout15MinEngine {
         price: slLimitPrice,
         triggerPrice,
         intent: 'PROTECTIVE'
-      }).catch((e: any) => {
-        this.log(state, `❌ Server SL Order Failed: ${e.message}`);
-        return 'FAILED';
       });
+      let slId: string = 'FAILED';
+      try {
+        slId = await placeProtectiveSl();
+      } catch (e: any) {
+        this.log(state, `❌ Server SL Order Failed: ${e.message}. Retrying once...`);
+        try {
+          await new Promise(r => setTimeout(r, 500));
+          slId = await placeProtectiveSl();
+        } catch (e2: any) {
+          this.log(state, `❌ Server SL Order retry Failed: ${e2.message}`);
+        }
+      }
+
+      if (slId === 'FAILED') {
+        this.log(state, `🚨 Protective SL could not be placed. Flattening the unprotected position immediately.`);
+        state.slOrderId = null;
+        await this.exitPosition(state, client, actualEntryPrice, 'FORCE_CLOSE');
+        return;
+      }
 
       state.slOrderId = slId;
       state.lastBrokerSlTrigger = triggerPrice;

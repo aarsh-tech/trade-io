@@ -408,6 +408,37 @@ export class GammaBlastExpiryEngine {
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
+      this.log(state, logReason);
+      let client: any = null;
+      if (!state.isPaperTrade) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) client = this.factory.createClient(account);
+        } catch (e: any) {
+          this.log(state, `⚠ Could not create broker client during shutdown: ${e?.message || e}`);
+        }
+      }
+
+      // A live position is NEVER left unprotected: flatten first, cancel SL only once flat.
+      let stillOpen = false;
+      if (!state.isPaperTrade && state.entryTriggered) {
+        if (client) {
+          this.log(state, `🧯 Position still open on shutdown — squaring off before stopping.`);
+          try {
+            const px = state.currentLtp || state.entryPrice || 0;
+            await this.exitPosition(state, client, px, 'FORCE_CLOSE');
+          } catch (e: any) {
+            this.log(state, `❌ Shutdown square-off failed: ${e?.message || e}`);
+          }
+          stillOpen = !!state.entryTriggered;
+        } else {
+          stillOpen = true;
+        }
+        if (stillOpen) {
+          this.log(state, `🚨 POSITION NOT CONFIRMED FLAT. Broker-side stop-loss order is left ACTIVE. Verify and close manually in Kite if needed.`);
+        }
+      }
+
       this.stopRealtimeMonitor(state);
       if (state.globalTickerUnsubscribe) {
         state.globalTickerUnsubscribe();
@@ -416,16 +447,11 @@ export class GammaBlastExpiryEngine {
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
-      this.log(state, logReason);
 
-      if (!state.isPaperTrade && (state.slOrderId || state.entryOrderId)) {
+      if (client && !state.isPaperTrade) {
         try {
-          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-          if (account?.accessToken) {
-            const client = this.factory.createClient(account);
-            if (state.slOrderId) await client.cancelOrder(state.slOrderId).catch(() => { });
-            if (state.entryOrderId) await client.cancelOrder(state.entryOrderId).catch(() => { });
-          }
+          if (!stillOpen && state.slOrderId) await client.cancelOrder(state.slOrderId).catch(() => { });
+          if (state.entryOrderId && !state.entryTriggered) await client.cancelOrder(state.entryOrderId).catch(() => { });
         } catch { }
       }
 
@@ -832,7 +858,8 @@ export class GammaBlastExpiryEngine {
 
     // ── 1. Hard Mandatory EOD Square-Off & Standby ──────────────
     // Auto square-off at 15:29:30 IST (on the 15:25–15:30 closing candle right before market close)
-    const isSquareOffTime = hhmm > 15 * 60 + 29 || (hhmm === 15 * 60 + 29 && currentSeconds >= 30) || hhmm >= 15 * 60 + 30;
+    const isSquareOffTime = hhmm > 15 * 60 + 29 || (hhmm === 15 * 60 + 29 && currentSeconds >= 30) || hhmm >= 15 * 60 + 30
+      || (!state.isPaperTrade && hhmm >= 15 * 60 + 10); // Live: hard flatten from 15:10 IST (before 15:15 at the latest)
     const isMarketClosed = hhmm >= 15 * 60 + 30 || hhmm < 9 * 60 + 15;
 
     if (isSquareOffTime && state.entryTriggered) {
@@ -1369,6 +1396,15 @@ export class GammaBlastExpiryEngine {
       this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping duplicate trade.`);
       return;
     }
+    // Live safety: expiry-day gamma is violent late; no fresh entries at/after 14:45 IST.
+    if (!state.isPaperTrade && this.getIstHhmm(new Date()) >= 14 * 60 + 45) {
+      this.log(state, `⏱ Late-session guard: no new entries at/after 14:45 IST. Skipping signal.`);
+      return;
+    }
+    if (state.dailyTargetLocked) {
+      this.log(state, `🔒 Daily lock active (Realized P&L: ₹${(state.dailyRealizedPnlRs || 0).toFixed(2)}). Skipping trade.`);
+      return;
+    }
     state.isPlacingTrade = true;
 
     try {
@@ -1495,21 +1531,32 @@ export class GammaBlastExpiryEngine {
       if (!state.isPaperTrade) {
         const slTrigger = this.roundTick(initialSl);
         const slLimit = this.roundTick(initialSl * 0.90);
-        const slOrderId = await this.placeOrder(state, {
-          symbol,
-          exchange,
-          product,
-          qty,
-          side: 'SELL',
-          orderType: 'SL',
-          price: slLimit,
-          triggerPrice: slTrigger,
-          intent: 'PROTECTIVE'
-        }).catch((e: any) => { this.log(state, `❌ SL Order notice: ${e.message}`); return null; });
+        let slOrderId: string | null = null;
+        for (let attempt = 1; attempt <= 2 && !slOrderId; attempt++) {
+          slOrderId = await this.placeOrder(state, {
+            symbol,
+            exchange,
+            product,
+            qty,
+            side: 'SELL',
+            orderType: 'SL',
+            price: slLimit,
+            triggerPrice: slTrigger,
+            intent: 'PROTECTIVE'
+          }).catch((e: any) => { this.log(state, `❌ SL Order attempt ${attempt}/2 failed: ${e.message}`); return null; });
+        }
 
         state.slOrderId = slOrderId;
         if (slOrderId) {
           this.log(state, `🛡 Broker SL Armed: Trigger ₹${slTrigger.toFixed(2)}, Limit ₹${slLimit.toFixed(2)} [OrderId: ${slOrderId}]`);
+        } else {
+          this.log(state, `🚨 Broker SL could NOT be placed after retry. Flattening position immediately (never hold unprotected).`);
+          if (state.entryOrderId) await client.cancelOrder(state.entryOrderId).catch(() => { });
+          await this.exitPosition(state, client, state.currentLtp || entryPrice, 'SL_PLACEMENT_FAILED');
+          if (state.entryTriggered) {
+            this.log(state, `🚨🚨 FLATTEN FAILED and NO SL is active on ${symbol}. CLOSE MANUALLY IN KITE NOW.`);
+          }
+          return;
         }
       }
 
@@ -1996,6 +2043,26 @@ export class GammaBlastExpiryEngine {
       });
     } catch (e: any) {
       this.log(state, `❌ Exit failed: ${e.message}`);
+      // Exit order failed after the broker SL was cancelled: re-arm protection so the position is not naked.
+      if (!state.isPaperTrade && state.entryTriggered && state.stopLossPrice) {
+        try {
+          const slTrigger = this.roundTick(state.stopLossPrice);
+          state.slOrderId = await this.placeOrder(state, {
+            symbol,
+            exchange,
+            product: state.config.product || 'NRML',
+            qty,
+            side: 'SELL',
+            orderType: 'SL',
+            price: this.roundTick(slTrigger * 0.90),
+            triggerPrice: slTrigger,
+            intent: 'PROTECTIVE'
+          });
+          this.log(state, `🛡 Exit failed — broker SL re-armed @ trigger ₹${slTrigger.toFixed(2)} [OrderId: ${state.slOrderId}]`);
+        } catch (e2: any) {
+          this.log(state, `🚨 Exit failed AND SL re-arm failed (${e2?.message || e2}). POSITION UNPROTECTED — close manually in Kite.`);
+        }
+      }
     }
   }
 

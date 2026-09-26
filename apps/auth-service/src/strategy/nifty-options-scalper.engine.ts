@@ -361,32 +361,65 @@ export class NiftyOptionsScalperEngine {
   }
 
   async stop(strategyId: string): Promise<void> {
-    const state = this.running.get(strategyId);
-    if (state) {
-      this.stopRealtimeMonitor(state);
-      clearInterval(this.timers.get(strategyId));
-      this.timers.delete(strategyId);
-      this.running.delete(strategyId);
-      this.log(state, '⏹ Strategy stopped by user');
-      await this.prisma.strategyExecution.update({
-        where: { id: state.executionId },
-        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
-      });
-    }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
+    await this.stopWithStatus(strategyId, 'STOPPED', '⏹ Strategy stopped by user');
   }
 
+  /**
+   * Safe shutdown. A live position is NEVER left unprotected:
+   *  1. If a live position is open, flatten it first (broker SL stays in place until flat).
+   *  2. Only cancel SL/target orders once the position is confirmed flat.
+   *  3. If flatten fails, leave the broker-side SL order active and warn loudly.
+   */
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
+      this.log(state, logReason);
+      let client: any = null;
+      if (!state.isPaperTrade) {
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) client = this.factory.createClient(account);
+        } catch (e: any) {
+          this.log(state, `⚠ Could not create broker client during shutdown: ${e?.message || e}`);
+        }
+      }
+
+      let stillOpen = false;
+      if (!state.isPaperTrade && state.entryTriggered) {
+        if (client) {
+          this.log(state, `🧯 Position still open on shutdown — squaring off before stopping.`);
+          try {
+            const px = state.currentLtp || state.entryPrice || 0;
+            await this.exitPosition(state, client, px, 'FORCE_CLOSE');
+          } catch (e: any) {
+            this.log(state, `❌ Shutdown square-off failed: ${e?.message || e}`);
+          }
+          stillOpen = !!state.entryTriggered;
+        } else {
+          stillOpen = true;
+        }
+        if (stillOpen) {
+          this.log(state, `🚨 POSITION NOT CONFIRMED FLAT. Broker-side stop-loss order is left ACTIVE. Verify and close manually in Kite if needed.`);
+        }
+      }
+
       this.stopRealtimeMonitor(state);
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
-      this.log(state, logReason);
+
+      if (client && !state.isPaperTrade && !stillOpen && state.slOrderId && state.slOrderId !== 'FAILED') {
+        try { await client.cancelOrder(state.slOrderId); } catch { }
+      }
+
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
+      });
+      strategyEvents.emit('strategy.update', {
+        strategyId: state.strategyId,
+        logs: state.logs,
+        state: this.getState(state.strategyId),
       });
     }
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
@@ -805,14 +838,14 @@ export class NiftyOptionsScalperEngine {
     const { config } = state;
     const kite = client['kite'];
 
-    if (state.winningTradesToday >= (config.maxWinsPerDay || 1)) {
+    if (!state.entryTriggered && state.winningTradesToday >= (config.maxWinsPerDay || 1)) {
       this.log(state, `🎯 Daily win goal reached (${state.winningTradesToday} win). Auto-stopping scalper for today.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `🎯 Auto-Stopped: Daily 10-point target locked`);
       return;
     }
 
-    if (state.tradesPlacedToday >= config.maxTradesPerDay) {
+    if (!state.entryTriggered && state.tradesPlacedToday >= config.maxTradesPerDay) {
       this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
@@ -820,7 +853,7 @@ export class NiftyOptionsScalperEngine {
     }
 
     // 0. Daily Loss Circuit Breaker: Halt on reaching max losses to eliminate chop drawdowns
-    if (state.dailyLossesCount >= (config.maxLossesPerDay || 2)) {
+    if (!state.entryTriggered && state.dailyLossesCount >= (config.maxLossesPerDay || 2)) {
       this.log(state, `🛡 [CIRCUIT BREAKER] Daily loss limit (${state.dailyLossesCount} losses) reached. Auto-stopping scalper for today to preserve capital.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `🛡 Auto-Stopped: Daily loss limit reached`);
@@ -1101,6 +1134,11 @@ export class NiftyOptionsScalperEngine {
       this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping duplicate trade.`);
       return;
     }
+    // Live safety: enforce entry cutoff on every live entry path (catch-up replays pass triggerTime and are excluded).
+    if (!state.isPaperTrade && !triggerTime && this.getIstHhmm(new Date()) >= this.parseHhmm(config.entryCutoffTime || '14:15')) {
+      this.log(state, `⏱ Entry cutoff (${config.entryCutoffTime || '14:15'} IST) passed. Skipping ${side} signal.`);
+      return;
+    }
     state.isPlacingTrade = true;
 
     try {
@@ -1197,21 +1235,36 @@ export class NiftyOptionsScalperEngine {
       if (!state.isPaperTrade && !isHistorical) {
         const slTriggerPrice = this.roundTick(sl);
         const slLimitPrice = this.roundTick(Math.max(0.05, sl - 1.00));
-        try {
-          state.slOrderId = await this.placeOrder(state, {
-            symbol: optSym,
-            exchange: exch,
-            product: config.product ?? 'MIS',
-            qty: tradeQty,
-            side: 'SELL',
-            orderType: 'SL',
-            price: slLimitPrice,
-            triggerPrice: slTriggerPrice,
-            intent: 'PROTECTIVE'
-          });
-          this.log(state, `🛡 Armed Zerodha Server SL Order (${state.slOrderId}) for ${tradeQty} shares @ Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)}`);
-        } catch (slErr: any) {
-          this.log(state, `⚠ Failed to arm broker SL order: ${slErr.message}. Realtime monitor will guard position.`);
+        const armSl = () => this.placeOrder(state, {
+          symbol: optSym,
+          exchange: exch,
+          product: config.product ?? 'MIS',
+          qty: tradeQty,
+          side: 'SELL',
+          orderType: 'SL',
+          price: slLimitPrice,
+          triggerPrice: slTriggerPrice,
+          intent: 'PROTECTIVE'
+        });
+        let slArmed = false;
+        for (let attempt = 1; attempt <= 2 && !slArmed; attempt++) {
+          try {
+            state.slOrderId = await armSl();
+            slArmed = true;
+            this.log(state, `🛡 Armed Zerodha Server SL Order (${state.slOrderId}) for ${tradeQty} shares @ Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)}`);
+          } catch (slErr: any) {
+            this.log(state, `⚠ Failed to arm broker SL order (attempt ${attempt}/2): ${slErr.message}`);
+          }
+        }
+        if (!slArmed) {
+          this.log(state, `🚨 Broker SL could not be placed after retry. Flattening position immediately.`);
+          state.slOrderId = null;
+          await this.exitPosition(state, client, entry, 'FORCE_CLOSE');
+          if (state.entryTriggered) {
+            this.log(state, `🚨 FLATTEN FAILED and NO BROKER SL. Position UNPROTECTED (realtime monitor only) - close manually in Kite.`);
+          } else {
+            return;
+          }
         }
       }
 
@@ -1442,29 +1495,32 @@ export class NiftyOptionsScalperEngine {
       const now = Date.now();
       if (state.lastBrokerSlModifyTime && (now - state.lastBrokerSlModifyTime < 1500)) return;
       if (state.lastBrokerSlTrigger && Math.abs(state.lastBrokerSlTrigger - triggerPrice) < 0.25) return;
+      // Ratchet-only: never loosen the exchange stop (long option: only raise).
+      if (state.lastBrokerSlTrigger !== undefined && triggerPrice < state.lastBrokerSlTrigger) return;
 
       const k = kite || client?.['kite'] || client;
+      let modifyError: any = null;
       if (client && client.modifyOrder) {
         await client.modifyOrder(state.slOrderId, {
           triggerPrice: triggerPrice,
           price: limitPrice,
-        }).catch((e: any) => {
-          this.log(state, `⚠ Zerodha SL modify notice: ${e.message}`);
-        });
-        state.lastBrokerSlTrigger = triggerPrice;
-        state.lastBrokerSlModifyTime = now;
-        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+        }).catch((e: any) => { modifyError = e; });
       } else if (k && k.modifyOrder) {
         await k.modifyOrder('regular', state.slOrderId, {
           trigger_price: triggerPrice,
           price: limitPrice,
-        }).catch((e: any) => {
-          this.log(state, `⚠ Zerodha Kite SL modify notice: ${e.message}`);
-        });
-        state.lastBrokerSlTrigger = triggerPrice;
-        state.lastBrokerSlModifyTime = now;
-        this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
+        }).catch((e: any) => { modifyError = e; });
+      } else {
+        return;
       }
+      state.lastBrokerSlModifyTime = now;
+      if (modifyError) {
+        // Do NOT record as synced: next tick retries. Broker keeps the previous (looser but valid) stop meanwhile.
+        this.log(state, `⚠ Zerodha SL modify failed (will retry): ${modifyError.message}`);
+        return;
+      }
+      state.lastBrokerSlTrigger = triggerPrice;
+      this.log(state, `🛡 Synced Trailing SL to Zerodha Exchange (${state.slOrderId}) -> Trigger: ₹${triggerPrice.toFixed(2)}, Limit: ₹${limitPrice.toFixed(2)}`);
     } catch (e: any) {
       this.logger.warn(`Failed to update broker SL order: ${e.message}`);
     }
@@ -1720,6 +1776,10 @@ export class NiftyOptionsScalperEngine {
         // Two-Loss Circuit Breaker
         if (state.dailyLossesCount >= (state.config.maxLossesPerDay || 2)) {
           this.log(state, `🛡 [CIRCUIT BREAKER] Daily loss limit reached (${state.dailyLossesCount} losses). Auto-stopping scalper for today to preserve capital.`);
+          // Position is already flat: clear it so stopWithStatus does not try to flatten again (would double-SELL).
+          state.entryTriggered = null;
+          state.optionSymbol = null;
+          state.slOrderId = null;
           await this.stopWithStatus(state.strategyId, 'COMPLETED', `🛡 Auto-Stopped: Daily loss limit reached`);
           return;
         }
@@ -1745,6 +1805,17 @@ export class NiftyOptionsScalperEngine {
       });
     } catch (e) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
+      // The broker SL was cancelled above; if we are live and still long, re-arm it so the position is not naked.
+      if (!state.isPaperTrade && client && state.entryTriggered && state.stopLossPrice) {
+        try {
+          const trig = this.roundTick(state.stopLossPrice);
+          state.slOrderId = await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product ?? 'MIS', qty, side: 'SELL', orderType: 'SL', price: this.roundTick(Math.max(0.05, trig - 1.00)), triggerPrice: trig, intent: 'PROTECTIVE' });
+          state.lastBrokerSlTrigger = trig;
+          this.log(state, `🛡 Re-armed broker SL (${state.slOrderId}) after failed exit.`);
+        } catch (re: any) {
+          this.log(state, `🚨 EXIT FAILED AND SL RE-ARM FAILED for ${symbol}. POSITION MAY BE UNPROTECTED - close manually in Kite.`);
+        }
+      }
     }
   }
 

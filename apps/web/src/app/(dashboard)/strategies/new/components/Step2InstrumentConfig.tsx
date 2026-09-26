@@ -7,43 +7,28 @@ import { Zap, Target, BarChart2, TrendingUp, Loader2, Sparkles, Clock, ArrowUpRi
 import { cn } from "@/lib/utils";
 import { StrategyFormState, getLotSize } from "../types";
 import { marketApi } from "@/lib/api";
+import { Advanced, Section } from "../../_components/form-ui";
+import { BrokerPicker } from "../../_components/broker-picker";
+import { InstrumentSearch, type InstrumentHit } from "../../_components/instrument-search";
+import type { BrokerAccount } from "../types";
 
 interface Step2Props {
   form: StrategyFormState;
   set: (k: keyof StrategyFormState, v: any) => void;
+  brokers: BrokerAccount[];
+  brokersLoading?: boolean;
+  brokersError?: boolean;
+  onRetryBrokers?: () => void;
 }
 
-export function Step2InstrumentConfig({ form, set }: Step2Props) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-
-  const handleSymbolSearch = async (query: string) => {
-    setSearchQuery(query);
-    if (!query || query.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-    setIsSearching(true);
-    try {
-      const res = await marketApi.search(query);
-      setSearchResults(res.data?.data || []);
-    } catch {
-      setSearchResults([]);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const selectInstrument = (item: any) => {
+export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brokersError, onRetryBrokers }: Step2Props) {
+  const selectInstrument = (item: InstrumentHit) => {
     set("symbol", item.symbol);
     set("exchange", item.exchange);
     set("instrumentType", item.segment === "NFO-OPT" || item.segment === "BFO-OPT" ? "OPTION" : (item.segment === "INDICES" ? "INDEX" : "STOCK"));
     if (item.lotSize && item.lotSize > 0) {
       set("lotSize", item.lotSize);
     }
-    setSearchResults([]);
-    setSearchQuery("");
   };
 
   React.useEffect(() => {
@@ -63,6 +48,17 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
 
   return (
     <div className="space-y-5">
+      <Section title="Broker account" description="Used for live prices and lot sizes, and for orders when you trade live.">
+        <BrokerPicker
+          brokers={brokers}
+          loading={brokersLoading}
+          error={brokersError}
+          value={form.brokerAccountId}
+          onChange={(id) => set("brokerAccountId", id)}
+          onRetry={onRetryBrokers}
+        />
+      </Section>
+
       {/* ── DAILY INDEX SCALPER SPECIAL CONFIG ── */}
       {form.type === "GAMMA_BLAST_EXPIRY" && (
         <div className="space-y-4">
@@ -431,62 +427,8 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
       {/* ── STANDARD INSTRUMENT SELECTOR FOR OTHER STRATEGIES OR MANUAL MODE ── */}
       {form.type !== "GAMMA_BLAST_EXPIRY" && !(form.type === "STOCK_OPTIONS_BUYING" && form.sIsAutoStockSelect !== false && form.symbol === "AUTO") && (
         <>
-          <div className="relative space-y-2">
-            <label className="text-xs sm:text-sm font-semibold text-foreground block">Search Symbol (Stock, Option, Future)</label>
-            <div className="relative">
-              <Input
-                placeholder="Search e.g. RELIANCE, APOLLOHOSP, NIFTY 22000 CE..."
-                value={searchQuery}
-                onChange={(e) => handleSymbolSearch(e.target.value)}
-                className="pr-10 h-10 text-xs font-semibold bg-background border-border text-foreground rounded-lg placeholder:text-muted-foreground/60"
-              />
-              {isSearching && (
-                <div className="absolute right-3 top-2.5">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              )}
-            </div>
-
-            {/* Search Results Dropdown */}
-            {searchResults.length > 0 && (
-              <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-lg shadow-xl max-h-60 overflow-y-auto divide-y divide-border">
-                {searchResults.map((item) => {
-                  const itemPrice = item.ltp || item.ltpNSE || item.price;
-                  return (
-                    <button
-                      key={`${item.exchange}:${item.symbol}`}
-                      onClick={() => selectInstrument(item)}
-                      className="w-full flex items-center justify-between p-3.5 hover:bg-accent/50 transition-colors text-left group"
-                    >
-                      <div>
-                        <p className="text-sm font-semibold text-foreground group-hover:text-accent-foreground transition-colors">
-                          {item.symbol}
-                        </p>
-                        <p className="text-xs text-foreground/75 font-medium uppercase truncate max-w-[220px]">
-                          {item.name}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {item.lotSize && item.lotSize > 1 ? (
-                          <Badge variant="outline" className="text-[10px] font-semibold border-warn/40 text-warn bg-warn-subtle">
-                            Lot: {item.lotSize}
-                          </Badge>
-                        ) : null}
-                        {itemPrice ? (
-                          <div className="text-right">
-                            <p className="text-xs font-semibold text-profit">
-                              ₹{Number(itemPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                            </p>
-                            <span className="text-[10px] text-muted-foreground">Live LTP</span>
-                          </div>
-                        ) : null}
-                        <Badge className="text-[10px] font-semibold">{item.exchange}</Badge>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+          <div className="space-y-3">
+            <InstrumentSearch onSelect={selectInstrument} label="Search symbol (stock, option or future)" placeholder="e.g. RELIANCE, APOLLOHOSP, NIFTY 22000 CE" />
 
             <div className="flex items-center justify-between p-4 rounded-lg bg-secondary/40 border border-border">
               <div>
@@ -901,6 +843,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
       )}
 
       {form.type === "STOCK_OPTIONS_BUYING" && (
+        <Advanced title="Entry and filter settings" description="Direction, setup type, timeframe and filters. Defaults are tuned; open to fine-tune.">
         <div className="space-y-5">
           <div className="p-4 rounded-lg bg-brand-subtle border-2 border-primary/30">
             <div className="flex items-center gap-2 mb-1">
@@ -1045,6 +988,7 @@ export function Step2InstrumentConfig({ form, set }: Step2Props) {
             />
           </div>
         </div>
+        </Advanced>
       )}
     </div>
   );

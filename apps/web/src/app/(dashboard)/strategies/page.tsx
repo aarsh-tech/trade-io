@@ -33,10 +33,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { strategyApi, brokerApi } from "@/lib/api";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { RmsSafetyCard } from "@/components/rms/rms-safety-card";
+import { EMPTY, formatINR } from "@/lib/format";
+import { MenuItem, OverflowMenu, ModeBadge, StatusBadge, typeLabel, type RunStatus } from "@/features/strategies/detail/shared";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,6 +62,9 @@ interface Strategy {
   type: string;
   isActive: boolean;
   autoStart: boolean;
+  isPaperTrade?: boolean;
+  /** Present only if the list API returns it; otherwise the card shows a dash. */
+  todayPnl?: number;
   brokerAccountId?: string | null;
   config: StrategyConfig | Record<string, any>;
   brokerAccount?: { broker: string; clientId: string } | null;
@@ -76,6 +82,7 @@ export default function StrategiesPage() {
   const [actionId, setActionId] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Strategy | null>(null);
+  const [pendingStop, setPendingStop] = useState<Strategy | null>(null);
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -323,20 +330,19 @@ export default function StrategiesPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-        <div className="relative flex items-center justify-center">
-          <div className="w-12 h-12 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
-          <Bot className="w-5 h-5 text-primary absolute" />
+      <div className="space-y-4 pb-12" aria-busy="true" aria-label="Loading strategies">
+        <div className="h-12 w-2/3 animate-pulse rounded-md bg-muted" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-52 animate-pulse rounded-lg bg-muted" />
+          ))}
         </div>
-        <p className="text-xs font-medium text-muted-foreground animate-pulse">
-          Loading algorithmic strategy engines...
-        </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-12 animate-[fade-up_0.4s_ease_both]">
+    <div className="space-y-5 pb-12">
       {/* ─── Top Header ─── */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/50 pb-5">
         <div>
@@ -358,10 +364,9 @@ export default function StrategiesPage() {
         <div className="flex items-center gap-2.5 self-stretch sm:self-auto justify-end">
           <Button
             variant="outline"
-            size="sm"
             onClick={load}
             disabled={loading}
-            className="gap-1.5 text-xs h-9 bg-card border-border/80 hover:bg-accent/50"
+            className="gap-1.5"
             title="Refresh strategy statuses"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
@@ -370,11 +375,10 @@ export default function StrategiesPage() {
 
           <Link href="/strategies/new">
             <Button
-              size="sm"
-              className="gap-2 text-xs h-9 font-semibold bg-primary hover:bg-brand-hover text-primary-foreground shadow-md px-4"
+              className="gap-2 font-semibold px-4"
             >
               <Plus className="h-4 w-4" />
-              New Strategy
+              New strategy
             </Button>
           </Link>
         </div>
@@ -461,7 +465,161 @@ export default function StrategiesPage() {
         </Card>
       </div>
 
-      {/* ─── 1-Click Quick Deploy Presets (Compact Side-by-Side Grid) ─── */}
+      {/* ─── Search & Category Filter Bar ─── */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card/50 p-2 rounded-lg border border-border/60">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+          <Button
+            variant={activeTab === "ALL" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("ALL")}
+            className={cn(
+              "text-xs h-10 md:h-8 px-3 rounded-lg font-semibold",
+              activeTab === "ALL" && "bg-primary text-primary-foreground hover:bg-brand-hover"
+            )}
+          >
+            All ({strategies.length})
+          </Button>
+          <Button
+            variant={activeTab === "ACTIVE" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("ACTIVE")}
+            className={cn(
+              "text-xs h-10 md:h-8 px-3 rounded-lg font-semibold gap-1.5",
+              activeTab === "ACTIVE" && "bg-profit text-on-profit hover:bg-profit/90"
+            )}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-profit/40" />
+            Live ({stats.active})
+          </Button>
+          <Button
+            variant={activeTab === "SCHEDULED" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("SCHEDULED")}
+            className={cn(
+              "text-xs h-10 md:h-8 px-3 rounded-lg font-semibold gap-1.5",
+              activeTab === "SCHEDULED" && "bg-warn text-on-warn hover:bg-warn/90"
+            )}
+          >
+            <AlarmClock className="h-3 w-3" />
+            Scheduled ({stats.scheduled})
+          </Button>
+          <Button
+            variant={activeTab === "INTRADAY" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("INTRADAY")}
+            className={cn(
+              "text-xs h-10 md:h-8 px-3 rounded-lg font-semibold",
+              activeTab === "INTRADAY" && "bg-primary text-primary-foreground"
+            )}
+          >
+            Intraday & Momentum
+          </Button>
+          <Button
+            variant={activeTab === "OPTIONS" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("OPTIONS")}
+            className={cn(
+              "text-xs h-10 md:h-8 px-3 rounded-lg font-semibold",
+              activeTab === "OPTIONS" && "bg-signal text-on-signal hover:bg-signal/90"
+            )}
+          >
+            Options & Scalpers
+          </Button>
+        </div>
+
+        <div className="relative w-full sm:w-64">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search strategy or symbol..."
+            className="pl-8 h-10 md:h-8 text-xs bg-background/80 border-border/70 rounded-lg focus-visible:ring-1"
+          />
+        </div>
+      </div>
+
+      {/* ─── Strategy Cards Grid ─── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {filteredStrategies.map((s) => (
+          <StrategyCard
+            key={s.id}
+            strategy={s}
+            busy={actionId === s.id || actionId === s.id + "_as"}
+            onToggle={(st) => (st.isActive ? setPendingStop(st) : toggleStrategy(st))}
+            onDelete={askDelete}
+            onToggleAutoStart={toggleAutoStart}
+          />
+        ))}
+
+        {/* Add Strategy Dashed Card */}
+        <Link href="/strategies/new" className="h-full">
+          <div className="h-full min-h-[260px] rounded-lg border-2 border-dashed border-border/70 hover:border-primary/60 bg-card/30 hover:bg-primary/[0.03] transition-all flex flex-col items-center justify-center p-6 text-center group cursor-pointer">
+            <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 text-accent-foreground flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-hover group-hover:text-primary-foreground transition-all mb-3">
+              <Plus className="h-6 w-6" />
+            </div>
+            <h4 className="text-sm font-semibold text-foreground group-hover:text-accent-foreground transition-colors">
+              Create New Strategy
+            </h4>
+            <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">
+              Set up custom indicators, risk rules, option scalpers or breakout engines.
+            </p>
+          </div>
+        </Link>
+      </div>
+
+      {/* ─── Empty Search State ─── */}
+      {filteredStrategies.length === 0 && strategies.length > 0 && (
+        <div className="text-center py-12 bg-card/40 rounded-lg border border-border/60">
+          <SlidersHorizontal className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
+          <p className="text-sm font-semibold text-foreground">No matching strategies found</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Try adjusting your search query or switching the category tab filter.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setSearchQuery("");
+              setActiveTab("ALL");
+            }}
+            className="mt-3 text-xs h-8"
+          >
+            Clear Filters
+          </Button>
+        </div>
+      )}
+
+      {/* ─── Global Empty State ─── */}
+      {strategies.length === 0 && (
+        <div className="text-center py-20 bg-card/30 rounded-lg border border-border/60">
+          <div className="h-14 w-14 rounded-lg bg-muted/60 flex items-center justify-center mx-auto mb-4 text-muted-foreground/60">
+            <Bot className="h-8 w-8" />
+          </div>
+          <h3 className="text-base font-semibold text-foreground">No Trading Strategies Configured</h3>
+          <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+            Get started by launching our recommended 1-click ₹500/day preset above, or build a custom strategy from scratch.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+            <Link href="/strategies/new">
+              <Button className="font-semibold">
+                <Plus className="h-4 w-4" /> New strategy
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              onClick={handleQuickDeploy500}
+              className="gap-1.5"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Quick deploy ₹500 preset
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 1-Click Quick Deploy Presets ─── */}
+      <section aria-labelledby="presets-title" className="space-y-3">
+      <h2 id="presets-title" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Quick deploy presets</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {/* Card 1: Stock Options Buying preset */}
         <div className="relative overflow-hidden rounded-lg border border-primary/30 bg-card p-4 flex flex-col justify-between gap-3 hover:border-primary/50 transition-all">
@@ -589,157 +747,18 @@ export default function StrategiesPage() {
           </Button>
         </div>
       </div>
+      </section>
 
-      {/* ─── Search & Category Filter Bar ─── */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card/50 p-2 rounded-lg border border-border/60">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-          <Button
-            variant={activeTab === "ALL" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setActiveTab("ALL")}
-            className={cn(
-              "text-xs h-8 px-3 rounded-lg font-semibold",
-              activeTab === "ALL" && "bg-primary text-primary-foreground hover:bg-brand-hover"
-            )}
-          >
-            All ({strategies.length})
-          </Button>
-          <Button
-            variant={activeTab === "ACTIVE" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setActiveTab("ACTIVE")}
-            className={cn(
-              "text-xs h-8 px-3 rounded-lg font-semibold gap-1.5",
-              activeTab === "ACTIVE" && "bg-profit text-on-profit hover:bg-profit/90"
-            )}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-profit/40" />
-            Live ({stats.active})
-          </Button>
-          <Button
-            variant={activeTab === "SCHEDULED" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setActiveTab("SCHEDULED")}
-            className={cn(
-              "text-xs h-8 px-3 rounded-lg font-semibold gap-1.5",
-              activeTab === "SCHEDULED" && "bg-warn text-on-warn hover:bg-warn/90"
-            )}
-          >
-            <AlarmClock className="h-3 w-3" />
-            Scheduled ({stats.scheduled})
-          </Button>
-          <Button
-            variant={activeTab === "INTRADAY" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setActiveTab("INTRADAY")}
-            className={cn(
-              "text-xs h-8 px-3 rounded-lg font-semibold",
-              activeTab === "INTRADAY" && "bg-primary text-primary-foreground"
-            )}
-          >
-            Intraday & Momentum
-          </Button>
-          <Button
-            variant={activeTab === "OPTIONS" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setActiveTab("OPTIONS")}
-            className={cn(
-              "text-xs h-8 px-3 rounded-lg font-semibold",
-              activeTab === "OPTIONS" && "bg-signal text-on-signal hover:bg-signal/90"
-            )}
-          >
-            Options & Scalpers
-          </Button>
-        </div>
-
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search strategy or symbol..."
-            className="pl-8 h-8 text-xs bg-background/80 border-border/70 rounded-lg focus-visible:ring-1"
-          />
-        </div>
-      </div>
-
-      {/* ─── Strategy Cards Grid ─── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filteredStrategies.map((s) => (
-          <StrategyCard
-            key={s.id}
-            strategy={s}
-            busy={actionId === s.id || actionId === s.id + "_as"}
-            onToggle={toggleStrategy}
-            onDelete={askDelete}
-            onToggleAutoStart={toggleAutoStart}
-          />
-        ))}
-
-        {/* Add Strategy Dashed Card */}
-        <Link href="/strategies/new" className="h-full">
-          <div className="h-full min-h-[260px] rounded-lg border-2 border-dashed border-border/70 hover:border-primary/60 bg-card/30 hover:bg-primary/[0.03] transition-all flex flex-col items-center justify-center p-6 text-center group cursor-pointer">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 text-accent-foreground flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-hover group-hover:text-primary-foreground transition-all mb-3">
-              <Plus className="h-6 w-6" />
-            </div>
-            <h4 className="text-sm font-semibold text-foreground group-hover:text-accent-foreground transition-colors">
-              Create New Strategy
-            </h4>
-            <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">
-              Set up custom indicators, risk rules, option scalpers or breakout engines.
-            </p>
-          </div>
-        </Link>
-      </div>
-
-      {/* ─── Empty Search State ─── */}
-      {filteredStrategies.length === 0 && strategies.length > 0 && (
-        <div className="text-center py-12 bg-card/40 rounded-lg border border-border/60">
-          <SlidersHorizontal className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-          <p className="text-sm font-semibold text-foreground">No matching strategies found</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Try adjusting your search query or switching the category tab filter.
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setSearchQuery("");
-              setActiveTab("ALL");
-            }}
-            className="mt-3 text-xs h-8"
-          >
-            Clear Filters
-          </Button>
-        </div>
-      )}
-
-      {/* ─── Global Empty State ─── */}
-      {strategies.length === 0 && (
-        <div className="text-center py-20 bg-card/30 rounded-lg border border-border/60">
-          <div className="h-14 w-14 rounded-lg bg-muted/60 flex items-center justify-center mx-auto mb-4 text-muted-foreground/60">
-            <Bot className="h-8 w-8" />
-          </div>
-          <h3 className="text-base font-semibold text-foreground">No Trading Strategies Configured</h3>
-          <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-            Get started by launching our recommended 1-click ₹500/day preset above, or build a custom strategy from scratch.
-          </p>
-          <div className="mt-5 flex items-center justify-center gap-3">
-            <Button
-              onClick={handleQuickDeploy500}
-              className="bg-profit hover:bg-profit/90 text-on-profit font-semibold text-xs h-9 gap-1.5"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              Quick Deploy ₹500 Preset
-            </Button>
-            <Link href="/strategies/new">
-              <Button variant="outline" className="text-xs h-9">
-                Build Custom Strategy
-              </Button>
-            </Link>
-          </div>
-        </div>
-      )}
+      {/* Stop Confirmation Modal */}
+      <ConfirmDialog
+        open={pendingStop !== null}
+        onOpenChange={(o) => !o && setPendingStop(null)}
+        onConfirm={() => pendingStop && toggleStrategy(pendingStop)}
+        title={pendingStop ? `Stop "${pendingStop.name}"?` : "Stop strategy?"}
+        description="Stopping the engine squares off any open position at market price and ends the current session."
+        confirmText="Stop and square off"
+        variant="destructive"
+      />
 
       {/* Delete Confirmation Modal */}
       <ConfirmDialog
@@ -770,6 +789,7 @@ function StrategyCard({
   onDelete: (s: Strategy) => void;
   onToggleAutoStart: (s: Strategy) => void;
 }) {
+  const router = useRouter();
   const cfg: StrategyConfig =
     typeof s.config === "string" ? JSON.parse(s.config || "{}") : s.config || {};
 
@@ -778,309 +798,125 @@ function StrategyCard({
   const isNiftyScalper = s.type === "NIFTY_OPTIONS_SCALPER";
   const isStockOptions = s.type === "STOCK_OPTIONS_BUYING";
   const isGammaBlast = s.type === "GAMMA_BLAST_EXPIRY";
-  const isDailyScalper = s.type === "DAILY_SCALPER";
+
+  const status: RunStatus = s.isActive ? "RUNNING" : s.latestExecution?.status === "COMPLETED" ? "COMPLETED" : "STOPPED";
+  const paper = Boolean(s.isPaperTrade ?? cfg.isPaperTrade);
+  const pnl = typeof s.todayPnl === "number" ? s.todayPnl : null;
+
+  const stopLossText = isStockOptions
+    ? "Breakeven @ T1"
+    : isGammaBlast
+      ? `${cfg.initialSlPct || 50}% premium`
+      : isNiftyScalper
+        ? "-7 pts"
+        : is15Min
+          ? "Candle SL"
+          : cfg.exitExactAtTarget
+            ? `Fixed ₹${cfg.stopLossRs ?? 500}`
+            : isEmaVwap
+              ? "Candle low"
+              : cfg.stopLossRs
+                ? `₹${cfg.stopLossRs}`
+                : "Dynamic";
+
+  const targetText = isStockOptions
+    ? cfg.target1RR && cfg.target2RR
+      ? `1:${cfg.target1RR} / 1:${cfg.target2RR} RR`
+      : "1:1.5 / 1:3 RR"
+    : isGammaBlast
+      ? "2x to 5x ratchet"
+      : isNiftyScalper
+        ? `+${cfg.targetPoints ?? 10} pts`
+        : cfg.exitExactAtTarget
+          ? `Fixed ₹${cfg.targetRs ?? 500}`
+          : is15Min
+            ? "1:2 RR + trail"
+            : isEmaVwap
+              ? "15-EMA / VWAP"
+              : cfg.targetRs
+                ? `₹${cfg.targetRs}`
+                : "Dynamic";
 
   return (
     <Card
       className={cn(
-        "relative rounded-lg overflow-hidden transition-all duration-300 border bg-card hover:shadow-md flex flex-col justify-between",
-        s.isActive
-          ? "border-profit/40 ring-1 ring-profit/20"
-          : "border-border/70 hover:border-border"
+        "flex flex-col rounded-lg border bg-card transition-colors",
+        s.isActive ? "border-profit/40" : "border-border hover:border-primary/40"
       )}
     >
-      {/* Top Active Ambient Bar */}
-      {s.isActive && (
-        <div className="absolute top-0 left-0 right-0 h-1 bg-profit" />
-      )}
-
-      <CardHeader className="p-4 pb-3 space-y-2.5">
-        {/* Top Badges Row */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {/* Strategy Type Badge */}
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border",
-                isNiftyScalper && "bg-signal/10 text-signal border-signal/20",
-                isStockOptions && "bg-warn/10 text-warn border-warn/20",
-                isGammaBlast && "bg-warn/10 text-warn border-warn/20",
-                is15Min && "bg-primary/10 text-accent-foreground border-primary/20",
-                isEmaVwap && "bg-profit/10 text-profit border-profit/20",
-                isDailyScalper && "bg-primary/10 text-accent-foreground border-primary/20"
-              )}
-            >
-              {isNiftyScalper && <Target className="h-3 w-3" />}
-              {isStockOptions && <Flame className="h-3 w-3" />}
-              {isGammaBlast && <Zap className="h-3 w-3" />}
-              {is15Min && <BarChart2 className="h-3 w-3" />}
-              {isEmaVwap && <TrendingUp className="h-3 w-3" />}
-              {isDailyScalper && <Zap className="h-3 w-3" />}
-              <span>
-                {isNiftyScalper
-                  ? "Nifty 10-Pt Scalper"
-                  : isStockOptions
-                    ? "Stock Options"
-                    : isGammaBlast
-                      ? "Daily Index Scalper"
-                      : is15Min
-                        ? "15-Min Breakout (Dynamic)"
-                        : isEmaVwap
-                          ? "15-EMA & VWAP"
-                          : isDailyScalper
-                            ? "Daily Scalper"
-                            : s.type}
-              </span>
-            </span>
-
-            {/* Product Tag */}
-            {cfg.product && (
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-secondary/80 text-muted-foreground border border-border/60">
-                {cfg.product}
-              </span>
-            )}
-          </div>
-
-          {/* Live Status Pill */}
-          <div
-            className={cn(
-              "inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full border ",
-              s.isActive
-                ? "bg-profit/15 text-profit border-profit/30"
-                : "bg-muted text-muted-foreground border-border/70"
-            )}
-          >
-            <span
-              className={cn(
-                "h-1.5 w-1.5 rounded-full",
-                s.isActive ? "bg-profit animate-ping" : "bg-muted-foreground"
-              )}
-            />
-            {s.isActive ? "LIVE" : "OFF"}
-          </div>
-        </div>
-
-        {/* Strategy Title & Subtitle */}
-        <div>
-          <CardTitle className="text-base font-semibold text-foreground leading-tight line-clamp-1">
-            {s.name}
-          </CardTitle>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-            <span className="font-semibold text-foreground/80">
-              {cfg.symbol || "AUTO"}
-            </span>
-            <span>•</span>
-            <span>{cfg.exchange || "NSE"}</span>
-            <span>•</span>
-            <span className="truncate max-w-[120px]">
-              {s.brokerAccount?.broker ? `${s.brokerAccount.broker}` : "Zerodha"}
-            </span>
-          </div>
-        </div>
-      </CardHeader>
-
-      <CardContent className="p-4 pt-0 space-y-3.5">
-        {/* ─── Risk & Sizing 3-Box Matrix ─── */}
-        <div className="grid grid-cols-3 gap-2">
-          <div className="p-2 rounded-lg bg-secondary/40 border border-border/50 text-center flex flex-col justify-center">
-            <span className="text-[10px] font-medium text-muted-foreground">Sizing</span>
-            <span
-              className="text-xs font-semibold text-foreground truncate mt-0.5"
-              title={
-                isStockOptions
-                  ? `Max Capital: ₹${Number(cfg.maxCapital || 25000).toLocaleString("en-IN")} • Auto Lots`
-                  : undefined
-              }
-            >
-              {isStockOptions
-                ? (cfg.maxCapital ? `₹${Number(cfg.maxCapital).toLocaleString("en-IN")}` : "Auto Lots")
-                : isGammaBlast
-                  ? `${cfg.lots || 1} Lot${(cfg.lots || 1) > 1 ? "s" : ""}`
-                  : isNiftyScalper
-                    ? "Auto Margin"
-                    : is15Min
-                      ? "Risk-Based (5x)"
-                      : isEmaVwap && cfg.symbol === "AUTO"
-                        ? "Risk-Based (5x)"
-                        : cfg.symbol === "AUTO"
-                          ? "Auto (5x)"
-                          : cfg.qty
-                            ? `${cfg.qty} Qty`
-                            : "Dynamic"}
-            </span>
-          </div>
-
-          <div className="p-2 rounded-lg bg-loss/5 border border-loss/20 text-center flex flex-col justify-center">
-            <span className="text-[10px] font-medium text-loss/80">Stop Loss</span>
-            <span
-              className="text-xs font-semibold text-loss mt-0.5 truncate"
-              title={
-                isStockOptions
-                  ? "Mother candle low SL with breakeven trailing at Target 1"
-                  : undefined
-              }
-            >
-              {isStockOptions
-                ? "Breakeven @ T1"
-                : isGammaBlast
-                  ? `${cfg.initialSlPct || 50}% Prem SL`
-                  : isNiftyScalper
-                    ? "-7 Pts (Server SL)"
-                    : is15Min
-                      ? "Candle SL (Trailed)"
-                      : cfg.exitExactAtTarget
-                        ? `Fixed ₹${cfg.stopLossRs ?? 500}`
-                        : isEmaVwap
-                          ? "Candle Low (Trailed)"
-                          : cfg.stopLossRs
-                            ? `₹${cfg.stopLossRs}`
-                            : "Dynamic SL"}
-            </span>
-          </div>
-
-          <div className="p-2 rounded-lg bg-profit/5 border border-profit/20 text-center flex flex-col justify-center">
-            <span className="text-[10px] font-medium text-profit/80">Target</span>
-            <span
-              className="text-xs font-semibold text-profit mt-0.5 truncate"
-              title={
-                isStockOptions
-                  ? `Target 1: 1:${cfg.target1RR || 1.5} RR (50% Banker Lock) • Target 2: 1:${cfg.target2RR || 3.0} RR (Runner Trail)`
-                  : undefined
-              }
-            >
-              {isStockOptions
-                ? (cfg.target1RR && cfg.target2RR
-                    ? `1:${cfg.target1RR} & 1:${cfg.target2RR} RR`
-                    : "1:1.5 & 1:3 RR")
-                : isGammaBlast
-                  ? "2x–5x Ratchet"
-                  : isNiftyScalper
-                    ? `+${cfg.targetPoints ?? 10} Pts (Banker/Runner)`
-                    : cfg.exitExactAtTarget
-                      ? `Fixed ₹${cfg.targetRs ?? 500}`
-                      : is15Min
-                        ? "1:2 RR + Uncapped Trail"
-                        : isEmaVwap
-                          ? "15-EMA / VWAP"
-                          : cfg.targetRs
-                            ? `₹${cfg.targetRs}`
-                            : "Dynamic RR"}
-            </span>
-          </div>
-        </div>
-
-        {/* ─── Status & Auto-Start Indicator ─── */}
-        <div className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-secondary/30 border border-border/40">
-          <div className="flex items-center gap-1.5 text-muted-foreground text-[11px]">
-            <Activity className="h-3 w-3 text-muted-foreground/70" />
-            <span>Last Status:</span>
-            <span
-              className={cn(
-                "font-semibold uppercase text-[10px] px-1.5 py-0.2 rounded",
-                s.latestExecution?.status === "RUNNING" && "bg-profit/10 text-profit",
-                s.latestExecution?.status === "STOPPED" && "bg-warn/10 text-warn",
-                s.latestExecution?.status === "ERROR" && "bg-loss/10 text-loss",
-                (!s.latestExecution || s.latestExecution?.status === "COMPLETED") &&
-                "bg-muted-foreground/10 text-foreground/75 dark:text-muted-foreground"
-              )}
-            >
-              {s.latestExecution?.status ?? "READY"}
-            </span>
-          </div>
-
+      <CardHeader className="space-y-2 p-4 pb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <ModeBadge paper={paper} />
+          <StatusBadge status={status} />
           {s.autoStart && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-warn bg-warn/10 px-2 py-0.5 rounded-full border border-warn/20">
-              <AlarmClock className="h-3 w-3" />
-              09:15 AM
+            <span className="inline-flex items-center gap-1 rounded-full border border-warn/30 bg-warn-subtle px-2 py-0.5 text-[11px] font-semibold text-warn">
+              <AlarmClock className="h-3 w-3" aria-hidden /> 09:15
             </span>
           )}
         </div>
+        <Link href={`/strategies/${s.id}`} prefetch={false} className="block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm">
+          <CardTitle className="truncate text-base font-semibold leading-tight text-foreground">{s.name}</CardTitle>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {typeLabel(s.type)} · <span className="font-semibold text-foreground">{cfg.symbol || "AUTO"}</span> · {cfg.exchange || "NSE"}
+          </p>
+        </Link>
+      </CardHeader>
 
-        {/* ─── Action Controls ─── */}
-        <div className="flex items-center gap-1.5 pt-1">
-          {/* Main Start / Stop Button */}
+      <CardContent className="mt-auto space-y-3 p-4 pt-0">
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="min-w-0 rounded-md bg-sunken px-2 py-2">
+            <p className="text-[11px] text-muted-foreground">Today</p>
+            <p className={cn("num truncate text-sm font-semibold", pnl === null ? "text-muted-foreground" : pnl > 0 ? "text-profit" : pnl < 0 ? "text-loss" : "text-foreground")}>
+              {pnl === null ? EMPTY : formatINR(pnl, { signed: true })}
+            </p>
+          </div>
+          <div className="min-w-0 rounded-md bg-sunken px-2 py-2">
+            <p className="text-[11px] text-muted-foreground">Stop-loss</p>
+            <p className="truncate text-sm font-semibold text-loss" title={stopLossText}>{stopLossText}</p>
+          </div>
+          <div className="min-w-0 rounded-md bg-sunken px-2 py-2">
+            <p className="text-[11px] text-muted-foreground">Target</p>
+            <p className="truncate text-sm font-semibold text-profit" title={targetText}>{targetText}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
           <Button
-            size="sm"
+            variant={s.isActive ? "danger" : "success"}
             disabled={busy}
             onClick={() => onToggle(s)}
-            className={cn(
-              "flex-1 h-9 font-semibold text-xs gap-1.5 rounded-lg transition-all ",
-              s.isActive
-                ? "bg-loss hover:bg-loss/90 text-on-loss "
-                : "bg-profit hover:bg-profit/90 text-on-profit "
-            )}
+            className="h-11 flex-1 md:h-10"
           >
             {busy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : s.isActive ? (
-              <>
-                <Square className="h-3.5 w-3.5 fill-white" />
-                Stop Engine
-              </>
+              <Square className="h-4 w-4 fill-current" />
             ) : (
+              <Play className="h-4 w-4 fill-current" />
+            )}
+            {s.isActive ? "Stop" : "Start"}
+          </Button>
+          <Link href={`/strategies/${s.id}`} prefetch={false}>
+            <Button variant="outline" className="h-11 md:h-10">
+              Details <ArrowUpRight className="h-4 w-4" aria-hidden />
+            </Button>
+          </Link>
+          <OverflowMenu label={`More actions for ${s.name}`}>
+            {(close) => (
               <>
-                <Play className="h-3.5 w-3.5 fill-white" />
-                Start Engine
+                <MenuItem icon={<Settings2 className="h-4 w-4" />} onClick={() => { close(); router.push(`/strategies/${s.id}/edit`); }}>
+                  Edit strategy
+                </MenuItem>
+                <MenuItem icon={<AlarmClock className="h-4 w-4" />} disabled={busy} onClick={() => { close(); onToggleAutoStart(s); }}>
+                  {s.autoStart ? "Disable 09:15 auto-start" : "Arm 09:15 auto-start"}
+                </MenuItem>
+                <div className="my-1 h-px bg-border" role="separator" />
+                <MenuItem icon={<Trash2 className="h-4 w-4" />} danger disabled={busy} onClick={() => { close(); onDelete(s); }}>
+                  Delete
+                </MenuItem>
               </>
             )}
-          </Button>
-
-          {/* Auto-Start Arm Button */}
-          <Button
-            variant="outline"
-            size="icon" aria-label="Toggle auto-start"
-            disabled={busy}
-            onClick={() => onToggleAutoStart(s)}
-            title={
-              s.autoStart
-                ? "Auto-Start Armed (Starts at 09:15 AM) — Click to disable"
-                : "Auto-Start Disarmed — Click to arm for 09:15 AM"
-            }
-            className={cn(
-              "h-9 w-9 rounded-lg transition-all border",
-              s.autoStart
-                ? "bg-warn/15 text-warn border-warn/30 hover:bg-warn/20"
-                : "text-muted-foreground hover:text-warn hover:border-warn/30"
-            )}
-          >
-            <AlarmClock className="h-4 w-4" />
-          </Button>
-
-          {/* Execution Logs & Monitor */}
-          <Link href={`/strategies/${s.id}`} prefetch={false}>
-            <Button
-              variant="outline"
-              size="icon" aria-label="View strategy execution and logs"
-              title="View Strategy Execution & Logs"
-              className="h-9 w-9 rounded-lg text-muted-foreground hover:text-accent-foreground hover:border-primary/30"
-            >
-              <Activity className="h-4 w-4" />
-            </Button>
-          </Link>
-
-          {/* Settings / Edit */}
-          <Link href={`/strategies/${s.id}/edit`} prefetch={false}>
-            <Button
-              variant="outline"
-              size="icon" aria-label="Edit strategy parameters"
-              title="Edit Strategy Parameters"
-              className="h-9 w-9 rounded-lg text-muted-foreground hover:text-foreground hover:border-border"
-            >
-              <Settings2 className="h-4 w-4" />
-            </Button>
-          </Link>
-
-          {/* Delete */}
-          <Button
-            variant="outline"
-            size="icon" aria-label="Delete strategy"
-            disabled={busy}
-            onClick={() => onDelete(s)}
-            title="Delete Strategy"
-            className="h-9 w-9 rounded-lg text-muted-foreground hover:text-loss hover:bg-loss/10 hover:border-loss/30"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          </OverflowMenu>
         </div>
       </CardContent>
     </Card>

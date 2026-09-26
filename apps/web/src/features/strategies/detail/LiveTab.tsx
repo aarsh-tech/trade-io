@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Activity, Radio, ShoppingCart } from "lucide-react";
 import { EngineConsole } from "./EngineConsole";
-import { EngineSnapshot } from "./EngineSnapshot";
+import { MetricCards } from "./MetricCards";
+import { PositionHero } from "./PositionHero";
 import type { DetailCtx } from "./useStrategyDetail";
 
 export function LiveTab({ ctx }: { ctx: DetailCtx }) {
@@ -14,10 +15,12 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
     <>
       {/* ─── TAB 1: LIVE ENGINE & TELEMETRY ─── */}
       {activeTab === "LIVE" && (
-        <div className="space-y-6">
-          <EngineSnapshot ctx={ctx} />
+        <div className="space-y-4">
+          <MetricCards ctx={ctx} />
+          <PositionHero ctx={ctx} />
+          <EngineConsole ctx={ctx} />
 
-          {/* Live Engine Status Grid */}
+          {/* Supporting detail: signal status and this run's orders */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="border-border/60 bg-card/60">
               <CardHeader className="p-4 pb-2 border-b border-border/50">
@@ -187,7 +190,6 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
             </Card>
           </div>
 
-          <EngineConsole ctx={ctx} />
         </div>
       )}
 

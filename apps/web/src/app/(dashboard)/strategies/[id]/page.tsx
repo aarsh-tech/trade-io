@@ -8,8 +8,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useStrategyDetail, withStrategy } from "@/features/strategies/detail/useStrategyDetail";
 import { HeaderBar } from "@/features/strategies/detail/HeaderBar";
-import { MetricCards } from "@/features/strategies/detail/MetricCards";
-import { PositionHero } from "@/features/strategies/detail/PositionHero";
+import { Skeleton } from "@/features/strategies/detail/shared";
 import { TabsBar } from "@/features/strategies/detail/TabsBar";
 import { LiveTab } from "@/features/strategies/detail/LiveTab";
 import { ConfigTab } from "@/features/strategies/detail/ConfigTab";
@@ -23,21 +22,30 @@ export default function StrategyDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[450px] gap-3">
-        <div className="relative flex items-center justify-center">
-          <div className="w-12 h-12 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
-          <Bot className="w-5 h-5 text-primary absolute" />
+      <div className="space-y-4 pb-16" aria-busy="true" aria-label="Loading strategy">
+        <div className="flex items-start gap-3">
+          <Skeleton className="h-11 w-11 md:h-8 md:w-8" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-7 w-2/3" />
+            <Skeleton className="h-5 w-1/2" />
+          </div>
         </div>
-        <p className="text-xs font-medium text-muted-foreground animate-pulse">
-          Connecting to strategy runtime & live telemetry...
-        </p>
+        <Skeleton className="h-11 w-full" />
+        <Skeleton className="h-11 w-full" />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-[88px]" />
+          ))}
+        </div>
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-72 w-full" />
       </div>
     );
   }
 
   if (!strategy) {
     return (
-      <div className="text-center py-20 bg-card/30 rounded-lg border border-border/60 max-w-lg mx-auto mt-10 p-8">
+      <div className="text-center py-20 bg-card rounded-lg border border-border max-w-lg mx-auto mt-10 p-8">
         <Bot className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
         <h2 className="text-lg font-semibold">Strategy Not Found</h2>
         <p className="text-xs text-muted-foreground mt-1">
@@ -57,10 +65,8 @@ export default function StrategyDetailPage() {
   if (!ctx) return null;
 
   return (
-    <div className="space-y-6 pb-16 animate-[fade-up_0.4s_ease_both]">
+    <div className="space-y-4 pb-16">
       <HeaderBar ctx={ctx} />
-      <MetricCards ctx={ctx} />
-      <PositionHero ctx={ctx} />
       <TabsBar ctx={ctx} />
       <LiveTab ctx={ctx} />
       <ConfigTab ctx={ctx} />

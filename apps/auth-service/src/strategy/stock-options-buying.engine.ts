@@ -238,27 +238,69 @@ export class StockOptionsBuyingEngine {
   }
 
   async stop(strategyId: string): Promise<void> {
-    const state = this.running.get(strategyId);
-    if (state) {
-      clearInterval(this.timers.get(strategyId));
-      this.timers.delete(strategyId);
-      this.running.delete(strategyId);
-      this.log(state, '⏹ Strategy stopped by user');
-      await this.prisma.strategyExecution.update({
-        where: { id: state.executionId },
-        data: { status: 'STOPPED', stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
-      });
-    }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
+    await this.stopWithStatus(strategyId, 'STOPPED', '⏹ Strategy stopped by user');
   }
 
+  /**
+   * Safe shutdown. A live position is NEVER abandoned silently:
+   *  1. Stop the tick loop, wait for any in-flight tick to finish.
+   *  2. Cancel any pending un-filled ENTRY order; re-check for a late/partial fill.
+   *  3. If a live position is open, flatten it via exitPosition and confirm flat at the broker.
+   *  4. If flatten cannot be confirmed, warn loudly (this engine has no broker-side SL order).
+   */
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
     if (state) {
+      this.log(state, logReason);
+      // Stop new ticks first; keep state in `running` until flatten is done.
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
+      for (let i = 0; i < 20 && state.isProcessingTick; i++) await new Promise(r => setTimeout(r, 250));
+
+      if (!state.isPaperTrade && state.stateType !== 'SCANNING' && state.optionSymbol) {
+        let client: any = null;
+        try {
+          const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
+          if (account?.accessToken) client = this.factory.createClient(account);
+        } catch (e: any) {
+          this.log(state, `⚠ Could not create broker client during shutdown: ${e?.message || e}`);
+        }
+        const sym = state.optionSymbol;
+        let stillOpen = true;
+        if (client) {
+          const kite = client['kite'];
+          try {
+            if (state.stateType === 'WAITING_FOR_TRIGGER' && state.entryOrderId) {
+              await client.cancelOrder(state.entryOrderId).catch(() => {});
+              this.log(state, `✅ Cancelled pending entry order ${state.entryOrderId} on shutdown`);
+            }
+            const px = state.currentLtp || state.entryTriggerPrice || 0.05;
+            if (state.stateType === 'ACTIVE_POSITION') {
+              this.log(state, `🧯 Position still open on shutdown — squaring off before stopping.`);
+              await this.exitPosition(state, client, px, 'FORCE_CLOSE');
+            }
+            // Confirm flat at the broker (also catches a late fill of the entry order).
+            for (let attempt = 0; attempt < 3; attempt++) {
+              await new Promise(r => setTimeout(r, 1500));
+              const bp = await getLiveBrokerPosition(kite, sym, this.logger);
+              if (!bp.isOpen) { stillOpen = false; break; }
+              if (attempt < 2 && bp.netQty > 0) {
+                this.log(state, `🧯 ${sym} still open at broker (Qty ${bp.netQty}) — re-sending square-off.`);
+                state.positionQty = bp.netQty;
+                state.entryTriggerPrice = state.entryTriggerPrice ?? px;
+                await this.exitPosition(state, client, px, 'FORCE_CLOSE');
+              }
+            }
+          } catch (e: any) {
+            this.log(state, `❌ Shutdown square-off failed: ${e?.message || e}`);
+          }
+        }
+        if (stillOpen) {
+          this.log(state, `🚨 POSITION NOT CONFIRMED FLAT for ${sym}. No exchange-side SL exists and the engine is stopping. Verify and close manually in Kite NOW.`);
+        }
+      }
+
       this.running.delete(strategyId);
-      this.log(state, logReason);
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs) },
@@ -667,6 +709,10 @@ export class StockOptionsBuyingEngine {
       this.log(state, `⛔ Strategy already in ${state.stateType} or trade in-flight. Skipping duplicate trade.`);
       return;
     }
+    if (!state.isPaperTrade && this.getIstHhmm(new Date()) >= 14 * 60 + 45) {
+      this.log(state, `⏳ Late-entry guard: no new LIVE entries at/after 14:45 IST. Skipping setup.`);
+      return;
+    }
     state.isPlacingTrade = true;
 
     try {
@@ -881,7 +927,31 @@ export class StockOptionsBuyingEngine {
             try {
               await client.cancelOrder(state.entryOrderId);
             } catch { }
-            this.resetStateToScanning(state);
+            // Re-check: a late/partial fill may have landed before the cancel took effect.
+            let after: any;
+            try {
+              const ords = await kite.getOrders();
+              after = ords.find((o: any) => o.order_id === state.entryOrderId);
+            } catch (chkErr: any) {
+              this.log(state, `⚠ Could not verify entry order after cancel (${chkErr.message}). Staying in trigger state to retry.`);
+              return;
+            }
+            if (after && after.status !== 'CANCELLED' && after.status !== 'REJECTED' && after.status !== 'COMPLETE') {
+              this.log(state, `⚠ Entry order ${state.entryOrderId} still ${after.status} after cancel. Will retry cancel next tick.`);
+              return;
+            }
+            const filledQty = Number(after?.filled_quantity) || (after?.status === 'COMPLETE' ? state.positionQty : 0);
+            if (filledQty > 0) {
+              const avgPrice = Number(after.average_price) || state.entryTriggerPrice;
+              state.positionQty = filledQty;
+              state.entryTriggerPrice = avgPrice;
+              state.stateType = 'ACTIVE_POSITION';
+              state.entryTime = Date.now();
+              this.log(state, `🛒 Late fill adopted [LIVE]: ${filledQty} of ${state.optionSymbol} at Avg ₹${avgPrice.toFixed(2)} — now managed with SL/targets.`);
+              await this.updateOrderStatus(state.entryOrderId!, 'COMPLETE', avgPrice);
+            } else {
+              this.resetStateToScanning(state);
+            }
           }
         }
       }

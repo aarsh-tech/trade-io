@@ -2,150 +2,134 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { strategyApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { AlarmClock, ArrowLeft, Check, Loader2, Pencil, Play, Radio, RefreshCw, Send, Square } from "lucide-react";
+import { AlarmClock, ArrowLeft, Check, Copy, Loader2, Pencil, Play, Radio, RefreshCw, Send, Square, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
+import { toast } from "sonner";
 import type { DetailCtx } from "./useStrategyDetail";
 import { getLotSize } from "./types";
+import { MenuItem, ModeBadge, OverflowMenu, StatusBadge, getRunStatus, isInPosition, typeLabel } from "./shared";
 
 export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
-  const { id, strategy, busy, isTestModalOpen, setIsTestModalOpen, testOrderLots, setTestOrderLots, testOrderBusy, testSymbol, testExchange, testProduct, setTestProduct, testPrice, setTestPrice, testOrderType, setTestOrderType, testVariety, setTestVariety, testSearchQuery, testSearchResults, isTestSearching, testLotSize, currentLiveTestPrice, load, isWsConnected, toggleEngine, toggleAutoStart, handleTestSymbolSearch, selectTestInstrument, handleTestOrder, cfg } = ctx;
+  const { id, router, strategy, liveState, busy, isTestModalOpen, setIsTestModalOpen, testOrderLots, setTestOrderLots, testOrderBusy, testSymbol, testExchange, testProduct, setTestProduct, testPrice, setTestPrice, testOrderType, setTestOrderType, testVariety, setTestVariety, testSearchQuery, testSearchResults, isTestSearching, testLotSize, currentLiveTestPrice, load, isWsConnected, toggleEngine, toggleAutoStart, handleTestSymbolSearch, selectTestInstrument, handleTestOrder, cfg } = ctx;
+  const [confirmStop, setConfirmStop] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [menuBusy, setMenuBusy] = useState(false);
+
+  const status = getRunStatus(strategy);
+  const running = strategy.isActive;
+  const inPosition = isInPosition(liveState);
+  const positionLabel = [liveState?.entryTriggered, liveState?.optionSymbol || liveState?.activeSymbol || cfg.symbol]
+    .filter((v) => typeof v === "string" && v)
+    .join(" ");
+
+  async function duplicate() {
+    setMenuBusy(true);
+    try {
+      const res = await strategyApi.create({
+        name: `${strategy.name} (copy)`,
+        type: strategy.type,
+        brokerAccountId: strategy.brokerAccountId,
+        isPaperTrade: strategy.isPaperTrade,
+        config: JSON.stringify(strategy.config),
+      });
+      const newId = res.data?.data?.id || res.data?.id;
+      toast.success("Strategy duplicated");
+      if (newId) router.push(`/strategies/${newId}`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message ?? "Failed to duplicate strategy");
+    } finally {
+      setMenuBusy(false);
+    }
+  }
+
+  async function remove() {
+    setMenuBusy(true);
+    try {
+      await strategyApi.delete(id);
+      toast.success("Strategy deleted");
+      router.push("/strategies");
+    } catch {
+      toast.error("Failed to delete strategy");
+      setMenuBusy(false);
+    }
+  }
+
   return (
     <>
-      {/* ─── Breadcrumb & Top Command Header ─── */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-border/50 pb-5">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link href="/strategies">
-            <Button
-              variant="outline"
-              size="icon" aria-label="Back to strategies"
-              className="h-10 w-10 rounded-lg bg-card border-border/80 hover:bg-accent shrink-0"
-            >
+      <header className="space-y-3">
+        <div className="flex items-start gap-3">
+          <Link href="/strategies" aria-label="Back to strategies" className="shrink-0">
+            <Button variant="outline" size="icon" aria-label="Back to strategies">
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-2xl font-semibold tracking-tight truncate max-w-[320px] sm:max-w-md">
-                {strategy.name}
-              </h1>
-
-              {/* Status Pill */}
-              <div
-                className={cn(
-                  "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ",
-                  strategy.isActive
-                    ? "bg-profit/15 text-profit border-profit/30"
-                    : "bg-muted text-muted-foreground border-border/70"
-                )}
-              >
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    strategy.isActive ? "bg-profit animate-ping" : "bg-muted-foreground"
-                  )}
-                />
-                {strategy.isActive ? "LIVE RUNNING" : "PAUSED"}
-              </div>
-
-              {strategy.isPaperTrade && (
-                <Badge
-                  variant="outline"
-                  className="bg-warn/10 text-warn border-warn/30 text-[10px] font-semibold"
-                >
-                  Paper Trade
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">{strategy.name}</h1>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+              <ModeBadge paper={strategy.isPaperTrade} />
+              <StatusBadge status={status} />
+              <span className="text-xs font-medium text-muted-foreground">{typeLabel(strategy.type)}</span>
+              <span className="text-xs text-muted-foreground" aria-hidden>·</span>
+              <span className="text-xs font-semibold text-foreground">{cfg.symbol || "AUTO"}</span>
+              <span className="text-xs text-muted-foreground">{cfg.exchange || "NSE"}</span>
+              {strategy.autoStart && (
+                <Badge variant="warning" className="gap-1">
+                  <AlarmClock className="h-3 w-3" aria-hidden /> 09:15 auto-start
                 </Badge>
               )}
-
-              {/* WebSocket Telemetry Status Pill */}
-              <div
-                className={cn(
-                  "inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ",
-                  isWsConnected
-                    ? "bg-profit/10 text-profit border-profit/30"
-                    : "bg-warn/10 text-warn border-warn/30"
-                )}
-                title={
-                  isWsConnected
-                    ? "Zero-latency WebSocket connected"
-                    : "Connecting to real-time WebSocket..."
-                }
-              >
-                <Radio className={cn("h-3 w-3", isWsConnected ? "text-profit animate-pulse" : "text-warn")} />
-                <span>{isWsConnected ? "WS Live" : "Connecting..."}</span>
-              </div>
             </div>
-
-            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-foreground/80">
-                {cfg.symbol || "AUTO"}
-              </span>
-              <span>•</span>
-              <span>{cfg.exchange || "NSE"}</span>
-              <span>•</span>
-              <span className="flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-profit inline-block" />
-                {strategy.brokerAccount
-                  ? `${strategy.brokerAccount.broker} (${strategy.brokerAccount.clientId})`
-                  : "Virtual Paper Broker"}
-              </span>
+            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Radio className={cn("h-3 w-3", isWsConnected ? "text-profit" : "text-warn")} aria-hidden />
+              {isWsConnected ? "Live feed connected" : "Reconnecting to live feed"}
+              <span aria-hidden>·</span>
+              {strategy.brokerAccount ? `${strategy.brokerAccount.broker} (${strategy.brokerAccount.clientId})` : "Virtual paper broker"}
             </p>
+          </div>
+
+          {/* Desktop actions sit beside the title; mobile gets a full-width row below. */}
+          <div className="hidden shrink-0 items-center gap-2 md:flex">
+            {primaryAction()}
+            {menu()}
           </div>
         </div>
 
-        {/* Top Control Actions */}
-        <div className="flex items-center gap-2 self-stretch md:self-auto justify-end flex-wrap">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={load}
-            disabled={busy}
-            className="h-9 px-3 text-xs gap-1.5 bg-card border-border/80 hover:bg-accent/60"
-            title="Refresh Status & Telemetry"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
-            <span className="hidden sm:inline">Refresh</span>
-          </Button>
+        <div className="flex items-center gap-2 md:hidden">
+          {primaryAction(true)}
+          {menu()}
+        </div>
+      </header>
 
-          {/* Auto-Start Arm Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={toggleAutoStart}
-            title={
-              strategy.autoStart
-                ? "Auto-Start Armed (Starts at 09:15 AM) — Click to disable"
-                : "Auto-Start Disarmed — Click to arm for 09:15 AM"
-            }
-            className={cn(
-              "h-9 px-3 text-xs gap-1.5 rounded-lg transition-all border font-semibold ",
-              strategy.autoStart
-                ? "bg-warn/15 text-warn border-warn/30 hover:bg-warn/20"
-                : "text-muted-foreground hover:text-warn hover:border-warn/30 bg-card"
-            )}
-          >
-            <AlarmClock className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">
-              {strategy.autoStart ? "09:15 AM Armed" : "Auto-Start"}
-            </span>
-          </Button>
+      <ConfirmDialog
+        open={confirmStop}
+        onOpenChange={setConfirmStop}
+        onConfirm={toggleEngine}
+        title={`Stop "${strategy.name}"?`}
+        description={
+          inPosition
+            ? `You have an open position${positionLabel ? ` (${positionLabel})` : ""}. Stopping the engine will square it off at market price right away.`
+            : "Stopping the engine will square off any open position and end the current session."
+        }
+        confirmText="Stop and square off"
+        variant="destructive"
+      />
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        onConfirm={remove}
+        title={`Delete "${strategy.name}"?`}
+        description="This permanently deletes the strategy and all its execution logs. This cannot be undone."
+        confirmText="Delete strategy"
+        variant="destructive"
+      />
 
-          {/* Test Order Trigger */}
-          <Dialog open={isTestModalOpen} onOpenChange={setIsTestModalOpen}>
-            <DialogTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 px-3 text-xs gap-1.5 border-warn/30 bg-warn/10 text-warn hover:bg-warn/20 font-semibold rounded-lg"
-              >
-                <Send className="h-3.5 w-3.5" />
-                <span>Test Order</span>
-              </Button>
-            </DialogTrigger>
+      <Dialog open={isTestModalOpen} onOpenChange={setIsTestModalOpen}>
             <DialogContent className="w-[calc(100%-2rem)] sm:max-w-[480px] p-5 sm:p-6 rounded-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="text-lg font-semibold flex items-center gap-2">
@@ -337,49 +321,50 @@ export function HeaderBar({ ctx }: { ctx: DetailCtx }) {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-
-          {/* Edit Full Strategy Button */}
-          <Link href={`/strategies/${id}/edit`}>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 px-3 text-xs gap-1.5 border-border/80 bg-card hover:bg-accent/60 font-semibold rounded-lg"
-              title="Edit Complete Strategy Configuration"
-            >
-              <Pencil className="h-3.5 w-3.5 text-primary" />
-              <span>Edit Strategy</span>
-            </Button>
-          </Link>
-
-          {/* Primary Start / Stop Button */}
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={toggleEngine}
-            className={cn(
-              "h-9 px-4 text-xs font-semibold gap-2 rounded-lg transition-all shadow-md",
-              strategy.isActive
-                ? "bg-loss hover:bg-loss/90 text-on-loss "
-                : "bg-profit hover:bg-profit/90 text-on-profit "
-            )}
-          >
-            {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : strategy.isActive ? (
-              <>
-                <Square className="h-3.5 w-3.5 fill-white" />
-                Stop Engine
-              </>
-            ) : (
-              <>
-                <Play className="h-3.5 w-3.5 fill-white" />
-                Start Engine
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
-
     </>
   );
+
+  function primaryAction(full?: boolean) {
+    return running ? (
+      <Button variant="danger" size="lg" disabled={busy} onClick={() => setConfirmStop(true)} className={cn(full && "flex-1")}>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4 fill-current" />}
+        Stop strategy
+      </Button>
+    ) : (
+      <Button variant="success" size="lg" disabled={busy} onClick={toggleEngine} className={cn(full && "flex-1")}>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-current" />}
+        Start strategy
+      </Button>
+    );
+  }
+
+  function menu() {
+    return (
+      <OverflowMenu>
+        {(close) => (
+          <>
+            <MenuItem icon={<Pencil className="h-4 w-4" />} onClick={() => { close(); router.push(`/strategies/${id}/edit`); }}>
+              Edit strategy
+            </MenuItem>
+            <MenuItem icon={<Copy className="h-4 w-4" />} disabled={menuBusy} onClick={() => { close(); duplicate(); }}>
+              Duplicate
+            </MenuItem>
+            <MenuItem icon={<AlarmClock className="h-4 w-4" />} disabled={busy} onClick={() => { close(); toggleAutoStart(); }}>
+              {strategy.autoStart ? "Disable 09:15 auto-start" : "Arm 09:15 auto-start"}
+            </MenuItem>
+            <MenuItem icon={<RefreshCw className="h-4 w-4" />} disabled={busy} onClick={() => { close(); load(); }}>
+              Refresh
+            </MenuItem>
+            <MenuItem icon={<Send className="h-4 w-4" />} onClick={() => { close(); setIsTestModalOpen(true); }}>
+              Send test order
+            </MenuItem>
+            <div className="my-1 h-px bg-border" role="separator" />
+            <MenuItem icon={<Trash2 className="h-4 w-4" />} danger disabled={menuBusy} onClick={() => { close(); setConfirmDelete(true); }}>
+              Delete
+            </MenuItem>
+          </>
+        )}
+      </OverflowMenu>
+    );
+  }
 }
