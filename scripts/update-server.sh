@@ -42,10 +42,11 @@ git fetch origin main
 git pull origin main
 echo -e "      Updated Commit: ${GREEN}$(git log -1 --oneline)${NC}"
 
-# 4. Generate Prisma Client
-echo -e "\n${CYAN}[4/6] Generating Prisma Client...${NC}"
+# 4. Apply Prisma Migrations + Generate Client
+echo -e "\n${CYAN}[4/6] Applying database migrations...${NC}"
+pnpm exec prisma migrate deploy --schema=./prisma/schema.prisma
 pnpm db:generate
-echo -e "      ${GREEN}✅ Prisma schema updated.${NC}"
+echo -e "      ${GREEN}✅ Database migrated and Prisma client generated.${NC}"
 
 # 5. Compile Backend Bundle
 echo -e "\n${CYAN}[5/6] Building backend with pnpm...${NC}"
