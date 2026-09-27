@@ -172,7 +172,7 @@ export function StrategyWizard({
   const title = isEdit ? "Edit strategy" : "Create strategy";
 
   return (
-    <div className="pb-4" onKeyDown={onKeyDown}>
+    <div className="pb-28 md:pb-4" onKeyDown={onKeyDown}>
       {/* ── Sticky header: title + progress ── */}
       <header className="sticky top-0 z-20 -mx-3 border-b border-border bg-background/95 px-3 pb-3 pt-2 backdrop-blur sm:-mx-4 sm:px-4 lg:-mx-5 lg:px-5">
         <div className="flex items-center gap-2.5">
@@ -303,8 +303,8 @@ export function StrategyWizard({
         </aside>
       </div>
 
-      {/* ── Sticky action bar ── */}
-      <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] z-20 -mx-3 mt-6 border-t border-border bg-card/95 px-3 py-2.5 backdrop-blur sm:-mx-4 sm:px-4 md:bottom-0 lg:-mx-5 lg:px-5">
+      {/* ── Action bar: fixed above the mobile tab bar (sticky container padding can't be trusted to reserve its full offset); sticky again on desktop, where there's no tab bar to clear ── */}
+      <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] z-30 border-t border-border bg-card/95 px-3 py-2.5 backdrop-blur sm:px-4 md:sticky md:inset-x-auto md:-mx-4 md:bottom-0 md:mt-6 lg:-mx-5 lg:px-5">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-2">
           {reason && (
             <p role="status" className="flex items-center gap-1.5 text-xs font-medium text-warn">

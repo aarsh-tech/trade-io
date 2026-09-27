@@ -755,45 +755,45 @@ export default function OrdersPage() {
                       </div>
 
                       {/* Bottom Grid: Qty, Price, Avg Executed, and Action */}
-                      <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded-lg border border-border/60 text-xs">
-                        <div>
-                          <span className="text-[10px] text-muted-foreground block">Qty Filled</span>
-                          <span className="font-mono font-semibold text-foreground">
-                            {ord.filledQty > 0 ? (
-                              <span className="text-profit font-semibold">{ord.filledQty}</span>
-                            ) : (
-                              "0"
-                            )}
-                            <span className="text-muted-foreground text-[10px]">/{ord.qty}</span>
-                          </span>
-                        </div>
+                      <div className="space-y-2 bg-muted/40 p-2.5 rounded-lg border border-border/60 text-xs">
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="min-w-0">
+                            <span className="text-[10px] text-muted-foreground block">Qty Filled</span>
+                            <span className="font-mono font-semibold text-foreground">
+                              {ord.filledQty > 0 ? (
+                                <span className="text-profit font-semibold">{ord.filledQty}</span>
+                              ) : (
+                                "0"
+                              )}
+                              <span className="text-muted-foreground text-[10px]">/{ord.qty}</span>
+                            </span>
+                          </div>
 
-                        <div>
-                          <span className="text-[10px] text-muted-foreground block">Order Price</span>
-                          <span className="font-mono font-semibold text-foreground">
-                            {ord.price && ord.price > 0 ? `₹${ord.price.toFixed(2)}` : "MARKET"}
-                          </span>
-                        </div>
+                          <div className="min-w-0">
+                            <span className="text-[10px] text-muted-foreground block">Order Price</span>
+                            <span className="font-mono font-semibold text-foreground truncate block">
+                              {ord.price && ord.price > 0 ? `₹${ord.price.toFixed(2)}` : "MARKET"}
+                            </span>
+                          </div>
 
-                        <div>
-                          <span className="text-[10px] text-muted-foreground block">Avg Executed</span>
-                          <span className="font-mono font-semibold text-foreground">
-                            {ord.avgPrice && ord.avgPrice > 0 ? `₹${ord.avgPrice.toFixed(2)}` : "-"}
-                          </span>
+                          <div className="min-w-0">
+                            <span className="text-[10px] text-muted-foreground block">Avg Executed</span>
+                            <span className="font-mono font-semibold text-foreground truncate block">
+                              {ord.avgPrice && ord.avgPrice > 0 ? `₹${ord.avgPrice.toFixed(2)}` : "-"}
+                            </span>
+                          </div>
                         </div>
 
                         {isOpen && (
-                          <div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setCancellingOrder(ord)}
-                              disabled={isCancelling}
-                              className="h-7 text-xs text-loss border-loss/30 hover:bg-loss-subtle px-3"
-                            >
-                              Cancel
-                            </Button>
-                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCancellingOrder(ord)}
+                            disabled={isCancelling}
+                            className="h-7 w-full text-xs text-loss border-loss/30 hover:bg-loss-subtle"
+                          >
+                            Cancel Order
+                          </Button>
                         )}
                       </div>
                     </div>

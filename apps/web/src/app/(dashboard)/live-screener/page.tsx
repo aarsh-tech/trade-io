@@ -769,24 +769,24 @@ export default function LiveOhlScreenerPage() {
                     key={stock.symbol}
                     className="p-3.5 space-y-3 bg-card hover:bg-muted/15 transition-colors">
                     {/* Row 1: Symbol & LTP */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-sm text-foreground">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="font-semibold text-sm text-foreground shrink-0">
                           {stock.symbol}
                         </span>
                         {stock.isFnO && (
                           <Badge
                             variant="outline"
-                            className="text-[9px] px-1 py-0 border-primary/30 text-accent-foreground bg-primary/5">
+                            className="text-[9px] px-1 py-0 border-primary/30 text-accent-foreground bg-primary/5 shrink-0">
                             Lot {stock.lotSize}
                           </Badge>
                         )}
-                        <span className="text-[10px] text-muted-foreground truncate max-w-[100px]">
+                        <span className="text-[10px] text-muted-foreground truncate min-w-0">
                           {stock.name}
                         </span>
                       </div>
 
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <div className="flex items-center justify-end gap-1.5">
                           <span
                             className={cn(

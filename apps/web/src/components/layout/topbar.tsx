@@ -34,12 +34,12 @@ export function TopBar() {
     <>
       <header className="h-[52px] md:h-12 bg-popover border-b border-border flex items-center justify-between gap-2 px-3 sm:px-5 sticky top-0 z-30 shrink-0">
         {/* Left: brand on mobile, page title on desktop */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Link href="/dashboard" className="flex items-center gap-2 md:hidden shrink-0" aria-label="Tradeio home">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <Link href="/dashboard" className="flex items-center gap-2 md:hidden min-w-0" aria-label="Tradeio home">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary shrink-0">
               <Zap className="h-3.5 w-3.5 text-primary-foreground" strokeWidth={2.5} aria-hidden />
             </span>
-            <span className="font-semibold text-sm tracking-tight text-foreground truncate">
+            <span className="min-w-0 truncate font-semibold text-sm tracking-tight text-foreground">
               {title || "Tradeio"}
             </span>
           </Link>
@@ -83,7 +83,11 @@ export function TopBar() {
             )}
           >
             <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", isKiteActive ? "bg-profit" : "bg-warn animate-pulse")} aria-hidden />
-            {isKiteActive ? "Kite connected" : <><span className="hidden sm:inline">Connect Kite</span><span className="sm:hidden">Kite login</span></>}
+            {isKiteActive ? (
+              <><span className="hidden sm:inline">Kite connected</span><span className="sm:hidden">Connected</span></>
+            ) : (
+              <><span className="hidden sm:inline">Connect Kite</span><span className="sm:hidden">Kite login</span></>
+            )}
           </button>
 
           <button
