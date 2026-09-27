@@ -145,7 +145,8 @@ export interface EmaVwapCrossoverConfig {
   enableDynamicVolume?: boolean;      // Judge volume against each stock's OWN same-time history (10 sessions) instead of one flat multiple (default: true)
   minVolumeZ?: number;                // Dynamic gate: min z-score of the signal candle's volume vs own history (default: 1.5)
   minRvolFloor?: number;              // Dynamic gate: also require at least this multiple of the stock's own average (default: 1.5)
-  minRvol?: number;                   // Fallback flat multiple when a stock has no volume history yet (default: 2.5)
+  minRvol?: number;                   // Fallback flat multiple vs. other days' same-time-slot volume, when a stock has no 10-session history yet (default: 2.5)
+  trailingRvolFloor?: number;         // Last-resort flat multiple vs. today's own preceding candles, used only when no cross-day baseline exists at all (default: 1.3, kept low because the baseline is already inflated by the same trend it's checking)
   targetMode?: 'FULL' | 'PARTIAL' | 'QUICK'; // Exit target (default FULL): FULL = one volatility target, no trailing | PARTIAL = book part at the volatility target, rest rides the 15-EMA candle-close exit | QUICK = book part at a small ~0.5R target, rest rides. Ignored when exitExactAtTarget (₹ target) is on.
   targetAtrMultiple?: number;         // FULL/PARTIAL first target = this x the stock's daily ATR% (default 0.5)
   quickTargetR?: number;              // QUICK first target in R multiples of the structural stop (default 0.5)

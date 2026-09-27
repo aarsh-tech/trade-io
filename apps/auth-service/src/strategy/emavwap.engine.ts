@@ -3709,6 +3709,7 @@ export class EmaVwapCrossoverEngine {
       minZ: config.minVolumeZ && config.minVolumeZ > 0 ? config.minVolumeZ : 1.5,
       rvolFloor: config.minRvolFloor && config.minRvolFloor > 0 ? config.minRvolFloor : 1.5,
       minRvol: config.minRvol && config.minRvol > 0 ? config.minRvol : 2.5,
+      trailingRvol: config.trailingRvolFloor && config.trailingRvolFloor > 0 ? config.trailingRvolFloor : 1.3,
     };
     const vol = this.checkVolumeConfirmation(candles, setup.candleIdx, opts, this.volumeBaselines.get(symKey)?.slots);
     if (!vol.isVolumeValid) {
@@ -4382,12 +4383,15 @@ export class EmaVwapCrossoverEngine {
    *    pass when z-score of ln(volume) >= minZ AND relative volume >= rvolFloor. A calm stock passes with a smaller multiple,
    *    a noisy stock needs a much bigger spike (a z=2 spike ranges from ~3x to ~17x across stocks).
    * 2) FALLBACK (no history): same-time average of the previous <= 3 sessions in the loaded candles, static minRvol.
-   * 3) Last resort: average of the last 10 candles of the day (needs >= 3). With no usable baseline the gate fails open.
+   * 3) Last resort: average of the last 10 candles of the day (needs >= 3), gated by trailingRvol instead of
+   *    minRvol — this baseline is the same trending day's own recent candles, so it's already inflated by the
+   *    move being checked and can never show a large multiple; a lower, separate floor avoids blocking genuine
+   *    steady-building trend continuation. With no usable baseline at all the gate fails open.
    */
   private checkVolumeConfirmation(
     candles: Candle[],
     idx: number,
-    opts: { dynamic: boolean; minZ: number; rvolFloor: number; minRvol: number },
+    opts: { dynamic: boolean; minZ: number; rvolFloor: number; minRvol: number; trailingRvol: number },
     baseline?: Map<number, number[]>
   ): { isVolumeValid: boolean; rvol: number; z?: number; basis: 'own-history' | 'time-of-day' | 'trailing' | 'none'; volume: number; baseline: number } {
     const sig = candles?.[idx];
@@ -4433,7 +4437,7 @@ export class EmaVwapCrossoverEngine {
     if (n >= 3) {
       const base = sum / n;
       const rvol = base > 0 ? volume / base : 1;
-      return { isVolumeValid: rvol >= opts.minRvol, rvol, basis: 'trailing', volume, baseline: base };
+      return { isVolumeValid: rvol >= opts.trailingRvol, rvol, basis: 'trailing', volume, baseline: base };
     }
     return { isVolumeValid: true, rvol: 1, basis: 'none', volume, baseline: 0 };
   }
