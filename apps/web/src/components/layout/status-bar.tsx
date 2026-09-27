@@ -11,6 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertOctagon, KeyRound } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { PositionsSheet } from '@/components/layout/positions-sheet';
 
 type SessionState = 'pre-open' | 'open' | 'closed' | 'holiday' | 'weekend';
 interface SessionInfo {
@@ -119,6 +120,7 @@ export function StatusBar({ onReconnect }: { onReconnect: () => void }) {
     ? istFormat.format(new Date(session.nextOpenAt))
     : null;
   const { total: dayPnl, realised: dayRealised } = useDayPnl();
+  const [showPositions, setShowPositions] = useState(false);
 
   return (
     <div
@@ -193,12 +195,14 @@ export function StatusBar({ onReconnect }: { onReconnect: () => void }) {
         </Link>
       )}
 
-      <span
-        className="ml-auto pl-4 whitespace-nowrap"
+      <button
+        type="button"
+        onClick={() => setShowPositions(true)}
+        className="ml-auto pl-4 whitespace-nowrap cursor-pointer hover:opacity-80 transition-opacity"
         title={
           dayRealised && risk
-            ? `Realised ${formatINR(dayRealised.realizedPnl)} (net of charges) + unrealised ${formatINR(risk.unrealizedPnl)}`
-            : 'Realised + unrealised'
+            ? `Realised ${formatINR(dayRealised.realizedPnl)} (net of charges) + unrealised ${formatINR(risk.unrealizedPnl)} · Click to view running positions`
+            : 'Realised + unrealised · Click to view running positions'
         }>
         Day P&amp;L{' '}
         <span
@@ -208,7 +212,9 @@ export function StatusBar({ onReconnect }: { onReconnect: () => void }) {
           )}>
           {dayPnl === undefined ? '—' : formatINR(dayPnl, { signed: true })}
         </span>
-      </span>
+      </button>
+
+      <PositionsSheet open={showPositions} onOpenChange={setShowPositions} />
     </div>
   );
 }
