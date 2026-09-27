@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
 import { findOpenPosition, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getInstrumentTickSize, getTopCandidateStocks, roundToInstrumentTick } from './smart-stock-picker';
+import { logSignal } from './signal-logger';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
 interface Candle {
@@ -18,6 +19,20 @@ interface Candle {
   low: number;
   close: number;
   volume: number;
+}
+
+interface StockSetup {
+  trend: 'LONG' | 'SHORT';
+  setupType: 'DIRECT' | 'INSIDE_CANDLE' | 'OPEN_LOW_DRIVE' | 'OPEN_HIGH_DRIVE' | 'TREND_BREAKDOWN' | 'TREND_BREAKOUT' | 'PULLBACK_REJECTION';
+  triggerHigh: number | null;
+  triggerLow: number | null;
+  slPrice: number;
+  invalidationPrice: number;
+  slNote: string;
+  candleTime: Date;
+  candleIdx: number;
+  scoreBoost: number;
+  description: string;
 }
 
 interface StrategyState {
@@ -99,6 +114,10 @@ interface StrategyState {
   pdh?: number | null;
   pdl?: number | null;
   pdc?: number | null;
+  partialTargetPrice?: number | null;
+  partialBooked?: boolean;
+  partialAttempts?: number;
+  isBookingPartial?: boolean;
 }
 
 @Injectable()
@@ -107,6 +126,8 @@ export class EmaVwapCrossoverEngine {
   private readonly running = new Map<string, StrategyState>();
   private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly candleCache = new Map<string, { candles: Candle[]; expiresAt: number }>();
+  /** Per-stock volume history: same-clock-time 5m volumes of the previous 10 sessions (loaded once per stock per day). */
+  private readonly volumeBaselines = new Map<string, { dateStr: string; slots: Map<number, number[]>; retryAfter?: number }>();
 
   constructor(
     private prisma: PrismaService,
@@ -134,6 +155,12 @@ export class EmaVwapCrossoverEngine {
     if (!strategy) throw new Error('Strategy not found');
 
     const config: EmaVwapCrossoverConfig = JSON.parse(strategy.config);
+    // FULL target mode = one volatility-based target with the exchange-side LIMIT order, no trailing and no EMA candle exit
+    // (reuses the fixed-target machinery). PARTIAL / QUICK keep trend-riding (15-EMA candle-close exit) for the runner.
+    if (!config.exitExactAtTarget && !config.isOptionBuyingOnly && (config.targetMode ?? 'FULL') === 'FULL') {
+      config.enableProfitFloor = false;
+      config.enableEmaCandleExit = false;
+    }
     await this.prisma.strategyExecution.updateMany({
       where: { strategyId, status: 'RUNNING' },
       data: { status: 'STOPPED', stoppedAt: new Date() },
@@ -335,6 +362,8 @@ export class EmaVwapCrossoverEngine {
       const isLong = pos.side === 'LONG';
 
       state.activeSymbol = pos.symbol;
+      state.partialBooked = true; // unknown whether a partial was already booked before the restart: never book again
+      state.partialTargetPrice = null;
       state.optionSymbol = isOption ? pos.symbol : null;
       // For options the position is always a bought CE/PE; the signal direction follows the option type.
       state.entryTriggered = isOption ? (pos.symbol.endsWith('PE') ? 'SHORT' : 'LONG') : pos.side;
@@ -566,6 +595,7 @@ export class EmaVwapCrossoverEngine {
               const cEmas = this.calculateEMA(closedCCandles, emaPeriod);
               const cVwaps = this.calculateVWAP(closedCCandles, state.config.vwapSource || 'close');
 
+              await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now);
               const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, state.config, candidate.symbol);
               if (setup) {
                 activeSetups.push({
@@ -688,8 +718,30 @@ export class EmaVwapCrossoverEngine {
               ? (currentOptionPriceLow <= state.stopLossPrice!)
               : (isLong ? (currentCandle.low <= state.stopLossPrice!) : (currentCandle.high >= state.stopLossPrice!));
 
+            // 0. 15-EMA candle-close mode: hard structural SL intrabar, otherwise exit only when a 5m candle CLOSES across the 15-EMA
+            const emaCandleMode = isTrailingEnabled && !state.config.exitExactAtTarget && state.config.enableEmaCandleExit !== false && !isOptionTrade;
+            if (emaCandleMode) {
+              if (isHitSL) {
+                const slExit = state.stopLossPrice!;
+                const slPnl = (isLong ? (slExit - state.entryPrice!) : (state.entryPrice! - slExit)) * state.config.qty;
+                this.log(state, `🛑 (Catch-up) Structural Stop Loss Hit at ₹${slExit.toFixed(2)} on ${this.formatTime(currentCandle.date)} | Final P&L: ₹${slPnl.toFixed(2)}`);
+                await this.exitPositionHistorical(state, client, slExit, 'SL', currentCandle.date);
+                optionCandles = []; optionCandleSymbol = '';
+                continue;
+              }
+              const closedAcrossEma = isLong ? (currentCandle.close < currentEma) : (currentCandle.close > currentEma);
+              if (closedAcrossEma) {
+                const emaExit = currentCandle.close;
+                const emaPnl = (isLong ? (emaExit - state.entryPrice!) : (state.entryPrice! - emaExit)) * state.config.qty;
+                this.log(state, `📈 (Catch-up) 5m candle closed ${isLong ? 'below' : 'above'} 15-EMA @ ₹${emaExit.toFixed(2)} (EMA: ₹${currentEma.toFixed(2)}) on ${this.formatTime(currentCandle.date)} | Final Realized P&L: ₹${emaPnl.toFixed(2)}`);
+                await this.exitPositionHistorical(state, client, emaExit, emaPnl >= 0 ? 'TARGET' : 'SL', currentCandle.date);
+                optionCandles = []; optionCandleSymbol = '';
+                continue;
+              }
+            }
+
             // 1. Check if Target 1 reached -> Activate EMA(15) Line Trailing SL
-            if ((pnlRs >= targetThresholdRs || isHitTarget) && !state.isTrailingEma && isTrailingEnabled) {
+            if ((pnlRs >= targetThresholdRs || isHitTarget) && !state.isTrailingEma && isTrailingEnabled && !emaCandleMode) {
               state.isTrailingEma = true;
               state.stopLossPrice = currentEma;
               this.log(state, `📈 (Catch-up) Target 1 reached on ${this.formatTime(currentCandle.date)} (Target: ₹${state.targetPrice?.toFixed(2)}, P&L: ₹${pnlRs.toFixed(2)})! Activated EMA(15) Line Trailing SL @ ₹${currentEma.toFixed(2)} — riding trend...`);
@@ -1137,7 +1189,7 @@ export class EmaVwapCrossoverEngine {
 
       // ── Trend Continuation Re-Entry (Catch Leg 2 on EMA Re-Claim) ────────────
       const currentHhmm = this.getIstHhmm(now);
-      if (config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && currentHhmm <= (13 * 60 + 30)) {
+      if (config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && currentHhmm < 15 * 60) {
         try {
           const candleSymbol = state.activeSymbol || config.symbol;
           const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
@@ -1197,6 +1249,7 @@ export class EmaVwapCrossoverEngine {
                 if (closedCCandles.length >= 2) {
                   const cEmas = this.calculateEMA(closedCCandles, emaPeriod);
                   const cVwaps = this.calculateVWAP(closedCCandles, config.vwapSource || 'close');
+                  await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now);
                   const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config, candidate.symbol);
                   if (setup) {
                     activeSetups.push({
@@ -1252,6 +1305,7 @@ export class EmaVwapCrossoverEngine {
           // ── Active Scanner Heartbeat (every 60 seconds) ─────────────────────────
           if (!state.last5mHeartbeatTime || (nowMs - state.last5mHeartbeatTime >= 60_000)) {
             state.last5mHeartbeatTime = nowMs;
+            logSignal('SCAN', state.strategyId, { top: candidates.slice(0, 10).map(c => ({ s: c.symbol, score: c.score, trend: c.trend, dayChg: +c.dayChangePct.toFixed(2), fromOpen: +c.changeFromOpenPct.toFixed(2), turnoverCr: +c.turnoverCr.toFixed(1), rvol: c.rvol !== undefined ? +c.rvol.toFixed(2) : null })) });
             const topList = candidates.slice(0, 4).map(c => `${c.symbol} (Score: ${c.score}, ${c.dayChangePct >= 0 ? '+' : ''}${c.dayChangePct.toFixed(1)}%)`).join(', ');
             const currentLeader = activeSetups.length > 0 ? activeSetups[0].candidate.symbol : (candidates[0]?.symbol || 'None');
             const setupDesc = activeSetups.length > 0 ? activeSetups[0].details.description : 'Monitoring 5m candles for breakout/breakdown trigger';
@@ -1398,11 +1452,13 @@ export class EmaVwapCrossoverEngine {
           this.log(state, `[${targetSym}] 🔍 5m Candle [${rangeStr}] closed at ${closeTimeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | 15-EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
 
           if (!state.waitingForConfirmation) {
+            if (!state.futureSymbol) await this.ensureVolumeBaseline(client, targetSym, config.exchange, now);
             const setup = this.evaluateStockSetup(closedCandles, emas, vwaps, now, config, targetSym);
             const setupTimeMs = setup?.candleTime.getTime();
             const isAlreadyInvalidated = state.invalidatedCrossoverTime === setupTimeMs;
 
             if (setup && !isAlreadyInvalidated) {
+              logSignal('SETUP', state.strategyId, { symbol: targetSym, trend: setup.trend, setupType: setup.setupType, trigger: setup.triggerHigh ?? setup.triggerLow, slPrice: setup.slPrice, scoreBoost: setup.scoreBoost, close: closedCandle.close, ema: currEma, vwap: currVwap, paper: !!state.isPaperTrade });
               const checkSymbol = state.futureSymbol || targetSym;
               const checkExchange = state.futureSymbol ? state.futureExchange : config.exchange;
               const ltpData = await withKiteRetry(() => kite.getLTP([`${checkExchange}:${checkSymbol}`]), 2).catch((e: any) => {
@@ -1477,10 +1533,20 @@ export class EmaVwapCrossoverEngine {
       this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping 2nd trade.`);
       return;
     }
-    // Live safety: no fresh entries in the last 20 minutes before the 15:05 square-off (not enough room to work the trade).
-    if (!state.isPaperTrade && this.getIstHhmm(new Date()) >= 14 * 60 + 45) {
-      this.log(state, `⏱ Late-session guard: no new entries after 14:45 IST. Skipping ${side} signal.`);
-      return;
+    // Setups may trigger at ANY time of the session. The only limits: an optional user-set entryCutoffTime, and a hard
+    // technical stop at 15:00 IST because every position is force-squared-off at 15:05 (an entry after 15:00 could only pay costs).
+    if (!triggerTime) {
+      const nowHhmm = this.getIstHhmm(new Date());
+      let cutoffHhmm = 15 * 60;
+      const userCutoff = (config as any).entryCutoffTime;
+      if (userCutoff) {
+        const [cH, cM] = String(userCutoff).split(':').map((v: string) => parseInt(v, 10));
+        if (Number.isFinite(cH)) cutoffHhmm = Math.min(cutoffHhmm, cH * 60 + (Number.isFinite(cM) ? cM : 0));
+      }
+      if (nowHhmm >= cutoffHhmm) {
+        this.log(state, `⏱ Entry window closed (${Math.floor(cutoffHhmm / 60)}:${String(cutoffHhmm % 60).padStart(2, '0')} IST). Skipping ${side} signal.`);
+        return;
+      }
     }
     state.isPlacingTrade = true;
 
@@ -1500,6 +1566,17 @@ export class EmaVwapCrossoverEngine {
 
       const isHistorical = !!triggerTime;
       const kite = client['kite'];
+
+      // Optional NIFTY 50 alignment gate (OFF by default: individual stocks often move independently of the index).
+      // It was previously documented as default-on but never called; it now only runs when explicitly enabled.
+      if (!isHistorical && (config as any).enableMarketTrendFilter === true) {
+        const align = await this.checkMarketTrendAlignment(client, side === 'BUY' ? 'LONG' : 'SHORT');
+        if (!align.isAligned) {
+          this.log(state, `🧭 Market filter: skipping ${side} — ${align.reason}`);
+          return;
+        }
+      }
+
       let symbol = state.activeSymbol || config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
       const product = (config as any).product ?? 'MIS';
       let optionMotherLow: number | null = null;
@@ -1619,6 +1696,15 @@ export class EmaVwapCrossoverEngine {
         } catch (targetErr: any) {
           this.log(state, `⚠ Historical candles for logical target fetch notice: ${targetErr.message}`);
         }
+      }
+
+      // ── Volatility-based target (equity; FULL / PARTIAL / QUICK modes) ────────────
+      const targetMode = this.getTargetMode(config, isOption);
+      if (targetMode === 'FULL' || targetMode === 'PARTIAL' || targetMode === 'QUICK') {
+        const vt = this.calculateVolatilityTarget(entry, sl, finalSide, targetMode, config, state.dailyAtrPct, symbol);
+        tgt = vt.targetPrice;
+        state.logicalTargetReason = vt.reason;
+        this.log(state, `🎯 [TARGET MODE: ${targetMode}] ${vt.reason}`);
       }
 
       const riskPerShare = Math.max(symTickSize, Math.abs(entry - sl));
@@ -1965,6 +2051,11 @@ export class EmaVwapCrossoverEngine {
       state.optionSymbol = isOption ? symbol : null;
       state.stopLossPrice = sl;
       state.targetPrice = tgt;
+      const placedMode = this.getTargetMode(config, isOption);
+      state.partialTargetPrice = (placedMode === 'PARTIAL' || placedMode === 'QUICK') ? tgt : null;
+      state.partialBooked = false;
+      state.partialAttempts = 0;
+      state.isBookingPartial = false;
       state.slOrderId = slOrderId;
       state.targetOrderId = targetOrderId;
       state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
@@ -2195,6 +2286,11 @@ export class EmaVwapCrossoverEngine {
         }
       }
 
+      // ── 1.9 Partial profit booking (PARTIAL / QUICK target modes) ─────────────
+      if (this.isPartialBookingDue(state, currentPrice)) {
+        await this.bookPartial(state, client, kite, currentPrice);
+      }
+
       // ── 2. Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ───────────────
       const entryPrice = state.entryPrice || currentPrice;
       const moveFromEntryPct = entryPrice > 0 ? (isLong ? (currentPrice - entryPrice) / entryPrice : (entryPrice - currentPrice) / entryPrice) * 100 : 0;
@@ -2204,7 +2300,7 @@ export class EmaVwapCrossoverEngine {
       // ── 2.1 Parabolic Mode & VWAP Profit-Lock (TTML Spike Protection) ──────────
       const parabolicThreshold = state.dynamicParabolicPct || 2.5;
       const isParabolicTrigger = moveFromEntryPct >= parabolicThreshold;
-      if (!state.config.exitExactAtTarget && state.config.enableParabolicVwapLock !== false && isParabolicTrigger && !isOptionTrade) {
+      if (this.isTickTrailExitEnabled(state) && state.config.enableParabolicVwapLock !== false && isParabolicTrigger && !isOptionTrade) {
         if (!state.isParabolicActive) {
           state.isParabolicActive = true;
           this.log(state, `🚀 [PARABOLIC MOMENTUM ACTIVE] Stock surged +${moveFromEntryPct.toFixed(2)}% (Dynamic ATR Threshold: ${parabolicThreshold}%)! Dynamic floor transferred to Session VWAP (₹${(state.lastVwap || 0).toFixed(2)}) to lock peak gains.`);
@@ -2230,7 +2326,7 @@ export class EmaVwapCrossoverEngine {
       }
 
       // ── 2.2 Uncapped 15-EMA & VWAP Trend Riding (Holds through wicks, ignores 50-paise noise) ──
-      if (!state.config.exitExactAtTarget && !isOptionTrade && state.lastEma && state.lastVwap) {
+      if (this.isTickTrailExitEnabled(state) && !isOptionTrade && state.lastEma && state.lastVwap) {
         const trendSupport = isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap);
 
         // If trend support rises into profit, trail SL along with the 15-EMA / VWAP
@@ -2267,7 +2363,7 @@ export class EmaVwapCrossoverEngine {
       }
 
       // 15-EMA & VWAP Dynamic Trailing check if configured
-      if (!state.config.exitExactAtTarget && state.isTrailingEma && !isOptionTrade) {
+      if (this.isTickTrailExitEnabled(state) && state.isTrailingEma && !isOptionTrade) {
         let dynamicTrailingSl: number | null = null;
         if (state.lastEma && state.lastVwap) {
           dynamicTrailingSl = isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap);
@@ -2617,13 +2713,18 @@ export class EmaVwapCrossoverEngine {
       }
     }
 
+    // ── Partial profit booking (PARTIAL / QUICK target modes) ────────────────
+    if (this.isPartialBookingDue(state, currentPrice)) {
+      await this.bookPartial(state, client, kite, currentPrice);
+    }
+
     // ── Intraday Multi-Stage Profit Ratchet & Breakeven Protection ───────────
     // ── Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ─────────────────
     const entryPrice = state.entryPrice || currentPrice;
     const moveFromEntryPct = entryPrice > 0 ? (isLong ? (currentPrice - entryPrice) / entryPrice : (entryPrice - currentPrice) / entryPrice) * 100 : 0;
 
     // Check Target 1 / Dynamic VWAP & EMA Trailing
-    if ((pnlRs >= targetThresholdRs || isTarget1Reached) && !state.isTrailingEma && isTrailingEnabled) {
+    if ((pnlRs >= targetThresholdRs || isTarget1Reached) && !state.isTrailingEma && isTrailingEnabled && this.isTickTrailExitEnabled(state)) {
       state.isTrailingEma = true;
       this.log(state, `📈 Target 1 reached (Target: ₹${state.targetPrice?.toFixed(2)}, P&L: ₹${pnlRs.toFixed(2)})! Activated Dynamic VWAP & 15-EMA Trailing SL — riding trend...`);
       if (state.targetOrderId && !state.isPaperTrade) {
@@ -2632,7 +2733,7 @@ export class EmaVwapCrossoverEngine {
       }
     }
 
-    if (state.isTrailingEma && !isOptionTrade) {
+    if (state.isTrailingEma && !isOptionTrade && !state.config.exitExactAtTarget && this.isTickTrailExitEnabled(state)) {
       let dynamicTrailingSl: number | null = null;
       if (state.lastEma && state.lastVwap) {
         dynamicTrailingSl = isLong ? Math.max(state.lastEma, state.lastVwap) : Math.min(state.lastEma, state.lastVwap);
@@ -2728,6 +2829,7 @@ export class EmaVwapCrossoverEngine {
       let exitOrderId = '';
       let exitOrderType: 'MARKET' | 'LIMIT' | 'SL' = 'MARKET';
       let actualExitPrice = exitPrice;
+      let orphanQtyLeft = 0; // >0 when the broker still holds shares after every exit attempt failed
       if (state.isPaperTrade) {
         exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
       } else {
@@ -2851,12 +2953,37 @@ export class EmaVwapCrossoverEngine {
               });
               if (emergencyOrderId) {
                 this.log(state, `🛡 Emergency square-off executed successfully (${orphanSide} ${orphanQty} shares): ${emergencyOrderId}`);
+              } else {
+                orphanQtyLeft = orphanQty;
               }
             }
           } catch (guardErr: any) {
             this.logger.warn(`Fail-safe position zeroing check notice: ${guardErr.message}`);
           }
         }
+      }
+
+      // Never orphan a live position: if the broker still holds shares because every exit attempt failed, keep the
+      // position ACTIVE (state intact), re-arm the exchange stop-loss we cancelled above, and let the monitor retry next tick.
+      if (!state.isPaperTrade && orphanQtyLeft > 0) {
+        this.log(state, `🚨 Exit NOT completed — ${orphanQtyLeft} shares of ${symbol} are still open at the broker. Keeping the position active and re-arming the exchange stop-loss; exit will be retried on the next tick.`);
+        state.executedQty = orphanQtyLeft;
+        if (state.stopLossPrice) {
+          try {
+            const tickSz = getInstrumentTickSize(symbol, state.stopLossPrice);
+            const trig = this.roundTick(state.stopLossPrice, symbol);
+            const lim = this.roundTick(exitSide === 'SELL' ? trig - tickSz * 3 : trig + tickSz * 3, symbol);
+            state.slOrderId = await this.placeOrder(state, {
+              symbol, exchange, product: config.product ?? 'MIS', qty: orphanQtyLeft, side: exitSide,
+              orderType: 'SL', price: lim, triggerPrice: trig, intent: 'PROTECTIVE'
+            }).catch((e: any) => { this.log(state, `❌ Could not re-arm exchange SL: ${e.message}`); return null; });
+            state.lastBrokerSlTrigger = state.slOrderId ? trig : undefined;
+          } catch (reArmErr: any) {
+            this.log(state, `❌ SL re-arm error: ${reArmErr.message}`);
+          }
+        }
+        this.startRealtimeMonitor(state, client).catch(() => { });
+        return;
       }
 
       await this.trackOrderInDB(state, exitSide, symbol, exchange, qty, actualExitPrice, exitOrderId, undefined, exitOrderType);
@@ -2866,6 +2993,7 @@ export class EmaVwapCrossoverEngine {
         tradePnl = (isLong ? (actualExitPrice - cachedEntryPrice) : (cachedEntryPrice - actualExitPrice)) * qty;
       }
       state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
+      logSignal('EXIT', state.strategyId, { symbol, side: isLong ? 'LONG' : 'SHORT', entry: cachedEntryPrice, exit: actualExitPrice, qty, pnlRs: +tradePnl.toFixed(2), reason, trailing: !!state.isTrailingEma, paper: !!state.isPaperTrade });
 
       // Cooldown symbol for at least 45 minutes to prevent rapid re-entry
       if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
@@ -2921,6 +3049,9 @@ export class EmaVwapCrossoverEngine {
       state.peakPnlRs = 0;
       state.lockedProfitRs = 0;
       state.isTrailingEma = false;
+      state.partialTargetPrice = null;
+      state.partialBooked = false;
+      state.isBookingPartial = false;
 
       this.stopRealtimeMonitor(state);
       strategyEvents.emit('strategy.update', {
@@ -3555,6 +3686,12 @@ export class EmaVwapCrossoverEngine {
     return false;
   }
 
+  /**
+   * Setup detection + volume-confirmation gate.
+   * Every setup (long or short) must be confirmed by a volume spike on its signal candle. The spike is judged against
+   * THAT STOCK's own history (same clock-time candle, previous 10 sessions), so a noisy stock needs a bigger spike than a
+   * calm one (dynamic). Runs on every newly closed 5m candle, so volume is re-checked continuously after 09:20.
+   */
   private evaluateStockSetup(
     candles: Candle[],
     emas: (number | null)[],
@@ -3562,19 +3699,72 @@ export class EmaVwapCrossoverEngine {
     now: Date,
     config: EmaVwapCrossoverConfig,
     symbol?: string
-  ): {
-    trend: 'LONG' | 'SHORT';
-    setupType: 'DIRECT' | 'INSIDE_CANDLE' | 'OPEN_LOW_DRIVE' | 'OPEN_HIGH_DRIVE' | 'TREND_BREAKDOWN' | 'TREND_BREAKOUT' | 'PULLBACK_REJECTION';
-    triggerHigh: number | null;
-    triggerLow: number | null;
-    slPrice: number;
-    invalidationPrice: number;
-    slNote: string;
-    candleTime: Date;
-    candleIdx: number;
-    scoreBoost: number;
-    description: string;
-  } | null {
+  ): StockSetup | null {
+    const setup = this.evaluateStockSetupRaw(candles, emas, vwaps, now, config, symbol);
+    if (!setup) return null;
+    if (config.enableRvolVolumeFilter === false) return setup;
+    const symKey = symbol ?? config.symbol;
+    const opts = {
+      dynamic: config.enableDynamicVolume !== false,
+      minZ: config.minVolumeZ && config.minVolumeZ > 0 ? config.minVolumeZ : 1.5,
+      rvolFloor: config.minRvolFloor && config.minRvolFloor > 0 ? config.minRvolFloor : 1.5,
+      minRvol: config.minRvol && config.minRvol > 0 ? config.minRvol : 2.5,
+    };
+    const vol = this.checkVolumeConfirmation(candles, setup.candleIdx, opts, this.volumeBaselines.get(symKey)?.slots);
+    if (!vol.isVolumeValid) {
+      this.logger.debug?.(`[VOLUME GATE] ${symKey} ${setup.setupType} ${setup.trend} rejected: RVOL ${vol.rvol.toFixed(2)}x${vol.z !== undefined ? ` z=${vol.z.toFixed(2)}` : ''} (${vol.basis})`);
+      return null;
+    }
+    if (vol.basis === 'own-history') setup.description += ` [Vol ${vol.rvol.toFixed(1)}x, z=${(vol.z ?? 0).toFixed(1)} vs own history]`;
+    else if (vol.basis !== 'none') setup.description += ` [Vol ${vol.rvol.toFixed(1)}x ${vol.basis === 'time-of-day' ? 'same-time avg' : 'recent avg'}]`;
+    return setup;
+  }
+
+  /** Loads (once per stock per day) the same-clock-time 5m volumes of the previous 10 sessions for the dynamic volume gate. */
+  private async ensureVolumeBaseline(client: any, symbol: string, exchange: string, now: Date): Promise<void> {
+    if (!symbol || !client?.getHistoricalData) return;
+    const todayStr = this.getIstDateStr(now);
+    const cached = this.volumeBaselines.get(symbol);
+    if (cached && cached.dateStr === todayStr && (!cached.retryAfter || Date.now() < cached.retryAfter)) return;
+    try {
+      const dayStart = new Date(`${todayStr}T09:15:00.000+05:30`);
+      const from = new Date(dayStart.getTime() - 16 * 24 * 3600 * 1000);
+      const to = new Date(dayStart.getTime() - 60 * 1000); // previous sessions only
+      const data = await Promise.race([
+        client.getHistoricalData(symbol, exchange, '5minute', from, to),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('volume-history timeout')), 4000)),
+      ]) as any[];
+      const byDay = new Map<string, Map<number, number>>();
+      for (const c of data || []) {
+        const d = new Date(c.date);
+        const dStr = this.getIstDateStr(d);
+        if (dStr >= todayStr || !(c.volume > 0)) continue;
+        if (!byDay.has(dStr)) byDay.set(dStr, new Map());
+        byDay.get(dStr)!.set(this.getIstHhmm(d), c.volume);
+      }
+      const recentDays = Array.from(byDay.keys()).sort().slice(-10);
+      const slots = new Map<number, number[]>();
+      for (const dStr of recentDays) {
+        for (const [slot, v] of byDay.get(dStr)!) {
+          if (!slots.has(slot)) slots.set(slot, []);
+          slots.get(slot)!.push(v);
+        }
+      }
+      this.volumeBaselines.set(symbol, { dateStr: todayStr, slots });
+    } catch (err: any) {
+      this.logger.debug?.(`Volume baseline unavailable for ${symbol}: ${err?.message}. Using 3-session fallback.`);
+      this.volumeBaselines.set(symbol, { dateStr: todayStr, slots: new Map(), retryAfter: Date.now() + 10 * 60 * 1000 });
+    }
+  }
+
+  private evaluateStockSetupRaw(
+    candles: Candle[],
+    emas: (number | null)[],
+    vwaps: (number | null)[],
+    now: Date,
+    config: EmaVwapCrossoverConfig,
+    symbol?: string
+  ): StockSetup | null {
     if (!candles || candles.length < 2) return null;
     const todayStr = this.getIstDateStr(now);
     const lastIdx = candles.length - 1;
@@ -3801,6 +3991,9 @@ export class EmaVwapCrossoverEngine {
       return count;
     };
 
+    // Setup types disabled by default on backtest evidence (TREND_BREAKOUT: -0.14R over 1,727 trades, negative in both halves).
+    const disabledSetups = new Set<string>((config as any)?.disabledSetupTypes ?? ['TREND_BREAKOUT']);
+
     // Volume baseline for breakout confirmation
     const totalTodayVol = todayCandles.reduce((s, tc) => s + (tc.candle.volume || 0), 0);
     const avgTodayVol = totalTodayVol / Math.max(1, todayCandles.length);
@@ -3838,7 +4031,7 @@ export class EmaVwapCrossoverEngine {
     }
 
     // ── 4. Pattern 4: Confirmed Trend Breakout & Day High Break (With Anti-Chasing & Volatility Filters) ──
-    if (isUptrend && todayCandles.length >= 2) {
+    if (isUptrend && todayCandles.length >= 2 && !disabledSetups.has('TREND_BREAKOUT')) {
       const priorHighs = todayCandles.slice(0, -1).map(tc => tc.candle.high);
       const priorHigh = priorHighs.length > 0 ? Math.max(...priorHighs) : currCandle.high;
       const distFromEmaPct = ((currCandle.close - currEma) / currCandle.close) * 100;
@@ -3888,7 +4081,7 @@ export class EmaVwapCrossoverEngine {
       }
     }
 
-    if (isUptrend && todayCandles.length >= 2) {
+    if (isUptrend && todayCandles.length >= 2 && !disabledSetups.has('TREND_BREAKOUT')) {
       const distFromEmaPct = ((currCandle.close - currEma) / currCandle.close) * 100;
       if (distFromEmaPct <= Math.max(4.0, dynamicMaxEmaDistPct * 2.0) && moveFromOpenPct <= metrics.dynamicExtensionPct) {
         const tightSl = getSwingShelfSl('LONG', Math.min(currCandle.low, currEma));
@@ -4154,9 +4347,10 @@ export class EmaVwapCrossoverEngine {
       const open = nifty.ohlc.open;
       const changePct = ((ltp - open) / open) * 100;
 
-      // LONG: Nifty should not be in strong selloff (change >= -0.25% from open)
-      // SHORT: Nifty should not be in strong bull rally (change <= +0.25% from open)
-      if (trend === 'LONG' && changePct < -0.25) {
+      // LONG: Nifty should not be selling off (block below -0.10% from open)
+      // SHORT: Nifty should not be rallying (block above +0.10% from open)
+      // Threshold tightened from 0.25% to 0.10% based on the backtest bucketing (against-market trades: -0.11R).
+      if (trend === 'LONG' && changePct < -0.10) {
         return {
           isAligned: false,
           niftyLtp: ltp,
@@ -4166,7 +4360,7 @@ export class EmaVwapCrossoverEngine {
         };
       }
 
-      if (trend === 'SHORT' && changePct > 0.25) {
+      if (trend === 'SHORT' && changePct > 0.10) {
         return {
           isAligned: false,
           niftyLtp: ltp,
@@ -4182,27 +4376,210 @@ export class EmaVwapCrossoverEngine {
     }
   }
 
-  private checkRvolFilter(candles: Candle[], candleIdx: number): { isVolumeValid: boolean; rvol: number; volume: number; avgVolume: number } {
-    if (!candles || candleIdx < 0 || candleIdx >= candles.length) {
-      return { isVolumeValid: true, rvol: 1, volume: 0, avgVolume: 0 };
-    }
+  /**
+   * Volume confirmation for a signal candle.
+   * 1) DYNAMIC (preferred): compare with the stock's OWN same-clock-time volumes over the previous 10 sessions (needs >= 6):
+   *    pass when z-score of ln(volume) >= minZ AND relative volume >= rvolFloor. A calm stock passes with a smaller multiple,
+   *    a noisy stock needs a much bigger spike (a z=2 spike ranges from ~3x to ~17x across stocks).
+   * 2) FALLBACK (no history): same-time average of the previous <= 3 sessions in the loaded candles, static minRvol.
+   * 3) Last resort: average of the last 10 candles of the day (needs >= 3). With no usable baseline the gate fails open.
+   */
+  private checkVolumeConfirmation(
+    candles: Candle[],
+    idx: number,
+    opts: { dynamic: boolean; minZ: number; rvolFloor: number; minRvol: number },
+    baseline?: Map<number, number[]>
+  ): { isVolumeValid: boolean; rvol: number; z?: number; basis: 'own-history' | 'time-of-day' | 'trailing' | 'none'; volume: number; baseline: number } {
+    const sig = candles?.[idx];
+    if (!sig) return { isVolumeValid: true, rvol: 1, basis: 'none', volume: 0, baseline: 0 };
+    const volume = sig.volume || 0;
+    const dayStr = this.getIstDateStr(sig.date);
+    const slot = this.getIstHhmm(sig.date);
 
-    const currentCandle = candles[candleIdx];
-    const volume = currentCandle.volume || 0;
-
-    const startIdx = Math.max(0, candleIdx - 10);
-    let pastSum = 0;
-    let pastCount = 0;
-    for (let k = startIdx; k < candleIdx; k++) {
-      if (candles[k].volume && candles[k].volume > 0) {
-        pastSum += candles[k].volume;
-        pastCount++;
+    if (opts.dynamic && baseline && volume > 0) {
+      const hist = baseline.get(slot);
+      if (hist && hist.length >= 6) {
+        const mean = hist.reduce((x, y) => x + y, 0) / hist.length;
+        const logs = hist.map(v => Math.log(v));
+        const lm = logs.reduce((x, y) => x + y, 0) / logs.length;
+        const sd = Math.max(0.2, Math.sqrt(logs.reduce((x, y) => x + (y - lm) ** 2, 0) / (logs.length - 1)));
+        const rvol = mean > 0 ? volume / mean : 1;
+        const z = (Math.log(volume) - lm) / sd;
+        return { isVolumeValid: z >= opts.minZ && rvol >= opts.rvolFloor, rvol, z, basis: 'own-history', volume, baseline: mean };
       }
     }
 
-    const avgVolume = pastCount > 0 ? (pastSum / pastCount) : volume;
-    const rvol = avgVolume > 0 ? (volume / avgVolume) : 1;
-    const isVolumeValid = rvol >= 1.15 || volume >= 5000;
-    return { isVolumeValid, rvol, volume, avgVolume };
+    let sum = 0, n = 0;
+    const seenDays = new Set<string>();
+    for (let k = idx - 1; k >= 0 && n < 3; k--) {
+      const d = this.getIstDateStr(candles[k].date);
+      if (d === dayStr || seenDays.has(d)) continue;
+      if (this.getIstHhmm(candles[k].date) === slot && candles[k].volume > 0) {
+        seenDays.add(d);
+        sum += candles[k].volume;
+        n++;
+      }
+    }
+    if (n >= 2) {
+      const base = sum / n;
+      const rvol = base > 0 ? volume / base : 1;
+      return { isVolumeValid: rvol >= opts.minRvol, rvol, basis: 'time-of-day', volume, baseline: base };
+    }
+
+    sum = 0; n = 0;
+    for (let k = idx - 1; k >= 0 && n < 10 && this.getIstDateStr(candles[k].date) === dayStr; k--) {
+      if (candles[k].volume > 0) { sum += candles[k].volume; n++; }
+    }
+    if (n >= 3) {
+      const base = sum / n;
+      const rvol = base > 0 ? volume / base : 1;
+      return { isVolumeValid: rvol >= opts.minRvol, rvol, basis: 'trailing', volume, baseline: base };
+    }
+    return { isVolumeValid: true, rvol: 1, basis: 'none', volume, baseline: 0 };
+  }
+
+  /** Which exit-target mode applies. FIXED_RS = the ₹ target/SL mode; LEGACY = option trades keep the old logic. */
+  private getTargetMode(config: EmaVwapCrossoverConfig, isOption: boolean): 'FIXED_RS' | 'LEGACY' | 'FULL' | 'PARTIAL' | 'QUICK' {
+    if (config.exitExactAtTarget) return 'FIXED_RS';
+    if (isOption || config.isOptionBuyingOnly) return 'LEGACY';
+    const m = config.targetMode;
+    return m === 'PARTIAL' || m === 'QUICK' ? m : 'FULL';
+  }
+
+  /**
+   * Volatility-scaled first target.
+   *  FULL / PARTIAL: 0.5 x the stock's daily ATR% (its typical daily range), kept between 0.5R and 2R of the structural stop.
+   *  QUICK: a small fixed R multiple (default 0.5R) that is reached about half of the time.
+   * Backtest (545 stocks, 2y): the old PDC/PDH/Fibonacci target sat ~1.7R away and was hit only ~10% of the time.
+   */
+  private calculateVolatilityTarget(
+    entry: number, sl: number, side: 'BUY' | 'SELL', mode: 'FULL' | 'PARTIAL' | 'QUICK',
+    config: EmaVwapCrossoverConfig, dailyAtrPct: number | undefined, symbol: string
+  ): { targetPrice: number; reason: string } {
+    const tick = getInstrumentTickSize(symbol, entry);
+    const risk = Math.max(tick * 4, Math.abs(entry - sl));
+    let dist: number;
+    let reason: string;
+    if (mode === 'QUICK') {
+      const r = config.quickTargetR && config.quickTargetR > 0 ? config.quickTargetR : 0.5;
+      dist = risk * r;
+      reason = `Quick target ${r}R (+₹${dist.toFixed(2)}/sh)`;
+    } else {
+      const atr = dailyAtrPct && dailyAtrPct > 0 ? dailyAtrPct : 2.5;
+      const mult = config.targetAtrMultiple && config.targetAtrMultiple > 0 ? config.targetAtrMultiple : 0.5;
+      const raw = entry * (atr / 100) * mult;
+      dist = Math.min(risk * 2, Math.max(risk * 0.5, raw));
+      reason = `${mult} x daily ATR (${atr.toFixed(2)}%) = +₹${raw.toFixed(2)}/sh, bounded to ${(dist / risk).toFixed(2)}R (+₹${dist.toFixed(2)}/sh)`;
+    }
+    dist = Math.max(dist, tick * 3);
+    const targetPrice = this.roundTick(side === 'BUY' ? entry + dist : entry - dist, symbol);
+    return { targetPrice, reason };
+  }
+
+  private isPartialBookingDue(state: StrategyState, price: number): boolean {
+    if (state.partialBooked || state.isBookingPartial || !state.partialTargetPrice || !state.entryTriggered || !price) return false;
+    if (state.config.exitExactAtTarget || (state.config.isOptionBuyingOnly && state.optionSymbol)) return false;
+    return state.entryTriggered === 'LONG' ? price >= state.partialTargetPrice : price <= state.partialTargetPrice;
+  }
+
+  /**
+   * Books part of the position at the first target, then leaves the runner to the 15-EMA candle-close exit / structural stop.
+   * Live safety order: (1) confirm the broker position, (2) shrink the exchange stop-loss to the remaining quantity FIRST
+   * (a stop larger than the position could reverse it), (3) market-exit the partial, (4) undo (1)-(2) on failure.
+   */
+  private async bookPartial(state: StrategyState, client: any, kite: any, price: number) {
+    state.isBookingPartial = true;
+    try {
+      const config = state.config;
+      const symbol = state.activeSymbol || config.symbol;
+      const exchange = state.futureSymbol ? state.futureExchange : config.exchange;
+      const isLong = state.entryTriggered === 'LONG';
+      const exitSide: 'BUY' | 'SELL' = isLong ? 'SELL' : 'BUY';
+      const totalQty = state.executedQty || config.qty;
+      const frac = Math.min(0.9, Math.max(0.1, config.partialBookFraction && config.partialBookFraction > 0 ? config.partialBookFraction : 0.5));
+      const qtyPartial = Math.floor(totalQty * frac);
+      const remaining = totalQty - qtyPartial;
+
+      if (qtyPartial < 1 || remaining < 1) {
+        state.partialBooked = true;
+        this.log(state, `ℹ [PARTIAL BOOKING] Position of ${totalQty} share(s) is too small to split — running the full position with the 15-EMA candle-close exit.`);
+        return;
+      }
+      state.partialAttempts = (state.partialAttempts || 0) + 1;
+      if (state.partialAttempts > 3) {
+        state.partialBooked = true;
+        this.log(state, `⚠ [PARTIAL BOOKING] Gave up after 3 failed attempts — running the full position with the 15-EMA candle-close exit.`);
+        return;
+      }
+
+      let orderId = `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      let fillPrice = price;
+      if (!state.isPaperTrade) {
+        if (!kite) return;
+        const safety = await isSafeToExit(kite, symbol, exitSide, this.logger);
+        if (!safety.safe || (safety.brokerQty && Math.abs(safety.brokerQty) < totalQty)) {
+          state.partialBooked = true;
+          this.log(state, `ℹ [PARTIAL BOOKING] Skipped: broker position (${safety.brokerQty ?? 0}) does not match the expected ${totalQty} share(s).`);
+          return;
+        }
+        const hasSl = !!state.slOrderId && state.slOrderId !== 'FAILED';
+        if (hasSl) {
+          try {
+            await kite.modifyOrder('regular', state.slOrderId, { quantity: remaining });
+          } catch (modErr: any) {
+            this.log(state, `⚠ [PARTIAL BOOKING] Could not shrink the exchange SL to ${remaining} share(s) (${modErr.message}); nothing sold, will retry.`);
+            return;
+          }
+        }
+        try {
+          orderId = await this.placeOrder(state, { symbol, exchange, product: config.product ?? 'MIS', qty: qtyPartial, side: exitSide, orderType: 'MARKET', intent: 'EXIT' });
+        } catch (ordErr: any) {
+          this.log(state, `❌ [PARTIAL BOOKING] Market order failed (${ordErr.message}). Restoring the exchange SL to ${totalQty} share(s).`);
+          if (hasSl) await kite.modifyOrder('regular', state.slOrderId, { quantity: totalQty }).catch((e: any) => this.log(state, `🚨 Could not restore SL quantity: ${e.message}`));
+          return;
+        }
+        try {
+          await new Promise(r => setTimeout(r, 500));
+          const orders = await kite.getOrders();
+          const o = orders.find((x: any) => x.order_id === orderId);
+          if (o && Number(o.average_price) > 0) fillPrice = Number(o.average_price);
+        } catch { /* keep LTP as the fill estimate */ }
+      }
+
+      await this.trackOrderInDB(state, exitSide, symbol, exchange, qtyPartial, fillPrice, orderId, undefined, 'MARKET');
+      const entry = state.entryPrice || fillPrice;
+      const partialPnl = (isLong ? (fillPrice - entry) : (entry - fillPrice)) * qtyPartial;
+      state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + partialPnl;
+      state.executedQty = remaining;
+      state.config.qty = remaining;
+      state.entryOrderId = null; // entry-fill sync must not restore the sold quantity
+      state.partialBooked = true;
+      logSignal('EXIT', state.strategyId, { symbol, side: isLong ? 'LONG' : 'SHORT', entry, exit: fillPrice, qty: qtyPartial, remaining, partial: true, pnlRs: +partialPnl.toFixed(2), reason: 'PARTIAL_TARGET', paper: !!state.isPaperTrade });
+      this.log(state, `💰 [PARTIAL BOOKED] ${qtyPartial}/${totalQty} share(s) of ${symbol} at ₹${fillPrice.toFixed(2)} (first target ₹${(state.partialTargetPrice || 0).toFixed(2)}) | Locked P&L: +₹${partialPnl.toFixed(2)} | Runner: ${remaining} share(s) ride the 15-EMA candle-close exit`);
+
+      if (config.partialMoveSlToBreakeven !== false && state.entryPrice) {
+        const tick = getInstrumentTickSize(symbol, price);
+        const be = this.roundTick(isLong ? state.entryPrice + tick * 2 : state.entryPrice - tick * 2, symbol);
+        const better = isLong ? be > (state.stopLossPrice || 0) : be < (state.stopLossPrice || Infinity);
+        if (better) {
+          state.stopLossPrice = be;
+          this.log(state, `🛡 [PARTIAL BOOKED] Runner stop moved to break-even ₹${be.toFixed(2)}`);
+          await this.updateBrokerSlSafe(client, kite, state, symbol);
+        }
+      }
+    } catch (err: any) {
+      this.log(state, `⚠ [PARTIAL BOOKING] error: ${err.message}`);
+    } finally {
+      state.isBookingPartial = false;
+    }
+  }
+
+  /**
+   * Intra-candle (tick) trailing exits on the 15-EMA/VWAP lines. OFF by default: in the 15-EMA trend-riding mode the
+   * exit is a 5m candle CLOSE across the 15-EMA (long: close below, short: close above), so wicks are ignored, and
+   * the structural stop-loss stays as the only intrabar exit. Never active in Fixed Target mode.
+   */
+  private isTickTrailExitEnabled(state: StrategyState): boolean {
+    return !state.config.exitExactAtTarget && (state.config as any).enableTickTrailExit === true;
   }
 }

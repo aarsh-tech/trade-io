@@ -832,7 +832,7 @@ function StrategyCard({
           : is15Min
             ? "1:2 RR + trail"
             : isEmaVwap
-              ? "15-EMA / VWAP"
+              ? (cfg.targetMode === "PARTIAL" ? "Book half + 15-EMA trail" : cfg.targetMode === "QUICK" ? "Quick 0.5R + trail" : "0.5x daily ATR")
               : cfg.targetRs
                 ? `₹${cfg.targetRs}`
                 : "Dynamic";

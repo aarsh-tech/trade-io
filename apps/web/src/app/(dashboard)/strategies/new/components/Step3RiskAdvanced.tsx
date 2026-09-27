@@ -803,6 +803,91 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
+          {/* Volume confirmation (EMA-VWAP stocks) */}
+          {form.type === "EMA_VWAP_CROSSOVER" && !form.isOptionBuyingOnly && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-sm font-semibold text-foreground">Volume Confirmation</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.volumeFilter !== false}
+                    onChange={(e) => set("volumeFilter", e.target.checked)}
+                    className="sr-only peer"
+                    aria-label="Require volume confirmation on every entry"
+                  />
+                  <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
+                </label>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                Every long and short entry needs a volume spike on its signal candle, compared with that stock&apos;s own volume at the same time of day over the last 10 sessions. Checked on every new 5-minute candle after 09:20, so a calm stock needs a smaller spike than a noisy one.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Volume strictness">
+                {([
+                  { value: "RELAXED", title: "Relaxed", body: "More trades. Volume clearly above normal." },
+                  { value: "BALANCED", title: "Balanced", body: "Recommended. Volume well above the stock's normal." },
+                  { value: "STRICT", title: "Strict", body: "Fewest trades. Only exceptional volume spikes." },
+                ] as const).map((opt) => {
+                  const selected = (form.volumeStrictness || "BALANCED") === opt.value && form.volumeFilter !== false;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={form.volumeFilter === false}
+                      onClick={() => set("volumeStrictness", opt.value)}
+                      className={`text-left p-3 rounded-lg border-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
+                    >
+                      <p className="text-xs font-semibold text-foreground">{opt.title}</p>
+                      <p className="text-[11px] text-foreground/75 font-medium leading-relaxed mt-1">{opt.body}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Target mode (EMA-VWAP stocks): how profits are taken */}
+          {form.type === "EMA_VWAP_CROSSOVER" && !form.isOptionBuyingOnly && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <Target className="h-4 w-4 text-profit shrink-0" />
+                <span className="text-sm font-semibold text-foreground">Profit Target Mode</span>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                Targets are sized from each stock&apos;s own daily volatility (ATR), not a fixed number. The stop-loss stays at the structural swing level in every mode.
+                {form.exitExactAtTarget && " Turned off while the Fixed Rupee Target below is on."}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Profit target mode">
+                {([
+                  { value: "FULL", title: "Full exit", body: "One target at 0.5x the stock's daily range, whole position exits there. No trailing. Highest win rate in backtests." },
+                  { value: "PARTIAL", title: "Partial booking", body: "Book half at that target, the other half rides until a 5m candle closes across the 15-EMA. Runner stop moves to break-even." },
+                  { value: "QUICK", title: "Quick wins", body: "Book half at a small 0.5R target (hit about half the time), the rest rides the 15-EMA candle-close exit." },
+                ] as const).map((opt) => {
+                  const selected = (form.targetMode || "FULL") === opt.value && !form.exitExactAtTarget;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={!!form.exitExactAtTarget}
+                      onClick={() => set("targetMode", opt.value)}
+                      className={`text-left p-3 rounded-lg border-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${selected ? "border-profit bg-profit-subtle/50" : "border-border bg-background hover:border-profit/50"}`}
+                    >
+                      <p className="text-xs font-semibold text-foreground">{opt.title}</p>
+                      <p className="text-[11px] text-foreground/75 font-medium leading-relaxed mt-1">{opt.body}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Exit Exact at Target Toggle */}
           <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
             <div className="flex items-center justify-between">

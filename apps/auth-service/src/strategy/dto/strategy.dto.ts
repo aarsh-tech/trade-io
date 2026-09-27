@@ -140,8 +140,18 @@ export interface EmaVwapCrossoverConfig {
   enableProfitFloor?: boolean;
   profitFloorBufferRs?: number;
   enableOpenLowHighTrigger?: boolean; // Enable Open = Low (Buy) & Open = High (Sell) Opening Drive (default: true)
-  enableMarketTrendFilter?: boolean;  // Align trades with broader NIFTY 50 trend (default: true)
-  enableRvolVolumeFilter?: boolean;   // Require institutional volume spike (RVOL >= 1.25x) (default: true)
+  enableMarketTrendFilter?: boolean;  // Optional: block trades against NIFTY 50 direction (default: OFF — stocks often move independently)
+  enableRvolVolumeFilter?: boolean;   // Volume confirmation on every setup's signal candle (time-of-day RVOL) (default: true)
+  enableDynamicVolume?: boolean;      // Judge volume against each stock's OWN same-time history (10 sessions) instead of one flat multiple (default: true)
+  minVolumeZ?: number;                // Dynamic gate: min z-score of the signal candle's volume vs own history (default: 1.5)
+  minRvolFloor?: number;              // Dynamic gate: also require at least this multiple of the stock's own average (default: 1.5)
+  minRvol?: number;                   // Fallback flat multiple when a stock has no volume history yet (default: 2.5)
+  targetMode?: 'FULL' | 'PARTIAL' | 'QUICK'; // Exit target (default FULL): FULL = one volatility target, no trailing | PARTIAL = book part at the volatility target, rest rides the 15-EMA candle-close exit | QUICK = book part at a small ~0.5R target, rest rides. Ignored when exitExactAtTarget (₹ target) is on.
+  targetAtrMultiple?: number;         // FULL/PARTIAL first target = this x the stock's daily ATR% (default 0.5)
+  quickTargetR?: number;              // QUICK first target in R multiples of the structural stop (default 0.5)
+  partialBookFraction?: number;       // PARTIAL/QUICK: fraction of the position sold at the first target (default 0.5)
+  partialMoveSlToBreakeven?: boolean; // PARTIAL/QUICK: move the runner's stop to break-even after booking (default true)
+  enableTickTrailExit?: boolean;      // Intra-candle EMA/VWAP trailing exits (default: OFF). OFF = exit only on a 5m candle CLOSE across the 15-EMA + structural SL
   enableDailyPnLLock?: boolean;       // One-and-Done rule: lock day on hitting profit target or max loss (default: true)
   enableParabolicVwapLock?: boolean;  // Lock profits using VWAP when trade goes parabolic (>2.5% gain or +2R) (default: true)
   enableTwoCandleEmaConfirmation?: boolean; // Require 2nd candle confirmation before exiting on EMA to prevent shakeouts (default: true)
@@ -149,6 +159,8 @@ export interface EmaVwapCrossoverConfig {
   enableTrendReEntry?: boolean;       // Allow 1 trend continuation re-entry if price reclaims EMA with volume (default: true)
   minStockPrice?: number;             // Minimum stock price floor for auto scanner (default: ₹300)
   enableHybridTrailing?: boolean;     // Hybrid mode: In Exact Target mode, trail SL to 15-EMA & VWAP with 0.30% noise buffer once Break-Even is locked (default: true)
+  entryCutoffTime?: string;           // Optional user-set entry cutoff, IST (default: none; hard stop at 15:00 because of the 15:05 square-off)
+  disabledSetupTypes?: string[];      // Setup types to skip (default: ['TREND_BREAKOUT'] — negative expectancy in backtest)
 }
 
 export interface NiftyOptionsScalperConfig {

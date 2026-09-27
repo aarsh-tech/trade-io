@@ -83,6 +83,9 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
   if (isSet(config.product) && !PRODUCTS.includes(String(config.product))) {
     errors.push(`Product must be one of ${PRODUCTS.join(', ')}`);
   }
+  if (isSet(config.targetMode) && !['FULL', 'PARTIAL', 'QUICK'].includes(String(config.targetMode))) {
+    errors.push('Target mode must be one of FULL, PARTIAL, QUICK');
+  }
   if (isSet(config.symbol) && String(config.symbol).trim() === '') errors.push('Symbol must not be blank');
 
   const times: Record<string, number> = {};

@@ -1,0 +1,61 @@
+symbols>=₹100  setups(all) 76490  split date 2025-11-06
+
+Crossover-candle RVOL vs SAME-CLOCK-TIME avg of prior 3 sessions (rvT)
+filter            n   A:meanR    ±95%  A:win%   B(2R)  A 1st half  A 2nd half   n1/n2
+no filter     76490     0.005   0.004    33.8   0.032       0.013      -0.002   38176/38314
+>= 1          29195     0.015   0.007    35.5   0.032       0.020       0.009   14808/14387
+>= 1.25       23257     0.017   0.008    35.9   0.030       0.023       0.010   11744/11513
+>= 1.5        18889     0.020   0.009    36.2   0.032       0.026       0.014   9461/9428
+>= 2          13165     0.022   0.011    36.2   0.032       0.024       0.020   6504/6661
+>= 2.5         9687     0.029   0.013    37.2   0.037       0.033       0.024   4705/4982
+>= 3           7448     0.029   0.016    37.7   0.036       0.033       0.025   3575/3873
+>= 4           4862     0.030   0.020    37.3   0.027       0.029       0.031   2310/2552
+
+Crossover-candle RVOL vs trailing 10 candles same day (rvR)
+filter            n   A:meanR    ±95%  A:win%   B(2R)  A 1st half  A 2nd half   n1/n2
+no filter     76490     0.005   0.004    33.8   0.032       0.013      -0.002   38176/38314
+>= 1          20510     0.015   0.007    35.5   0.041       0.020       0.010   10491/10019
+>= 1.25       13798     0.018   0.009    35.5   0.037       0.023       0.013   7003/6795
+>= 1.5         9704     0.021   0.011    35.9   0.035       0.027       0.014   4910/4794
+>= 2           5119     0.023   0.015    36.4   0.033       0.031       0.014   2527/2592
+>= 2.5         3049     0.022   0.020    36.3   0.026       0.030       0.015   1472/1577
+>= 3           1964     0.020   0.026    35.8   0.027       0.012       0.028   939/1025
+>= 4            907     0.027   0.038    36.6   0.031       0.016       0.037   424/483
+
+Detection-candle RVOL vs same-clock-time (rvT2)
+filter            n   A:meanR    ±95%  A:win%   B(2R)  A 1st half  A 2nd half   n1/n2
+no filter     76490     0.005   0.004    33.8   0.032       0.013      -0.002   38176/38314
+>= 1          27873     0.016   0.007    35.5   0.033       0.022       0.009   14192/13681
+>= 1.25       22007     0.018   0.008    35.8   0.029       0.025       0.010   11159/10848
+>= 1.5        17807     0.023   0.009    36.1   0.031       0.030       0.016   8938/8869
+>= 2          12314     0.024   0.012    36.1   0.033       0.028       0.020   6135/6179
+>= 2.5         9022     0.027   0.014    37.0   0.037       0.034       0.021   4414/4608
+>= 3           6902     0.024   0.016    37.4   0.034       0.032       0.017   3338/3564
+>= 4           4518     0.023   0.021    37.1   0.021       0.026       0.019   2170/2348
+
+Crossover-candle volume / previous candle volume (vPrev)
+filter            n   A:meanR    ±95%  A:win%   B(2R)  A 1st half  A 2nd half   n1/n2
+no filter     76490     0.005   0.004    33.8   0.032       0.013      -0.002   38176/38314
+>= 1          34618     0.008   0.006    34.1   0.038       0.017      -0.001   17599/17019
+>= 1.5        19946     0.006   0.008    33.7   0.037       0.017      -0.005   9785/10161
+>= 2          12612     0.007   0.009    34.0   0.038       0.018      -0.002   5983/6629
+>= 3           6197     0.007   0.013    33.8   0.035       0.015       0.001   2794/3403
+
+LONG rvT>=1.5 n 10392 A meanR 0.020 win% 34.7
+SHORT rvT>=1.5 n 8497 A meanR 0.021 win% 38.1
+
+By time of day (signal candle), filter rvT>=1.5, exit A:
+09:20-10:00 n 414 meanR 0.010 win% 37.2
+10:00-11:30 n 10634 meanR 0.017 win% 36.4
+11:30-13:00 n 5037 meanR 0.025 win% 35.3
+13:00-14:30 n 2804 meanR 0.025 win% 37.0
+
+Exit-rule comparison (filter rvT>=2.5 | all setups):
+rvT>=2.5  A  candle-close beyond 15EMA + hard SL               meanR 0.029 ± 0.013 win% 37.2 | halves 0.033 0.024
+rvT>=2.5  D  tick-touch max/min(EMA,VWAP) trail (old engine)   meanR 0.037 ± 0.015 win% 62.7 | halves 0.041 0.033
+rvT>=2.5  E  A + breakeven after +1R                           meanR 0.029 ± 0.013 win% 36.5 | halves 0.033 0.025
+rvT>=2.5  B  fixed 2R + hard SL                                meanR 0.037 ± 0.017 win% 47.0 | halves 0.043 0.031
+all       A  candle-close beyond 15EMA + hard SL               meanR 0.005 ± 0.004 win% 33.8 | halves 0.013 -0.002
+all       D  tick-touch max/min(EMA,VWAP) trail (old engine)   meanR 0.022 ± 0.005 win% 65.9 | halves 0.028 0.016
+all       E  A + breakeven after +1R                           meanR 0.005 ± 0.004 win% 33.5 | halves 0.013 -0.002
+all       B  fixed 2R + hard SL                                meanR 0.032 ± 0.006 win% 48.1 | halves 0.044 0.021

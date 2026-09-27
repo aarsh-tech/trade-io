@@ -51,7 +51,7 @@ function stopLoss(ctx: DetailCtx): string {
   if (isNiftyScalper) return `-${cfg.stopLossPoints ?? 7} pts (server SL)`;
   if (isStockOptions) return "Mother-candle low, breakeven at T1";
   if (is15Min) return "Candle SL";
-  if (isEmaVwap) return "Candle low, trailed on 15-EMA";
+  if (isEmaVwap) return "Structural swing stop (broker-side)";
   return rs(cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? 500) ?? "Dynamic";
 }
 
@@ -62,7 +62,7 @@ function targetText(ctx: DetailCtx): string {
   if (isNiftyScalper) return `+${cfg.targetPoints ?? 10} pts, then trail`;
   if (isStockOptions) return `1:${cfg.target1RR ?? 1.5} and 1:${cfg.target2RR ?? 3} RR`;
   if (is15Min) return `1:${Number(cfg.riskRewardRatio ?? 2).toFixed(1)} RR, then trail`;
-  if (isEmaVwap) return "15-EMA / VWAP exhaustion";
+  if (isEmaVwap) return cfg.targetMode === "PARTIAL" ? "Half at 0.5x daily ATR, rest trails 15-EMA candle close" : cfg.targetMode === "QUICK" ? "Half at 0.5R, rest trails 15-EMA candle close" : "One target at 0.5x daily ATR (no trailing)";
   return rs(cfg.targetRs ?? cfg.dailyTargetRs ?? 500) ?? "Dynamic";
 }
 
@@ -126,7 +126,12 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
       { label: "OI unwinding confirmation", ...toggle(cfg.enableOiFilter) },
     );
   }
-  if (isEmaVwap) entry.push({ label: "Entry signal", value: "15-EMA and VWAP crossover" });
+  if (isEmaVwap) {
+    entry.push(
+      { label: "Entry signal", value: "15-EMA and VWAP crossover" },
+      { label: "Volume confirmation", ...toggle(cfg.enableRvolVolumeFilter !== false, cfg.enableDynamicVolume === false ? `>= ${cfg.minRvol ?? 2.5}x average` : `z >= ${cfg.minVolumeZ ?? 1.5} vs the stock's own 10-session history`) },
+    );
+  }
 
   const risk: Row[] = [
     { label: "Position sizing", value: sizing(ctx) },
@@ -148,7 +153,9 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
         ? toggle(cfg.enablePartialBooking, `${cfg.partialBookingPct ?? 50}%${is15Min ? ` at +${cfg.partialBookingR ?? 1.8}R` : " at T1"}, runner trails`)
         : isGammaBlast
           ? toggle(cfg.enablePartialProfitBooking, "50% at 2x, runner trails")
-          : { value: undefined }),
+          : isEmaVwap && !cfg.exitExactAtTarget && (cfg.targetMode === "PARTIAL" || cfg.targetMode === "QUICK")
+            ? { value: "Half at the first target, runner exits on a 15-EMA candle close" }
+            : { value: undefined }),
     },
     { label: "Breakeven lock", value: is15Min ? `At +${cfg.breakevenTriggerR ?? 0.7}R` : isNiftyScalper ? `At +${cfg.trailCostAtPoints ?? 6} pts` : undefined },
     { label: "Ratchet trailing", ...(isGammaBlast ? toggle(cfg.enableRatchetTrailing, "1.5x, 2x, 3x locks") : { value: undefined }) },

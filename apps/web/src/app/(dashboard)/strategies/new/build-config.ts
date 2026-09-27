@@ -170,6 +170,12 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       exitExactAtTarget: !!form.exitExactAtTarget,
       maxTradesPerDay: Number(form.maxTradesPerDay),
       enableProfitFloor: form.enableProfitFloor,
+      targetMode: form.targetMode || "FULL",
+      // Volume confirmation (dynamic, per stock). Strictness maps to the z-score tested in the 2-year backtest.
+      enableRvolVolumeFilter: form.volumeFilter !== false,
+      enableDynamicVolume: true,
+      minVolumeZ: form.volumeStrictness === "STRICT" ? 2 : form.volumeStrictness === "RELAXED" ? 1 : 1.5,
+      minRvolFloor: 1.5,
       profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
       ...(form.isOptionBuyingOnly && {
         minPremium: Number(form.minPremium),

@@ -1,0 +1,92 @@
+setups 76490, split 2025-11-06
+
+=== ALL crossover setups  n=76490
+candle-close 15EMA exit (trend-riding): meanR 0.005 | halves 0.013 -0.002
+MFE (best favourable move before SL/EOD) in R:  median 0.46  p25 0.19  p75 0.91 | as fraction of daily ATR: median 0.21  p75 0.42
+MODES (whole-position result in R, hard structural SL, EOD 15:05):  avg T1 distance 1.17 R
+mode                                            T1hit%   win%   meanR   ±95%   half1   half2
+FULL   single 0.5xATR target, no trail            19.2   49.5   0.029  0.005   0.042   0.016
+PARTIAL 50% @0.5xATR, rest EMA-close trail        10.2   34.3   0.006  0.004   0.014  -0.002
+PARTIAL + runner SL to breakeven                  10.2   34.3   0.006  0.004   0.014  -0.002
+QUICK   50% @0.5R, rest EMA-close trail           29.4   38.0   0.003  0.003   0.010  -0.004
+QUICK + runner SL to breakeven                    29.4   38.5   0.004  0.003   0.010  -0.003
+reference: all-in EMA-close trail (no partial)           33.8   0.005
+
+target                      distR   hit%   meanR   half1   half2
+fixed 0.5R                   0.50   47.0   0.011   0.019   0.002
+fixed 0.75R                  0.75   32.2   0.021   0.031   0.010
+fixed 1R                     1.00   21.9   0.025   0.035   0.014
+fixed 1.25R                  1.25   15.1   0.028   0.041   0.016
+fixed 1.5R                   1.50   10.5   0.030   0.042   0.018
+fixed 2R                     2.00    5.4   0.032   0.044   0.021
+fixed 2.5R                   2.50    2.9   0.033   0.044   0.022
+fixed 3R                     3.00    1.7   0.032   0.042   0.022
+0.1 x daily ATR              0.24   71.5  -0.001   0.006  -0.008
+0.15 x daily ATR             0.37   60.9   0.005   0.012  -0.003
+0.2 x daily ATR              0.49   51.9   0.012   0.022   0.002
+0.3 x daily ATR              0.73   37.1   0.019   0.029   0.009
+0.4 x daily ATR              0.97   26.6   0.027   0.038   0.015
+0.5 x daily ATR              1.22   18.8   0.029   0.041   0.017
+CURRENT logical target       1.72    8.7   0.031   0.042   0.021
+  current-target reasons: FIB 67% (hit 9%, meanR 0.03) | PDL 9% (hit 5%, meanR 0.03) | PDH 9% (hit 7%, meanR 0.02) | MIN1.2R 3% (hit 14%, meanR 0.01) | PDC 3% (hit 7%, meanR 0.05) | SWING 10% (hit 8%, meanR 0.03)
+
+=== STATIC volume  (rvol same-time >= 2.5x)  n=9687
+candle-close 15EMA exit (trend-riding): meanR 0.029 | halves 0.033 0.024
+MFE (best favourable move before SL/EOD) in R:  median 0.47  p25 0.19  p75 0.97 | as fraction of daily ATR: median 0.25  p75 0.50
+MODES (whole-position result in R, hard structural SL, EOD 15:05):  avg T1 distance 1.06 R
+mode                                            T1hit%   win%   meanR   ±95%   half1   half2
+FULL   single 0.5xATR target, no trail            25.1   49.7   0.036  0.015   0.046   0.028
+PARTIAL 50% @0.5xATR, rest EMA-close trail        17.2   38.1   0.028  0.012   0.032   0.024
+PARTIAL + runner SL to breakeven                  17.2   38.2   0.028  0.012   0.031   0.024
+QUICK   50% @0.5R, rest EMA-close trail           36.0   42.9   0.020  0.010   0.024   0.017
+QUICK + runner SL to breakeven                    36.0   44.3   0.022  0.010   0.026   0.019
+reference: all-in EMA-close trail (no partial)           37.2   0.029
+
+target                      distR   hit%   meanR   half1   half2
+fixed 0.5R                   0.50   48.3   0.017   0.023   0.011
+fixed 0.75R                  0.75   33.9   0.028   0.039   0.018
+fixed 1R                     1.00   23.9   0.033   0.043   0.024
+fixed 1.25R                  1.25   17.1   0.036   0.045   0.027
+fixed 1.5R                   1.50   12.4   0.034   0.045   0.024
+fixed 2R                     2.00    7.0   0.037   0.043   0.031
+fixed 2.5R                   2.50    4.2   0.040   0.047   0.034
+fixed 3R                     3.00    2.7   0.041   0.048   0.035
+0.1 x daily ATR              0.22   74.5  -0.001   0.002  -0.003
+0.15 x daily ATR             0.33   65.1   0.007   0.010   0.004
+0.2 x daily ATR              0.43   56.8   0.014   0.021   0.008
+0.3 x daily ATR              0.65   43.3   0.026   0.036   0.016
+0.4 x daily ATR              0.87   32.8   0.034   0.046   0.023
+0.5 x daily ATR              1.08   25.1   0.037   0.046   0.027
+CURRENT logical target       1.72   10.5   0.036   0.044   0.029
+  current-target reasons: FIB 74% (hit 11%, meanR 0.03) | PDC 5% (hit 6%, meanR 0.01) | PDL 6% (hit 5%, meanR 0.04) | MIN1.2R 2% (hit 18%, meanR 0.16) | PDH 7% (hit 7%, meanR 0.02) | SWING 7% (hit 10%, meanR 0.07)
+
+=== DYNAMIC volume (own-history z>=1.5 & rvol>=1.5x)  n=6570
+candle-close 15EMA exit (trend-riding): meanR 0.031 | halves 0.037 0.025
+MFE (best favourable move before SL/EOD) in R:  median 0.49  p25 0.20  p75 1.00 | as fraction of daily ATR: median 0.24  p75 0.50
+MODES (whole-position result in R, hard structural SL, EOD 15:05):  avg T1 distance 1.09 R
+mode                                            T1hit%   win%   meanR   ±95%   half1   half2
+FULL   single 0.5xATR target, no trail            25.0   49.8   0.036  0.019   0.040   0.031
+PARTIAL 50% @0.5xATR, rest EMA-close trail        17.8   39.3   0.031  0.015   0.035   0.028
+PARTIAL + runner SL to breakeven                  17.8   39.4   0.031  0.015   0.034   0.028
+QUICK   50% @0.5R, rest EMA-close trail           38.1   44.9   0.025  0.012   0.027   0.022
+QUICK + runner SL to breakeven                    38.1   46.4   0.027  0.012   0.030   0.025
+reference: all-in EMA-close trail (no partial)           38.3   0.031
+
+target                      distR   hit%   meanR   half1   half2
+fixed 0.5R                   0.50   49.3   0.021   0.023   0.018
+fixed 0.75R                  0.75   34.9   0.032   0.035   0.029
+fixed 1R                     1.00   24.9   0.035   0.034   0.036
+fixed 1.25R                  1.25   17.9   0.036   0.036   0.035
+fixed 1.5R                   1.50   12.9   0.033   0.039   0.027
+fixed 2R                     2.00    7.3   0.035   0.040   0.029
+fixed 2.5R                   2.50    4.7   0.042   0.048   0.037
+fixed 3R                     3.00    2.9   0.042   0.047   0.037
+0.1 x daily ATR              0.23   74.8   0.007   0.004   0.010
+0.15 x daily ATR             0.34   65.1   0.012   0.011   0.013
+0.2 x daily ATR              0.45   56.6   0.020   0.021   0.019
+0.3 x daily ATR              0.68   43.3   0.028   0.033   0.023
+0.4 x daily ATR              0.91   32.6   0.031   0.039   0.024
+0.5 x daily ATR              1.14   25.1   0.037   0.044   0.031
+CURRENT logical target       1.74   10.8   0.034   0.038   0.030
+  current-target reasons: FIB 75% (hit 12%, meanR 0.03) | PDH 7% (hit 6%, meanR 0.03) | PDC 5% (hit 6%, meanR 0.06) | MIN1.2R 2% (hit 15%, meanR 0.15) | SWING 6% (hit 10%, meanR 0.09) | PDL 6% (hit 6%, meanR 0.04)
+
