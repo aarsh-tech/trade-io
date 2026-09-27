@@ -71,6 +71,9 @@ interface ScalperStrategyState {
   lastBrokerSlTrigger?: number;
   lastBrokerSlModifyTime?: number;
   lastTrailedCandleTime?: number;
+  /** Cross-path reentrancy guard: the realtime websocket monitor and the 3s poll monitor can both
+   *  detect the same SL/target breach concurrently; only one may execute exitPosition() at a time. */
+  isExiting?: boolean;
 }
 
 @Injectable()
@@ -307,9 +310,21 @@ export class NiftyOptionsScalperEngine {
       return { executionId: execution.id };
     }
 
-    this.initialCatchup(strategyId, replayDate).then(() => {
+    // Catch-up replays today's candles through placeTrade()/exitPositionHistorical() with a
+    // triggerTime set, which only ever simulates fills (no real broker order is ever sent — see
+    // placeTrade's isHistorical branch). For a LIVE strategy the 3s tick() timer above is already
+    // running concurrently with this replay: if the replay leaves a simulated position "open"
+    // (state.entryTriggered set) when it reaches the present moment, the live tick loop would treat
+    // it as a real position and could place a genuine market SELL for an option the account never
+    // bought. So catch-up only ever runs for paper trades (or an explicit backtest replayDate,
+    // which is never real money) — live strategies go straight to live ticking.
+    if (state.isPaperTrade || replayDate) {
+      this.initialCatchup(strategyId, replayDate).then(() => {
+        this.tick(strategyId).catch(e => this.logger.error(e));
+      }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
+    } else {
       this.tick(strategyId).catch(e => this.logger.error(e));
-    }).catch(e => this.logger.error(`Catch-up error: ${e.message}`));
+    }
 
     return { executionId: execution.id };
   }
@@ -824,7 +839,11 @@ export class NiftyOptionsScalperEngine {
       }
 
       if (!state.entryTriggered) this.log(state, `✅ Catch-up complete for Nifty 10-Point Scalper. Evaluated ${sessionCandles.length} 5-min candles for session (${targetSessionDateStr}).`);
-      state.tradesPlacedToday = 0;
+      // Do NOT reset tradesPlacedToday here: it started from the real DB-restored count (set in
+      // start()) and the loop above only added to it for genuine simulated round-trips (each one
+      // gated by the very same maxTradesPerDay check at the top of this loop). Zeroing it would
+      // throw away both of those and let the live tick() loop that follows place real trades beyond
+      // the user's configured daily cap.
       await this.persistLogs(state);
     } catch (err) {
       this.log(state, `⚠ Catch-up failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1491,23 +1510,39 @@ export class NiftyOptionsScalperEngine {
               this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`).catch(() => {});
             } else if (client) {
               try {
-                const partOrderId = await this.placeOrder(state, {
-                  symbol,
-                  exchange: exch,
-                  product: state.config.product,
-                  qty: bookQty,
-                  side: 'SELL',
-                  orderType: 'MARKET',
-                  intent: 'EXIT'
-                });
-                this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
-                this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
+                // Capital Wipeout Guard: every other exit path in this engine confirms the broker
+                // still holds the quantity it's about to sell before selling — this path was the
+                // one exception, so a manual square-off or a race with a just-filled SL could turn
+                // this into an unintended naked short. Check before placing the partial SELL.
+                const partialExitSafety = await isSafeToExit(client['kite'], symbol, 'SELL', this.logger);
+                const safeBookQty = partialExitSafety.safe ? Math.min(bookQty, Math.abs(partialExitSafety.brokerQty)) : 0;
+                if (safeBookQty <= 0) {
+                  state.isPartialBooked = false;
+                  state.executedQty = currentTotalQty;
+                  this.log(state, `ℹ [AUTO-SYNC] Skipped partial booking for ${symbol} — broker shows no sellable quantity (Broker Qty: ${partialExitSafety.brokerQty}). Position may already be reduced/closed manually.`);
+                } else {
+                  if (safeBookQty < bookQty) {
+                    state.executedQty = currentTotalQty - safeBookQty;
+                    this.log(state, `⚠ Broker only holds ${safeBookQty} of the intended ${bookQty} qty to book — clamping partial booking to what's actually held.`);
+                  }
+                  const partOrderId = await this.placeOrder(state, {
+                    symbol,
+                    exchange: exch,
+                    product: state.config.product,
+                    qty: safeBookQty,
+                    side: 'SELL',
+                    orderType: 'MARKET',
+                    intent: 'EXIT'
+                  });
+                  this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${safeBookQty} qty @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${state.executedQty} qty.`);
+                  this.trackOrderInDB(state, 'SELL', symbol, exch, safeBookQty, currentPrice, partOrderId).catch(() => {});
 
-                // Shrink the exchange SL order to the new remaining quantity (retries once
-                // internally; only logs success if the broker actually confirmed it).
-                const slQtyOk = await this.updateBrokerSlQuantitySafe(client, state, remainingQty);
-                if (slQtyOk) {
-                  this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${remainingQty} shares`);
+                  // Shrink the exchange SL order to the new remaining quantity (retries once
+                  // internally; only logs success if the broker actually confirmed it).
+                  const slQtyOk = await this.updateBrokerSlQuantitySafe(client, state, state.executedQty!);
+                  if (slQtyOk) {
+                    this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${state.executedQty} shares`);
+                  }
                 }
               } catch (partErr: any) {
                 this.log(state, `⚠ Partial profit exit notice: ${partErr.message}`);
@@ -1797,21 +1832,36 @@ export class NiftyOptionsScalperEngine {
             this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`).catch(() => {});
           } else if (client) {
             try {
-              const partOrderId = await this.placeOrder(state, {
-                symbol,
-                exchange: exch,
-                product: state.config.product,
-                qty: bookQty,
-                side: 'SELL',
-                orderType: 'MARKET',
-                intent: 'EXIT'
-              });
-              this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
-              this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
+              // Capital Wipeout Guard: see the matching realtime-monitor partial-booking path for
+              // why this check is required here too — without it, this was the one exit path in
+              // the engine that could sell more than the broker actually holds.
+              const partialExitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+              const safeBookQty = partialExitSafety.safe ? Math.min(bookQty, Math.abs(partialExitSafety.brokerQty)) : 0;
+              if (safeBookQty <= 0) {
+                state.isPartialBooked = false;
+                state.executedQty = currentTotalQty;
+                this.log(state, `ℹ [AUTO-SYNC] Skipped partial booking for ${symbol} — broker shows no sellable quantity (Broker Qty: ${partialExitSafety.brokerQty}). Position may already be reduced/closed manually.`);
+              } else {
+                if (safeBookQty < bookQty) {
+                  state.executedQty = currentTotalQty - safeBookQty;
+                  this.log(state, `⚠ Broker only holds ${safeBookQty} of the intended ${bookQty} qty to book — clamping partial booking to what's actually held.`);
+                }
+                const partOrderId = await this.placeOrder(state, {
+                  symbol,
+                  exchange: exch,
+                  product: state.config.product,
+                  qty: safeBookQty,
+                  side: 'SELL',
+                  orderType: 'MARKET',
+                  intent: 'EXIT'
+                });
+                this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${safeBookQty} qty @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${state.executedQty} qty.`);
+                this.trackOrderInDB(state, 'SELL', symbol, exch, safeBookQty, currentPrice, partOrderId).catch(() => {});
 
-              const slQtyOk = await this.updateBrokerSlQuantitySafe(client, state, remainingQty);
-              if (slQtyOk) {
-                this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${remainingQty} shares`);
+                const slQtyOk = await this.updateBrokerSlQuantitySafe(client, state, state.executedQty!);
+                if (slQtyOk) {
+                  this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${state.executedQty} shares`);
+                }
               }
             } catch (partErr: any) {
               this.log(state, `⚠ Partial profit exit notice in poll monitor: ${partErr.message}`);
@@ -1863,121 +1913,179 @@ export class NiftyOptionsScalperEngine {
   }
 
   private async exitPosition(state: ScalperStrategyState, client: any, exitPrice: number, reason: 'SL' | 'TARGET' | 'FORCE_CLOSE') {
-    const symbol = state.optionSymbol!;
-    const qty = state.executedQty || state.config.qty;
-    const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
-    this.stopRealtimeMonitor(state);
-
-    // Cancel open broker SL order safely to prevent double exits
-    if (!state.isPaperTrade && client && state.slOrderId && state.slOrderId !== 'FAILED') {
-      try {
-        await client.cancelOrder(state.slOrderId).catch(() => { });
-        this.log(state, `🧹 Cancelled pending Zerodha SL order (${state.slOrderId})`);
-      } catch { }
+    // Cross-path reentrancy guard: the realtime websocket monitor and the 3s poll monitor can both
+    // detect the same SL/target breach and call exitPosition() concurrently for the same position.
+    // Without this, both could place a market SELL and both could increment tradesPlacedToday /
+    // dailyLossesCount, corrupting the Two-Loss circuit breaker and risking an over-sold position.
+    if (state.isExiting) {
+      this.log(state, `ℹ Exit already in progress for ${state.optionSymbol}. Ignoring duplicate exit call (${reason}).`);
+      return;
     }
-
-    // ── 0. Capital Wipeout Guard: Verify Broker Net Quantity Before Exit ──────
-    if (!state.isPaperTrade && client) {
-      try {
-        const kite = client['kite'];
-        // The Kite positions API can lag right after an order fills — most likely right
-        // here, when the broker SL failed to arm moments earlier and we try to flatten
-        // immediately after entry. Trusting a single "flat" read would wrongly conclude
-        // "someone already closed this manually" and abandon a real, unprotected position
-        // with no broker-side stop and no monitor left running. Retry briefly before that.
-        let exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
-        for (let attempt = 0; attempt < 3 && !exitSafety.safe; attempt++) {
-          await new Promise(r => setTimeout(r, 700));
-          exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
-        }
-        if (!exitSafety.safe) {
-          this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}, confirmed after retry). Skipping duplicate exit order to prevent unintended short.`);
-          this.stopRealtimeMonitor(state);
-          state.entryTriggered = null;
-          state.optionSymbol = null;
-          state.entryPrice = null;
-          state.stopLossPrice = null;
-          state.targetPrice = null;
-          state.slOrderId = null;
-          state.isCostSlTrailed = false;
-          state.isProfitLockTrailed = false;
-          state.isDynamicTrailingActive = false;
-          state.isPartialBooked = false;
-          state.executedQty = undefined;
-          state.setupType = undefined;
-          state.indexInvalidationPrice = null;
-
-          strategyEvents.emit('strategy.update', {
-            strategyId: state.strategyId,
-            logs: state.logs,
-            state: this.getState(state.strategyId),
-          });
-          return;
-        }
-      } catch (err: any) {
-        this.log(state, `⚠ Position sync check notice: ${err.message}`);
-      }
-    }
-
+    state.isExiting = true;
     try {
-      const exitOrderId = state.isPaperTrade
-        ? `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`
-        : await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product, qty, side: 'SELL', orderType: 'MARKET', intent: 'EXIT' });
+      const symbol = state.optionSymbol!;
+      const qty = state.executedQty || state.config.qty;
+      const exch = state.futureExchange === 'BFO' ? 'BFO' : 'NFO';
+      this.stopRealtimeMonitor(state);
 
-      await this.trackOrderInDB(state, 'SELL', symbol, exch, qty, exitPrice, exitOrderId);
-      state.tradesPlacedToday++;
-      state.lastExitTimestamp = Date.now();
+      // Cancel open broker SL order safely to prevent double exits
+      if (!state.isPaperTrade && client && state.slOrderId && state.slOrderId !== 'FAILED') {
+        try {
+          await client.cancelOrder(state.slOrderId).catch(() => { });
+          this.log(state, `🧹 Cancelled pending Zerodha SL order (${state.slOrderId})`);
+        } catch { }
+      }
 
-      const isLoss = reason === 'SL' || (state.entryPrice !== null && exitPrice < state.entryPrice);
-      if (isLoss) {
-        state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
-        this.log(state, `🛑 Stop Loss Recorded [Daily Losses: ${state.dailyLossesCount}/${state.config.maxLossesPerDay || 2}]`);
+      // ── 0. Capital Wipeout Guard: Verify Broker Net Quantity Before Exit ──────
+      if (!state.isPaperTrade && client) {
+        try {
+          const kite = client['kite'];
+          // The Kite positions API can lag right after an order fills — most likely right
+          // here, when the broker SL failed to arm moments earlier and we try to flatten
+          // immediately after entry. Trusting a single "flat" read would wrongly conclude
+          // "someone already closed this manually" and abandon a real, unprotected position
+          // with no broker-side stop and no monitor left running. Retry briefly before that.
+          let exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+          for (let attempt = 0; attempt < 3 && !exitSafety.safe; attempt++) {
+            await new Promise(r => setTimeout(r, 700));
+            exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+          }
+          if (!exitSafety.safe) {
+            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}, confirmed after retry). Skipping duplicate exit order to prevent unintended short.`);
+            this.stopRealtimeMonitor(state);
+            state.entryTriggered = null;
+            state.optionSymbol = null;
+            state.entryPrice = null;
+            state.stopLossPrice = null;
+            state.targetPrice = null;
+            state.slOrderId = null;
+            state.isCostSlTrailed = false;
+            state.isProfitLockTrailed = false;
+            state.isDynamicTrailingActive = false;
+            state.isPartialBooked = false;
+            state.executedQty = undefined;
+            state.setupType = undefined;
+            state.indexInvalidationPrice = null;
 
-        // Two-Loss Circuit Breaker
-        if (state.dailyLossesCount >= (state.config.maxLossesPerDay || 2)) {
-          this.log(state, `🛡 [CIRCUIT BREAKER] Daily loss limit reached (${state.dailyLossesCount} losses). Auto-stopping scalper for today to preserve capital.`);
-          // Position is already flat: clear it so stopWithStatus does not try to flatten again (would double-SELL).
-          state.entryTriggered = null;
-          state.optionSymbol = null;
-          state.slOrderId = null;
-          await this.stopWithStatus(state.strategyId, 'COMPLETED', `🛡 Auto-Stopped: Daily loss limit reached`);
+            strategyEvents.emit('strategy.update', {
+              strategyId: state.strategyId,
+              logs: state.logs,
+              state: this.getState(state.strategyId),
+            });
+            return;
+          }
+        } catch (err: any) {
+          this.log(state, `⚠ Position sync check notice: ${err.message}`);
+        }
+      }
+
+      try {
+        const exitOrderId = state.isPaperTrade
+          ? `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`
+          : await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product, qty, side: 'SELL', orderType: 'MARKET', intent: 'EXIT' });
+
+        // ── Fill Confirmation / Fail-Safe Flattener (live only) ──────────────────
+        // A MARKET order can be accepted by Kite yet later reject or only partial-fill at RMS.
+        // Confirm the broker is actually flat before counting this trade and clearing our
+        // protective state — clearing on an unconfirmed fill would let tick() open a brand-new
+        // position while the old one may still be open at the broker with no SL protecting it.
+        let orphanQty = 0;
+        if (!state.isPaperTrade && client) {
+          try {
+            await new Promise(r => setTimeout(r, 600)); // Allow exchange match to settle
+            const kite = client['kite'];
+            const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger);
+            if (finalPos.isOpen && finalPos.netQty !== 0) {
+              orphanQty = Math.abs(finalPos.netQty);
+              this.log(state, `🚨 [FAIL-SAFE] ${symbol} still shows ${orphanQty} open at the broker after the exit MARKET order. Attempting emergency flatten...`);
+              const emergencyId = await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product, qty: orphanQty, side: 'SELL', orderType: 'MARKET', intent: 'EXIT' })
+                .catch((e: any) => { this.log(state, `❌ Emergency flatten failed: ${e.message}`); return null; });
+              if (emergencyId) {
+                this.log(state, `🛡 Emergency flatten executed: ${emergencyId}`);
+                orphanQty = 0;
+              }
+            }
+          } catch (checkErr: any) {
+            this.log(state, `⚠ Post-exit broker confirmation notice: ${checkErr.message}`);
+          }
+        }
+
+        if (orphanQty > 0) {
+          // Still not flat: keep the position ACTIVE (do not count the trade or clear protective
+          // state yet) and re-arm the exchange SL so it isn't naked; the monitor retries next tick.
+          state.executedQty = orphanQty;
+          if (state.stopLossPrice) {
+            try {
+              const trig = this.roundTick(state.stopLossPrice);
+              state.slOrderId = await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product ?? 'MIS', qty: orphanQty, side: 'SELL', orderType: 'SL', price: this.roundTick(Math.max(0.05, trig - 1.00)), triggerPrice: trig, intent: 'PROTECTIVE' })
+                .catch((e: any) => { this.log(state, `❌ Could not re-arm exchange SL: ${e.message}`); return null; });
+              state.lastBrokerSlTrigger = state.slOrderId ? trig : undefined;
+            } catch (reArmErr: any) {
+              this.log(state, `❌ SL re-arm error: ${reArmErr.message}`);
+            }
+          }
+          this.startRealtimeMonitor(state, client).catch(() => { });
+          this.log(state, `🚨 Exit NOT completed — ${orphanQty} contracts still open at the broker. Keeping position active for retry on the next tick.`);
           return;
         }
-      }
 
-      this.stopRealtimeMonitor(state);
-      state.entryTriggered = null;
-      state.optionSymbol = null;
-      state.entryPrice = null;
-      state.stopLossPrice = null;
-      state.targetPrice = null;
-      state.slOrderId = null;
-      state.isCostSlTrailed = false;
-      state.isProfitLockTrailed = false;
-      state.isDynamicTrailingActive = false;
-      state.isPartialBooked = false;
-      state.executedQty = undefined;
-      state.setupType = undefined;
-      state.indexInvalidationPrice = null;
+        await this.trackOrderInDB(state, 'SELL', symbol, exch, qty, exitPrice, exitOrderId);
+        state.tradesPlacedToday++;
+        state.lastExitTimestamp = Date.now();
 
-      strategyEvents.emit('strategy.update', {
-        strategyId: state.strategyId,
-        logs: state.logs,
-        state: this.getState(state.strategyId),
-      });
-    } catch (e) {
-      this.log(state, `❌ Exit execution failed: ${e instanceof Error ? e.message : String(e)}`);
-      // The broker SL was cancelled above; if we are live and still long, re-arm it so the position is not naked.
-      if (!state.isPaperTrade && client && state.entryTriggered && state.stopLossPrice) {
-        try {
-          const trig = this.roundTick(state.stopLossPrice);
-          state.slOrderId = await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product ?? 'MIS', qty, side: 'SELL', orderType: 'SL', price: this.roundTick(Math.max(0.05, trig - 1.00)), triggerPrice: trig, intent: 'PROTECTIVE' });
-          state.lastBrokerSlTrigger = trig;
-          this.log(state, `🛡 Re-armed broker SL (${state.slOrderId}) after failed exit.`);
-        } catch (re: any) {
-          this.log(state, `🚨 EXIT FAILED AND SL RE-ARM FAILED for ${symbol}. POSITION MAY BE UNPROTECTED - close manually in Kite.`);
+        const isLoss = reason === 'SL' || (state.entryPrice !== null && exitPrice < state.entryPrice);
+        if (isLoss) {
+          state.dailyLossesCount = (state.dailyLossesCount || 0) + 1;
+          this.log(state, `🛑 Stop Loss Recorded [Daily Losses: ${state.dailyLossesCount}/${state.config.maxLossesPerDay || 2}]`);
+
+          // Two-Loss Circuit Breaker
+          if (state.dailyLossesCount >= (state.config.maxLossesPerDay || 2)) {
+            this.log(state, `🛡 [CIRCUIT BREAKER] Daily loss limit reached (${state.dailyLossesCount} losses). Auto-stopping scalper for today to preserve capital.`);
+            // Position is already flat: clear it so stopWithStatus does not try to flatten again (would double-SELL).
+            state.entryTriggered = null;
+            state.optionSymbol = null;
+            state.slOrderId = null;
+            await this.stopWithStatus(state.strategyId, 'COMPLETED', `🛡 Auto-Stopped: Daily loss limit reached`);
+            return;
+          }
+        }
+
+        this.stopRealtimeMonitor(state);
+        state.entryTriggered = null;
+        state.optionSymbol = null;
+        state.entryPrice = null;
+        state.stopLossPrice = null;
+        state.targetPrice = null;
+        state.slOrderId = null;
+        state.isCostSlTrailed = false;
+        state.isProfitLockTrailed = false;
+        state.isDynamicTrailingActive = false;
+        state.isPartialBooked = false;
+        state.executedQty = undefined;
+        state.setupType = undefined;
+        state.indexInvalidationPrice = null;
+
+        strategyEvents.emit('strategy.update', {
+          strategyId: state.strategyId,
+          logs: state.logs,
+          state: this.getState(state.strategyId),
+        });
+      } catch (e) {
+        this.log(state, `❌ Exit execution failed: ${e instanceof Error ? e.message : String(e)}`);
+        // The broker SL was cancelled above; if we are live and still long, re-arm it so the position is not naked.
+        if (!state.isPaperTrade && client && state.entryTriggered && state.stopLossPrice) {
+          try {
+            const trig = this.roundTick(state.stopLossPrice);
+            state.slOrderId = await this.placeOrder(state, { symbol, exchange: exch, product: state.config.product ?? 'MIS', qty, side: 'SELL', orderType: 'SL', price: this.roundTick(Math.max(0.05, trig - 1.00)), triggerPrice: trig, intent: 'PROTECTIVE' });
+            state.lastBrokerSlTrigger = trig;
+            this.log(state, `🛡 Re-armed broker SL (${state.slOrderId}) after failed exit.`);
+          } catch (re: any) {
+            this.log(state, `🚨 EXIT FAILED AND SL RE-ARM FAILED for ${symbol}. POSITION MAY BE UNPROTECTED - close manually in Kite.`);
+          }
         }
       }
+    } finally {
+      state.isExiting = false;
     }
   }
 

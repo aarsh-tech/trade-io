@@ -95,6 +95,9 @@ interface StrategyState {
   } | null;
   reEntryEligible?: boolean;
   reEntrySwingPrice?: number | null;
+  /** Direction of the trade that armed re-entry. The consumer only implements a bullish (LONG)
+   *  continuation, so re-entry must never fire for a SHORT-direction exit. */
+  reEntryDirection?: 'LONG' | 'SHORT' | null;
   reEntryCountToday?: number;
   isAutoMode?: boolean;
   activeSymbol?: string | null;
@@ -102,6 +105,7 @@ interface StrategyState {
   dailyTargetLocked?: boolean;
   lastBrokerSlTrigger?: number;
   lastBrokerSlModifyTime?: number;
+  lastSlArmRetryTime?: number;
   isProcessingTick?: boolean;
   isPlacingTrade?: boolean;
   isExiting?: boolean;
@@ -1006,7 +1010,10 @@ export class EmaVwapCrossoverEngine {
       const kite = client['kite'];
 
       // ── Check Max Daily Trade Cap ───────────────────────────────────────────
-      if (state.tradesPlacedToday >= config.maxTradesPerDay) {
+      // Gated on !state.entryTriggered: a position that was just opened already counts toward
+      // tradesPlacedToday, so this must not force-close it — it only blocks NEW entries once the
+      // current position (if any) has naturally exited via its own SL/target.
+      if (!state.entryTriggered && state.tradesPlacedToday >= config.maxTradesPerDay) {
         this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached.`);
         await this.persistLogs(state);
         await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
@@ -1027,7 +1034,10 @@ export class EmaVwapCrossoverEngine {
       // ── Phase 3: Monitor Active Position (Strict Single-Stock Policy) ────────
       if (state.entryTriggered) {
         // Auto-sync with broker: If position for activeSymbol was closed at broker, sync state immediately
-        if (!state.isPaperTrade && kite && kite.getPositions && !state.isPlacingTrade) {
+        // Gated on !state.isExiting so this doesn't race with a concurrent exitPosition() call (e.g. from the
+        // realtime websocket monitor) doing its own accounting for the same position at the same time.
+        if (!state.isPaperTrade && kite && kite.getPositions && !state.isPlacingTrade && !state.isExiting) {
+          state.isExiting = true;
           try {
             const symbolToMonitor = state.optionSymbol || state.activeSymbol || config.symbol;
             const brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger);
@@ -1124,6 +1134,11 @@ export class EmaVwapCrossoverEngine {
             }
           } catch (syncErr: any) {
             this.logger.debug?.(`Broker sync notice: ${syncErr.message}`);
+          } finally {
+            // Always release the lock: either the position is still open (normal monitoring
+            // continues below) or state.entryTriggered was already cleared above — either way,
+            // a stuck `true` here would permanently block every future exitPosition() call.
+            state.isExiting = false;
           }
         }
 
@@ -1189,7 +1204,7 @@ export class EmaVwapCrossoverEngine {
 
       // ── Trend Continuation Re-Entry (Catch Leg 2 on EMA Re-Claim) ────────────
       const currentHhmm = this.getIstHhmm(now);
-      if (config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && currentHhmm < 15 * 60) {
+      if (config.enableTrendReEntry !== false && state.reEntryEligible && state.reEntryDirection === 'LONG' && state.reEntrySwingPrice && !state.entryTriggered && (state.reEntryCountToday || 0) < 1 && currentHhmm < 15 * 60) {
         try {
           const candleSymbol = state.activeSymbol || config.symbol;
           const candleExchange = state.futureSymbol ? state.futureExchange : config.exchange;
@@ -1205,6 +1220,7 @@ export class EmaVwapCrossoverEngine {
             if (curEma && curVwap && lastCandle.close > curEma && lastCandle.close > curVwap && lastCandle.close > state.reEntrySwingPrice) {
               this.log(state, `🔥 [TREND RE-ENTRY TRIGGERED] ${candleSymbol} re-claimed ${config.emaPeriod || 15}-EMA & VWAP and broke swing high (₹${state.reEntrySwingPrice.toFixed(2)}) @ ₹${lastCandle.close.toFixed(2)}! Entering Trend Continuation Leg 2.`);
               state.reEntryEligible = false;
+              state.reEntryDirection = null;
               state.reEntryCountToday = (state.reEntryCountToday || 0) + 1;
               await this.placeTrade(state, client, account, 'BUY', lastCandle.close, now, now, Math.min(lastCandle.low, curEma), state.reEntrySwingPrice);
               await this.persistLogs(state);
@@ -2588,6 +2604,44 @@ export class EmaVwapCrossoverEngine {
       }
     }
 
+    // ── 0b. Missing Stop-Loss Safety Net (retry if broker SL was never armed) ──
+    // Unlike the partial-fill sync above (gated on executedQty < config.qty), this runs on
+    // every poll regardless of fill completeness, so a fully-filled entry whose initial SL
+    // placement failed still gets a broker-side stop instead of running unprotected forever.
+    if (!state.isPaperTrade && kite && state.entryTriggered && (state.executedQty || 0) > 0 &&
+      (!state.slOrderId || state.slOrderId === 'FAILED') && state.stopLossPrice &&
+      (Date.now() - (state.lastSlArmRetryTime || 0) > 5000)) {
+      state.lastSlArmRetryTime = Date.now();
+      try {
+        const isOptionRetry = !!(state.config.isOptionBuyingOnly && state.optionSymbol);
+        const exitSideRetry = isOptionRetry ? 'SELL' : (state.entryTriggered === 'LONG' ? 'SELL' : 'BUY');
+        const symTickSizeRetry = isOptionRetry ? 0.05 : getInstrumentTickSize(symbol, state.entryPrice || 0);
+        const slLimitPriceRetry = exitSideRetry === 'BUY'
+          ? this.roundTick(isOptionRetry ? state.stopLossPrice * 1.02 : state.stopLossPrice + symTickSizeRetry * 3, symbol)
+          : this.roundTick(isOptionRetry ? state.stopLossPrice * 0.98 : state.stopLossPrice - symTickSizeRetry * 3, symbol);
+        const slTriggerPriceRetry = this.roundTick(state.stopLossPrice, symbol);
+        const retrySlOrderId = await this.placeOrder(state, {
+          symbol,
+          exchange,
+          product: state.config.product ?? 'MIS',
+          qty: state.executedQty!,
+          side: exitSideRetry,
+          orderType: 'SL',
+          price: slLimitPriceRetry,
+          triggerPrice: slTriggerPriceRetry,
+          intent: 'PROTECTIVE'
+        }).catch((e: any) => { this.log(state, `❌ SL retry failed: ${e.message}`); return null; });
+        if (retrySlOrderId) {
+          state.slOrderId = retrySlOrderId;
+          this.log(state, `🛡 Re-armed missing Stop Loss at broker (${state.executedQty} shares) after earlier placement failure: Trigger ₹${slTriggerPriceRetry.toFixed(2)} | OrderId: ${retrySlOrderId}`);
+        } else {
+          this.log(state, `⚠ Position still has NO broker-side Stop Loss protection — will retry again next poll.`);
+        }
+      } catch (e: any) {
+        this.log(state, `⚠ SL retry attempt error: ${e.message}`);
+      }
+    }
+
     // ── 1. 3:05 PM Mandatory EOD Cutoff ──────────────────────────────────────
     const currentHhmm = this.getIstHhmm(new Date());
     if (currentHhmm >= 15 * 60 + 5 && state.entryTriggered) {
@@ -3025,8 +3079,12 @@ export class EmaVwapCrossoverEngine {
         this.log(state, stopReason);
       }
 
-      if (config.enableTrendReEntry !== false && !shouldStopStrategy && (state.reEntryCountToday || 0) < 1 && (reason === 'TARGET' || state.isTrailingEma)) {
+      if (config.enableTrendReEntry !== false && !shouldStopStrategy && (state.reEntryCountToday || 0) < 1 && (reason === 'TARGET' || state.isTrailingEma) && isLong) {
+        // Re-entry only ever fires as a BUY (bullish EMA/VWAP reclaim) below, so only arm it for a
+        // LONG-direction exit — arming it here for a SHORT would let a bearish trade's exit trigger
+        // an unrelated, wrong-direction BUY with real capital.
         state.reEntryEligible = true;
+        state.reEntryDirection = 'LONG';
         state.reEntrySwingPrice = state.currentLtp || actualExitPrice;
         this.log(state, `🔁 [RE-ENTRY ARMED] ${symbol} exited trend trail. If price reclaims 15-EMA and breaks swing high (₹${(state.reEntrySwingPrice || 0).toFixed(2)}) with VWAP support, Leg 2 Re-Entry will execute!`);
       }
@@ -3064,8 +3122,103 @@ export class EmaVwapCrossoverEngine {
         await this.persistLogs(state);
         await this.stopWithStatus(state.strategyId, 'COMPLETED', stopReason);
       }
-    } catch (e) {
+    } catch (e: any) {
       this.log(state, `❌ Exit execution failed: ${e.message}`);
+      // The market exit order may already have gone through at the broker before this error hit
+      // (e.g. a DB blip while recording the fill) — check broker truth rather than trusting our
+      // own in-memory flag, so a real closed position doesn't sit "open" in our state forever with
+      // its P&L silently dropped from the daily loss/target ("One-and-Done") tracking.
+      if (!state.isPaperTrade && client && client['kite']) {
+        try {
+          const kite = client['kite'];
+          await new Promise(r => setTimeout(r, 600));
+          const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger);
+          if (!finalPos.isOpen || finalPos.netQty === 0) {
+            const approxExitPrice = state.currentLtp || exitPrice || cachedEntryPrice;
+            const tradePnl = (cachedEntryPrice > 0 && approxExitPrice > 0)
+              ? (isLong ? (approxExitPrice - cachedEntryPrice) : (cachedEntryPrice - approxExitPrice)) * qty
+              : 0;
+            state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
+            this.log(state, `⚠ [RECOVERY] Confirmed ${symbol} is flat at the broker despite the error above. Reconciling state with an approximate exit price ₹${approxExitPrice.toFixed(2)} (Trade P&L: ₹${tradePnl.toFixed(2)}). Verify the actual fill price in Zerodha's order book.`);
+
+            state.entryTriggered = null;
+            state.optionSymbol = null;
+            state.entryPrice = null;
+            state.entryTime = null;
+            state.stopLossPrice = null;
+            state.spotStopLossPrice = null;
+            state.targetPrice = null;
+            state.slOrderId = null;
+            state.targetOrderId = null;
+            state.waitingForConfirmation = null;
+            state.confirmationHigh = null;
+            state.confirmationLow = null;
+            state.invalidationPrice = null;
+            state.setupTimestamp = null;
+            state.setupType = undefined;
+            state.peakPnlRs = 0;
+            state.lockedProfitRs = 0;
+            state.isTrailingEma = false;
+            state.partialTargetPrice = null;
+            state.partialBooked = false;
+            state.isBookingPartial = false;
+
+            if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
+            state.cooldownSymbols.set(symbol, Date.now() + 45 * 60 * 1000);
+
+            const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
+            const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : (targetThresholdRs * 1.5);
+            let shouldStopStrategy = false;
+            let stopReason = '';
+            if (config.enableDailyPnLLock !== false) {
+              if (state.dailyRealizedPnlRs >= targetThresholdRs) {
+                state.dailyTargetLocked = true;
+                shouldStopStrategy = true;
+                stopReason = `🎯 Daily Profit Target Reached (+₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day.`;
+              } else if (state.dailyRealizedPnlRs <= -maxRiskRs) {
+                state.dailyTargetLocked = true;
+                shouldStopStrategy = true;
+                stopReason = `🛑 Daily Max Loss Limit Reached (₹${state.dailyRealizedPnlRs.toFixed(2)})! 'One-and-Done' Rule Active — Trading safely locked for the day to preserve capital.`;
+              }
+            }
+            if (!shouldStopStrategy && state.tradesPlacedToday >= config.maxTradesPerDay) {
+              shouldStopStrategy = true;
+              stopReason = `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached. Auto-stopping strategy for today.`;
+            }
+
+            strategyEvents.emit('strategy.update', {
+              strategyId: state.strategyId,
+              logs: state.logs,
+              state: this.getState(state.strategyId),
+            });
+            await this.persistLogs(state);
+            if (shouldStopStrategy) {
+              this.log(state, stopReason);
+              await this.stopWithStatus(state.strategyId, 'COMPLETED', stopReason);
+            }
+          } else {
+            this.log(state, `🚨 [UNRESOLVED] ${symbol} still shows ${finalPos.netQty} shares open at the broker after the exit error. Re-arming exchange stop-loss and keeping the position ACTIVE for retry on the next tick.`);
+            state.executedQty = Math.abs(finalPos.netQty);
+            if (state.stopLossPrice) {
+              try {
+                const tickSz = getInstrumentTickSize(symbol, state.stopLossPrice);
+                const trig = this.roundTick(state.stopLossPrice, symbol);
+                const lim = this.roundTick(exitSide === 'SELL' ? trig - tickSz * 3 : trig + tickSz * 3, symbol);
+                state.slOrderId = await this.placeOrder(state, {
+                  symbol, exchange, product: config.product ?? 'MIS', qty: state.executedQty, side: exitSide,
+                  orderType: 'SL', price: lim, triggerPrice: trig, intent: 'PROTECTIVE'
+                }).catch((slErr: any) => { this.log(state, `❌ Could not re-arm exchange SL: ${slErr.message}`); return null; });
+                state.lastBrokerSlTrigger = state.slOrderId ? trig : undefined;
+              } catch (reArmErr: any) {
+                this.log(state, `❌ SL re-arm error: ${reArmErr.message}`);
+              }
+            }
+            this.startRealtimeMonitor(state, client).catch(() => { });
+          }
+        } catch (reconcileErr: any) {
+          this.log(state, `⚠ Post-error broker reconciliation check failed: ${reconcileErr.message}. Position state left ACTIVE — the next tick's broker-sync check will retry.`);
+        }
+      }
     } finally {
       state.isExiting = false;
     }
