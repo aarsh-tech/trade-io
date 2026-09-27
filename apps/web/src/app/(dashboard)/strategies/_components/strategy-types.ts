@@ -79,7 +79,7 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
     riskNote: "Fast trades; lots can scale with your available margin.",
     instrument: "Index options (NIFTY, SENSEX)",
     bestFor: "Short scalps with tight, point-based risk",
-    timing: "From 09:20",
+    timing: "From 10:45",
     icon: Target,
     tile: "bg-signal-subtle text-signal border-signal/30",
     defaultName: "Nifty Options Scalper",

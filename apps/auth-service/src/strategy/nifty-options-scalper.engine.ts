@@ -196,7 +196,7 @@ export class NiftyOptionsScalperEngine {
       maxPremium: parsedConfig.maxPremium,
       enableOrbTrigger: parsedConfig.enableOrbTrigger !== undefined ? parsedConfig.enableOrbTrigger : false,
       enablePullbackTrigger: parsedConfig.enablePullbackTrigger !== undefined ? parsedConfig.enablePullbackTrigger : true,
-      enableCrossoverTrigger: parsedConfig.enableCrossoverTrigger !== undefined ? parsedConfig.enableCrossoverTrigger : false,
+      enableCrossoverTrigger: parsedConfig.enableCrossoverTrigger !== undefined ? parsedConfig.enableCrossoverTrigger : true,
       enableRsiFilter: parsedConfig.enableRsiFilter !== undefined ? parsedConfig.enableRsiFilter : false,
       enableRangeFilter: parsedConfig.enableRangeFilter !== undefined ? parsedConfig.enableRangeFilter : true,
       enableStagnancyExit: parsedConfig.enableStagnancyExit !== undefined ? parsedConfig.enableStagnancyExit : true,
@@ -212,7 +212,7 @@ export class NiftyOptionsScalperEngine {
       minRvol: parsedConfig.minRvol || 0.9,
       enableTrendBiasFilter: parsedConfig.enableTrendBiasFilter !== undefined ? parsedConfig.enableTrendBiasFilter : true,
       enableMacroDayBias: parsedConfig.enableMacroDayBias !== undefined ? parsedConfig.enableMacroDayBias : false,
-      entryStartTime: parsedConfig.entryStartTime || '09:45',
+      entryStartTime: parsedConfig.entryStartTime || '10:45',
       entryCutoffTime: parsedConfig.entryCutoffTime || '14:15',
       minRejectionWickPct: parsedConfig.minRejectionWickPct !== undefined ? parsedConfig.minRejectionWickPct : 0.0,
       timeframe: parsedConfig.timeframe || '5minute',
@@ -669,10 +669,14 @@ export class NiftyOptionsScalperEngine {
         }
 
         // 2. Start Time, Cutoff & Midday Dead-Zone Filter
+        // ORB gets its own earlier gate (9:30, its natural opening-range window) when enabled;
+        // pullback and crossover still wait for entryStartTime to avoid the opening whipsaw.
         const candleHhmm = this.getIstHhmm(currentCandle.date);
-        const startHhmm = this.parseHhmm(state.config.entryStartTime || '10:05');
+        const startHhmm = this.parseHhmm(state.config.entryStartTime || '10:45');
         const cutoffHhmm = this.parseHhmm(state.config.entryCutoffTime || '14:15');
-        if (candleHhmm < startHhmm || candleHhmm >= cutoffHhmm) continue;
+        const orbWindowStartHhmm = 9 * 60 + 30;
+        const earliestPossibleHhmm = state.config.enableOrbTrigger ? Math.min(startHhmm, orbWindowStartHhmm) : startHhmm;
+        if (candleHhmm < earliestPossibleHhmm || candleHhmm >= cutoffHhmm) continue;
 
         if (state.config.enableMiddayChopFilter !== false) {
           const deadStart = this.parseHhmm(state.config.middayDeadZoneStart || '12:15');
@@ -702,8 +706,9 @@ export class NiftyOptionsScalperEngine {
         let setupName = '';
         let triggerPriceLevel = currentCandle.close;
 
-        // Trigger 1: EMA-VWAP Crossover (if enabled)
-        if (state.config.enableCrossoverTrigger && prevEma !== null && prevVwap !== null) {
+        // Trigger 1: EMA-VWAP Crossover (if enabled) — waits for entryStartTime like Pullback;
+        // only ORB is allowed to fire before that (see the gate above).
+        if (state.config.enableCrossoverTrigger && candleHhmm >= startHhmm && prevEma !== null && prevVwap !== null) {
           if (prevEma <= prevVwap && currentEma > currentVwap) {
             triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover'; triggerPriceLevel = currentCandle.high;
           } else if (prevEma >= prevVwap && currentEma < currentVwap) {
@@ -901,9 +906,14 @@ export class NiftyOptionsScalperEngine {
     }
 
     // 1. Start Time, Cutoff & Midday Dead-Zone Filter
-    const startHhmm = this.parseHhmm(config.entryStartTime || '09:45');
-    if (hhmm < startHhmm) {
-      return; // Skip early opening noise before 09:45 AM
+    // ORB is meant to catch the early breakout itself, so — when enabled — it gets its own
+    // earlier gate (its window starts at 9:30 regardless of entryStartTime); pullback and
+    // crossover still wait for entryStartTime (default 10:45) to avoid the opening whipsaw.
+    const startHhmm = this.parseHhmm(config.entryStartTime || '10:45');
+    const orbWindowStartHhmm = 9 * 60 + 30;
+    const earliestPossibleHhmm = config.enableOrbTrigger ? Math.min(startHhmm, orbWindowStartHhmm) : startHhmm;
+    if (hhmm < earliestPossibleHhmm) {
+      return; // Nothing can trigger yet
     }
     const cutoffHhmm = this.parseHhmm(config.entryCutoffTime || '14:15');
     if (hhmm >= cutoffHhmm) {
@@ -983,8 +993,10 @@ export class NiftyOptionsScalperEngine {
         const isRangeValid = config.enableRangeFilter === false || candleRange >= scanParams.minCandleRange;
 
         if (isRangeValid) {
-          // 1. EMA-VWAP Crossover Trigger (if enabled)
-          if (config.enableCrossoverTrigger && prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
+          // 1. EMA-VWAP Crossover Trigger (if enabled) — waits for entryStartTime like Pullback;
+          // only ORB is allowed to fire before that (see the gate at the top of tick()).
+          const candleHhmm = this.getIstHhmm(currentCandle.date);
+          if (config.enableCrossoverTrigger && candleHhmm >= startHhmm && prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
             if (prevEma <= prevVwap && currEma > currVwap && currentCandle.close >= currVwap && currentCandle.close >= currEma && currentCandle.close >= currentCandle.open) {
               triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover';
             } else if (prevEma >= prevVwap && currEma < currVwap && currentCandle.close <= currVwap && currentCandle.close <= currEma && currentCandle.close <= currentCandle.open) {
@@ -995,7 +1007,7 @@ export class NiftyOptionsScalperEngine {
           // 2. High-Probability 15-EMA VWAP Pullback Rejection (Captures 82.6% Institutional Sniper scalps)
           if (!triggerSide && config.enablePullbackTrigger && currEma !== null && currVwap !== null) {
             const candleHhmm = this.getIstHhmm(currentCandle.date);
-            const startHhmm = this.parseHhmm(config.entryStartTime || '09:45');
+            const startHhmm = this.parseHhmm(config.entryStartTime || '10:45');
             if (candleHhmm >= startHhmm) {
               const isCeSlope = prevEma === null || currEma >= prevEma - 0.5;
               const isPeSlope = prevEma === null || currEma <= prevEma + 0.5;
@@ -1012,7 +1024,6 @@ export class NiftyOptionsScalperEngine {
           }
 
           // 3. 15-Min Opening Range Breakdown (ORB) — strictly active between 9:30 AM and 11:30 AM!
-          const candleHhmm = this.getIstHhmm(currentCandle.date);
           const isOrbTimeWindow = candleHhmm >= 9 * 60 + 30 && candleHhmm <= 11 * 60 + 30;
           let orbHigh: number | null = null;
           let orbLow: number | null = null;
@@ -1168,40 +1179,45 @@ export class NiftyOptionsScalperEngine {
 
     // Dynamic Capital Sizing & Lot Auto-Calculation
     const isHistorical = !!triggerTime;
-    let capital = (config as any).maxCapital;
-    if (!capital || capital <= 0) {
-      if (client && !state.isPaperTrade && !isHistorical) {
-        try {
-          const k = client['kite'] || client;
-          const liveMargins = await (k.getMargins ? k.getMargins() : client.getMargins?.()).catch(() => null);
-          const liveCash = liveMargins?.equity?.available?.live_balance
-            ?? liveMargins?.equity?.available?.cash
-            ?? liveMargins?.equity?.net
-            ?? liveMargins?.available?.live_balance
-            ?? liveMargins?.available?.cash
-            ?? liveMargins?.net;
-          if (liveCash && liveCash > 0) {
-            capital = Number(liveCash);
-            this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${capital.toLocaleString('en-IN')}`);
-          }
-        } catch { }
-      }
-    }
-    if (!capital || capital <= 0) capital = 15000;
-
     const lotSize = params.defaultLotSize;
-
-    // Dynamic sizing: Reserve 15% cash buffer (min ₹1,000), deploy 85% tradeable margin for option buying
-    const capitalBuffer = Math.max(1000, capital * 0.15);
-    const tradeableCapital = Math.max(2000, capital - capitalBuffer);
-    const perLotCost = entry * lotSize;
-    let dynamicLots = Math.max(1, Math.floor(tradeableCapital / Math.max(1, perLotCost)));
-
     const maxLots = (config as any).maxLots || 25;
-    if (config.enableDynamicSizing !== false) {
-      dynamicLots = Math.min(maxLots, Math.max(1, dynamicLots));
-    } else if (config.lots && config.lots > 1) {
-      dynamicLots = Math.max(config.lots, dynamicLots);
+    let dynamicLots: number;
+
+    if (config.enableDynamicSizing === false) {
+      // Fixed sizing: the user explicitly turned dynamic sizing OFF, so trade exactly
+      // config.lots. Previously this only kicked in when config.lots > 1, so the common
+      // case (lots left at the default of 1) silently fell through to the capital-derived
+      // count below instead — a user who thought they'd pinned the size to 1 lot could end
+      // up trading many more. Also skip the live-margin lookup entirely: its result would
+      // just be discarded, so there is no reason to pay for the extra Kite API call.
+      dynamicLots = Math.max(1, config.lots || 1);
+    } else {
+      let capital = (config as any).maxCapital;
+      if (!capital || capital <= 0) {
+        if (client && !state.isPaperTrade && !isHistorical) {
+          try {
+            const k = client['kite'] || client;
+            const liveMargins = await (k.getMargins ? k.getMargins() : client.getMargins?.()).catch(() => null);
+            const liveCash = liveMargins?.equity?.available?.live_balance
+              ?? liveMargins?.equity?.available?.cash
+              ?? liveMargins?.equity?.net
+              ?? liveMargins?.available?.live_balance
+              ?? liveMargins?.available?.cash
+              ?? liveMargins?.net;
+            if (liveCash && liveCash > 0) {
+              capital = Number(liveCash);
+              this.log(state, `💰 Live Zerodha Equity Margin detected: ₹${capital.toLocaleString('en-IN')}`);
+            }
+          } catch { }
+        }
+      }
+      if (!capital || capital <= 0) capital = 15000;
+
+      // Dynamic sizing: Reserve 15% cash buffer (min ₹1,000), deploy 85% tradeable margin for option buying
+      const capitalBuffer = Math.max(1000, capital * 0.15);
+      const tradeableCapital = Math.max(2000, capital - capitalBuffer);
+      const perLotCost = entry * lotSize;
+      dynamicLots = Math.min(maxLots, Math.max(1, Math.floor(tradeableCapital / Math.max(1, perLotCost))));
     }
     const tradeQty = dynamicLots * lotSize;
     state.config.qty = tradeQty;
@@ -1409,14 +1425,10 @@ export class NiftyOptionsScalperEngine {
                 this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
                 this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
 
-                // Modify existing Zerodha SL order quantity to remainingQty
-                if (state.slOrderId && state.slOrderId !== 'FAILED') {
-                  const k = client['kite'] || client;
-                  if (client.modifyOrder) {
-                    await client.modifyOrder(state.slOrderId, { quantity: remainingQty }).catch(() => {});
-                  } else if (k && k.modifyOrder) {
-                    await k.modifyOrder('regular', state.slOrderId, { quantity: remainingQty }).catch(() => {});
-                  }
+                // Shrink the exchange SL order to the new remaining quantity (retries once
+                // internally; only logs success if the broker actually confirmed it).
+                const slQtyOk = await this.updateBrokerSlQuantitySafe(client, state, remainingQty);
+                if (slQtyOk) {
                   this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${remainingQty} shares`);
                 }
               } catch (partErr: any) {
@@ -1444,7 +1456,9 @@ export class NiftyOptionsScalperEngine {
       const stagnancyMs = (state.config.stagnancyMinutes || 15) * 60 * 1000;
       const holdingTime = now - (state.setupTimestamp || now);
       if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs && !state.isDynamicTrailingActive) {
-        if (pnlPoints >= -3 && pnlPoints <= 2) {
+        const stagnancyLossBand = -Math.max(1, params.stopLossPoints * 0.4);
+        const stagnancyProfitBand = Math.max(1, params.stopLossPoints * 0.3);
+        if (pnlPoints >= stagnancyLossBand && pnlPoints <= stagnancyProfitBand) {
           isExiting = true;
           this.log(state, `⌛ Stagnant Trade Timeout (${Math.round(holdingTime / 60000)}m flat). Exiting at ₹${currentPrice.toFixed(2)} (P&L: ${pnlPoints.toFixed(1)} pts) to prevent theta decay.`);
           this.stopRealtimeMonitor(state);
@@ -1524,6 +1538,38 @@ export class NiftyOptionsScalperEngine {
     } catch (e: any) {
       this.logger.warn(`Failed to update broker SL order: ${e.message}`);
     }
+  }
+
+  /**
+   * After a partial-booking sell, the exchange stop-loss order for the LONG leg still
+   * references the OLD (larger) quantity until this succeeds. If it silently fails, a
+   * later SL trigger either gets rejected by the broker (no protection at all) or, in the
+   * worst case, tries to sell more than is actually held. Retries once and always tells
+   * the caller whether the broker now actually protects `remainingQty`, so callers can
+   * warn loudly instead of assuming an unconditional "Updated" log line means it worked.
+   */
+  private async updateBrokerSlQuantitySafe(client: any, state: ScalperStrategyState, remainingQty: number): Promise<boolean> {
+    if (state.isPaperTrade || !state.slOrderId || state.slOrderId === 'FAILED') return true;
+    const k = client?.['kite'] || client;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (client && client.modifyOrder) {
+          await client.modifyOrder(state.slOrderId, { quantity: remainingQty });
+        } else if (k && k.modifyOrder) {
+          await k.modifyOrder('regular', state.slOrderId, { quantity: remainingQty });
+        } else {
+          return false;
+        }
+        return true;
+      } catch (e: any) {
+        if (attempt === 2) {
+          this.log(state, `🚨 Could not shrink Zerodha SL order (${state.slOrderId}) to ${remainingQty} qty after partial booking: ${e?.message || e}. The broker SL may still reference the OLD larger quantity — verify manually in Kite.`);
+          return false;
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+    return false;
   }
 
   private async monitorPosition(state: ScalperStrategyState, client: any, kite: any) {
@@ -1657,13 +1703,8 @@ export class NiftyOptionsScalperEngine {
               this.log(state, `💰 [THE BANKER & RUNNER] Live Partial Profit Booked: ${bookLots} lots (${bookQty} qty) @ ₹${currentPrice.toFixed(2)} (Order ID: ${partOrderId})! Trailing remaining ${remainingQty} qty.`);
               this.trackOrderInDB(state, 'SELL', symbol, exch, bookQty, currentPrice, partOrderId).catch(() => {});
 
-              if (state.slOrderId && state.slOrderId !== 'FAILED') {
-                const k = client['kite'] || client;
-                if (client.modifyOrder) {
-                  await client.modifyOrder(state.slOrderId, { quantity: remainingQty }).catch(() => {});
-                } else if (k && k.modifyOrder) {
-                  await k.modifyOrder('regular', state.slOrderId, { quantity: remainingQty }).catch(() => {});
-                }
+              const slQtyOk = await this.updateBrokerSlQuantitySafe(client, state, remainingQty);
+              if (slQtyOk) {
                 this.log(state, `🛡 Updated Zerodha Server SL Order (${state.slOrderId}) quantity to ${remainingQty} shares`);
               }
             } catch (partErr: any) {
@@ -1692,7 +1733,9 @@ export class NiftyOptionsScalperEngine {
     const stagnancyMs = (state.config.stagnancyMinutes || 15) * 60 * 1000;
     const holdingTime = now - (state.setupTimestamp || now);
     if (state.config.enableStagnancyExit !== false && holdingTime >= stagnancyMs && !state.isDynamicTrailingActive) {
-      if (pnlPoints >= -3 && pnlPoints <= 2) {
+      const stagnancyLossBand = -Math.max(1, params.stopLossPoints * 0.4);
+      const stagnancyProfitBand = Math.max(1, params.stopLossPoints * 0.3);
+      if (pnlPoints >= stagnancyLossBand && pnlPoints <= stagnancyProfitBand) {
         this.log(state, `⌛ Stagnant Trade Timeout in poll (${Math.round(holdingTime / 60000)}m flat). Exiting at ₹${currentPrice.toFixed(2)}.`);
         this.stopRealtimeMonitor(state);
         await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
@@ -1731,9 +1774,18 @@ export class NiftyOptionsScalperEngine {
     if (!state.isPaperTrade && client) {
       try {
         const kite = client['kite'];
-        const exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+        // The Kite positions API can lag right after an order fills — most likely right
+        // here, when the broker SL failed to arm moments earlier and we try to flatten
+        // immediately after entry. Trusting a single "flat" read would wrongly conclude
+        // "someone already closed this manually" and abandon a real, unprotected position
+        // with no broker-side stop and no monitor left running. Retry briefly before that.
+        let exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+        for (let attempt = 0; attempt < 3 && !exitSafety.safe; attempt++) {
+          await new Promise(r => setTimeout(r, 700));
+          exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
+        }
         if (!exitSafety.safe) {
-          this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended short.`);
+          this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off manually on Zerodha (Broker Qty: ${exitSafety.brokerQty}, confirmed after retry). Skipping duplicate exit order to prevent unintended short.`);
           this.stopRealtimeMonitor(state);
           state.entryTriggered = null;
           state.optionSymbol = null;
