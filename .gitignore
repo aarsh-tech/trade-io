@@ -27,3 +27,14 @@ scripts/*
 !scripts/update-server.sh
 !scripts/verify-all-fixes.js
 
+
+# backtest (credentials and downloaded market data)
+backtest/.env.kite
+backtest/.kite-session.json
+backtest/data/
+backtest/results/live-orders.csv
+backtest/backups/
+
+apps/auth-service/logs/
+backtest/results/v3/
+backtest/data/bin/

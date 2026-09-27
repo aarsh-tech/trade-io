@@ -1,18 +1,17 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { OrderSide, OrderStatus, OrderType, ProductType } from '@prisma/client';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
-import { OrderSide, OrderType, ProductType, OrderStatus } from '@prisma/client';
 import { Trade as ITrade } from '../brokers/interfaces/broker-client.interface';
-import { TickerService } from '../market/ticker.service';
-import { OrderUpdateEvent } from '../market/market-tick';
 import { isTradingDay, istParts } from '../market/market-calendar';
-import { parseKiteTime } from './kite-time';
+import { OrderUpdateEvent } from '../market/market-tick';
+import { TickerService } from '../market/ticker.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { isFnoSymbol, orderBrokerage, segmentOf } from './charges';
+import { parseKiteTime } from './kite-time';
 import { ClosedTrade, Fill, istDate, matchFills, tradeStatus } from './ledger';
 
 const EOD_SYNC_MINUTE = 15 * 60 + 40;
 const EOD_CHECK_INTERVAL_MS = 60_000;
-
 export type { ClosedTrade };
 
 export interface DailyLedgerItem {

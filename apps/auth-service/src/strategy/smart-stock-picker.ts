@@ -2,9 +2,8 @@ import { Logger } from '@nestjs/common';
 import { NIFTY_500_UNIVERSE, FO_STOCKS_LIST } from '../market/market.constants';
 
 // ─── Minimal Filter for Pure Penny / Illiquid / Extreme High-Price Symbols ───────────────────
-const BLACKLISTED_SLOW_STOCKS = new Set([
-  'IDEA', 'VODAFONE', 'JISLJALEQS', 'YESBANK', 'SUZLON', 'NIACL'
-]);
+// No hard-coded blacklist: illiquid / penny names are removed by the live price + turnover filters instead.
+const BLACKLISTED_SLOW_STOCKS = new Set<string>();
 
 export const globalTickSizeMap = new Map<string, number>();
 
@@ -103,28 +102,19 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
     logger?.warn(`Could not fetch NFO universe: ${err.message}`);
   }
 
-  // 3. Build Full Dynamic NSE Scanner Universe:
-  // Order: F&O symbols first, then NIFTY 500 (covers all Zerodha top gainers & losers)
+  // 3. Universe = EVERY tradable NSE equity (ETFs / index funds / non-EQ series already excluded above).
+  // No fixed watch-list: the scanner ranks the whole market live and lets the liquidity + momentum filters pick leaders.
+  // F&O stocks are listed first only so partial quote failures still cover the most liquid names.
   const combinedSet = new Set<string>();
   const liquidSymbols: string[] = [];
-
-  // Priority 1: Liquid F&O stocks
   for (const sym of fnoSymbols) {
-    if (allNseSymbols.has(sym) && !BLACKLISTED_SLOW_STOCKS.has(sym) && !combinedSet.has(sym)) {
-      combinedSet.add(sym);
-      liquidSymbols.push(sym);
-    }
+    if (allNseSymbols.has(sym) && !combinedSet.has(sym)) { combinedSet.add(sym); liquidSymbols.push(sym); }
+  }
+  for (const sym of allNseSymbols) {
+    if (!combinedSet.has(sym)) { combinedSet.add(sym); liquidSymbols.push(sym); }
   }
 
-  // Priority 2: NIFTY 500 universe (all top institutional market runners)
-  for (const sym of (NIFTY_500_UNIVERSE || [])) {
-    if (allNseSymbols.has(sym) && !BLACKLISTED_SLOW_STOCKS.has(sym) && !combinedSet.has(sym)) {
-      combinedSet.add(sym);
-      liquidSymbols.push(sym);
-    }
-  }
-
-  logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} active NSE equity stocks (F&O + NIFTY 500 Universe)`);
+  logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} NSE equity stocks (entire market, ${fnoSymbols.length} with F&O)`);
   cachedDynamicStocks = { symbols: liquidSymbols, tokenMap, tickSizeMap };
   cachedDynamicStocksTime = Date.now();
   return cachedDynamicStocks;
@@ -206,6 +196,101 @@ export interface CandidateStock {
   isBelowPdl?: boolean;
   distToPdhPct?: number;
   distToPdlPct?: number;
+  rvol?: number; // true relative volume vs own 10-session average at the same clock time
+}
+
+// ─── Whole-market quotes (cached briefly; Kite quote endpoints allow ~1 request/second) ─────────────
+let quoteCache: { at: number; data: Record<string, any> } | null = null;
+async function fetchWholeMarketQuotes(kite: any, keys: string[], logger?: Logger): Promise<Record<string, any>> {
+  if (quoteCache && Date.now() - quoteCache.at < 12_000) return quoteCache.data;
+  const out: Record<string, any> = {};
+  for (let i = 0; i < keys.length; i += 500) {
+    const batch = keys.slice(i, i + 500);
+    try {
+      Object.assign(out, await kite.getQuote(batch));
+    } catch (err: any) {
+      logger?.warn(`Live quotes batch fetch failed: ${err.message}`);
+    }
+    if (i + 500 < keys.length) await new Promise(r => setTimeout(r, 1100));
+  }
+  if (Object.keys(out).length > 0) quoteCache = { at: Date.now(), data: out };
+  return out;
+}
+
+// ─── True RVOL: cumulative volume today vs the stock's own recent sessions at the same clock time ────
+interface VolumeProfile { dateStr: string; sessionsCum: number[][]; sessionsBar: number[][]; }
+const volumeProfileCache = new Map<string, VolumeProfile | null>();
+
+async function loadVolumeProfile(kite: any, symbol: string, token: number, istDateStr: string): Promise<VolumeProfile | null> {
+  const cached = volumeProfileCache.get(symbol);
+  if (cached !== undefined && (cached === null || cached.dateStr === istDateStr)) return cached;
+  try {
+    const to = new Date();
+    const from = new Date(to.getTime() - 18 * 24 * 60 * 60 * 1000);
+    const candles: any[] = await Promise.race([
+      kite.getHistoricalData(token, '5minute', from, to, false),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000)),
+    ]) as any;
+    if (!Array.isArray(candles) || candles.length === 0) { volumeProfileCache.set(symbol, null); return null; }
+    const byDay = new Map<string, number[]>();
+    for (const c of candles) {
+      const d = new Date(c.date);
+      const ist = new Date(d.getTime() + 330 * 60000 + d.getTimezoneOffset() * 60000);
+      const dayStr = ist.toISOString().split('T')[0];
+      if (dayStr === istDateStr) continue; // prior sessions only
+      const idx = Math.floor((ist.getHours() * 60 + ist.getMinutes() - 555) / 5);
+      if (idx < 0 || idx > 74) continue;
+      if (!byDay.has(dayStr)) byDay.set(dayStr, new Array(75).fill(0));
+      byDay.get(dayStr)![idx] += Number(c.volume) || 0;
+    }
+    const days = Array.from(byDay.keys()).sort().slice(-10);
+    const sessionsBar = days.map(d => byDay.get(d)!);
+    const sessionsCum = sessionsBar.map(bars => { let run = 0; return bars.map(v => (run += v)); });
+    const profile: VolumeProfile = { dateStr: istDateStr, sessionsCum, sessionsBar };
+    volumeProfileCache.set(symbol, sessionsCum.length >= 3 ? profile : null);
+    return sessionsCum.length >= 3 ? profile : null;
+  } catch {
+    return null; // not cached: retry on a later scan
+  }
+}
+
+function expectedCumVolume(profile: VolumeProfile, minutesSinceOpen: number): number {
+  const m = Math.max(0, minutesSinceOpen);
+  const bars = Math.min(75, Math.floor(m / 5));
+  const frac = Math.min(1, (m - bars * 5) / 5);
+  const n = profile.sessionsCum.length;
+  let done = 0, partial = 0;
+  for (let i = 0; i < n; i++) {
+    if (bars > 0) done += profile.sessionsCum[i][Math.min(74, bars - 1)];
+    if (bars < 75) partial += profile.sessionsBar[i][bars] * frac;
+  }
+  return (done + partial) / n;
+}
+
+async function applyTrueRvol(kite: any, shortlist: CandidateStock[], tokenMap: Map<string, number>, logger?: Logger): Promise<void> {
+  const now = new Date();
+  const ist = new Date(now.getTime() + 330 * 60000 + now.getTimezoneOffset() * 60000);
+  const istDateStr = ist.toISOString().split('T')[0];
+  const minutesSinceOpen = ist.getHours() * 60 + ist.getMinutes() + ist.getSeconds() / 60 - 555;
+  if (minutesSinceOpen <= 0.2) return;
+  const todo = shortlist.filter(c => {
+    const cached = volumeProfileCache.get(c.symbol);
+    return tokenMap.get(c.symbol) && (cached === undefined || (cached !== null && cached.dateStr !== istDateStr));
+  });
+  // Load missing profiles 3 at a time (Kite historical limit ≈ 3 req/s). Cached for the rest of the day.
+  for (let i = 0; i < todo.length; i += 3) {
+    await Promise.all(todo.slice(i, i + 3).map(c => loadVolumeProfile(kite, c.symbol, tokenMap.get(c.symbol)!, istDateStr)));
+    if (i + 3 < todo.length) await new Promise(r => setTimeout(r, 1000));
+  }
+  for (const c of shortlist) {
+    const profile = volumeProfileCache.get(c.symbol);
+    if (!profile || profile.dateStr !== istDateStr) continue;
+    const expected = expectedCumVolume(profile, minutesSinceOpen);
+    const liveVol = (c as any)._liveVolume as number | undefined;
+    if (!liveVol || expected <= 0) continue;
+    c.rvol = liveVol / expected;
+    c.score += Math.min(250, Math.round(c.rvol * 60));
+  }
 }
 
 /**
@@ -241,20 +326,7 @@ export async function getTopCandidateStocks(
     .filter(s => !BLACKLISTED_SLOW_STOCKS.has(s) && (!excludedSymbols || !excludedSymbols.has(s)))
     .map(s => `NSE:${s}`);
 
-  let liveQuotes: Record<string, any> = {};
-  for (let i = 0; i < ltpSymbols.length; i += 150) {
-    const batch = ltpSymbols.slice(i, i + 150);
-    try {
-      const quotes = await kite.getQuote(batch);
-      Object.assign(liveQuotes, quotes);
-    } catch (err: any) {
-      logger?.warn(`Live quotes batch fetch failed: ${err.message}`);
-    }
-    // Throttle slightly between chunks to respect Zerodha API rate limit
-    if (i + 150 < ltpSymbols.length) {
-      await new Promise(resolve => setTimeout(resolve, 80));
-    }
-  }
+  const liveQuotes: Record<string, any> = await fetchWholeMarketQuotes(kite, ltpSymbols, logger);
 
   // Current time in IST to adjust volume/turnover expectations for market open
   const istDate = new Date(new Date().getTime() + 330 * 60000 + new Date().getTimezoneOffset() * 60000);
@@ -325,10 +397,10 @@ export async function getTopCandidateStocks(
       if (absDayChange >= 19.0 || absChangeFromOpen >= 17.0) continue;
 
       // ── Relative Volume (RVOL) Institutional Participation Gauge ───────────
-      const marketMinutesElapsed = Math.max(5, Math.min(375, istHhmm - (9 * 60 + 15)));
-      const baselineVol = isMarketOpening ? 1000 : Math.max(5000, Math.round(50000 * (marketMinutesElapsed / 375)));
-      const rvol = liveVolume > 0 ? (liveVolume / baselineVol) : 1;
-      const rvolScore = Math.min(250, Math.round(rvol * 35));
+      // NOTE: the old fixed 50,000-share baseline saturated this score for almost every stock, so it carried no information.
+      // TRUE relative volume (today's cumulative volume vs the same stock's own 10-session average at this clock time)
+      // is added below for the top shortlist only (it needs per-stock history).
+      const rvolScore = 0;
 
       // Short momentum score (for selloffs/breakdowns / Top Losers)
       const shortDropFromOpen = Math.max(0, -changeFromOpenPct);
@@ -338,8 +410,8 @@ export async function getTopCandidateStocks(
         (shortDropFromOpen * 180) +          // Intraday continuous selling drive
         (moveFromHighPct * 90) +             // Rejection from highs
         (dayRangePct * 80) +                 // Intraday expansion range
-        (Math.min(turnoverCr, 200) * 20) +   // Institutional liquidity weight
-        rvolScore +                          // Relative Volume surge
+        (Math.min(turnoverCr, 200) * 20) +   // Institutional liquidity weight (backtest: liquid leaders beat pure-momentum ranking)
+        rvolScore +
         (isOpenHigh ? 250 : 0)               // Confluence boost for Open=High
       );
 
@@ -351,8 +423,8 @@ export async function getTopCandidateStocks(
         (longGainFromOpen * 180) +           // Intraday continuous buying drive
         (moveFromLowPct * 90) +              // Bounce off lows
         (dayRangePct * 80) +                 // Intraday expansion range
-        (Math.min(turnoverCr, 200) * 20) +   // Institutional liquidity weight
-        rvolScore +                          // Relative Volume surge
+        (Math.min(turnoverCr, 200) * 20) +   // Institutional liquidity weight (backtest: liquid leaders beat pure-momentum ranking)
+        rvolScore +
         (isOpenLow ? 250 : 0)                // Confluence boost for Open=Low
       );
 
@@ -384,11 +456,16 @@ export async function getTopCandidateStocks(
         isOpenLow,
         isOpenHigh,
         prevClose,
+        ...({ _liveVolume: liveVolume } as any),
       });
     }
   }
 
   // Sort preliminary candidates descending by momentum score
+  result.sort((a, b) => b.score - a.score);
+
+  // ── 3b. TRUE relative volume for the shortlist (own 10-session same-time average; no fixed baseline) ──
+  await applyTrueRvol(kite, result.slice(0, 40), tokenMap, logger);
   result.sort((a, b) => b.score - a.score);
 
   // ── 4. Enrich Top Candidates with Previous Day High (PDH) & Low (PDL) ─────
