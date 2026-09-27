@@ -54,6 +54,9 @@ export interface StrategyFormState {
   dsEnableDynamicSizing?: boolean;
   dsMaxCapital?: string;
   dsMaxLots?: string;
+  dsEnableTrapSniper?: boolean;
+  dsTrapSweepBufferPts?: string;
+  dsEnablePcrConfluence?: boolean;
   // Stock Options Buying
   sTimeframe: string;
   sEmaPeriod: string;

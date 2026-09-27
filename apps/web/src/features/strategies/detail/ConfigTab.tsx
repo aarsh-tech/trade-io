@@ -107,6 +107,18 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
       { label: "Volume surge (RVOL)", ...toggle(cfg.enableVolumeSurge, `>= ${cfg.minRvol ?? 1.15}x`) },
       { label: "VWAP trend bias", ...toggle(cfg.enableTrendBiasFilter, "CE above VWAP, PE below") },
       { label: "Midday dead zone", ...toggle(cfg.enableMiddayChopFilter, "11:45 to 13:00 paused") },
+      // These two are opt-in (default off), unlike the flags above — toggle() treats a missing
+      // value as "on", which is backwards here, so they're built directly instead.
+      {
+        label: "SMC trap sniper",
+        value: cfg.enableTrapSniper === true ? `On · ${cfg.trapSweepBufferPts ? `${cfg.trapSweepBufferPts} pt buffer` : "auto buffer"}` : "Off",
+        tone: cfg.enableTrapSniper === true ? undefined : "muted",
+      },
+      {
+        label: "PCR / OI confluence tag",
+        value: cfg.enablePcrConfluence === true ? "On · informational only" : "Off",
+        tone: cfg.enablePcrConfluence === true ? undefined : "muted",
+      },
     );
   }
   if (isStockOptions) {

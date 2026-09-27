@@ -42,6 +42,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['protectionBufferPct', 'Protection buffer %', 0, 50, false],
   ['minPremium', 'Min premium', 0, 1_000_000, false],
   ['maxPremium', 'Max premium', 0, 1_000_000, false],
+  ['trapSweepBufferPts', 'Trap sniper invalidation buffer (pts)', 0.5, 200, false],
 ];
 
 const TIME_FIELDS: [string, string][] = [

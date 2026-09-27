@@ -50,6 +50,9 @@ export function createDefaultForm(): StrategyFormState {
     dsEnableMacroDayBias: false,
     dsEntryCutoffTime: "14:45",
     dsTimeframe: "5minute",
+    dsEnableTrapSniper: false,
+    dsTrapSweepBufferPts: "",
+    dsEnablePcrConfluence: false,
     sTimeframe: "15min",
     sEmaPeriod: "15",
     sRiskRewardRatio: "2",
@@ -191,6 +194,9 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     dsEnableDynamicSizing: bool(c.enableDynamicSizing, true),
     dsMaxCapital: has(c.maxCapital) ? String(c.maxCapital) : "",
     dsMaxLots: has(c.maxLots) ? String(c.maxLots) : "25",
+    dsEnableTrapSniper: bool(c.enableTrapSniper, false),
+    dsTrapSweepBufferPts: has(c.trapSweepBufferPts) ? String(c.trapSweepBufferPts) : "",
+    dsEnablePcrConfluence: bool(c.enablePcrConfluence, false),
 
     // Stock options buying
     sTimeframe: str(c.timeframe, base.sTimeframe),

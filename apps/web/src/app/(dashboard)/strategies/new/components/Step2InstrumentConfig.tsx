@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Zap, Target, BarChart2, TrendingUp, Loader2, Sparkles, Clock, ArrowUpRight, ArrowDownRight, Shuffle } from "lucide-react";
+import { Zap, Target, BarChart2, TrendingUp, Loader2, Sparkles, Clock, ArrowUpRight, ArrowDownRight, Shuffle, Crosshair } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StrategyFormState, getLotSize } from "../types";
 import { marketApi } from "@/lib/api";
@@ -711,6 +711,65 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 checked={form.dsEnableMacroDayBias !== false}
                 onChange={(e) => set("dsEnableMacroDayBias", e.target.checked)}
                 className="h-4 w-4 rounded accent-profit shrink-0 cursor-pointer"
+              />
+            </div>
+
+            {/* SMC Institutional Liquidity Trap Sniper (ported from Gamma Blast) */}
+            <div className="p-3.5 rounded-lg border border-border bg-card space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5 pr-4">
+                  <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Crosshair className="h-3.5 w-3.5 text-signal" />
+                    SMC Institutional Trap Sniper
+                  </p>
+                  <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                    Fades false breakouts: fires when price sweeps above/below the Opening Range or Previous Day High/Low to trap retail breakout traders, rejects with a strong wick, and displaces back through VWAP. Also exits the trade immediately if the underlying breaks back through that structural level, even before the point-based stop-loss is hit.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={form.dsEnableTrapSniper === true}
+                  onChange={(e) => set("dsEnableTrapSniper", e.target.checked)}
+                  className="h-4 w-4 rounded accent-signal shrink-0 cursor-pointer"
+                />
+              </div>
+
+              {form.dsEnableTrapSniper === true && (
+                <div className="pt-3 border-t border-border">
+                  <label className="text-xs font-semibold block text-foreground mb-1">
+                    Invalidation Buffer (pts, Optional)
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.5"
+                    placeholder="Auto (6 NIFTY / 20 SENSEX / 15 BANKNIFTY)"
+                    value={form.dsTrapSweepBufferPts || ""}
+                    onChange={(e) => set("dsTrapSweepBufferPts", e.target.value)}
+                    className="h-9 text-xs bg-background border-border text-foreground rounded-lg"
+                  />
+                  <p className="text-xs text-foreground/75 font-medium mt-1">
+                    How far past the sweep extreme the underlying must reclaim before the trade is invalidated and exited. Leave empty to use the index-adaptive default.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Live Option-Chain PCR / OI Confluence Tag */}
+            <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card">
+              <div className="space-y-0.5 pr-4">
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <BarChart2 className="h-3.5 w-3.5 text-accent-foreground" />
+                  Live PCR / OI Confluence Tag
+                </p>
+                <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                  Tags a firing signal as "High-Conviction A+" when the live ATM option-chain Put/Call OI ratio agrees with the trade direction. Informational only — logged for your review, never blocks or filters an entry.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={form.dsEnablePcrConfluence === true}
+                onChange={(e) => set("dsEnablePcrConfluence", e.target.checked)}
+                className="h-4 w-4 rounded accent-signal shrink-0 cursor-pointer"
               />
             </div>
 

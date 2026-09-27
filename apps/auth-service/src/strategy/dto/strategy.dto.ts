@@ -209,6 +209,17 @@ export interface NiftyOptionsScalperConfig {
   enableDynamicSizing?: boolean;   // Dynamic Compounding Lot Sizing: Deploys 85% tradeable margin from live Zerodha balance (default: true)
   maxCapital?: number;             // Optional capital cap for position sizing (default: undefined -> uses live Kite margin)
   maxLots?: number;                // Maximum safety lot cap to prevent oversized orders (default: 25)
+
+  // ── Smart Money Concepts (SMC): Institutional Liquidity Trap Sniper ──
+  enableTrapSniper?: boolean;      // Fade false breakouts: price sweeps above/below ORH/ORL & PDH/PDL to trap retail
+                                   // breakout traders, rejects with a strong wick, and displaces back through VWAP —
+                                   // ported from the Gamma Blast engine's SMC setup (default: false, opt-in; live-tick only,
+                                   // does not fire during historical catch-up replay)
+  trapSweepBufferPts?: number;     // Structural invalidation buffer beyond the sweep extreme (default: index-adaptive,
+                                   // see getIndexScalpParams — 6 pts NIFTY / 20 pts SENSEX / 15 pts BANKNIFTY)
+  enablePcrConfluence?: boolean;   // Tag a firing signal with the live ATM option-chain Put/Call OI ratio when it agrees
+                                   // with the trade direction ("High-Conviction A+"). Informational only — never blocks
+                                   // or filters an entry (default: false; costs one extra instruments+quote lookup per signal)
 }
 
 // ─── Stock Options Buying Config ───────────────────────────────────────────────
