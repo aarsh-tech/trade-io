@@ -1,6 +1,7 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { toKiteError, withKiteRetry } from '../brokers/kite-errors';
+import { PrismaService } from '../prisma/prisma.service';
 import { analyzeStock, DailyCandle } from './vcp.analyzer';
 
 // ─── Nifty 500 scan universe (liquid NSE stocks) ──────────────────────────────
@@ -116,7 +117,8 @@ export class SwingScannerService {
     try {
       instruments = await kite.getInstruments('NSE');
     } catch (err) {
-      throw new BadRequestException(`Failed to fetch NSE instruments: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      throw new BadRequestException(`Failed to fetch NSE instruments: ${message}`);
     }
 
     // Fetch NFO instruments to map F&O lot sizes dynamically
@@ -124,7 +126,8 @@ export class SwingScannerService {
     try {
       nfoInstruments = await kite.getInstruments('NFO');
     } catch (err) {
-      this.logger.warn(`Failed to fetch NFO instruments: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to fetch NFO instruments: ${message}`);
     }
 
     const fnoLotSizes = new Map<string, number>();
@@ -162,23 +165,38 @@ export class SwingScannerService {
     });
 
     // ── Get Live Quotes (LTP) for the entire universe ────────────────────────
-    // Kite LTP accepts max 500 symbols per request, so chunk in batches of 400
-    const ltpBatch = dynamicUniverse.slice(0, 1000);
-    const ltpSymbols = ltpBatch.map(s => `NSE:${s}`);
+    // kiteconnect builds the request as GET /quote/ltp?i=NSE:SYM&i=NSE:SYM2&... — sending
+    // all 1000 symbols in one call produced a real "URI Too Long" (414), so 200/chunk keeps
+    // the query string short. Which chunk trips a raw, non-Kite-JSON 403 has moved around
+    // (3rd of 3, then 5th of 5) as the chunking changed, which means it isn't tied to a
+    // specific chunk's size or position — it's a short-lived condition on Kite's side (this
+    // server also runs live strategy engines sharing the same API key/quote rate bucket).
+    // toKiteError already classifies it as retryable (NetworkException); the fix that
+    // actually applies here is giving that retry enough time to outlast the blip rather
+    // than continuing to reshuffle chunk boundaries.
+    const ltpBatch = dynamicUniverse.slice(0, 1000).map(s => `NSE:${s}`);
     let liveQuotes: Record<string, { last_price: number }> = {};
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < ltpSymbols.length; i += CHUNK_SIZE) {
-      const chunk = ltpSymbols.slice(i, i + CHUNK_SIZE);
+    const LTP_CHUNK_SIZE = 200;
+    for (let i = 0; i < ltpBatch.length; i += LTP_CHUNK_SIZE) {
+      const chunk = ltpBatch.slice(i, i + LTP_CHUNK_SIZE);
+      const chunkNo = Math.floor(i / LTP_CHUNK_SIZE) + 1;
       try {
-        const chunkQuotes = await kite.getLTP(chunk);
+        // 5 attempts, backoff 800ms→6.4s: ~12s worst case, acceptable since this scan
+        // already runs in the background and this is its slowest-to-clear failure mode.
+        const chunkQuotes = await withKiteRetry(() => kite.getLTP(chunk), 5, 800);
         Object.assign(liveQuotes, chunkQuotes);
       } catch (err: any) {
-        this.logger.warn(`Live quotes chunk ${Math.floor(i / CHUNK_SIZE) + 1} fetch failed: ${err.message}`);
+        const kerr = toKiteError(err);
+        this.logger.warn(`Live quotes chunk ${chunkNo} fetch failed after retries (${kerr.name}): ${kerr.message}`);
+      }
+      if (i + LTP_CHUNK_SIZE < ltpBatch.length) {
+        await new Promise(r => setTimeout(r, 500));
       }
     }
 
     const results: ScanResult[] = [];
     let scanned = 0;
+    let candleFetchFailures = 0;
 
     const scanList = dynamicUniverse.slice(0, 1000);
     for (let i = 0; i < scanList.length; i += 5) {
@@ -249,12 +267,16 @@ export class SwingScannerService {
               });
             });
           } catch (err) {
-            // Silently skip failed stocks
+            candleFetchFailures++;
           }
         }),
       );
       // Small delay between batches to respect rate limits
       await new Promise(r => setTimeout(r, 350));
+    }
+
+    if (candleFetchFailures > 0) {
+      this.logger.warn(`Historical candle fetch failed for ${candleFetchFailures}/${scanList.length} stocks (network/rate-limit — excluded from results)`);
     }
 
     // Sort by score desc, assign rank
@@ -385,7 +407,10 @@ export class SwingScannerService {
     const from = new Date();
     from.setDate(from.getDate() - days);
 
-    const data = await kite.getHistoricalData(token, 'day', from, to, false);
+    // Historical is capped at 3 req/s across the whole app; under load a call can get
+    // queued behind others long enough to look like a failure, so retry network/429 blips
+    // instead of silently dropping the stock from the scan.
+    const data = await withKiteRetry<any[]>(() => kite.getHistoricalData(token, 'day', from, to, false), 3, 400);
     return (data || []).map((c: any) => ({
       date:   new Date(c.date),
       open:   c.open,

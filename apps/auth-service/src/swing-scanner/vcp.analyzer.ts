@@ -7,6 +7,8 @@ export interface DailyCandle {
   low: number;
   close: number;
   volume: number;
+  /** false only for weekly/monthly candles still mid-period (the ongoing week/month) */
+  complete?: boolean;
 }
 
 export type PatternType =
@@ -69,16 +71,24 @@ export function aggregateWeeklyCandles(daily: DailyCandle[]): DailyCandle[] {
   const weekly: DailyCandle[] = [];
   const groups = new Map<string, DailyCandle[]>();
 
-  daily.forEach((c) => {
-    const d = new Date(c.date);
+  const mondayKeyOf = (d: Date): string => {
     const day = d.getDay(); // 0 is Sun, 1 is Mon...
     const diff = d.getDate() - day + (day === 0 ? -6 : 1);
     const monday = new Date(d.getFullYear(), d.getMonth(), diff);
     monday.setHours(0, 0, 0, 0);
-    const key = monday.toISOString().split('T')[0];
+    return monday.toISOString().split('T')[0];
+  };
+
+  daily.forEach((c) => {
+    const key = mondayKeyOf(new Date(c.date));
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(c);
   });
+
+  // Any week whose Monday is on/after this week's Monday is still in progress:
+  // its high/low only reflects however many trading days have elapsed so far,
+  // not a genuine full-week range, so it must not be treated as a closed candle.
+  const currentWeekKey = mondayKeyOf(new Date());
 
   const sortedKeys = Array.from(groups.keys()).sort();
   sortedKeys.forEach((key) => {
@@ -91,6 +101,7 @@ export function aggregateWeeklyCandles(daily: DailyCandle[]): DailyCandle[] {
       low: Math.min(...group.map((g) => g.low)),
       close: group[group.length - 1].close,
       volume: group.reduce((s, g) => s + (g.volume || 0), 0),
+      complete: key < currentWeekKey,
     });
   });
   return weekly;
@@ -104,12 +115,17 @@ export function aggregateMonthlyCandles(daily: DailyCandle[]): DailyCandle[] {
   const monthly: DailyCandle[] = [];
   const groups = new Map<string, DailyCandle[]>();
 
+  const monthKeyOf = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
   daily.forEach((c) => {
-    const d = new Date(c.date);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const key = monthKeyOf(new Date(c.date));
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(c);
   });
+
+  // The current calendar month is still in progress: its range only reflects
+  // however many trading days have elapsed so far, not a genuine closed month.
+  const currentMonthKey = monthKeyOf(new Date());
 
   const sortedKeys = Array.from(groups.keys()).sort();
   sortedKeys.forEach((key) => {
@@ -122,6 +138,7 @@ export function aggregateMonthlyCandles(daily: DailyCandle[]): DailyCandle[] {
       low: Math.min(...group.map((g) => g.low)),
       close: group[group.length - 1].close,
       volume: group.reduce((s, g) => s + (g.volume || 0), 0),
+      complete: key < currentMonthKey,
     });
   });
   return monthly;
@@ -458,10 +475,15 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
 
   // Case A: Today / Current period is INSIDE the previous mother period
   // (Current High <= Previous High and Current Low >= Previous Low)
+  // For WEEKLY/MONTHLY, only valid once the current period is fully closed — a still-forming
+  // week/month has only accumulated a few days of range, so it will look "inside" the prior,
+  // fully-formed period almost by construction (e.g. every Monday, every 1st week of a month),
+  // producing false signals rather than a genuine consolidation.
   const curr = candles[n];
   const prev = candles[n - 1];
+  const currIsClosed = type === 'DAILY' || curr.complete !== false;
 
-  if (curr.high <= prev.high * 1.002 && curr.low >= prev.low * 0.998 && curr.high > curr.low) {
+  if (currIsClosed && curr.high <= prev.high * 1.002 && curr.low >= prev.low * 0.998 && curr.high > curr.low) {
     insideCandle = curr;
     motherCandle = prev;
     isBreakoutDay = false;

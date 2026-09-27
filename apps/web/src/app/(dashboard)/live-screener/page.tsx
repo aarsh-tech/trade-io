@@ -1,16 +1,20 @@
-"use client";
+'use client';
 
-import { QuickTradePanel, QuickTradeStock } from "@/components/dashboard/QuickTradePanel";
-import { pressable } from "@/lib/a11y";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { useMarketData } from "@/hooks/use-market-data";
-import { useMarketStore } from "@/store/market-store";
-import { marketApi } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import {
+  OrderWindow,
+  type BracketPreset,
+} from '@/components/dashboard/OrderWindow';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { useMarketData } from '@/hooks/use-market-data';
+import { pressable } from '@/lib/a11y';
+import { marketApi } from '@/lib/api';
+import { formatINR } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { useMarketStore } from '@/store/market-store';
+import { useQuery } from '@tanstack/react-query';
 import {
   ArrowDownRight,
   ArrowUpDown,
@@ -22,15 +26,9 @@ import {
   LayoutGrid,
   RefreshCw,
   Search,
-  SlidersHorizontal,
-  Sparkles,
   Table as TableIcon,
-  TrendingDown,
-  TrendingUp,
-  Zap
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { formatINR } from "@/lib/format";
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 interface OhlStockItem {
   symbol: string;
@@ -53,10 +51,15 @@ interface OhlStockItem {
   diffOpenLowPct: number;
   diffOpenHigh: number;
   diffOpenHighPct: number;
-  signal: "OPEN_LOW" | "OPEN_HIGH" | "NEAR_OPEN_LOW" | "NEAR_OPEN_HIGH" | "NEUTRAL";
-  signalType: "BULLISH" | "BEARISH" | "NEUTRAL";
-  signalStrength: "STRONG" | "MODERATE" | "WEAK";
-  suggestedAction: "BUY" | "SELL" | "WATCH";
+  signal:
+    | 'OPEN_LOW'
+    | 'OPEN_HIGH'
+    | 'NEAR_OPEN_LOW'
+    | 'NEAR_OPEN_HIGH'
+    | 'NEUTRAL';
+  signalType: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  signalStrength: 'STRONG' | 'MODERATE' | 'WEAK';
+  suggestedAction: 'BUY' | 'SELL' | 'WATCH';
   suggestedSL: number;
   suggestedTarget1: number;
   suggestedTarget2: number;
@@ -65,40 +68,102 @@ interface OhlStockItem {
   lastUpdated: string;
 }
 
-const CATEGORIES = ["ALL", "Banking", "IT", "Auto", "Energy & Metals", "Pharma", "FMCG", "Construction", "Capital Goods"];
-const ALPHABETS = ["ALL", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"];
+const CATEGORIES = [
+  'ALL',
+  'Banking',
+  'IT',
+  'Auto',
+  'Energy & Metals',
+  'Pharma',
+  'FMCG',
+  'Construction',
+  'Capital Goods',
+];
+const ALPHABETS = [
+  'ALL',
+  'A',
+  'B',
+  'C',
+  'D',
+  'E',
+  'F',
+  'G',
+  'H',
+  'I',
+  'J',
+  'K',
+  'L',
+  'M',
+  'N',
+  'O',
+  'P',
+  'Q',
+  'R',
+  'S',
+  'T',
+  'U',
+  'V',
+  'W',
+  'X',
+  'Y',
+  'Z',
+];
 
 export default function LiveOhlScreenerPage() {
   // State filters
-  const [activeTab, setActiveTab] = useState<"all" | "open_low" | "open_high" | "near_open_low" | "near_open_high">("all");
-  const [universe, setUniverse] = useState<"fno" | "nifty50">("fno");
+  const [activeTab, setActiveTab] = useState<
+    'all' | 'open_low' | 'open_high' | 'near_open_low' | 'near_open_high'
+  >('all');
+  const [universe, setUniverse] = useState<'fno' | 'nifty50'>('fno');
   const [tolerance, setTolerance] = useState<number>(0.05); // 0.05%
-  const [search, setSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("ALL");
-  const [selectedAlphabet, setSelectedAlphabet] = useState("ALL");
-  const [viewMode, setViewMode] = useState<"table" | "grid">("table");
-  const [sortBy, setSortBy] = useState<"symbol" | "changePct" | "diff" | "volume">("changePct");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [search, setSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const [selectedAlphabet, setSelectedAlphabet] = useState('ALL');
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+  const [sortBy, setSortBy] = useState<
+    'symbol' | 'changePct' | 'diff' | 'volume'
+  >('changePct');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   // Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(25);
 
   // Quick Trade Modal State
-  const [quickTradeStock, setQuickTradeStock] = useState<QuickTradeStock | null>(null);
+  const [orderState, setOrderState] = useState<{
+    isOpen: boolean;
+    type: 'BUY' | 'SELL';
+    symbol: string;
+    exchange: string;
+    ltp: number;
+    lotSize?: number;
+    bracket?: BracketPreset;
+  }>({ isOpen: false, type: 'BUY', symbol: '', exchange: 'NSE', ltp: 0 });
 
   // Fetch data
-  const { data: response, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ["ohl-stocks", universe, tolerance],
+  const {
+    data: response,
+    isLoading,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: ['ohl-stocks', universe, tolerance],
     queryFn: async () => {
-      const res = await marketApi.getOhlStocks({ universe, tolerance, filter: "all" });
+      const res = await marketApi.getOhlStocks({
+        universe,
+        tolerance,
+        filter: 'all',
+      });
       return res.data?.data;
     },
     refetchInterval: 10000, // background refresh every 10s
     staleTime: 4000,
   });
 
-  const rawStocks: OhlStockItem[] = useMemo(() => response?.stocks || [], [response]);
+  const rawStocks: OhlStockItem[] = useMemo(
+    () => response?.stocks || [],
+    [response],
+  );
   const summary = response?.summary || {
     openLowCount: 0,
     openHighCount: 0,
@@ -109,25 +174,31 @@ export default function LiveOhlScreenerPage() {
     unchanged: 0,
   };
 
-  // Subscribe to real-time WebSocket ticks for all visible stock symbols
+  // Subscribe to real-time WebSocket ticks for the whole fetched universe (F&O liquid ≤200 / Nifty50 ≤50),
+  // not just an arbitrary slice — the visible rows are a sorted/filtered/paginated view of this same set,
+  // so every row a user can actually scroll to must already be subscribed.
   const subscriptionSymbols = useMemo(() => {
-    return rawStocks.slice(0, 100).map((s) => s.symbol);
+    return rawStocks.map((s) => s.symbol);
   }, [rawStocks]);
 
   const { prices: livePrices, getPrice } = useMarketData(subscriptionSymbols);
   const socketConnected = useMarketStore((st) => st.connected);
-  const feedLive = useMarketStore((st) => st.connected && st.feed.status === "connected");
+  const feedLive = useMarketStore(
+    (st) => st.connected && st.feed.status === 'connected',
+  );
 
   // Keep track of price flash animations
-  const [priceFlashes, setPriceFlashes] = useState<Record<string, "up" | "down">>({});
+  const [priceFlashes, setPriceFlashes] = useState<
+    Record<string, 'up' | 'down'>
+  >({});
   const prevPricesRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
-    const newFlashes: Record<string, "up" | "down"> = {};
+    const newFlashes: Record<string, 'up' | 'down'> = {};
     Object.entries(livePrices).forEach(([sym, newPrice]) => {
       const oldPrice = prevPricesRef.current[sym];
       if (oldPrice && newPrice !== oldPrice) {
-        newFlashes[sym] = newPrice > oldPrice ? "up" : "down";
+        newFlashes[sym] = newPrice > oldPrice ? 'up' : 'down';
       }
       prevPricesRef.current[sym] = newPrice;
     });
@@ -145,15 +216,27 @@ export default function LiveOhlScreenerPage() {
   const enrichedStocks = useMemo(() => {
     return rawStocks.map((stock) => {
       const wsPrice = getPrice(stock.symbol);
-      const ltp = wsPrice && wsPrice > 0 ? wsPrice : stock.ltp;
-      const change = stock.close > 0 ? Number((ltp - stock.close).toFixed(2)) : stock.change;
-      const changePct = stock.close > 0 ? Number((((ltp - stock.close) / stock.close) * 100).toFixed(2)) : stock.changePct;
-      const changeFromOpen = stock.open > 0 ? Number((ltp - stock.open).toFixed(2)) : stock.changeFromOpen;
-      const changeFromOpenPct = stock.open > 0 ? Number((((ltp - stock.open) / stock.open) * 100).toFixed(2)) : stock.changeFromOpenPct;
+      const isLive = typeof wsPrice === 'number' && wsPrice > 0;
+      const ltp = isLive ? wsPrice : stock.ltp;
+      const change =
+        stock.close > 0 ? Number((ltp - stock.close).toFixed(2)) : stock.change;
+      const changePct =
+        stock.close > 0
+          ? Number((((ltp - stock.close) / stock.close) * 100).toFixed(2))
+          : stock.changePct;
+      const changeFromOpen =
+        stock.open > 0
+          ? Number((ltp - stock.open).toFixed(2))
+          : stock.changeFromOpen;
+      const changeFromOpenPct =
+        stock.open > 0
+          ? Number((((ltp - stock.open) / stock.open) * 100).toFixed(2))
+          : stock.changeFromOpenPct;
 
       return {
         ...stock,
         ltp,
+        isLive,
         change,
         changePct,
         changeFromOpen,
@@ -162,36 +245,43 @@ export default function LiveOhlScreenerPage() {
     });
   }, [rawStocks, livePrices, getPrice]);
 
-
   // Filtered & Sorted Stocks
   const filteredStocks = useMemo(() => {
     let list = enrichedStocks;
 
     // Tab Filter
-    if (activeTab === "open_low") {
-      list = list.filter((s) => s.signal === "OPEN_LOW");
-    } else if (activeTab === "open_high") {
-      list = list.filter((s) => s.signal === "OPEN_HIGH");
-    } else if (activeTab === "near_open_low") {
-      list = list.filter((s) => s.signal === "NEAR_OPEN_LOW");
-    } else if (activeTab === "near_open_high") {
-      list = list.filter((s) => s.signal === "NEAR_OPEN_HIGH");
+    if (activeTab === 'open_low') {
+      list = list.filter((s) => s.signal === 'OPEN_LOW');
+    } else if (activeTab === 'open_high') {
+      list = list.filter((s) => s.signal === 'OPEN_HIGH');
+    } else if (activeTab === 'near_open_low') {
+      list = list.filter((s) => s.signal === 'NEAR_OPEN_LOW');
+    } else if (activeTab === 'near_open_high') {
+      list = list.filter((s) => s.signal === 'NEAR_OPEN_HIGH');
     }
 
     // Search query
     if (search.trim()) {
       const q = search.toLowerCase().trim();
-      list = list.filter((s) => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
+      list = list.filter(
+        (s) =>
+          s.symbol.toLowerCase().includes(q) ||
+          s.name.toLowerCase().includes(q),
+      );
     }
 
     // Category Filter
-    if (selectedCategory !== "ALL") {
-      list = list.filter((s) => s.category.toLowerCase().includes(selectedCategory.toLowerCase()));
+    if (selectedCategory !== 'ALL') {
+      list = list.filter((s) =>
+        s.category.toLowerCase().includes(selectedCategory.toLowerCase()),
+      );
     }
 
     // Alphabet Filter
-    if (selectedAlphabet !== "ALL") {
-      list = list.filter((s) => s.symbol.toUpperCase().startsWith(selectedAlphabet));
+    if (selectedAlphabet !== 'ALL') {
+      list = list.filter((s) =>
+        s.symbol.toUpperCase().startsWith(selectedAlphabet),
+      );
     }
 
     // Sorting
@@ -199,24 +289,36 @@ export default function LiveOhlScreenerPage() {
       let valA: number = 0;
       let valB: number = 0;
 
-      if (sortBy === "symbol") {
-        return sortOrder === "asc" ? a.symbol.localeCompare(b.symbol) : b.symbol.localeCompare(a.symbol);
-      } else if (sortBy === "changePct") {
+      if (sortBy === 'symbol') {
+        return sortOrder === 'asc'
+          ? a.symbol.localeCompare(b.symbol)
+          : b.symbol.localeCompare(a.symbol);
+      } else if (sortBy === 'changePct') {
         valA = a.changePct;
         valB = b.changePct;
-      } else if (sortBy === "diff") {
-        valA = a.signalType === "BULLISH" ? a.diffOpenLowPct : a.diffOpenHighPct;
-        valB = b.signalType === "BULLISH" ? b.diffOpenLowPct : b.diffOpenHighPct;
-      } else if (sortBy === "volume") {
+      } else if (sortBy === 'diff') {
+        valA =
+          a.signalType === 'BULLISH' ? a.diffOpenLowPct : a.diffOpenHighPct;
+        valB =
+          b.signalType === 'BULLISH' ? b.diffOpenLowPct : b.diffOpenHighPct;
+      } else if (sortBy === 'volume') {
         valA = a.volume;
         valB = b.volume;
       }
 
-      return sortOrder === "asc" ? valA - valB : valB - valA;
+      return sortOrder === 'asc' ? valA - valB : valB - valA;
     });
 
     return list;
-  }, [enrichedStocks, activeTab, search, selectedCategory, selectedAlphabet, sortBy, sortOrder]);
+  }, [
+    enrichedStocks,
+    activeTab,
+    search,
+    selectedCategory,
+    selectedAlphabet,
+    sortBy,
+    sortOrder,
+  ]);
 
   // Pagination slice
   const totalPages = Math.ceil(filteredStocks.length / pageSize) || 1;
@@ -226,24 +328,38 @@ export default function LiveOhlScreenerPage() {
   }, [filteredStocks, page, pageSize]);
 
   // Handle Quick Trade trigger
-  const handleOpenTrade = (stock: OhlStockItem, direction: "LONG" | "SHORT") => {
-    const sl = direction === "LONG" ? stock.suggestedSL || stock.low : stock.suggestedSL || stock.high;
-    const tgt1 = direction === "LONG" ? stock.suggestedTarget1 || stock.ltp * 1.015 : stock.suggestedTarget1 || stock.ltp * 0.985;
-    const tgt2 = direction === "LONG" ? stock.suggestedTarget2 || stock.ltp * 1.03 : stock.suggestedTarget2 || stock.ltp * 0.97;
+  const handleOpenTrade = (
+    stock: OhlStockItem,
+    direction: 'LONG' | 'SHORT',
+  ) => {
+    const sl =
+      direction === 'LONG'
+        ? stock.suggestedSL || stock.low
+        : stock.suggestedSL || stock.high;
+    const tgt1 =
+      direction === 'LONG'
+        ? stock.suggestedTarget1 || stock.ltp * 1.015
+        : stock.suggestedTarget1 || stock.ltp * 0.985;
+    const tgt2 =
+      direction === 'LONG'
+        ? stock.suggestedTarget2 || stock.ltp * 1.03
+        : stock.suggestedTarget2 || stock.ltp * 0.97;
 
-    setQuickTradeStock({
+    setOrderState({
+      isOpen: true,
+      type: direction === 'LONG' ? 'BUY' : 'SELL',
       symbol: stock.symbol,
-      exchange: stock.exchange || "NSE",
-      direction,
-      entryPrice: stock.ltp,
-      stopLoss: sl,
-      target1: tgt1,
-      target2: tgt2,
-      currentPrice: stock.ltp,
-      suggestedQty: stock.lotSize || 1,
-      product: "MIS",
-      isFnO: stock.isFnO,
+      exchange: stock.exchange || 'NSE',
+      ltp: stock.ltp,
       lotSize: stock.lotSize,
+      bracket: {
+        entryPrice: stock.ltp,
+        stopLoss: sl,
+        target1: tgt1,
+        target2: tgt2,
+        product: 'MIS',
+        isFnO: stock.isFnO,
+      },
     });
   };
 
@@ -251,20 +367,30 @@ export default function LiveOhlScreenerPage() {
     <div className="space-y-6 pb-12">
       {/* Header Banner */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-
         <div className="space-y-1 min-w-0">
           <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">
               Open = High / Open = Low Screener
             </h1>
             {/* Reflects the real price feed, not a fixed label. */}
-            <Badge variant={feedLive ? "success" : "secondary"} className="text-[11px]">
-              <span className={cn("h-1.5 w-1.5 rounded-full", feedLive ? "bg-profit animate-pulse" : "bg-muted-foreground")} aria-hidden />
-              {feedLive ? "Live" : socketConnected ? "Feed idle" : "Offline"}
+            <Badge
+              variant={feedLive ? 'success' : 'secondary'}
+              className="text-[11px]">
+              <span
+                className={cn(
+                  'h-1.5 w-1.5 rounded-full',
+                  feedLive ? 'bg-profit animate-pulse' : 'bg-muted-foreground',
+                )}
+                aria-hidden
+              />
+              {feedLive ? 'Live' : socketConnected ? 'Feed idle' : 'Offline'}
             </Badge>
           </div>
           <p className="text-muted-foreground text-xs sm:text-sm max-w-2xl">
-            Real-time scanner identifying institutional opening drive momentum. Pinpoint stocks with <b>Open = Low</b> (Bullish Long) and <b>Open = High</b> (Bearish Short) for Monday morning & daily execution.
+            Real-time scanner identifying institutional opening drive momentum.
+            Pinpoint stocks with <b>Open = Low</b> (Bullish Long) and{' '}
+            <b>Open = High</b> (Bearish Short) for Monday morning & daily
+            execution.
           </p>
         </div>
 
@@ -273,21 +399,23 @@ export default function LiveOhlScreenerPage() {
           {/* Universe selector */}
           <div className="flex items-center bg-muted border border-border rounded-md p-0.5 text-xs">
             <button
-              onClick={() => setUniverse("fno")}
+              onClick={() => setUniverse('fno')}
               className={cn(
-                "px-3 py-1.5 rounded font-medium transition-colors cursor-pointer",
-                universe === "fno" ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
-              )}
-            >
+                'px-3 py-1.5 rounded font-medium transition-colors cursor-pointer',
+                universe === 'fno'
+                  ? 'bg-card text-foreground '
+                  : 'text-muted-foreground hover:text-foreground',
+              )}>
               F&O Liquid ({FO_STOCKS_COUNT || 200})
             </button>
             <button
-              onClick={() => setUniverse("nifty50")}
+              onClick={() => setUniverse('nifty50')}
               className={cn(
-                "px-3 py-1.5 rounded font-medium transition-colors cursor-pointer",
-                universe === "nifty50" ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
-              )}
-            >
+                'px-3 py-1.5 rounded font-medium transition-colors cursor-pointer',
+                universe === 'nifty50'
+                  ? 'bg-card text-foreground '
+                  : 'text-muted-foreground hover:text-foreground',
+              )}>
               Nifty 50
             </button>
           </div>
@@ -295,38 +423,39 @@ export default function LiveOhlScreenerPage() {
           {/* Tolerance selector */}
           <div className="flex items-center bg-muted border border-border rounded-md p-0.5 text-xs">
             <button
-              onClick={() => setTolerance(0.00)}
+              onClick={() => setTolerance(0.0)}
               className={cn(
-                "px-2.5 py-1.5 rounded font-medium transition-colors cursor-pointer",
-                tolerance === 0.00 ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
+                'px-2.5 py-1.5 rounded font-medium transition-colors cursor-pointer',
+                tolerance === 0.0
+                  ? 'bg-card text-foreground '
+                  : 'text-muted-foreground hover:text-foreground',
               )}
-              title="Exact 0.00% equality (Open == Low or Open == High)"
-            >
+              title="Exact 0.00% equality (Open == Low or Open == High)">
               Exact (0.00%)
             </button>
             <button
               onClick={() => setTolerance(0.05)}
               className={cn(
-                "px-2.5 py-1.5 rounded font-medium transition-colors cursor-pointer",
-                tolerance === 0.05 ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
+                'px-2.5 py-1.5 rounded font-medium transition-colors cursor-pointer',
+                tolerance === 0.05
+                  ? 'bg-card text-foreground '
+                  : 'text-muted-foreground hover:text-foreground',
               )}
-              title="Near Open=Low / Open=High (within 0.05% threshold)"
-            >
+              title="Near Open=Low / Open=High (within 0.05% threshold)">
               0.05% Tol
             </button>
             <button
-              onClick={() => setTolerance(0.10)}
+              onClick={() => setTolerance(0.1)}
               className={cn(
-                "px-2.5 py-1.5 rounded font-medium transition-colors cursor-pointer",
-                tolerance === 0.10 ? "bg-card text-foreground " : "text-muted-foreground hover:text-foreground"
+                'px-2.5 py-1.5 rounded font-medium transition-colors cursor-pointer',
+                tolerance === 0.1
+                  ? 'bg-card text-foreground '
+                  : 'text-muted-foreground hover:text-foreground',
               )}
-              title="Within 0.10% threshold"
-            >
+              title="Within 0.10% threshold">
               0.10% Tol
             </button>
           </div>
-
-
 
           {/* Refresh Button */}
           <Button
@@ -334,136 +463,112 @@ export default function LiveOhlScreenerPage() {
             size="sm"
             onClick={() => refetch()}
             disabled={isFetching}
-            className="h-8 text-xs gap-1.5"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin text-primary")} />
-            {isFetching ? "Scanning..." : "Refresh"}
+            className="h-8 text-xs gap-1.5">
+            <RefreshCw
+              className={cn(
+                'h-3.5 w-3.5',
+                isFetching && 'animate-spin text-primary',
+              )}
+            />
+            {isFetching ? 'Scanning...' : 'Refresh'}
           </Button>
         </div>
-
-
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* Open = Low Card */}
-        <Card
-          onClick={() => setActiveTab("open_low")}
+      {/* Stat Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-border border border-border rounded bg-card overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setActiveTab('open_low')}
           className={cn(
-            "cursor-pointer transition-all border rounded-lg overflow-hidden ",
-            activeTab === "open_low" ? "ring-2 ring-profit border-profit/50 bg-profit/5" : "bg-card hover:border-profit/40"
-          )}
-        >
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-xs font-semibold text-profit uppercase tracking-wider flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-profit" />
-                Open = Low (Bullish)
-              </span>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-semibold text-foreground">{summary.openLowCount}</span>
-                <span className="text-xs text-muted-foreground">stocks</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground">100% Buyer dominance from open</p>
-            </div>
-            <div className="p-3.5 rounded-lg bg-profit/10 border border-profit/20 text-profit">
-              <TrendingUp className="h-6 w-6" />
-            </div>
-          </CardContent>
-        </Card>
+            'text-left px-4 py-3 transition-colors border-b-2',
+            activeTab === 'open_low'
+              ? 'border-b-profit bg-muted/40'
+              : 'border-b-transparent hover:bg-muted/30',
+          )}>
+          <span className="text-[11px] text-muted-foreground">
+            Open = Low (Bullish)
+          </span>
+          <div className="mt-0.5 flex items-baseline gap-1.5">
+            <span className="text-xl font-semibold font-mono text-profit">
+              {summary.openLowCount}
+            </span>
+            <span className="text-[11px] text-muted-foreground">stocks</span>
+          </div>
+        </button>
 
-        {/* Open = High Card */}
-        <Card
-          onClick={() => setActiveTab("open_high")}
+        <button
+          type="button"
+          onClick={() => setActiveTab('open_high')}
           className={cn(
-            "cursor-pointer transition-all border rounded-lg overflow-hidden ",
-            activeTab === "open_high" ? "ring-2 ring-loss border-loss/50 bg-loss/5" : "bg-card hover:border-loss/40"
-          )}
-        >
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-xs font-semibold text-loss uppercase tracking-wider flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-loss" />
-                Open = High (Bearish)
-              </span>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-semibold text-foreground">{summary.openHighCount}</span>
-                <span className="text-xs text-muted-foreground">stocks</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground">100% Seller dominance from open</p>
-            </div>
-            <div className="p-3.5 rounded-lg bg-loss/10 border border-loss/20 text-loss">
-              <TrendingDown className="h-6 w-6" />
-            </div>
-          </CardContent>
-        </Card>
+            'text-left px-4 py-3 transition-colors border-b-2',
+            activeTab === 'open_high'
+              ? 'border-b-loss bg-muted/40'
+              : 'border-b-transparent hover:bg-muted/30',
+          )}>
+          <span className="text-[11px] text-muted-foreground">
+            Open = High (Bearish)
+          </span>
+          <div className="mt-0.5 flex items-baseline gap-1.5">
+            <span className="text-xl font-semibold font-mono text-loss">
+              {summary.openHighCount}
+            </span>
+            <span className="text-[11px] text-muted-foreground">stocks</span>
+          </div>
+        </button>
 
-        {/* Near Open Match Card */}
-        <Card
-          onClick={() => setActiveTab(activeTab === "near_open_low" ? "near_open_high" : "near_open_low")}
+        <button
+          type="button"
+          onClick={() =>
+            setActiveTab(
+              activeTab === 'near_open_low'
+                ? 'near_open_high'
+                : 'near_open_low',
+            )
+          }
           className={cn(
-            "cursor-pointer transition-all border rounded-lg overflow-hidden ",
-            activeTab === "near_open_low" || activeTab === "near_open_high"
-              ? "ring-2 ring-primary border-primary/50 bg-primary/5"
-              : "bg-card hover:border-primary/40"
-          )}
-        >
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-xs font-semibold text-accent-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <SlidersHorizontal className="h-3 w-3" />
-                Near Match (≤{tolerance}%)
-              </span>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-semibold text-foreground">
-                  {summary.nearOpenLowCount + summary.nearOpenHighCount}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  ({summary.nearOpenLowCount} <span className="inline-block h-2 w-2 rounded-full bg-profit align-middle" aria-hidden /> / {summary.nearOpenHighCount} <span className="inline-block h-2 w-2 rounded-full bg-loss align-middle" aria-hidden />)
-                </span>
-              </div>
-              <p className="text-[11px] text-muted-foreground">Potential breakout setups</p>
-            </div>
-            <div className="p-3.5 rounded-lg bg-primary/10 border border-primary/20 text-accent-foreground">
-              <Sparkles className="h-6 w-6" />
-            </div>
-          </CardContent>
-        </Card>
+            'text-left px-4 py-3 transition-colors border-b-2',
+            activeTab === 'near_open_low' || activeTab === 'near_open_high'
+              ? 'border-b-primary bg-muted/40'
+              : 'border-b-transparent hover:bg-muted/30',
+          )}>
+          <span className="text-[11px] text-muted-foreground">
+            Near Match (≤{tolerance}%)
+          </span>
+          <div className="mt-0.5 flex items-baseline gap-1.5">
+            <span className="text-xl font-semibold font-mono text-foreground">
+              {summary.nearOpenLowCount + summary.nearOpenHighCount}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {summary.nearOpenLowCount} / {summary.nearOpenHighCount}
+            </span>
+          </div>
+        </button>
 
-        {/* Market Breadth Card */}
-        <Card className="border rounded-lg bg-card">
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1 w-full">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  Market Breadth
-                </span>
-                <span className="text-xs font-semibold text-foreground">
-                  {summary.advances} Adv / {summary.declines} Dec
-                </span>
-              </div>
-              {/* Progress ratio bar */}
-              <div className="w-full bg-border h-2.5 rounded-full overflow-hidden flex my-1.5">
-                <div
-                  className="bg-profit transition-all duration-500"
-                  style={{
-                    width: `${summary.advances + summary.declines > 0 ? (summary.advances / (summary.advances + summary.declines)) * 100 : 50}%`,
-                  }}
-                />
-                <div
-                  className="bg-loss transition-all duration-500"
-                  style={{
-                    width: `${summary.advances + summary.declines > 0 ? (summary.declines / (summary.advances + summary.declines)) * 100 : 50}%`,
-                  }}
-                />
-              </div>
-              <p className="text-[11px] text-muted-foreground flex items-center justify-between">
-                <span><span className="inline-block h-2 w-2 rounded-full bg-profit align-middle" aria-hidden /> {summary.advances} Positive</span>
-                <span><span className="inline-block h-2 w-2 rounded-full bg-loss align-middle" aria-hidden /> {summary.declines} Negative</span>
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-muted-foreground">
+              Market Breadth
+            </span>
+            <span className="text-[11px] font-medium text-foreground num">
+              {summary.advances} Adv / {summary.declines} Dec
+            </span>
+          </div>
+          <div className="w-full bg-border h-1 overflow-hidden flex my-2">
+            <div
+              className="bg-profit"
+              style={{
+                width: `${summary.advances + summary.declines > 0 ? (summary.advances / (summary.advances + summary.declines)) * 100 : 50}%`,
+              }}
+            />
+            <div
+              className="bg-loss"
+              style={{
+                width: `${summary.advances + summary.declines > 0 ? (summary.declines / (summary.advances + summary.declines)) * 100 : 50}%`,
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Main Filter & Tabs Bar */}
@@ -472,54 +577,70 @@ export default function LiveOhlScreenerPage() {
           {/* Signal Filter Tabs */}
           <div className="flex items-center gap-1.5 bg-muted/60 p-1 rounded-lg border border-border/80 overflow-x-auto">
             <button
-              onClick={() => { setActiveTab("all"); setPage(1); }}
+              onClick={() => {
+                setActiveTab('all');
+                setPage(1);
+              }}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap",
-                activeTab === "all" ? "bg-card text-foreground  font-semibold" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap',
+                activeTab === 'all'
+                  ? 'bg-card text-foreground  font-semibold'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}>
               All Stocks ({enrichedStocks.length})
             </button>
             <button
-              onClick={() => { setActiveTab("open_low"); setPage(1); }}
+              onClick={() => {
+                setActiveTab('open_low');
+                setPage(1);
+              }}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex items-center gap-1.5",
-                activeTab === "open_low"
-                  ? "bg-profit text-on-profit  font-semibold"
-                  : "text-profit  hover:bg-profit/10"
-              )}
-            >
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex items-center gap-1.5',
+                activeTab === 'open_low'
+                  ? 'bg-profit text-on-profit  font-semibold'
+                  : 'text-profit  hover:bg-profit/10',
+              )}>
               <span className="h-2 w-2 rounded-full bg-profit/40" />
               Open = Low ({summary.openLowCount})
             </button>
             <button
-              onClick={() => { setActiveTab("open_high"); setPage(1); }}
+              onClick={() => {
+                setActiveTab('open_high');
+                setPage(1);
+              }}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex items-center gap-1.5",
-                activeTab === "open_high"
-                  ? "bg-loss text-on-loss  font-semibold"
-                  : "text-loss  hover:bg-loss/10"
-              )}
-            >
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex items-center gap-1.5',
+                activeTab === 'open_high'
+                  ? 'bg-loss text-on-loss  font-semibold'
+                  : 'text-loss  hover:bg-loss/10',
+              )}>
               <span className="h-2 w-2 rounded-full bg-loss/40" />
               Open = High ({summary.openHighCount})
             </button>
             <button
-              onClick={() => { setActiveTab("near_open_low"); setPage(1); }}
+              onClick={() => {
+                setActiveTab('near_open_low');
+                setPage(1);
+              }}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap",
-                activeTab === "near_open_low" ? "bg-primary text-primary-foreground  font-semibold" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap',
+                activeTab === 'near_open_low'
+                  ? 'bg-primary text-primary-foreground  font-semibold'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}>
               Near O=L ({summary.nearOpenLowCount})
             </button>
             <button
-              onClick={() => { setActiveTab("near_open_high"); setPage(1); }}
+              onClick={() => {
+                setActiveTab('near_open_high');
+                setPage(1);
+              }}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap",
-                activeTab === "near_open_high" ? "bg-signal text-on-signal  font-semibold" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap',
+                activeTab === 'near_open_high'
+                  ? 'bg-signal text-on-signal  font-semibold'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}>
               Near O=H ({summary.nearOpenHighCount})
             </button>
           </div>
@@ -531,7 +652,10 @@ export default function LiveOhlScreenerPage() {
               <Input
                 placeholder="Search stock symbol or name..."
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
                 className="pl-9 h-9 text-xs bg-card border-border/80 rounded-lg"
               />
             </div>
@@ -539,17 +663,25 @@ export default function LiveOhlScreenerPage() {
             {/* View Mode */}
             <div className="flex items-center border border-border/80 rounded-lg p-0.5 bg-card">
               <button
-                onClick={() => setViewMode("table")}
-                className={cn("p-1.5 rounded-lg text-xs transition-colors", viewMode === "table" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}
-                title="Table View"
-              >
+                onClick={() => setViewMode('table')}
+                className={cn(
+                  'p-1.5 rounded-lg text-xs transition-colors',
+                  viewMode === 'table'
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                title="Table View">
                 <TableIcon className="h-4 w-4" />
               </button>
               <button
-                onClick={() => setViewMode("grid")}
-                className={cn("p-1.5 rounded-lg text-xs transition-colors", viewMode === "grid" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}
-                title="Card Grid View"
-              >
+                onClick={() => setViewMode('grid')}
+                className={cn(
+                  'p-1.5 rounded-lg text-xs transition-colors',
+                  viewMode === 'grid'
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                title="Card Grid View">
                 <LayoutGrid className="h-4 w-4" />
               </button>
             </div>
@@ -564,14 +696,16 @@ export default function LiveOhlScreenerPage() {
           {CATEGORIES.map((cat) => (
             <button
               key={cat}
-              onClick={() => { setSelectedCategory(cat); setPage(1); }}
+              onClick={() => {
+                setSelectedCategory(cat);
+                setPage(1);
+              }}
               className={cn(
-                "px-2.5 py-1 rounded-lg transition-all shrink-0 font-medium",
+                'px-2.5 py-1 rounded-lg transition-all shrink-0 font-medium',
                 selectedCategory === cat
-                  ? "bg-foreground text-background "
-                  : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
+                  ? 'bg-foreground text-background '
+                  : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}>
               {cat}
             </button>
           ))}
@@ -579,18 +713,22 @@ export default function LiveOhlScreenerPage() {
 
         {/* Alphabet Bar */}
         <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px]">
-          <span className="text-muted-foreground font-semibold shrink-0 mr-1">A-Z:</span>
+          <span className="text-muted-foreground font-semibold shrink-0 mr-1">
+            A-Z:
+          </span>
           {ALPHABETS.map((letter) => (
             <button
               key={letter}
-              onClick={() => { setSelectedAlphabet(letter); setPage(1); }}
+              onClick={() => {
+                setSelectedAlphabet(letter);
+                setPage(1);
+              }}
               className={cn(
-                "h-6 px-1.5 min-w-[24px] rounded font-medium transition-colors shrink-0",
+                'h-6 px-1.5 min-w-[24px] rounded font-medium transition-colors shrink-0',
                 selectedAlphabet === letter
-                  ? "bg-primary text-primary-foreground font-semibold"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
+                  ? 'bg-primary text-primary-foreground font-semibold'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}>
               {letter}
             </button>
           ))}
@@ -598,8 +736,8 @@ export default function LiveOhlScreenerPage() {
       </div>
 
       {/* Main Table / Grid View */}
-      {viewMode === "table" ? (
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
+      {viewMode === 'table' ? (
+        <div className="bg-card border border-border rounded overflow-hidden">
           {/* ─── Mobile Stock Cards (< md) ─── */}
           <div className="block md:hidden divide-y divide-border/60">
             {isLoading ? (
@@ -612,79 +750,117 @@ export default function LiveOhlScreenerPage() {
             ) : paginatedStocks.length === 0 ? (
               <div className="py-12 text-center text-muted-foreground px-4">
                 <Info className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                <p className="font-semibold text-sm">No stocks matching the selected criteria</p>
-                <p className="text-xs text-muted-foreground mt-1">Try switching tabs or adjusting tolerance settings.</p>
+                <p className="font-semibold text-sm">
+                  No stocks matching the selected criteria
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Try switching tabs or adjusting tolerance settings.
+                </p>
               </div>
             ) : (
               paginatedStocks.map((stock) => {
                 const isUp = stock.change >= 0;
-                const flash = priceFlashes[stock.symbol] || priceFlashes[`NSE:${stock.symbol}`];
-                const isBullish = stock.signalType === "BULLISH";
+                const flash =
+                  priceFlashes[stock.symbol] ||
+                  priceFlashes[`NSE:${stock.symbol}`];
 
                 return (
-                  <div key={stock.symbol} className="p-3.5 space-y-3 bg-card hover:bg-muted/15 transition-colors">
+                  <div
+                    key={stock.symbol}
+                    className="p-3.5 space-y-3 bg-card hover:bg-muted/15 transition-colors">
                     {/* Row 1: Symbol & LTP */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-sm text-foreground">{stock.symbol}</span>
+                        <span className="font-semibold text-sm text-foreground">
+                          {stock.symbol}
+                        </span>
                         {stock.isFnO && (
-                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/30 text-accent-foreground bg-primary/5">
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] px-1 py-0 border-primary/30 text-accent-foreground bg-primary/5">
                             Lot {stock.lotSize}
                           </Badge>
                         )}
-                        <span className="text-[10px] text-muted-foreground truncate max-w-[100px]">{stock.name}</span>
+                        <span className="text-[10px] text-muted-foreground truncate max-w-[100px]">
+                          {stock.name}
+                        </span>
                       </div>
 
                       <div className="text-right">
-                        <span
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span
+                            className={cn(
+                              'h-1.5 w-1.5 rounded-full shrink-0',
+                              stock.isLive
+                                ? 'bg-profit animate-pulse'
+                                : 'bg-muted-foreground/40',
+                            )}
+                            title={
+                              stock.isLive
+                                ? 'Live tick'
+                                : 'Delayed (last known price)'
+                            }
+                          />
+                          <span
+                            className={cn(
+                              'px-2 py-0.5 rounded transition-all duration-300 inline-block font-mono font-semibold text-sm',
+                              flash === 'up' &&
+                                'bg-profit/30 text-profit scale-105',
+                              flash === 'down' &&
+                                'bg-loss/30 text-loss scale-105',
+                            )}>
+                            {formatINR(stock.ltp)}
+                          </span>
+                        </div>
+                        <div
                           className={cn(
-                            "px-2 py-0.5 rounded transition-all duration-300 inline-block font-mono font-semibold text-sm",
-                            flash === "up" && "bg-profit/30 text-profit scale-105",
-                            flash === "down" && "bg-loss/30 text-loss scale-105"
+                            'flex items-center justify-end gap-0.5 font-semibold text-[11px] font-mono',
+                            isUp ? 'text-profit' : 'text-loss',
+                          )}>
+                          {isUp ? (
+                            <ArrowUpRight className="h-3 w-3" />
+                          ) : (
+                            <ArrowDownRight className="h-3 w-3" />
                           )}
-                        >
-                          {formatINR(stock.ltp)}
-                        </span>
-                        <div className={cn("flex items-center justify-end gap-0.5 font-semibold text-[11px] font-mono", isUp ? "text-profit" : "text-loss")}>
-                          {isUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                          <span>{isUp ? "+" : ""}{stock.changePct.toFixed(2)}%</span>
+                          <span>
+                            {isUp ? '+' : ''}
+                            {stock.changePct.toFixed(2)}%
+                          </span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Row 2: Signal Badge & O-L/O-H Gap */}
-                    <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded-lg border border-border/60 text-xs">
-                      <div>
-                        {stock.signal === "OPEN_LOW" && (
-                          <Badge className="bg-profit/15 text-profit border-profit/30 text-[10px] font-semibold gap-1">
-                            <span className="h-1.5 w-1.5 rounded-full bg-profit" />
-                            OPEN = LOW
-                          </Badge>
+                    {/* Row 2: Signal & O-L/O-H Gap */}
+                    <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded border border-border/60 text-xs">
+                      <div className="text-[11px] font-medium">
+                        {stock.signal === 'OPEN_LOW' && (
+                          <span className="text-profit">Open = Low</span>
                         )}
-                        {stock.signal === "OPEN_HIGH" && (
-                          <Badge className="bg-loss/15 text-loss border-loss/30 text-[10px] font-semibold gap-1">
-                            <span className="h-1.5 w-1.5 rounded-full bg-loss" />
-                            OPEN = HIGH
-                          </Badge>
+                        {stock.signal === 'OPEN_HIGH' && (
+                          <span className="text-loss">Open = High</span>
                         )}
-                        {stock.signal === "NEAR_OPEN_LOW" && (
-                          <Badge variant="outline" className="text-[9px] border-primary/40 text-accent-foreground bg-primary/5">
-                            NEAR O=L ({stock.diffOpenLowPct.toFixed(2)}%)
-                          </Badge>
+                        {stock.signal === 'NEAR_OPEN_LOW' && (
+                          <span className="text-accent-foreground">
+                            Near O=L ({stock.diffOpenLowPct.toFixed(2)}%)
+                          </span>
                         )}
-                        {stock.signal === "NEAR_OPEN_HIGH" && (
-                          <Badge variant="outline" className="text-[9px] border-signal/40 text-signal bg-signal/5">
-                            NEAR O=H ({stock.diffOpenHighPct.toFixed(2)}%)
-                          </Badge>
+                        {stock.signal === 'NEAR_OPEN_HIGH' && (
+                          <span className="text-signal">
+                            Near O=H ({stock.diffOpenHighPct.toFixed(2)}%)
+                          </span>
                         )}
-                        {stock.signal === "NEUTRAL" && (
-                          <span className="text-[10px] text-muted-foreground">Neutral</span>
+                        {stock.signal === 'NEUTRAL' && (
+                          <span className="text-muted-foreground">Neutral</span>
                         )}
                       </div>
 
                       <div className="flex items-center gap-2 font-mono text-[10.5px]">
-                        <span className="text-loss">SL: ₹{stock.suggestedSL}</span>
-                        <span className="text-profit">TGT: ₹{stock.suggestedTarget1}</span>
+                        <span className="text-loss">
+                          SL: ₹{stock.suggestedSL}
+                        </span>
+                        <span className="text-profit">
+                          TGT: ₹{stock.suggestedTarget1}
+                        </span>
                       </div>
                     </div>
 
@@ -692,16 +868,14 @@ export default function LiveOhlScreenerPage() {
                     <div className="flex items-center gap-2 pt-0.5">
                       <Button
                         size="sm"
-                        onClick={() => handleOpenTrade(stock, "LONG")}
-                        className="h-8 flex-1 text-xs bg-profit hover:bg-profit text-on-profit font-semibold rounded-lg"
-                      >
+                        onClick={() => handleOpenTrade(stock, 'LONG')}
+                        className="h-8 flex-1 text-xs bg-profit hover:bg-profit/90 text-on-profit font-medium rounded-sm">
                         BUY (Long)
                       </Button>
                       <Button
                         size="sm"
-                        onClick={() => handleOpenTrade(stock, "SHORT")}
-                        className="h-8 flex-1 text-xs bg-loss hover:bg-loss text-on-loss font-semibold rounded-lg"
-                      >
+                        onClick={() => handleOpenTrade(stock, 'SHORT')}
+                        className="h-8 flex-1 text-xs bg-loss hover:bg-loss/90 text-on-loss font-medium rounded-sm">
                         SELL (Short)
                       </Button>
                     </div>
@@ -717,48 +891,66 @@ export default function LiveOhlScreenerPage() {
               <thead className="bg-muted/50 text-muted-foreground font-semibold border-b border-border text-[11px] uppercase tracking-wider">
                 <tr>
                   <th
-                    className="py-3.5 px-4 cursor-pointer hover:text-foreground"
-                    {...pressable(() => {
-                      if (sortBy === "symbol") setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-                      else { setSortBy("symbol"); setSortOrder("asc"); }
-                    }, { role: null })}
-                  >
+                    className="py-2.5 px-4 cursor-pointer hover:text-foreground"
+                    {...pressable(
+                      () => {
+                        if (sortBy === 'symbol')
+                          setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                        else {
+                          setSortBy('symbol');
+                          setSortOrder('asc');
+                        }
+                      },
+                      { role: null },
+                    )}>
                     <div className="flex items-center gap-1">
                       <span>Stock / Symbol</span>
                       <ArrowUpDown className="h-3 w-3" />
                     </div>
                   </th>
-                  <th className="py-3.5 px-4">Live LTP (₹)</th>
+                  <th className="py-2.5 px-4">Live LTP (₹)</th>
                   <th
-                    className="py-3.5 px-4 cursor-pointer hover:text-foreground"
-                    {...pressable(() => {
-                      if (sortBy === "changePct") setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-                      else { setSortBy("changePct"); setSortOrder("desc"); }
-                    }, { role: null })}
-                  >
+                    className="py-2.5 px-4 cursor-pointer hover:text-foreground"
+                    {...pressable(
+                      () => {
+                        if (sortBy === 'changePct')
+                          setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                        else {
+                          setSortBy('changePct');
+                          setSortOrder('desc');
+                        }
+                      },
+                      { role: null },
+                    )}>
                     <div className="flex items-center gap-1">
                       <span>Day Change (%)</span>
                       <ArrowUpDown className="h-3 w-3" />
                     </div>
                   </th>
-                  <th className="py-3.5 px-4">Open</th>
-                  <th className="py-3.5 px-4">High</th>
-                  <th className="py-3.5 px-4">Low</th>
+                  <th className="py-2.5 px-4">Open</th>
+                  <th className="py-2.5 px-4">High</th>
+                  <th className="py-2.5 px-4">Low</th>
                   <th
-                    className="py-3.5 px-4 cursor-pointer hover:text-foreground"
-                    {...pressable(() => {
-                      if (sortBy === "diff") setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-                      else { setSortBy("diff"); setSortOrder("asc"); }
-                    }, { role: null })}
-                  >
+                    className="py-2.5 px-4 cursor-pointer hover:text-foreground"
+                    {...pressable(
+                      () => {
+                        if (sortBy === 'diff')
+                          setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                        else {
+                          setSortBy('diff');
+                          setSortOrder('asc');
+                        }
+                      },
+                      { role: null },
+                    )}>
                     <div className="flex items-center gap-1">
                       <span>O-L / O-H Diff</span>
                       <ArrowUpDown className="h-3 w-3" />
                     </div>
                   </th>
-                  <th className="py-3.5 px-4">Signal & Strength</th>
-                  <th className="py-3.5 px-4">Suggested SL & TGT</th>
-                  <th className="py-3.5 px-4 text-right">Quick Execution</th>
+                  <th className="py-2.5 px-4">Signal & Strength</th>
+                  <th className="py-2.5 px-4">Suggested SL & TGT</th>
+                  <th className="py-2.5 px-4 text-right">Quick Execution</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -772,157 +964,208 @@ export default function LiveOhlScreenerPage() {
                   ))
                 ) : paginatedStocks.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-muted-foreground">
+                    <td
+                      colSpan={10}
+                      className="py-12 text-center text-muted-foreground">
                       <Info className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                      <p className="font-semibold text-sm">No stocks matching the selected criteria</p>
-                      <p className="text-xs text-muted-foreground mt-1">Try switching tabs or adjusting tolerance settings.</p>
+                      <p className="font-semibold text-sm">
+                        No stocks matching the selected criteria
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Try switching tabs or adjusting tolerance settings.
+                      </p>
                     </td>
                   </tr>
                 ) : (
                   paginatedStocks.map((stock) => {
                     const isUp = stock.change >= 0;
-                    const flash = priceFlashes[stock.symbol] || priceFlashes[`NSE:${stock.symbol}`];
-                    const isBullish = stock.signalType === "BULLISH";
-                    const isBearish = stock.signalType === "BEARISH";
+                    const flash =
+                      priceFlashes[stock.symbol] ||
+                      priceFlashes[`NSE:${stock.symbol}`];
+                    const isBullish = stock.signalType === 'BULLISH';
+                    const isBearish = stock.signalType === 'BEARISH';
 
                     return (
-                      <tr
-                        key={stock.symbol}
-                        className={cn(
-                          "transition-colors hover:bg-muted/40",
-                          stock.signal === "OPEN_LOW" && "bg-profit/[0.03]",
-                          stock.signal === "OPEN_HIGH" && "bg-loss/[0.03]"
-                        )}
-                      >
+                      <tr key={stock.symbol} className="hover:bg-muted/40">
                         {/* Symbol & Name */}
-                        <td className="py-3.5 px-4">
+                        <td className="py-2 px-4">
                           <div className="flex flex-col">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-semibold text-sm text-foreground">{stock.symbol}</span>
+                              <span className="font-semibold text-sm text-foreground">
+                                {stock.symbol}
+                              </span>
                               {stock.isFnO && (
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 border-primary/30 text-accent-foreground bg-primary/5">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] px-1 py-0 border-primary/30 text-accent-foreground bg-primary/5">
                                   Lot {stock.lotSize}
                                 </Badge>
                               )}
                             </div>
-                            <span className="text-[11px] text-muted-foreground truncate max-w-[170px]">{stock.name}</span>
+                            <span className="text-[11px] text-muted-foreground truncate max-w-[170px]">
+                              {stock.name}
+                            </span>
                           </div>
                         </td>
 
                         {/* Live LTP with Flash Animation */}
-                        <td className="py-3.5 px-4 font-semibold text-sm">
-                          <span
-                            className={cn(
-                              "px-2 py-0.5 rounded transition-all duration-300 inline-block font-mono",
-                              flash === "up" && "bg-profit/30 text-profit scale-105",
-                              flash === "down" && "bg-loss/30 text-loss scale-105"
-                            )}
-                          >
-                            {formatINR(stock.ltp)}
-                          </span>
+                        <td className="py-2.5 px-4 font-semibold text-sm">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={cn(
+                                'h-1.5 w-1.5 rounded-full shrink-0',
+                                stock.isLive
+                                  ? 'bg-profit animate-pulse'
+                                  : 'bg-muted-foreground/40',
+                              )}
+                              title={
+                                stock.isLive
+                                  ? 'Live tick'
+                                  : 'Delayed (last known price)'
+                              }
+                            />
+                            <span
+                              className={cn(
+                                'px-2 py-0.5 rounded transition-all duration-300 inline-block font-mono',
+                                flash === 'up' &&
+                                  'bg-profit/30 text-profit scale-105',
+                                flash === 'down' &&
+                                  'bg-loss/30 text-loss scale-105',
+                              )}>
+                              {formatINR(stock.ltp)}
+                            </span>
+                          </div>
                         </td>
 
                         {/* Day Change (%) */}
-                        <td className="py-3.5 px-4">
-                          <div className={cn("flex items-center gap-1 font-semibold text-xs font-mono", isUp ? "text-profit" : "text-loss")}>
-                            {isUp ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-                            <span>{isUp ? "+" : ""}{stock.changePct.toFixed(2)}%</span>
+                        <td className="py-2.5 px-4">
+                          <div
+                            className={cn(
+                              'flex items-center gap-1 font-semibold text-xs font-mono',
+                              isUp ? 'text-profit' : 'text-loss',
+                            )}>
+                            {isUp ? (
+                              <ArrowUpRight className="h-3.5 w-3.5" />
+                            ) : (
+                              <ArrowDownRight className="h-3.5 w-3.5" />
+                            )}
+                            <span>
+                              {isUp ? '+' : ''}
+                              {stock.changePct.toFixed(2)}%
+                            </span>
                           </div>
-                          <span className="text-[10px] text-muted-foreground">₹{stock.change > 0 ? "+" : ""}{stock.change.toFixed(2)}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            ₹{stock.change > 0 ? '+' : ''}
+                            {stock.change.toFixed(2)}
+                          </span>
                         </td>
 
                         {/* Open */}
-                        <td className="py-3.5 px-4 font-mono font-medium text-foreground">
+                        <td className="py-2.5 px-4 font-mono font-medium text-foreground">
                           ₹{stock.open.toFixed(2)}
                         </td>
 
                         {/* High */}
-                        <td className="py-3.5 px-4 font-mono text-muted-foreground">
-                          <span className={cn(stock.signal === "OPEN_HIGH" && "text-loss font-semibold")}>
+                        <td className="py-2.5 px-4 font-mono text-muted-foreground">
+                          <span
+                            className={cn(
+                              stock.signal === 'OPEN_HIGH' &&
+                                'text-loss font-semibold',
+                            )}>
                             ₹{stock.high.toFixed(2)}
                           </span>
                         </td>
 
                         {/* Low */}
-                        <td className="py-3.5 px-4 font-mono text-muted-foreground">
-                          <span className={cn(stock.signal === "OPEN_LOW" && "text-profit font-semibold")}>
+                        <td className="py-2.5 px-4 font-mono text-muted-foreground">
+                          <span
+                            className={cn(
+                              stock.signal === 'OPEN_LOW' &&
+                                'text-profit font-semibold',
+                            )}>
                             ₹{stock.low.toFixed(2)}
                           </span>
                         </td>
 
                         {/* O-L / O-H Difference */}
-                        <td className="py-3.5 px-4">
+                        <td className="py-2.5 px-4">
                           {isBullish ? (
                             <div className="flex flex-col">
                               <span className="font-mono font-semibold text-profit">
-                                ₹{stock.diffOpenLow.toFixed(2)} ({stock.diffOpenLowPct.toFixed(2)}%)
+                                ₹{stock.diffOpenLow.toFixed(2)} (
+                                {stock.diffOpenLowPct.toFixed(2)}%)
                               </span>
-                              <span className="text-[10px] text-muted-foreground">O-L Gap</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                O-L Gap
+                              </span>
                             </div>
                           ) : isBearish ? (
                             <div className="flex flex-col">
                               <span className="font-mono font-semibold text-loss">
-                                ₹{stock.diffOpenHigh.toFixed(2)} ({stock.diffOpenHighPct.toFixed(2)}%)
+                                ₹{stock.diffOpenHigh.toFixed(2)} (
+                                {stock.diffOpenHighPct.toFixed(2)}%)
                               </span>
-                              <span className="text-[10px] text-muted-foreground">O-H Gap</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                O-H Gap
+                              </span>
                             </div>
                           ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
+                            <span className="text-muted-foreground text-xs">
+                              —
+                            </span>
                           )}
                         </td>
 
-                        {/* Signal Badge */}
-                        <td className="py-3.5 px-4">
-                          {stock.signal === "OPEN_LOW" && (
-                            <Badge className="bg-profit/15 text-profit border-profit/30 text-[11px] font-semibold gap-1">
-                              <span className="h-1.5 w-1.5 rounded-full bg-profit" />
-                              OPEN = LOW
-                            </Badge>
+                        {/* Signal */}
+                        <td className="py-2.5 px-4 text-[11px] font-medium">
+                          {stock.signal === 'OPEN_LOW' && (
+                            <span className="text-profit">Open = Low</span>
                           )}
-                          {stock.signal === "OPEN_HIGH" && (
-                            <Badge className="bg-loss/15 text-loss border-loss/30 text-[11px] font-semibold gap-1">
-                              <span className="h-1.5 w-1.5 rounded-full bg-loss" />
-                              OPEN = HIGH
-                            </Badge>
+                          {stock.signal === 'OPEN_HIGH' && (
+                            <span className="text-loss">Open = High</span>
                           )}
-                          {stock.signal === "NEAR_OPEN_LOW" && (
-                            <Badge variant="outline" className="text-[10px] border-primary/40 text-accent-foreground bg-primary/5">
-                              NEAR O=L ({stock.diffOpenLowPct.toFixed(2)}%)
-                            </Badge>
+                          {stock.signal === 'NEAR_OPEN_LOW' && (
+                            <span className="text-accent-foreground">
+                              Near O=L ({stock.diffOpenLowPct.toFixed(2)}%)
+                            </span>
                           )}
-                          {stock.signal === "NEAR_OPEN_HIGH" && (
-                            <Badge variant="outline" className="text-[10px] border-signal/40 text-signal bg-signal/5">
-                              NEAR O=H ({stock.diffOpenHighPct.toFixed(2)}%)
-                            </Badge>
+                          {stock.signal === 'NEAR_OPEN_HIGH' && (
+                            <span className="text-signal">
+                              Near O=H ({stock.diffOpenHighPct.toFixed(2)}%)
+                            </span>
                           )}
-                          {stock.signal === "NEUTRAL" && (
-                            <span className="text-[11px] text-muted-foreground">Neutral</span>
+                          {stock.signal === 'NEUTRAL' && (
+                            <span className="text-muted-foreground">
+                              Neutral
+                            </span>
                           )}
                         </td>
 
                         {/* Suggested SL & Target */}
-                        <td className="py-3.5 px-4 font-mono text-[11px]">
+                        <td className="py-2.5 px-4 font-mono text-[11px]">
                           <div className="flex flex-col">
-                            <span className="text-loss">SL: ₹{stock.suggestedSL}</span>
-                            <span className="text-profit">TGT: ₹{stock.suggestedTarget1}</span>
+                            <span className="text-loss">
+                              SL: ₹{stock.suggestedSL}
+                            </span>
+                            <span className="text-profit">
+                              TGT: ₹{stock.suggestedTarget1}
+                            </span>
                           </div>
                         </td>
 
                         {/* Action Execution Buttons */}
-                        <td className="py-3.5 px-4 text-right">
+                        <td className="py-2.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <Button
                               size="sm"
-                              onClick={() => handleOpenTrade(stock, "LONG")}
-                              className="h-7 px-2.5 text-xs bg-profit hover:bg-profit text-on-profit font-semibold rounded-lg"
-                            >
+                              onClick={() => handleOpenTrade(stock, 'LONG')}
+                              className="h-7 px-2.5 text-xs bg-profit hover:bg-profit/90 text-on-profit font-medium rounded-sm">
                               BUY
                             </Button>
                             <Button
                               size="sm"
-                              onClick={() => handleOpenTrade(stock, "SHORT")}
-                              className="h-7 px-2.5 text-xs bg-loss hover:bg-loss text-on-loss font-semibold rounded-lg"
-                            >
+                              onClick={() => handleOpenTrade(stock, 'SHORT')}
+                              className="h-7 px-2.5 text-xs bg-loss hover:bg-loss/90 text-on-loss font-medium rounded-sm">
                               SELL
                             </Button>
                           </div>
@@ -938,17 +1181,26 @@ export default function LiveOhlScreenerPage() {
           {/* Pagination Controls */}
           <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/20 text-xs text-muted-foreground">
             <div>
-              Showing <span className="font-semibold text-foreground">{paginatedStocks.length}</span> of{" "}
-              <span className="font-semibold text-foreground">{filteredStocks.length}</span> stocks
+              Showing{' '}
+              <span className="font-semibold text-foreground">
+                {paginatedStocks.length}
+              </span>{' '}
+              of{' '}
+              <span className="font-semibold text-foreground">
+                {filteredStocks.length}
+              </span>{' '}
+              stocks
             </div>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5">
                 <span>Per page:</span>
                 <select
                   value={pageSize}
-                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                  className="bg-card border border-border rounded px-2 py-1 text-xs text-foreground"
-                >
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="bg-card border border-border rounded px-2 py-1 text-xs text-foreground">
                   <option value={25}>25</option>
                   <option value={50}>50</option>
                   <option value={100}>100</option>
@@ -961,8 +1213,7 @@ export default function LiveOhlScreenerPage() {
                   size="sm"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page <= 1}
-                  className="h-7 w-7 p-0 rounded-lg"
-                >
+                  className="h-7 w-7 p-0 rounded-lg">
                   <ChevronLeft className="h-3.5 w-3.5" />
                 </Button>
                 <span className="px-2 font-medium">
@@ -973,8 +1224,7 @@ export default function LiveOhlScreenerPage() {
                   size="sm"
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
-                  className="h-7 w-7 p-0 rounded-lg"
-                >
+                  className="h-7 w-7 p-0 rounded-lg">
                   <ChevronRight className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -986,42 +1236,56 @@ export default function LiveOhlScreenerPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {paginatedStocks.map((stock) => {
             const isUp = stock.change >= 0;
-            const flash = priceFlashes[stock.symbol] || priceFlashes[`NSE:${stock.symbol}`];
+            const flash =
+              priceFlashes[stock.symbol] || priceFlashes[`NSE:${stock.symbol}`];
 
             return (
               <Card
                 key={stock.symbol}
                 className={cn(
-                  "border rounded-lg overflow-hidden hover:shadow-lg transition-all",
-                  stock.signal === "OPEN_LOW" && "border-profit/40 bg-profit/[0.02]",
-                  stock.signal === "OPEN_HIGH" && "border-loss/40 bg-loss/[0.02]"
-                )}
-              >
+                  'border rounded overflow-hidden hover:border-foreground/20 transition-colors',
+                  stock.signal === 'OPEN_LOW' && 'border-profit/40',
+                  stock.signal === 'OPEN_HIGH' && 'border-loss/40',
+                )}>
                 <CardHeader className="p-4 pb-2 border-b border-border/50">
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <CardTitle className="text-base font-semibold text-foreground">{stock.symbol}</CardTitle>
+                        <CardTitle className="text-base font-semibold text-foreground">
+                          {stock.symbol}
+                        </CardTitle>
                         {stock.isFnO && (
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-primary/30 text-accent-foreground">
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] px-1 py-0 border-primary/30 text-accent-foreground">
                             Lot {stock.lotSize}
                           </Badge>
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground truncate max-w-[200px]">{stock.name}</p>
+                      <p className="text-xs text-muted-foreground truncate max-w-[200px]">
+                        {stock.name}
+                      </p>
                     </div>
 
-                    {stock.signal === "OPEN_LOW" && (
-                      <Badge className="bg-profit text-on-profit font-semibold text-xs">OPEN = LOW</Badge>
+                    {stock.signal === 'OPEN_LOW' && (
+                      <span className="text-[11px] font-medium text-profit">
+                        Open = Low
+                      </span>
                     )}
-                    {stock.signal === "OPEN_HIGH" && (
-                      <Badge className="bg-loss text-on-loss font-semibold text-xs">OPEN = HIGH</Badge>
+                    {stock.signal === 'OPEN_HIGH' && (
+                      <span className="text-[11px] font-medium text-loss">
+                        Open = High
+                      </span>
                     )}
-                    {stock.signal === "NEAR_OPEN_LOW" && (
-                      <Badge variant="outline" className="border-primary text-accent-foreground text-[10px]">NEAR O=L</Badge>
+                    {stock.signal === 'NEAR_OPEN_LOW' && (
+                      <span className="text-[11px] font-medium text-accent-foreground">
+                        Near O=L
+                      </span>
                     )}
-                    {stock.signal === "NEAR_OPEN_HIGH" && (
-                      <Badge variant="outline" className="border-signal text-signal text-[10px]">NEAR O=H</Badge>
+                    {stock.signal === 'NEAR_OPEN_HIGH' && (
+                      <span className="text-[11px] font-medium text-signal">
+                        Near O=H
+                      </span>
                     )}
                   </div>
                 </CardHeader>
@@ -1030,22 +1294,38 @@ export default function LiveOhlScreenerPage() {
                   {/* Price & Change */}
                   <div className="flex items-baseline justify-between">
                     <div>
-                      <span className="text-xs text-muted-foreground block">Live Price</span>
+                      <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            'h-1.5 w-1.5 rounded-full shrink-0',
+                            stock.isLive
+                              ? 'bg-profit animate-pulse'
+                              : 'bg-muted-foreground/40',
+                          )}
+                        />
+                        Live Price
+                      </span>
                       <span
                         className={cn(
-                          "text-xl font-semibold font-mono inline-block px-1 rounded transition-colors",
-                          flash === "up" && "bg-profit/20 text-profit",
-                          flash === "down" && "bg-loss/20 text-loss"
-                        )}
-                      >
+                          'text-xl font-semibold font-mono inline-block px-1 rounded transition-colors',
+                          flash === 'up' && 'bg-profit/20 text-profit',
+                          flash === 'down' && 'bg-loss/20 text-loss',
+                        )}>
                         ₹{stock.ltp.toFixed(2)}
                       </span>
                     </div>
 
                     <div className="text-right">
-                      <span className="text-xs text-muted-foreground block">Day Change</span>
-                      <span className={cn("font-semibold text-sm font-mono flex items-center gap-0.5 justify-end", isUp ? "text-profit" : "text-loss")}>
-                        {isUp ? "+" : ""}{stock.changePct.toFixed(2)}%
+                      <span className="text-xs text-muted-foreground block">
+                        Day Change
+                      </span>
+                      <span
+                        className={cn(
+                          'font-semibold text-sm font-mono flex items-center gap-0.5 justify-end',
+                          isUp ? 'text-profit' : 'text-loss',
+                        )}>
+                        {isUp ? '+' : ''}
+                        {stock.changePct.toFixed(2)}%
                       </span>
                     </div>
                   </div>
@@ -1053,18 +1333,38 @@ export default function LiveOhlScreenerPage() {
                   {/* OHLC metrics grid */}
                   <div className="grid grid-cols-3 gap-2 bg-muted/40 p-2.5 rounded-lg text-center text-xs font-mono">
                     <div>
-                      <span className="text-[10px] text-muted-foreground block font-sans">Open</span>
-                      <span className="font-semibold text-foreground">₹{stock.open.toFixed(1)}</span>
+                      <span className="text-[10px] text-muted-foreground block font-sans">
+                        Open
+                      </span>
+                      <span className="font-semibold text-foreground">
+                        ₹{stock.open.toFixed(1)}
+                      </span>
                     </div>
                     <div>
-                      <span className="text-[10px] text-muted-foreground block font-sans">High</span>
-                      <span className={cn("font-semibold", stock.signal === "OPEN_HIGH" ? "text-loss font-semibold" : "text-foreground")}>
+                      <span className="text-[10px] text-muted-foreground block font-sans">
+                        High
+                      </span>
+                      <span
+                        className={cn(
+                          'font-semibold',
+                          stock.signal === 'OPEN_HIGH'
+                            ? 'text-loss font-semibold'
+                            : 'text-foreground',
+                        )}>
                         ₹{stock.high.toFixed(1)}
                       </span>
                     </div>
                     <div>
-                      <span className="text-[10px] text-muted-foreground block font-sans">Low</span>
-                      <span className={cn("font-semibold", stock.signal === "OPEN_LOW" ? "text-profit font-semibold" : "text-foreground")}>
+                      <span className="text-[10px] text-muted-foreground block font-sans">
+                        Low
+                      </span>
+                      <span
+                        className={cn(
+                          'font-semibold',
+                          stock.signal === 'OPEN_LOW'
+                            ? 'text-profit font-semibold'
+                            : 'text-foreground',
+                        )}>
                         ₹{stock.low.toFixed(1)}
                       </span>
                     </div>
@@ -1073,21 +1373,21 @@ export default function LiveOhlScreenerPage() {
                   {/* Suggested Levels */}
                   <div className="flex items-center justify-between text-xs font-mono pt-1">
                     <span className="text-loss">SL: ₹{stock.suggestedSL}</span>
-                    <span className="text-profit">Target: ₹{stock.suggestedTarget1}</span>
+                    <span className="text-profit">
+                      Target: ₹{stock.suggestedTarget1}
+                    </span>
                   </div>
 
                   {/* Action Buttons */}
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <Button
-                      onClick={() => handleOpenTrade(stock, "LONG")}
-                      className="w-full bg-profit hover:bg-profit text-on-profit font-semibold text-xs h-8 rounded-lg"
-                    >
+                      onClick={() => handleOpenTrade(stock, 'LONG')}
+                      className="w-full bg-profit hover:bg-profit/90 text-on-profit font-medium text-xs h-8 rounded-sm">
                       BUY (Long)
                     </Button>
                     <Button
-                      onClick={() => handleOpenTrade(stock, "SHORT")}
-                      className="w-full bg-loss hover:bg-loss text-on-loss font-semibold text-xs h-8 rounded-lg"
-                    >
+                      onClick={() => handleOpenTrade(stock, 'SHORT')}
+                      className="w-full bg-loss hover:bg-loss/90 text-on-loss font-medium text-xs h-8 rounded-sm">
                       SELL (Short)
                     </Button>
                   </div>
@@ -1099,12 +1399,16 @@ export default function LiveOhlScreenerPage() {
       )}
 
       {/* Quick Trade Execution Modal */}
-      {quickTradeStock && (
-        <QuickTradePanel
-          stock={quickTradeStock}
-          onClose={() => setQuickTradeStock(null)}
-        />
-      )}
+      <OrderWindow
+        isOpen={orderState.isOpen}
+        onClose={() => setOrderState((prev) => ({ ...prev, isOpen: false }))}
+        symbol={orderState.symbol}
+        exchange={orderState.exchange}
+        type={orderState.type}
+        ltp={orderState.ltp}
+        lotSize={orderState.lotSize}
+        bracket={orderState.bracket}
+      />
     </div>
   );
 }

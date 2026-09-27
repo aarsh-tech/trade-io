@@ -115,7 +115,7 @@ export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalPro
   };
 
   const isSessionValid = Boolean(
-    zerodhaAccount?.accessToken &&
+    zerodhaAccount?.isActive &&
     zerodhaAccount?.tokenExpiry &&
     new Date(zerodhaAccount.tokenExpiry).getTime() > Date.now()
   );

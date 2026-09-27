@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { queryKeys } from "@/lib/query-keys";
 import { TRADING_QUERY } from "@/lib/query-options";
+import { broadcastBrokerSessionRenewed } from "@/lib/broker-sync";
 
 export const PORTFOLIO_KEYS = queryKeys.portfolio;
 
@@ -91,6 +92,9 @@ export function usePortfolio(brokerId?: string | null) {
       ]);
 
       toast.success("Broker session authenticated! Live portfolio & margins synced.");
+
+      // Zerodha login runs in a separate tab (window.open); tell every other open tab to refresh too.
+      broadcastBrokerSessionRenewed();
     },
     onError: (err: any) => {
       toast.error(err?.response?.data?.message || err?.message || "Failed to renew session");

@@ -1,26 +1,30 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, KeyRound } from "lucide-react";
-import Link from "next/link";
-import { cn } from "@/lib/utils";
-import { marketApi } from "@/lib/api";
-import { formatINR, pnlClass } from "@/lib/format";
-import { useMarketStore } from "@/store/market-store";
-import { useBrokers } from "@/hooks/useBrokers";
-import { useRiskStatus } from "@/hooks/useRiskStatus";
-import { useDayPnl } from "@/hooks/useDayPnl";
+import { useBrokers } from '@/hooks/useBrokers';
+import { useDayPnl } from '@/hooks/useDayPnl';
+import { useRiskStatus } from '@/hooks/useRiskStatus';
+import { marketApi } from '@/lib/api';
+import { formatINR, pnlClass } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { useMarketStore } from '@/store/market-store';
+import { useQuery } from '@tanstack/react-query';
+import { AlertOctagon, KeyRound } from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 
-type SessionState = "pre-open" | "open" | "closed" | "holiday" | "weekend";
-interface SessionInfo { state: SessionState; nextOpenAt: string | null; closesAt: string | null }
+type SessionState = 'pre-open' | 'open' | 'closed' | 'holiday' | 'weekend';
+interface SessionInfo {
+  state: SessionState;
+  nextOpenAt: string | null;
+  closesAt: string | null;
+}
 
 const SESSION_LABEL: Record<SessionState, string> = {
-  "pre-open": "Pre-open",
-  open: "Market open",
-  closed: "Market closed",
-  holiday: "Market holiday",
-  weekend: "Weekend",
+  'pre-open': 'Pre-open',
+  open: 'Market open',
+  closed: 'Market closed',
+  holiday: 'Market holiday',
+  weekend: 'Weekend',
 };
 
 function useNow(intervalMs = 1000) {
@@ -44,8 +48,12 @@ function formatCountdown(ms: number) {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 }
 
-const istFormat = new Intl.DateTimeFormat("en-IN", {
-  weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata", hour12: false,
+const istFormat = new Intl.DateTimeFormat('en-IN', {
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Asia/Kolkata',
+  hour12: false,
 });
 
 /** Global live-market state: feed, exchange session, broker token expiry, kill switch and day P&L. */
@@ -64,70 +72,141 @@ export function StatusBar({ onReconnect }: { onReconnect: () => void }) {
   const { brokers } = useBrokers();
   const { data: risk } = useRiskStatus();
   const { data: session } = useQuery({
-    queryKey: ["market", "session"],
+    queryKey: ['market', 'session'],
     queryFn: async () => (await marketApi.session()).data?.data as SessionInfo,
     refetchInterval: 60_000,
   });
 
-  const kite = brokers.find((b: any) => b.broker === "ZERODHA");
-  const expiryMs = kite?.accessToken && kite?.tokenExpiry ? new Date(kite.tokenExpiry).getTime() : null;
+  const kite = brokers.find((b: any) => b.broker === 'ZERODHA');
+  const expiryMs =
+    kite?.isActive && kite?.tokenExpiry
+      ? new Date(kite.tokenExpiry).getTime()
+      : null;
   const remaining = expiryMs !== null ? expiryMs - now : null;
-  const tokenState = !kite ? "none" : remaining === null || remaining <= 0 ? "expired" : remaining < 60 * 60_000 ? "soon" : "ok";
+  const tokenState = !kite
+    ? 'none'
+    : remaining === null || remaining <= 0
+      ? 'expired'
+      : remaining < 60 * 60_000
+        ? 'soon'
+        : 'ok';
 
-  const marketLive = session?.state === "open" || session?.state === "pre-open";
-  const feedState: "offline" | "live" | "stale" | "closed" = !socketConnected
-    ? "offline"
-    : feed.status === "connected" ? "live" : feed.status === "stale" ? "stale" : "closed";
-  const feedLabel = { offline: "Disconnected", live: "Live", stale: "Delayed", closed: "Feed closed" }[feedState];
+  const marketLive = session?.state === 'open' || session?.state === 'pre-open';
+  const feedState: 'offline' | 'live' | 'stale' | 'closed' = !socketConnected
+    ? 'offline'
+    : feed.status === 'connected'
+      ? 'live'
+      : feed.status === 'stale'
+        ? 'stale'
+        : 'closed';
+  const feedLabel = {
+    offline: 'Disconnected',
+    live: 'Live',
+    stale: 'Delayed',
+    closed: 'Feed closed',
+  }[feedState];
   const feedDot =
-    feedState === "live" ? "bg-profit" : feedState === "stale" ? "bg-warn" : feedState === "offline" ? "bg-loss" : "bg-muted-foreground";
+    feedState === 'live'
+      ? 'bg-profit'
+      : feedState === 'stale'
+        ? 'bg-warn'
+        : feedState === 'offline'
+          ? 'bg-loss'
+          : 'bg-muted-foreground';
   const tickAge = lastTickAt ? formatAge(now - lastTickAt) : null;
 
-  const nextOpen = session?.nextOpenAt ? istFormat.format(new Date(session.nextOpenAt)) : null;
+  const nextOpen = session?.nextOpenAt
+    ? istFormat.format(new Date(session.nextOpenAt))
+    : null;
   const { total: dayPnl, realised: dayRealised } = useDayPnl();
 
   return (
     <div
       role="status"
       aria-label="Market and account status"
-      className="flex items-center gap-x-5 h-8 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-3 sm:px-5 bg-surface border-b border-border text-[11px] sm:text-xs text-muted-foreground shrink-0"
-    >
-      <span className="flex items-center gap-1.5 whitespace-nowrap" title="Live price feed">
-        <span className={cn("h-2 w-2 rounded-full shrink-0", feedDot, feedState === "live" && "animate-pulse")} aria-hidden />
+      className="flex items-center gap-x-5 h-8 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-3 sm:px-5 bg-surface border-b border-border text-[11px] sm:text-xs text-muted-foreground shrink-0">
+      <span
+        className="flex items-center gap-1.5 whitespace-nowrap"
+        title="Live price feed">
+        <span
+          className={cn(
+            'h-2 w-2 rounded-full shrink-0',
+            feedDot,
+            feedState === 'live' && 'animate-pulse',
+          )}
+          aria-hidden
+        />
         <span className="font-medium text-foreground">{feedLabel}</span>
-        {tickAge && feedState !== "closed" && <span className="text-muted-foreground num">· last tick {tickAge} ago</span>}
+        {tickAge && feedState !== 'closed' && (
+          <span className="text-muted-foreground num">
+            · last tick {tickAge} ago
+          </span>
+        )}
       </span>
 
       <span className="whitespace-nowrap" title="NSE/BSE session (IST)">
-        <span className={cn("font-medium", marketLive ? "text-profit" : "text-foreground")}>
-          {session ? SESSION_LABEL[session.state] : "Market —"}
+        <span
+          className={cn(
+            'font-medium',
+            marketLive ? 'text-profit' : 'text-foreground',
+          )}>
+          {session ? SESSION_LABEL[session.state] : 'Market —'}
         </span>
-        {session && !marketLive && nextOpen && <span className="text-muted-foreground"> · opens {nextOpen} IST</span>}
+        {session && !marketLive && nextOpen && (
+          <span className="text-muted-foreground"> · opens {nextOpen} IST</span>
+        )}
       </span>
 
-      <span className="flex items-center gap-1.5 whitespace-nowrap" title="Zerodha access tokens expire daily at 06:00 IST">
+      <span
+        className="flex items-center gap-1.5 whitespace-nowrap"
+        title="Zerodha access tokens expire daily at 06:00 IST">
         <KeyRound className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        {tokenState === "none" && <span className="text-muted-foreground">No broker</span>}
-        {tokenState === "ok" && <span>Kite token {formatCountdown(remaining!)} left</span>}
-        {tokenState === "soon" && <span className="text-warn font-semibold">Kite token expires in {formatCountdown(remaining!)}</span>}
-        {tokenState === "expired" && <span className="text-loss font-semibold">Kite session expired</span>}
-        {tokenState !== "ok" && (
-          <button type="button" onClick={onReconnect} className="underline underline-offset-2 font-semibold text-info hover:opacity-80 cursor-pointer">
-            {tokenState === "none" ? "Connect" : "Re-login"}
+        {tokenState === 'none' && (
+          <span className="text-muted-foreground">No broker</span>
+        )}
+        {tokenState === 'ok' && (
+          <span>Kite token {formatCountdown(remaining!)} left</span>
+        )}
+        {tokenState === 'soon' && (
+          <span className="text-warn font-semibold">
+            Kite token expires in {formatCountdown(remaining!)}
+          </span>
+        )}
+        {tokenState === 'expired' && (
+          <span className="text-loss font-semibold">Kite session expired</span>
+        )}
+        {tokenState !== 'ok' && (
+          <button
+            type="button"
+            onClick={onReconnect}
+            className="underline underline-offset-2 font-semibold text-info hover:opacity-80 cursor-pointer">
+            {tokenState === 'none' ? 'Connect' : 'Re-login'}
           </button>
         )}
       </span>
 
       {risk?.killSwitchActive && (
-        <Link href="/strategies" className="flex items-center gap-1 font-semibold text-loss whitespace-nowrap">
+        <Link
+          href="/strategies"
+          className="flex items-center gap-1 font-semibold text-loss whitespace-nowrap">
           <AlertOctagon className="h-3.5 w-3.5" aria-hidden /> Kill switch ON
         </Link>
       )}
 
-      <span className="ml-auto pl-4 whitespace-nowrap" title={dayRealised && risk ? `Realised ${formatINR(dayRealised.realizedPnl)} (net of charges) + unrealised ${formatINR(risk.unrealizedPnl)}` : "Realised + unrealised"}>
-        Day P&amp;L{" "}
-        <span className={cn("font-semibold num", dayPnl === undefined ? "text-muted-foreground" : pnlClass(dayPnl))}>
-          {dayPnl === undefined ? "—" : formatINR(dayPnl, { signed: true })}
+      <span
+        className="ml-auto pl-4 whitespace-nowrap"
+        title={
+          dayRealised && risk
+            ? `Realised ${formatINR(dayRealised.realizedPnl)} (net of charges) + unrealised ${formatINR(risk.unrealizedPnl)}`
+            : 'Realised + unrealised'
+        }>
+        Day P&amp;L{' '}
+        <span
+          className={cn(
+            'font-semibold num',
+            dayPnl === undefined ? 'text-muted-foreground' : pnlClass(dayPnl),
+          )}>
+          {dayPnl === undefined ? '—' : formatINR(dayPnl, { signed: true })}
         </span>
       </span>
     </div>

@@ -1,32 +1,41 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { QuickTradePanel, type QuickTradeStock } from "@/components/dashboard/QuickTradePanel";
+import { OrderWindow, type BracketPreset } from "@/components/dashboard/OrderWindow";
+import { useMarketData } from "@/hooks/use-market-data";
+
+interface TradeSetup {
+  symbol: string;
+  exchange: string;
+  direction: "LONG" | "SHORT";
+  entryPrice: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  currentPrice: number;
+  suggestedQty?: number;
+  product?: "MIS" | "NRML";
+  isFnO?: boolean;
+  lotSize?: number;
+}
 import { swingApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
-  BarChart2,
   ChevronDown,
   ChevronUp,
   Info,
   Loader2,
-  RefreshCw,
-  Rocket,
   Search,
   Share2,
-  ShieldAlert,
-  Star,
   Target,
   TrendingDown,
   TrendingUp,
   Zap,
   Sparkles,
-  ArrowUpRight,
   RefreshCcw
 } from "lucide-react";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatINR } from "@/lib/format";
@@ -74,15 +83,19 @@ function getDirection(r: ScanResult): "LONG" | "SHORT" {
 function PickCard({
   r,
   targetRs,
+  livePrice,
   onQuickTrade,
 }: {
   r: ScanResult;
   targetRs: number;
-  onQuickTrade: (stock: QuickTradeStock) => void;
+  livePrice?: number | null;
+  onQuickTrade: (stock: TradeSetup) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const direction = getDirection(r);
   const isLong = direction === "LONG";
+  const isLive = typeof livePrice === "number" && livePrice > 0;
+  const currentPrice = isLive ? livePrice : r.currentPrice;
 
   const profitPerShare = Math.abs(r.target1 - r.entryPrice);
   const qty = profitPerShare > 0 ? Math.ceil(targetRs / profitPerShare) : r.suggestedQty;
@@ -93,7 +106,7 @@ function PickCard({
     const side = isLong ? "BUY (Long)" : "SELL (Short)";
     const text = `🚀 *Intraday Pick — ${side}*
 Stock: *${r.symbol}* (${r.exchange})
-Price: ₹${fmt(r.currentPrice)}
+Price: ₹${fmt(currentPrice)}
 
 Entry: ₹${fmt(r.entryPrice)}
 Stop Loss: ₹${fmt(r.stopLoss)} (${r.riskPct.toFixed(1)}% Risk)
@@ -109,156 +122,74 @@ _Powered by Tradeio.site Intelligence_`;
   return (
     <Card
       className={cn(
-        "border-border/90 bg-card  rounded-lg overflow-hidden hover:border-border hover:shadow-md transition-all group flex flex-col justify-between",
-        r.confidence === "HIGH" && "border-profit/30"
+        "border-border/90 bg-card rounded overflow-hidden hover:border-foreground/20 transition-colors flex flex-col justify-between",
+        r.confidence === "HIGH" && "border-l-2 border-l-profit"
       )}
     >
-      <div className="p-5 space-y-4">
+      <div className="p-3.5 sm:p-4 space-y-3">
         {/* Card Header */}
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-lg font-semibold text-foreground group-hover:text-accent-foreground transition-colors">
-                {r.symbol}
-              </h3>
-              <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1 text-muted-foreground">
-                {r.exchange}
-              </Badge>
-              <Badge
-                variant={isLong ? "success" : "destructive"}
-                className={cn(
-                  "text-[10px] font-semibold py-0 px-1.5 inline-flex items-center gap-0.5",
-                  isLong
-                    ? "bg-profit-subtle text-profit border-profit/30"
-                    : "bg-loss-subtle text-loss border-loss/30"
-                )}
-              >
-                {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                {isLong ? "LONG" : "SHORT"}
-              </Badge>
-            </div>
-
-            <div className="flex items-center gap-2 mt-1">
-              <span className="font-mono text-xs font-semibold text-foreground/75 bg-muted/50 px-2 py-0.5 rounded border border-border/60">
-                LTP: ₹{fmt(r.currentPrice)}
-              </span>
-              <Badge
-                variant="secondary"
-                className={cn(
-                  "text-[10px] font-medium",
-                  r.confidence === "HIGH"
-                    ? "bg-profit-subtle text-profit border border-profit/30"
-                    : r.confidence === "MEDIUM"
-                    ? "bg-warn-subtle text-warn border border-warn/30"
-                    : "bg-muted text-foreground/75"
-                )}
-              >
-                <Star className="h-2.5 w-2.5 inline mr-1 text-warn fill-warn" />
-                {r.confidence}
-              </Badge>
-            </div>
-          </div>
-
-          <div className="text-right">
-            <div className="flex items-center justify-end gap-1.5 mb-0.5">
-              <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Score</span>
-              <button
-                onClick={handleShare}
-                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground/75 transition-colors"
-                title="Copy trade setup"
-              >
-                <Share2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            <div
-              className={cn(
-                "text-lg sm:text-2xl font-semibold font-mono",
-                r.score >= 85 ? "text-accent-foreground" : r.score >= 75 ? "text-profit" : "text-muted-foreground"
-              )}
-            >
-              {r.score}
-            </div>
-          </div>
-        </div>
-
-        {/* Level Boxes Grid */}
-        <div className="grid grid-cols-2 gap-2.5">
-          <div
-            className={cn(
-              "p-2.5 rounded-lg border",
-              isLong ? "bg-profit-subtle/50 border-profit/30" : "bg-loss-subtle/50 border-loss/30"
-            )}
-          >
-            <div
-              className={cn(
-                "flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider mb-0.5",
-                isLong ? "text-profit" : "text-loss"
-              )}
-            >
-              <Target className="h-3 w-3" />
-              {isLong ? "Buy Above" : "Sell Below"}
-            </div>
-            <div className={cn("text-base font-semibold font-mono", isLong ? "text-profit" : "text-loss")}>
-              ₹{fmt(r.entryPrice)}
-            </div>
-          </div>
-
-          <div className="p-2.5 bg-loss-subtle/50 rounded-lg border border-loss/30">
-            <div className="flex items-center gap-1 text-[10px] font-semibold text-loss uppercase tracking-wider mb-0.5">
-              <ShieldAlert className="h-3 w-3" /> Stop Loss
-            </div>
-            <div className="text-base font-semibold font-mono text-loss">₹{fmt(r.stopLoss)}</div>
-            <div className="text-[10px] text-loss font-medium">{r.riskPct.toFixed(1)}% Risk</div>
-          </div>
-        </div>
-
-        {/* Targets Strip */}
-        <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
-          {[
-            { label: "T1 (Fib 0.382)", price: r.target1, color: "text-profit bg-profit-subtle border-profit/30" },
-            { label: "T2 (Fib 0.618)", price: r.target2, color: "text-accent-foreground bg-brand-subtle border-primary/30" },
-            { label: "T3 (Fib 1.0)", price: r.target3, color: "text-accent-foreground bg-brand-subtle border-primary/30" },
-          ].map((t) => (
-            <div key={t.label} className={cn("flex-shrink-0 px-2.5 py-1.5 rounded-lg border flex flex-col items-center min-w-[85px]", t.color)}>
-              <span className="text-[9px] font-semibold uppercase">{t.label}</span>
-              <span className="text-xs font-semibold font-mono">₹{fmt(t.price)}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Goal Calculator Panel */}
-        <div className="bg-muted/50 rounded-lg p-3 border border-border/80">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5 text-foreground/75">
-              <Rocket className="h-3.5 w-3.5 text-accent-foreground" />
-              <span className="text-[11px] font-semibold uppercase tracking-wider">Goal Plan</span>
-            </div>
-            <span className="text-[10px] font-semibold font-mono bg-brand-subtle text-accent-foreground px-2 py-0.5 rounded border border-primary/30">
-              Target: ₹{targetRs}
+          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+            <h3 className="text-sm font-semibold text-foreground">{r.symbol}</h3>
+            <span className="text-[10px] text-muted-foreground">{r.exchange}</span>
+            <span className={cn("text-[11px] font-semibold", isLong ? "text-profit" : "text-loss")}>
+              {isLong ? "LONG" : "SHORT"}
             </span>
           </div>
+          <button
+            onClick={handleShare}
+            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground/75 transition-colors shrink-0"
+            title="Copy trade setup"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
 
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div>
-              <div className="text-[9px] text-muted-foreground font-semibold uppercase">Qty</div>
-              <div className="text-xs font-semibold font-mono text-foreground">{qty}</div>
-            </div>
-            <div className="border-x border-border">
-              <div className="text-[9px] text-muted-foreground font-semibold uppercase">Capital</div>
-              <div className="text-xs font-semibold font-mono text-foreground">
-                {formatINR(Math.round(capital), { decimals: 0 })}
-              </div>
-            </div>
-            <div>
-              <div className="text-[9px] text-muted-foreground font-semibold uppercase">Max Risk</div>
-              <div className="text-xs font-semibold font-mono text-loss">
-                {formatINR(Math.round(stopLossAmount), { decimals: 0 })}
-              </div>
-            </div>
+        {/* Sub-row: LTP, confidence, score */}
+        <div className="flex items-center justify-between text-[11px]">
+          <div className="flex items-center gap-1.5">
+            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", isLive ? "bg-profit animate-pulse" : "bg-muted-foreground/40")} title={isLive ? "Live tick" : "Last scan snapshot"} />
+            <span className="font-mono font-semibold text-foreground">₹{fmt(currentPrice)}</span>
+          </div>
+          <span className={cn(r.confidence === "HIGH" ? "text-profit" : r.confidence === "MEDIUM" ? "text-warn" : "text-muted-foreground")}>
+            {r.confidence} conf. · Score {r.score}
+          </span>
+        </div>
+
+        {/* Levels row */}
+        <div className="grid grid-cols-4 gap-1 text-center border-y border-border py-2">
+          <div>
+            <p className="text-[9.5px] text-muted-foreground uppercase">{isLong ? "Buy Above" : "Sell Below"}</p>
+            <p className={cn("text-xs font-semibold font-mono", isLong ? "text-profit" : "text-loss")}>₹{fmt(r.entryPrice)}</p>
+          </div>
+          <div>
+            <p className="text-[9.5px] text-muted-foreground uppercase">SL ({r.riskPct.toFixed(1)}%)</p>
+            <p className="text-xs font-semibold font-mono text-loss">₹{fmt(r.stopLoss)}</p>
+          </div>
+          <div>
+            <p className="text-[9.5px] text-muted-foreground uppercase">T1</p>
+            <p className="text-xs font-semibold font-mono text-profit">₹{fmt(r.target1)}</p>
+          </div>
+          <div>
+            <p className="text-[9.5px] text-muted-foreground uppercase">T2</p>
+            <p className="text-xs font-semibold font-mono text-profit">₹{fmt(r.target2)}</p>
           </div>
         </div>
 
-        {/* ⚡ One-Click Trade Button */}
+        {/* Goal plan */}
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-muted-foreground">
+            Qty <strong className="text-foreground font-mono">{qty}</strong>
+          </span>
+          <span className="text-muted-foreground">
+            Capital <strong className="text-foreground font-mono">{formatINR(Math.round(capital), { decimals: 0 })}</strong>
+          </span>
+          <span className="text-muted-foreground">
+            Max risk <strong className="text-loss font-mono">{formatINR(Math.round(stopLossAmount), { decimals: 0 })}</strong>
+          </span>
+        </div>
+
+        {/* One-Click Trade Button */}
         <Button
           onClick={() =>
             onQuickTrade({
@@ -269,19 +200,18 @@ _Powered by Tradeio.site Intelligence_`;
               stopLoss: r.stopLoss,
               target1: r.target1,
               target2: r.target2,
-              currentPrice: r.currentPrice,
+              currentPrice,
               suggestedQty: qty,
               product: "MIS",
             })
           }
           className={cn(
-            "w-full min-w-0 h-9 px-3 text-xs font-semibold uppercase tracking-wider rounded-lg  gap-1.5 flex items-center justify-center overflow-hidden",
+            "w-full min-w-0 h-8 px-3 text-xs font-medium rounded-sm gap-1.5 flex items-center justify-center overflow-hidden",
             isLong
               ? "bg-profit hover:bg-profit/90 text-on-profit"
               : "bg-loss hover:bg-loss/90 text-on-loss"
           )}
         >
-          <Zap className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{isLong ? "Buy" : "Short"} {r.symbol}</span>
           <span className="hidden sm:inline text-[10px] opacity-80 shrink-0">(MIS)</span>
         </Button>
@@ -289,17 +219,17 @@ _Powered by Tradeio.site Intelligence_`;
         {/* Expand Notes */}
         <button
           onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center justify-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground/75 transition-colors uppercase tracking-wider pt-1"
+          className="w-full flex items-center justify-center gap-1 text-[11px] text-muted-foreground hover:text-foreground/75 transition-colors"
         >
           {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-          {expanded ? "Hide Details" : "View Analysis Notes"}
+          {expanded ? "Hide details" : "View analysis notes"}
         </button>
 
         {expanded && (
-          <div className="mt-2 space-y-1.5 border-t border-border pt-2.5 text-xs text-foreground/75">
+          <div className="space-y-1.5 border-t border-border pt-2.5 text-xs text-foreground/75">
             {r.notes.map((note, idx) => (
               <div key={idx} className="flex items-start gap-1.5">
-                <div className="mt-1 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+                <div className="mt-1 h-1 w-1 rounded-full bg-muted-foreground shrink-0" />
                 <span>{note}</span>
               </div>
             ))}
@@ -317,7 +247,7 @@ export default function IntradayPicksPage() {
   const [targetRs, setTargetRs] = useState(500);
   const [dirFilter, setDirFilter] = useState<"ALL" | "LONG" | "SHORT">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [tradeStock, setTradeStock] = useState<QuickTradeStock | null>(null);
+  const [tradeStock, setTradeStock] = useState<TradeSetup | null>(null);
 
   const loadLast = useCallback(async () => {
     try {
@@ -370,9 +300,31 @@ export default function IntradayPicksPage() {
       : afterDir;
   }, [allResults, dirFilter, searchQuery]);
 
+  // Live LTP for the currently displayed picks (scan levels stay from the snapshot; only the LTP badge ticks live).
+  const visibleSymbols = useMemo(() => filtered.map((r) => r.symbol), [filtered]);
+  const { getPrice } = useMarketData(visibleSymbols);
+
   return (
     <div className="space-y-6 animate-[fade-up_0.3s_ease_both] pb-12 font-sans">
-      <QuickTradePanel stock={tradeStock} onClose={() => setTradeStock(null)} targetRs={targetRs} />
+      <OrderWindow
+        isOpen={tradeStock !== null}
+        onClose={() => setTradeStock(null)}
+        symbol={tradeStock?.symbol ?? ""}
+        exchange={tradeStock?.exchange ?? "NSE"}
+        type={tradeStock?.direction === "SHORT" ? "SELL" : "BUY"}
+        ltp={tradeStock?.currentPrice ?? 0}
+        lotSize={tradeStock?.lotSize}
+        targetRs={targetRs}
+        bracket={tradeStock ? {
+          entryPrice: tradeStock.entryPrice,
+          stopLoss: tradeStock.stopLoss,
+          target1: tradeStock.target1,
+          target2: tradeStock.target2,
+          product: tradeStock.product,
+          isFnO: tradeStock.isFnO,
+          suggestedQty: tradeStock.suggestedQty,
+        } : undefined}
+      />
 
       {/* ── 1. Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -398,71 +350,28 @@ export default function IntradayPicksPage() {
         </div>
       </div>
 
-      {/* ── 2. Stat Cards Grid ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <Card className="border-border/90 bg-card rounded-lg">
-          <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-              <span>Scanned Universe</span>
-              <BarChart2 className="h-4 w-4 text-accent-foreground" />
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-5 pb-4">
-            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
-              {scan?.totalScanned || 0} Stocks
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Total symbols screened</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/90 bg-card rounded-lg">
-          <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-              <span>Total Setups</span>
-              <Zap className="h-4 w-4 text-accent-foreground" />
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-5 pb-4">
-            <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
-              {allResults.length} Candidates
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Passed momentum threshold</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/90 bg-card rounded-lg">
-          <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-              <span>Long Breakouts</span>
-              <TrendingUp className="h-4 w-4 text-profit" />
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-5 pb-4">
-            <div className="text-lg sm:text-2xl font-semibold font-mono text-profit">
-              {longCount} Setups
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Bullish momentum buy setups</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/90 bg-card rounded-lg">
-          <CardHeader className="pb-1 pt-4 px-5">
-            <CardTitle className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-              <span>Short Breakdowns</span>
-              <TrendingDown className="h-4 w-4 text-loss" />
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-5 pb-4">
-            <div className="text-lg sm:text-2xl font-semibold font-mono text-loss">
-              {shortCount} Setups
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Bearish momentum sell setups</p>
-          </CardContent>
-        </Card>
+      {/* ── 2. Stat Strip ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-border border border-border rounded bg-card overflow-hidden">
+        <div className="px-4 py-3">
+          <p className="text-[11px] text-muted-foreground">Scanned Universe</p>
+          <p className="text-xl font-semibold font-mono text-foreground mt-0.5">{scan?.totalScanned || 0}</p>
+        </div>
+        <div className="px-4 py-3">
+          <p className="text-[11px] text-muted-foreground">Total Setups</p>
+          <p className="text-xl font-semibold font-mono text-foreground mt-0.5">{allResults.length}</p>
+        </div>
+        <div className="px-4 py-3">
+          <p className="text-[11px] text-muted-foreground">Long Breakouts</p>
+          <p className="text-xl font-semibold font-mono text-profit mt-0.5">{longCount}</p>
+        </div>
+        <div className="px-4 py-3">
+          <p className="text-[11px] text-muted-foreground">Short Breakdowns</p>
+          <p className="text-xl font-semibold font-mono text-loss mt-0.5">{shortCount}</p>
+        </div>
       </div>
 
       {/* ── 3. Controls & Filter Bar ── */}
-      <Card className="border-border/90 bg-card rounded-lg">
+      <Card className="border-border/90 bg-card rounded">
         <CardContent className="p-4">
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
             {/* Direction Filter Pills */}
@@ -551,12 +460,13 @@ export default function IntradayPicksPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
           {filtered.map((pick) => (
             <PickCard
               key={`${pick.symbol}-${pick.pattern}-${getDirection(pick)}`}
               r={pick}
               targetRs={targetRs}
+              livePrice={getPrice(pick.symbol)}
               onQuickTrade={setTradeStock}
             />
           ))}
@@ -564,7 +474,7 @@ export default function IntradayPicksPage() {
       )}
 
       {/* ── 5. Information & Safety Panel ── */}
-      <Card className="border-border/80 bg-muted/40 rounded-lg">
+      <Card className="border-border/80 bg-muted/40 rounded">
         <CardContent className="p-5 text-xs text-foreground/75 leading-relaxed space-y-2">
           <div className="flex items-center gap-2 font-semibold text-foreground uppercase tracking-wider">
             <Info className="h-4 w-4 text-accent-foreground" /> Automated Risk & Execution Model

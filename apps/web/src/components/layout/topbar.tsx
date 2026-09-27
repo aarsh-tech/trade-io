@@ -25,7 +25,7 @@ export function TopBar() {
 
   const zerodhaAccount = brokers.find((b: any) => b.broker === "ZERODHA");
   const isKiteActive = Boolean(
-    zerodhaAccount?.accessToken &&
+    zerodhaAccount?.isActive &&
     zerodhaAccount?.tokenExpiry &&
     new Date(zerodhaAccount.tokenExpiry).getTime() > Date.now()
   );
