@@ -71,6 +71,9 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       enableDynamicSizing: form.dsEnableDynamicSizing !== false,
       maxCapital: form.dsMaxCapital ? Number(form.dsMaxCapital) : undefined,
       maxLots: form.dsMaxLots ? Number(form.dsMaxLots) : 25,
+      enableTrapSniper: form.dsEnableTrapSniper === true,
+      trapSweepBufferPts: form.dsTrapSweepBufferPts ? Number(form.dsTrapSweepBufferPts) : undefined,
+      enablePcrConfluence: form.dsEnablePcrConfluence === true,
     };
   } else if (form.type === "STOCK_OPTIONS_BUYING") {
     const isAuto = form.sIsAutoStockSelect || form.symbol === "AUTO";

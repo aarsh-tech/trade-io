@@ -1,14 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
-import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
-import { autoSelectStock } from './smart-stock-picker';
-import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { TickerService } from '../market/ticker.service';
-import { findOpenPosition, tallyTodaysTrades, protectionNotice, PositionUnknownError } from './position-recovery';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
+import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
+import { findOpenPosition, PositionUnknownError, protectionNotice, tallyTodaysTrades } from './position-recovery';
 
 interface Candle {
   date: Date;
@@ -36,6 +35,8 @@ interface ScalperStrategyState {
   invalidationPrice: number | null;
   setupTimestamp: number | null;
   setupType?: string;
+  /** Structural index/future price that invalidates a trap-sniper thesis (SMC setups only). Null = plain point-based SL only. */
+  indexInvalidationPrice?: number | null;
   entryPrice: number | null;
   stopLossPrice: number | null;
   initialSlPrice?: number | null;
@@ -135,6 +136,7 @@ export class NiftyOptionsScalperEngine {
     const candleTrailBufferPts = isSensex ? 2.5 : (isBankNifty ? 2.0 : 1.0);
     const minCandleRange = isSensex ? 25 : (isBankNifty ? 18 : 8);
     const emaPullbackBuffer = isSensex ? 25 : (isBankNifty ? 16 : 9);
+    const trapSweepBufferPts = userConfig?.trapSweepBufferPts || (isSensex ? 20 : (isBankNifty ? 15 : 6));
 
     return {
       isAutoHybrid,
@@ -154,6 +156,7 @@ export class NiftyOptionsScalperEngine {
       candleTrailBufferPts,
       minCandleRange,
       emaPullbackBuffer,
+      trapSweepBufferPts,
     };
   }
 
@@ -220,6 +223,9 @@ export class NiftyOptionsScalperEngine {
       enableDynamicSizing: parsedConfig.enableDynamicSizing !== undefined ? parsedConfig.enableDynamicSizing : true,
       maxCapital: parsedConfig.maxCapital,
       maxLots: parsedConfig.maxLots || 25,
+      enableTrapSniper: parsedConfig.enableTrapSniper === true,
+      trapSweepBufferPts: parsedConfig.trapSweepBufferPts,
+      enablePcrConfluence: parsedConfig.enablePcrConfluence === true,
     };
 
     await this.prisma.strategyExecution.updateMany({
@@ -256,6 +262,7 @@ export class NiftyOptionsScalperEngine {
       confirmationLow: null,
       invalidationPrice: null,
       setupTimestamp: null,
+      indexInvalidationPrice: null,
       entryPrice: null,
       stopLossPrice: null,
       targetPrice: null,
@@ -820,7 +827,7 @@ export class NiftyOptionsScalperEngine {
       state.tradesPlacedToday = 0;
       await this.persistLogs(state);
     } catch (err) {
-      this.log(state, `⚠ Catch-up failed: ${err.message}`);
+      this.log(state, `⚠ Catch-up failed: ${err instanceof Error ? err.message : String(err)}`);
       await this.persistLogs(state);
     }
   }
@@ -886,6 +893,8 @@ export class NiftyOptionsScalperEngine {
             state.isDynamicTrailingActive = false;
             state.isPartialBooked = false;
             state.executedQty = undefined;
+            state.setupType = undefined;
+            state.indexInvalidationPrice = null;
 
             strategyEvents.emit('strategy.update', {
               strategyId: state.strategyId,
@@ -969,6 +978,8 @@ export class NiftyOptionsScalperEngine {
         const upperWick = currentCandle.high - Math.max(currentCandle.open, currentCandle.close);
         const lowerWickPct = lowerWick / candleRange;
         const upperWickPct = upperWick / candleRange;
+        const isGreen = currentCandle.close >= currentCandle.open;
+        const isRed = currentCandle.close < currentCandle.open;
         const minWickPct = config.minRejectionWickPct !== undefined ? config.minRejectionWickPct : 0.15;
         const scanParams = this.getIndexScalpParams(config.symbol, config);
 
@@ -986,13 +997,76 @@ export class NiftyOptionsScalperEngine {
           return;
         }
 
+        // Session Opening Range (ORH/ORL) & Previous-Day High/Low (PDH/PDL) — the institutional
+        // liquidity pools the SMC Trap Sniper (below) fades sweeps of, and that the ORB trigger
+        // also breaks out of.
+        const todayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) === todayStr);
+        let orbHigh: number | null = null;
+        let orbLow: number | null = null;
+        if (todayCandles.length >= 3) {
+          const orbCandles = todayCandles.slice(0, 3);
+          orbHigh = Math.max(...orbCandles.map(c => c.high));
+          orbLow = Math.min(...orbCandles.map(c => c.low));
+        }
+        let pdh: number | null = null;
+        let pdl: number | null = null;
+        const priorCandles = closedCandles.filter(c => this.getIstDateStr(c.date) !== todayStr);
+        if (priorCandles.length > 0) {
+          const lastPriorDateStr = this.getIstDateStr(priorCandles[priorCandles.length - 1].date);
+          const lastPriorDayCandles = priorCandles.filter(c => this.getIstDateStr(c.date) === lastPriorDateStr);
+          pdh = Math.max(...lastPriorDayCandles.map(c => c.high));
+          pdl = Math.min(...lastPriorDayCandles.map(c => c.low));
+        }
+
         let triggerSide: 'BUY' | 'SELL' | null = null;
         let setupName = '';
+        let trapSetupType: 'BULL_TRAP_SNIPER' | 'BEAR_TRAP_SNIPER' | null = null;
+        let indexInvalidationPrice: number | null = null;
+
+        // ── SMC Setup: Institutional Liquidity Sweep & Trap Sniper (opt-in, ported from Gamma
+        // Blast's SMC engine) — fades false breakouts: price sweeps above/below the key
+        // resistance/support pool (Opening Range or Previous Day High/Low) to trap retail
+        // breakout traders, rejects with a strong wick, and displaces back through VWAP. Checked
+        // first (like Gamma Blast) since it's meant to catch exactly the reversal that the
+        // crossover/pullback/ORB triggers below would otherwise get chopped by.
+        if (config.enableTrapSniper && orbHigh !== null && orbLow !== null && currVwap !== null) {
+          const keyResistance = Math.max(orbHigh, pdh ?? orbHigh);
+          const keySupport = Math.min(orbLow, pdl ?? orbLow);
+          const bufferPts = scanParams.trapSweepBufferPts;
+
+          const sweptHigh = Math.max(currentCandle.high, prevCandle.high);
+          const isBullSweep = sweptHigh >= keyResistance;
+          const isBullTrapConfirmed = isBullSweep && currentCandle.close < currVwap && (
+            (currentCandle.close <= keyResistance && upperWickPct >= 0.35) ||
+            (isRed && currEma !== null && currentCandle.close < currEma)
+          );
+
+          const sweptLow = Math.min(currentCandle.low, prevCandle.low);
+          const isBearSweep = sweptLow <= keySupport;
+          const isBearTrapConfirmed = isBearSweep && currentCandle.close > currVwap && (
+            (currentCandle.close >= keySupport && lowerWickPct >= 0.35) ||
+            (isGreen && currEma !== null && currentCandle.close > currEma)
+          );
+
+          if (isBullTrapConfirmed) {
+            triggerSide = 'SELL';
+            setupName = 'SMC Bull Trap Sniper (PE)';
+            trapSetupType = 'BULL_TRAP_SNIPER';
+            indexInvalidationPrice = this.roundTick(sweptHigh + bufferPts);
+            this.log(state, `🎯 [INSTITUTIONAL BULL TRAP] Liquidity swept above ₹${keyResistance.toFixed(1)} (Peak: ₹${sweptHigh.toFixed(1)}) & rejected below VWAP (₹${currVwap.toFixed(1)})! Fading with PE. Invalidation: ₹${indexInvalidationPrice.toFixed(1)}`);
+          } else if (isBearTrapConfirmed) {
+            triggerSide = 'BUY';
+            setupName = 'SMC Bear Trap Sniper (CE)';
+            trapSetupType = 'BEAR_TRAP_SNIPER';
+            indexInvalidationPrice = this.roundTick(sweptLow - bufferPts);
+            this.log(state, `🎯 [INSTITUTIONAL BEAR TRAP] Liquidity swept below ₹${keySupport.toFixed(1)} (Trough: ₹${sweptLow.toFixed(1)}) & absorbed above VWAP (₹${currVwap.toFixed(1)})! Fading with CE. Invalidation: ₹${indexInvalidationPrice.toFixed(1)}`);
+          }
+        }
 
         // Skip micro / flat candles to avoid choppy sideways whipsaws
         const isRangeValid = config.enableRangeFilter === false || candleRange >= scanParams.minCandleRange;
 
-        if (isRangeValid) {
+        if (!triggerSide && isRangeValid) {
           // 1. EMA-VWAP Crossover Trigger (if enabled) — waits for entryStartTime like Pullback;
           // only ORB is allowed to fire before that (see the gate at the top of tick()).
           const candleHhmm = this.getIstHhmm(currentCandle.date);
@@ -1024,15 +1098,8 @@ export class NiftyOptionsScalperEngine {
           }
 
           // 3. 15-Min Opening Range Breakdown (ORB) — strictly active between 9:30 AM and 11:30 AM!
+          // orbHigh/orbLow/todayCandles were already computed above (also feeds the SMC Trap Sniper).
           const isOrbTimeWindow = candleHhmm >= 9 * 60 + 30 && candleHhmm <= 11 * 60 + 30;
-          let orbHigh: number | null = null;
-          let orbLow: number | null = null;
-          const todayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) === todayStr);
-          if (todayCandles.length >= 3) {
-            const orbCandles = todayCandles.slice(0, 3);
-            orbHigh = Math.max(...orbCandles.map(c => c.high));
-            orbLow = Math.min(...orbCandles.map(c => c.low));
-          }
 
           if (!triggerSide && config.enableOrbTrigger && isOrbTimeWindow && orbLow !== null && orbHigh !== null && lastIdx >= 3) {
             if (currentCandle.close < orbLow && prevCandle.close >= orbLow) {
@@ -1072,7 +1139,8 @@ export class NiftyOptionsScalperEngine {
 
           // Macro Day Trend Bias Alignment Filter (In Bull Day, suppress counter-trend PE pullbacks; in Bear Day, suppress counter-trend CE pullbacks)
           if (triggerSide && config.enableMacroDayBias !== false && setupName.includes('Pullback')) {
-            const prevDayCandles = closedCandles.filter(c => this.getIstDateStr(c.date) !== todayStr);
+            // priorCandles (all candles strictly before today) was already computed above (also feeds PDH/PDL).
+            const prevDayCandles = priorCandles;
             if (prevDayCandles.length > 0 && todayCandles.length > 0) {
               const prevClose = prevDayCandles[prevDayCandles.length - 1].close;
               const dayOpen = todayCandles[0].open;
@@ -1125,8 +1193,16 @@ export class NiftyOptionsScalperEngine {
         const dStr = currD !== null ? currD.toFixed(1) : 'N/A';
 
         if (triggerSide) {
-          this.log(state, `🚀 Triggered ${setupName} on ${intervalMinutes}m candle [${rangeStr}] (closed at ${closeTimeStr}, StochRSI %K: ${kStr}, %D: ${dStr}, Range: ${candleRange.toFixed(1)} pts)! Placing 10-Point Option Trade...`);
-          await this.placeTrade(state, client, account, triggerSide, currentCandle.close);
+          let convictionTag = '';
+          if (config.enablePcrConfluence) {
+            const pcrInfo = await this.computePcrConfluence(client, config, currentCandle.close);
+            if (pcrInfo) {
+              const isAligned = triggerSide === 'BUY' ? pcrInfo.isBullishConfluence : pcrInfo.isBearishConfluence;
+              convictionTag = ` | PCR: ${pcrInfo.pcr}${isAligned ? ' | High-Conviction A+ Setup (OI Confluence)' : ''}`;
+            }
+          }
+          this.log(state, `🚀 Triggered ${setupName} on ${intervalMinutes}m candle [${rangeStr}] (closed at ${closeTimeStr}, StochRSI %K: ${kStr}, %D: ${dStr}, Range: ${candleRange.toFixed(1)} pts)${convictionTag}! Placing 10-Point Option Trade...`);
+          await this.placeTrade(state, client, account, triggerSide, currentCandle.close, undefined, undefined, undefined, undefined, trapSetupType, indexInvalidationPrice);
         } else {
           this.log(state, `👀 Scanned ${intervalMinutes}-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | StochRSI: ${kStr}/${dStr} (No crossover signal)`);
         }
@@ -1138,7 +1214,7 @@ export class NiftyOptionsScalperEngine {
     }
   }
 
-  private async placeTrade(state: ScalperStrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date, motherLow?: number, motherHigh?: number) {
+  private async placeTrade(state: ScalperStrategyState, client: any, account: any, side: 'BUY' | 'SELL', triggerPrice: number, triggerTime?: Date, motherTime?: Date, motherLow?: number, motherHigh?: number, setupType?: 'BULL_TRAP_SNIPER' | 'BEAR_TRAP_SNIPER' | null, indexInvalidationPrice?: number | null) {
     const { config } = state;
     if (!this.running.has(state.strategyId)) return;
     if (state.entryTriggered || state.isPlacingTrade) {
@@ -1230,6 +1306,8 @@ export class NiftyOptionsScalperEngine {
     state.initialSlPrice = sl;
     state.targetPrice = tgt;
     state.setupTimestamp = triggerTime ? triggerTime.getTime() : Date.now();
+    state.setupType = setupType || undefined;
+    state.indexInvalidationPrice = indexInvalidationPrice ?? null;
     state.isCostSlTrailed = false;
     state.isProfitLockTrailed = false;
     state.isDynamicTrailingActive = false;
@@ -1611,6 +1689,34 @@ export class NiftyOptionsScalperEngine {
       return;
     }
 
+    // 1b. SMC Structural Invalidation (Trap Sniper setups only): exit the moment the underlying
+    // future breaks back through the level whose sweep-and-reject the trade was based on, even if
+    // the option premium hasn't hit its point-based SL yet — the same structure-invalidation safety
+    // net Gamma Blast uses for its trap setups.
+    if ((state.setupType === 'BULL_TRAP_SNIPER' || state.setupType === 'BEAR_TRAP_SNIPER') && state.indexInvalidationPrice && state.futureSymbol) {
+      try {
+        const futKey = `${exch}:${state.futureSymbol}`;
+        const futLtp = await kite.getLTP([futKey]);
+        const futPrice = futLtp[futKey]?.last_price;
+        if (futPrice) {
+          const isBullTrapInvalidated = state.setupType === 'BULL_TRAP_SNIPER' && futPrice >= state.indexInvalidationPrice;
+          const isBearTrapInvalidated = state.setupType === 'BEAR_TRAP_SNIPER' && futPrice <= state.indexInvalidationPrice;
+          if (isBullTrapInvalidated || isBearTrapInvalidated) {
+            let exitPrice = state.currentLtp || state.entryPrice || 0;
+            try {
+              const ltpData = await kite.getLTP([key]);
+              if (ltpData[key]?.last_price) exitPrice = ltpData[key].last_price;
+            } catch { }
+            this.log(state, `🛑 [INSTITUTIONAL STRUCTURE INVALIDATION] ${state.config.symbol} Fut @ ₹${futPrice.toFixed(1)} violated Invalidation Level (₹${state.indexInvalidationPrice.toFixed(1)}). Exiting ${symbol} @ ₹${exitPrice.toFixed(2)} ahead of the point-based SL.`);
+            this.stopRealtimeMonitor(state);
+            await this.exitPosition(state, client, exitPrice, 'FORCE_CLOSE');
+            await this.persistLogs(state);
+            return;
+          }
+        }
+      } catch { }
+    }
+
     const isWebSocketStale = !state.lastTickTime || (Date.now() - state.lastTickTime > 3500);
     let currentPrice = state.currentLtp;
 
@@ -1623,7 +1729,7 @@ export class NiftyOptionsScalperEngine {
           state.lastTickTime = Date.now();
         }
       } catch (e) {
-        this.log(state, `⚠ LTP check notice: ${e.message}`);
+        this.log(state, `⚠ LTP check notice: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
@@ -1798,6 +1904,8 @@ export class NiftyOptionsScalperEngine {
           state.isDynamicTrailingActive = false;
           state.isPartialBooked = false;
           state.executedQty = undefined;
+          state.setupType = undefined;
+          state.indexInvalidationPrice = null;
 
           strategyEvents.emit('strategy.update', {
             strategyId: state.strategyId,
@@ -1849,6 +1957,8 @@ export class NiftyOptionsScalperEngine {
       state.isDynamicTrailingActive = false;
       state.isPartialBooked = false;
       state.executedQty = undefined;
+      state.setupType = undefined;
+      state.indexInvalidationPrice = null;
 
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,
@@ -1856,7 +1966,7 @@ export class NiftyOptionsScalperEngine {
         state: this.getState(state.strategyId),
       });
     } catch (e) {
-      this.log(state, `❌ Exit execution failed: ${e.message}`);
+      this.log(state, `❌ Exit execution failed: ${e instanceof Error ? e.message : String(e)}`);
       // The broker SL was cancelled above; if we are live and still long, re-arm it so the position is not naked.
       if (!state.isPaperTrade && client && state.entryTriggered && state.stopLossPrice) {
         try {
@@ -1899,8 +2009,10 @@ export class NiftyOptionsScalperEngine {
       state.isDynamicTrailingActive = false;
       state.isPartialBooked = false;
       state.executedQty = undefined;
+      state.setupType = undefined;
+      state.indexInvalidationPrice = null;
     } catch (e) {
-      this.log(state, `❌ Historical exit failed: ${e.message}`);
+      this.log(state, `❌ Historical exit failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -1940,7 +2052,7 @@ export class NiftyOptionsScalperEngine {
         createdAt,
       });
     } catch (e) {
-      this.logger.error(`Failed to track order in DB: ${e.message}`);
+      this.logger.error(`Failed to track order in DB: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -2110,6 +2222,75 @@ export class NiftyOptionsScalperEngine {
       const targetTimeMs = timestamp.getTime();
       const match = data.find((c: any) => new Date(c.date).getTime() === targetTimeMs);
       return match ? match.close : data[0].close;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Live ATM option-chain Put/Call OI confluence — an informational "conviction" tag only,
+   * ported from Gamma Blast's PCR/OI check. It never blocks or filters an entry; it just tells the
+   * trader (via the log) whether the option chain's own positioning agrees with the direction a
+   * trigger already fired in. Returns null (silently) on any lookup failure — a signal never waits
+   * on this, and a missing tag never suppresses a trade.
+   */
+  private async computePcrConfluence(client: any, config: NiftyOptionsScalperConfig, futurePrice: number): Promise<{ pcr: number; isBullishConfluence: boolean; isBearishConfluence: boolean } | null> {
+    try {
+      const kite = client['kite'] || client;
+      if (!kite || !kite.getQuote) return null;
+
+      const upper = (config.symbol || 'NIFTY').toUpperCase().trim();
+      let underlying = 'NIFTY';
+      if (upper.includes('BANKNIFTY')) underlying = 'BANKNIFTY';
+      else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
+      else if (upper.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
+      else if (upper.includes('SENSEX')) underlying = 'SENSEX';
+
+      const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
+      const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
+      const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : (underlying === 'MIDCPNIFTY' ? 25 : 100);
+
+      const instruments = await client.getInstruments(exchange);
+      const options = (instruments || []).filter((i: any) => i.name === underlying && (i.segment === segment || i.segment === `${exchange}-OPT`));
+      if (options.length === 0) return null;
+
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      const getExpiryStr = (expiry: any): string => {
+        const d = new Date(expiry);
+        return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+      };
+      const uniqueExpiries = Array.from(new Set(options.map((i: any) => getExpiryStr(i.expiry)))).filter(e => e !== '' && e >= todayStr).sort();
+      if (uniqueExpiries.length === 0) return null;
+      const nearestExpiry = uniqueExpiries[0];
+      const weeklyOptions = options.filter((i: any) => getExpiryStr(i.expiry) === nearestExpiry);
+
+      // ATM ± 3 strikes each side is enough to gauge near-the-money OI skew without an expensive full-chain fetch.
+      const atm = Math.round(futurePrice / step) * step;
+      const band = new Set([-3, -2, -1, 0, 1, 2, 3].map(m => atm + m * step));
+      const candidates = weeklyOptions.filter((i: any) => band.has(Number(i.strike)));
+      if (candidates.length === 0) return null;
+
+      const symbols = candidates.map((i: any) => `${exchange}:${i.tradingsymbol}`);
+      const quotes = await kite.getQuote(symbols).catch(() => null);
+      if (!quotes) return null;
+
+      let totalCallOi = 0, totalPutOi = 0;
+      for (const inst of candidates) {
+        const q = quotes[`${exchange}:${inst.tradingsymbol}`];
+        if (!q) continue;
+        if (inst.instrument_type === 'CE') totalCallOi += q.oi || 0;
+        else if (inst.instrument_type === 'PE') totalPutOi += q.oi || 0;
+      }
+      if (totalCallOi <= 0 && totalPutOi <= 0) return null;
+
+      const pcr = totalCallOi > 0 ? (totalPutOi / totalCallOi) : 1.0;
+      return {
+        pcr: Number(pcr.toFixed(2)),
+        // Same thresholds Gamma Blast tags "High-Conviction A+" with: PCR skewed the trade's way,
+        // or the opposing side simply carries less open interest.
+        isBullishConfluence: pcr >= 1.05 || totalCallOi < totalPutOi,
+        isBearishConfluence: pcr <= 0.95 || totalPutOi < totalCallOi,
+      };
     } catch {
       return null;
     }
