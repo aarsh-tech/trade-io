@@ -126,7 +126,14 @@ export class RiskService {
         const client = this.factory.createClient(acc);
         const positions = await client.getPositions();
         for (const pos of positions) {
-          unrealizedPnl += Number(pos.pnl || 0);
+          // Kite's position `pnl` is the day's TOTAL for that instrument (realised + unrealised), and a closed
+          // position (qty 0) keeps its realised amount there. That amount is already in realizedPnl above, so
+          // only open positions contribute, marked to market from their own average and last price.
+          const qty = Number(pos.qty || 0);
+          if (qty === 0) continue;
+          const avg = Number(pos.avgPrice || 0);
+          const ltp = Number(pos.ltp || 0);
+          unrealizedPnl += avg > 0 && ltp > 0 ? (ltp - avg) * qty : Number(pos.pnl || 0);
         }
       } catch (err: any) {
         this.logger.debug(`Could not fetch live positions for account ${acc.id}: ${err.message}`);
