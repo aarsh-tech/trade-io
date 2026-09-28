@@ -28,6 +28,9 @@ import { StrategyService } from './strategy.service';
     credentials: true,
   },
   namespace: 'strategy',
+  // Tolerate a briefly stalled browser tab or a slow mobile network before declaring the client dead.
+  pingInterval: 20000,
+  pingTimeout: 30000,
 })
 export class StrategyGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()

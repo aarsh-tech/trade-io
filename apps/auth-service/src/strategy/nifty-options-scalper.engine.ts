@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
+import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -74,7 +75,24 @@ interface ScalperStrategyState {
   /** Cross-path reentrancy guard: the realtime websocket monitor and the 3s poll monitor can both
    *  detect the same SL/target breach concurrently; only one may execute exitPosition() at a time. */
   isExiting?: boolean;
+  /** Last log line and time written to the DB, so unchanged logs are not rewritten every 3s tick. */
+  loggedEntryWindowWait?: boolean;
+  lastPersistedLogTail?: string;
+  lastDbPersistTime?: number;
 }
+
+/**
+ * Earliest entry time (IST) when the strategy config does not set one. 09:20 lets the strategy act on the
+ * first closed candles after the open; the old 10:45 default silently discarded every crossover before it.
+ */
+const DEFAULT_ENTRY_START_TIME = '09:20';
+
+/**
+ * Last minute (IST) a new entry may be taken, matching the 15:05 mandatory square-off. Fixed for this engine:
+ * the old per-strategy cutoff (14:15 / 14:45) and midday dead-zone are no longer applied, including for
+ * strategies saved earlier with those values.
+ */
+const ENTRY_CUTOFF_TIME = '15:05';
 
 @Injectable()
 export class NiftyOptionsScalperEngine {
@@ -211,15 +229,13 @@ export class NiftyOptionsScalperEngine {
       maxLossesPerDay: parsedConfig.maxLossesPerDay || 2,
       enablePartialBooking: parsedConfig.enablePartialBooking !== undefined ? parsedConfig.enablePartialBooking : false,
       partialBookingPct: parsedConfig.partialBookingPct || 50,
-      enableMiddayChopFilter: parsedConfig.enableMiddayChopFilter !== undefined ? parsedConfig.enableMiddayChopFilter : true,
-      middayDeadZoneStart: parsedConfig.middayDeadZoneStart || '12:15',
-      middayDeadZoneEnd: parsedConfig.middayDeadZoneEnd || '13:15',
+      enableMiddayChopFilter: false,
       enableVolumeSurge: parsedConfig.enableVolumeSurge !== undefined ? parsedConfig.enableVolumeSurge : false,
       minRvol: parsedConfig.minRvol || 0.9,
       enableTrendBiasFilter: parsedConfig.enableTrendBiasFilter !== undefined ? parsedConfig.enableTrendBiasFilter : true,
       enableMacroDayBias: parsedConfig.enableMacroDayBias !== undefined ? parsedConfig.enableMacroDayBias : false,
-      entryStartTime: parsedConfig.entryStartTime || '10:45',
-      entryCutoffTime: parsedConfig.entryCutoffTime || '14:15',
+      entryStartTime: parsedConfig.entryStartTime || DEFAULT_ENTRY_START_TIME,
+      entryCutoffTime: ENTRY_CUTOFF_TIME,
       minRejectionWickPct: parsedConfig.minRejectionWickPct !== undefined ? parsedConfig.minRejectionWickPct : 0.0,
       timeframe: parsedConfig.timeframe || '5minute',
       enableAutoHybrid: isAutoHybrid,
@@ -286,7 +302,7 @@ export class NiftyOptionsScalperEngine {
 
     this.running.set(strategyId, state);
     this.log(state, `▶ Nifty 10-Point Scalper Started — ${config.symbol}:${config.exchange} (Target: +${config.targetPoints} pts, SL: -${config.stopLossPoints} pts, Cost Trail: +${config.trailCostAtPoints} pts, Strike: ${config.moneyness || 'ITM'})`);
-    this.log(state, `⚡ High-Speed Engine active: 3-sec tick frequency, The Banker & Runner (50% partial book), Two-Loss Shield, Midday Dead-Zone Filter (11:45-13:00), RVOL surge & Trend filters enabled`);
+    this.log(state, `⚡ High-Speed Engine active: 3-sec tick frequency, The Banker & Runner (50% partial book), Two-Loss Shield, RVOL surge & Trend filters enabled (entries 09:20-15:05 IST, no midday pause)`);
     // Restore today's trade / win / loss counters so a restart cannot bypass the daily caps and shields
     if (!replayDate) {
       const tally = await tallyTodaysTrades(this.prisma, strategyId);
@@ -690,23 +706,15 @@ export class NiftyOptionsScalperEngine {
           continue;
         }
 
-        // 2. Start Time, Cutoff & Midday Dead-Zone Filter
+        // 2. Start Time & Cutoff
         // ORB gets its own earlier gate (9:30, its natural opening-range window) when enabled;
         // pullback and crossover still wait for entryStartTime to avoid the opening whipsaw.
         const candleHhmm = this.getIstHhmm(currentCandle.date);
-        const startHhmm = this.parseHhmm(state.config.entryStartTime || '10:45');
-        const cutoffHhmm = this.parseHhmm(state.config.entryCutoffTime || '14:15');
+        const startHhmm = this.parseHhmm(state.config.entryStartTime || DEFAULT_ENTRY_START_TIME);
+        const cutoffHhmm = this.parseHhmm(ENTRY_CUTOFF_TIME);
         const orbWindowStartHhmm = 9 * 60 + 30;
         const earliestPossibleHhmm = state.config.enableOrbTrigger ? Math.min(startHhmm, orbWindowStartHhmm) : startHhmm;
         if (candleHhmm < earliestPossibleHhmm || candleHhmm >= cutoffHhmm) continue;
-
-        if (state.config.enableMiddayChopFilter !== false) {
-          const deadStart = this.parseHhmm(state.config.middayDeadZoneStart || '12:15');
-          const deadEnd = this.parseHhmm(state.config.middayDeadZoneEnd || '13:15');
-          if (candleHhmm >= deadStart && candleHhmm < deadEnd) {
-            continue; // Skip midday European transition chop
-          }
-        }
 
         const prevCandle = candles[i - 1];
         const prevDateStr = prevCandle.date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
@@ -933,27 +941,23 @@ export class NiftyOptionsScalperEngine {
       return;
     }
 
-    // 1. Start Time, Cutoff & Midday Dead-Zone Filter
+    // 1. Start Time & Cutoff
     // ORB is meant to catch the early breakout itself, so — when enabled — it gets its own
     // earlier gate (its window starts at 9:30 regardless of entryStartTime); pullback and
-    // crossover still wait for entryStartTime (default 10:45) to avoid the opening whipsaw.
-    const startHhmm = this.parseHhmm(config.entryStartTime || '10:45');
+    // crossover still wait for entryStartTime (default 09:20).
+    const startHhmm = this.parseHhmm(config.entryStartTime || DEFAULT_ENTRY_START_TIME);
     const orbWindowStartHhmm = 9 * 60 + 30;
     const earliestPossibleHhmm = config.enableOrbTrigger ? Math.min(startHhmm, orbWindowStartHhmm) : startHhmm;
     if (hhmm < earliestPossibleHhmm) {
+      if (!state.loggedEntryWindowWait) {
+        state.loggedEntryWindowWait = true;
+        this.log(state, `⏳ Waiting for entry window: signals are scanned from ${config.entryStartTime || DEFAULT_ENTRY_START_TIME} IST (cutoff ${ENTRY_CUTOFF_TIME} IST).`);
+      }
       return; // Nothing can trigger yet
     }
-    const cutoffHhmm = this.parseHhmm(config.entryCutoffTime || '14:15');
+    const cutoffHhmm = this.parseHhmm(ENTRY_CUTOFF_TIME);
     if (hhmm >= cutoffHhmm) {
       return; // No new entries after cutoff time
-    }
-
-    if (config.enableMiddayChopFilter !== false) {
-      const deadStart = this.parseHhmm(config.middayDeadZoneStart || '12:15');
-      const deadEnd = this.parseHhmm(config.middayDeadZoneEnd || '13:15');
-      if (hhmm >= deadStart && hhmm < deadEnd) {
-        return; // Suppress new entry scans during midday European transition lull
-      }
     }
 
     try {
@@ -1041,6 +1045,7 @@ export class NiftyOptionsScalperEngine {
         let setupName = '';
         let trapSetupType: 'BULL_TRAP_SNIPER' | 'BEAR_TRAP_SNIPER' | null = null;
         let indexInvalidationPrice: number | null = null;
+        let crossoverNote = '';
 
         // ── SMC Setup: Institutional Liquidity Sweep & Trap Sniper (opt-in, ported from Gamma
         // Blast's SMC engine) — fades false breakouts: price sweeps above/below the key
@@ -1084,23 +1089,43 @@ export class NiftyOptionsScalperEngine {
 
         // Skip micro / flat candles to avoid choppy sideways whipsaws
         const isRangeValid = config.enableRangeFilter === false || candleRange >= scanParams.minCandleRange;
+        if (!isRangeValid) {
+          crossoverNote = ` | Candle range ${candleRange.toFixed(1)} pts is below the ${scanParams.minCandleRange} pt minimum, entries skipped`;
+        }
 
         if (!triggerSide && isRangeValid) {
           // 1. EMA-VWAP Crossover Trigger (if enabled) — waits for entryStartTime like Pullback;
           // only ORB is allowed to fire before that (see the gate at the top of tick()).
           const candleHhmm = this.getIstHhmm(currentCandle.date);
           if (config.enableCrossoverTrigger && candleHhmm >= startHhmm && prevEma !== null && prevVwap !== null && currEma !== null && currVwap !== null) {
-            if (prevEma <= prevVwap && currEma > currVwap && currentCandle.close >= currVwap && currentCandle.close >= currEma && currentCandle.close >= currentCandle.open) {
+            const bullAligned = currentCandle.close >= currVwap && currentCandle.close >= currEma && currentCandle.close >= currentCandle.open;
+            const bearAligned = currentCandle.close <= currVwap && currentCandle.close <= currEma && currentCandle.close <= currentCandle.open;
+            const bullCross = prevEma <= prevVwap && currEma > currVwap;
+            const bearCross = prevEma >= prevVwap && currEma < currVwap;
+            // The crossover may have happened one candle ago on a candle that did not itself close aligned
+            // (e.g. a small bounce candle). Take it on the next candle that confirms the direction.
+            const emaBeforePrev = lastIdx >= 2 ? emas[lastIdx - 2] : null;
+            const vwapBeforePrev = lastIdx >= 2 ? vwaps[lastIdx - 2] : null;
+            const bullCrossPrev = emaBeforePrev !== null && vwapBeforePrev !== null && emaBeforePrev <= vwapBeforePrev && prevEma > prevVwap && currEma > currVwap;
+            const bearCrossPrev = emaBeforePrev !== null && vwapBeforePrev !== null && emaBeforePrev >= vwapBeforePrev && prevEma < prevVwap && currEma < currVwap;
+
+            if (bullCross && bullAligned) {
               triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover';
-            } else if (prevEma >= prevVwap && currEma < currVwap && currentCandle.close <= currVwap && currentCandle.close <= currEma && currentCandle.close <= currentCandle.open) {
+            } else if (bearCross && bearAligned) {
               triggerSide = 'SELL'; setupName = 'EMA-VWAP Bearish Crossover';
+            } else if (bullCrossPrev && bullAligned) {
+              triggerSide = 'BUY'; setupName = 'EMA-VWAP Bullish Crossover (confirmed)';
+            } else if (bearCrossPrev && bearAligned) {
+              triggerSide = 'SELL'; setupName = 'EMA-VWAP Bearish Crossover (confirmed)';
+            } else if (bullCross || bearCross) {
+              crossoverNote = ` | Crossover seen but candle not aligned (close ${currentCandle.close.toFixed(2)}, ${isGreen ? 'green' : 'red'}); waiting for one confirming candle`;
             }
           }
 
           // 2. High-Probability 15-EMA VWAP Pullback Rejection (Captures 82.6% Institutional Sniper scalps)
           if (!triggerSide && config.enablePullbackTrigger && currEma !== null && currVwap !== null) {
             const candleHhmm = this.getIstHhmm(currentCandle.date);
-            const startHhmm = this.parseHhmm(config.entryStartTime || '10:45');
+            const startHhmm = this.parseHhmm(config.entryStartTime || DEFAULT_ENTRY_START_TIME);
             if (candleHhmm >= startHhmm) {
               const isCeSlope = prevEma === null || currEma >= prevEma - 0.5;
               const isPeSlope = prevEma === null || currEma <= prevEma + 0.5;
@@ -1223,7 +1248,7 @@ export class NiftyOptionsScalperEngine {
           this.log(state, `🚀 Triggered ${setupName} on ${intervalMinutes}m candle [${rangeStr}] (closed at ${closeTimeStr}, StochRSI %K: ${kStr}, %D: ${dStr}, Range: ${candleRange.toFixed(1)} pts)${convictionTag}! Placing 10-Point Option Trade...`);
           await this.placeTrade(state, client, account, triggerSide, currentCandle.close, undefined, undefined, undefined, undefined, trapSetupType, indexInvalidationPrice);
         } else {
-          this.log(state, `👀 Scanned ${intervalMinutes}-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | StochRSI: ${kStr}/${dStr} (No crossover signal)`);
+          this.log(state, `👀 Scanned ${intervalMinutes}-min candle [${rangeStr}] (closed at ${closeTimeStr}) @ ₹${currentCandle.close.toFixed(2)} — EMA: ₹${currEma?.toFixed(2)} | VWAP: ₹${currVwap?.toFixed(2)} | StochRSI: ${kStr}/${dStr} (No crossover signal)${crossoverNote}`);
         }
       }
     } catch (err: any) { this.log(state, `❌ Tick error: ${err.message}`); }
@@ -1241,8 +1266,8 @@ export class NiftyOptionsScalperEngine {
       return;
     }
     // Live safety: enforce entry cutoff on every live entry path (catch-up replays pass triggerTime and are excluded).
-    if (!state.isPaperTrade && !triggerTime && this.getIstHhmm(new Date()) >= this.parseHhmm(config.entryCutoffTime || '14:15')) {
-      this.log(state, `⏱ Entry cutoff (${config.entryCutoffTime || '14:15'} IST) passed. Skipping ${side} signal.`);
+    if (!state.isPaperTrade && !triggerTime && this.getIstHhmm(new Date()) >= this.parseHhmm(ENTRY_CUTOFF_TIME)) {
+      this.log(state, `⏱ Entry cutoff (${ENTRY_CUTOFF_TIME} IST) passed. Skipping ${side} signal.`);
       return;
     }
     state.isPlacingTrade = true;
@@ -2495,15 +2520,18 @@ export class NiftyOptionsScalperEngine {
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: ScalperStrategyState, msg: string) {
     const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    state.logs.push(`[${ts}] ${msg}`);
-    if (state.logs.length > 300) {
-      state.logs = state.logs.slice(-200);
-    }
+    pushEngineLog(state.logs, `[${ts}] ${msg}`);
     this.logger.log(`[${state.executionId}] ${msg}`);
   }
   private async persistLogs(state: ScalperStrategyState) {
     try {
-      await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-500)) } });
+      const tail = state.logs[state.logs.length - 1];
+      const now = Date.now();
+      if (tail !== state.lastPersistedLogTail || now - (state.lastDbPersistTime || 0) >= 15_000) {
+        state.lastPersistedLogTail = tail;
+        state.lastDbPersistTime = now;
+        await this.prisma.strategyExecution.update({ where: { id: state.executionId }, data: { logs: JSON.stringify(state.logs.slice(-MAX_ENGINE_LOGS)) } });
+      }
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,
         logs: state.logs,

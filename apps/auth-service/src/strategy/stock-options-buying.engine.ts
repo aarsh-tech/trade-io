@@ -7,6 +7,7 @@ import { StockOptionsBuyingConfig } from './dto/strategy.dto';
 import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart-stock-picker';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { strategyEvents } from '../common/events';
+import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
 import { findOpenPosition, strategyOrderWhere, istDayStart, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
@@ -1730,10 +1731,7 @@ export class StockOptionsBuyingEngine {
 
   private log(state: StrategyState, msg: string) {
     const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    state.logs.push(`[${ts}] ${msg}`);
-    if (state.logs.length > 300) {
-      state.logs = state.logs.slice(-200);
-    }
+    pushEngineLog(state.logs, `[${ts}] ${msg}`);
     this.logger.log(`[${state.executionId}] ${msg}`);
   }
 
@@ -1741,7 +1739,7 @@ export class StockOptionsBuyingEngine {
     try {
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { logs: JSON.stringify(state.logs.slice(-500)) },
+        data: { logs: JSON.stringify(state.logs.slice(-MAX_ENGINE_LOGS)) },
       });
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,

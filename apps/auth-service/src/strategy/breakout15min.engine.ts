@@ -7,6 +7,7 @@ import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from '.
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
+import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, strategyOrderWhere, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
@@ -451,7 +452,7 @@ export class Breakout15MinEngine {
 
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-500)) },
+        data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-MAX_ENGINE_LOGS)) },
       });
     }
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
@@ -3213,17 +3214,14 @@ export class Breakout15MinEngine {
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) {
     const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    state.logs.push(`[${ts}] ${msg}`);
-    if (state.logs.length > 300) {
-      state.logs = state.logs.slice(-200);
-    }
+    pushEngineLog(state.logs, `[${ts}] ${msg}`);
     this.logger.log(`[${state.executionId}] ${msg}`);
   }
   private async persistLogs(state: StrategyState) {
     try {
       await this.prisma.strategyExecution.update({
         where: { id: state.executionId },
-        data: { logs: JSON.stringify(state.logs.slice(-500)) },
+        data: { logs: JSON.stringify(state.logs.slice(-MAX_ENGINE_LOGS)) },
       });
       strategyEvents.emit('strategy.update', {
         strategyId: state.strategyId,

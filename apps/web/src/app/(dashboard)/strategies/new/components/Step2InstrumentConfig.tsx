@@ -772,25 +772,6 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 className="h-4 w-4 rounded accent-signal shrink-0 cursor-pointer"
               />
             </div>
-
-            {/* Midday Dead-Zone Filter */}
-            <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card">
-              <div className="space-y-0.5 pr-4">
-                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5 text-warn" />
-                  Extended Midday Dead-Zone Shield (11:30 AM – 1:30 PM IST)
-                </p>
-                <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                  Skips new entries during the European transition lunch lull (11:30–13:30) when liquidity drops and theta decay accelerates. Focuses capital on prime morning &amp; afternoon breakout windows.
-                </p>
-              </div>
-              <input
-                type="checkbox"
-                checked={form.dsEnableMiddayChopFilter !== false}
-                onChange={(e) => set("dsEnableMiddayChopFilter", e.target.checked)}
-                className="h-4 w-4 rounded accent-signal shrink-0 cursor-pointer"
-              />
-            </div>
           </div>
         </div>
       )}

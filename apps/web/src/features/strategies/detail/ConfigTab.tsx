@@ -106,7 +106,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
     entry.push(
       { label: "Volume surge (RVOL)", ...toggle(cfg.enableVolumeSurge, `>= ${cfg.minRvol ?? 1.15}x`) },
       { label: "VWAP trend bias", ...toggle(cfg.enableTrendBiasFilter, "CE above VWAP, PE below") },
-      { label: "Midday dead zone", ...toggle(cfg.enableMiddayChopFilter, "11:45 to 13:00 paused") },
+      { label: "Entry window", value: `${cfg.entryStartTime ?? "09:20"} to 15:05 IST, no midday pause` },
       // These two are opt-in (default off), unlike the flags above — toggle() treats a missing
       // value as "on", which is backwards here, so they're built directly instead.
       {

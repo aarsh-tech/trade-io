@@ -45,11 +45,9 @@ export interface StrategyFormState {
   dsMaxLossesPerDay?: string;
   dsEnablePartialBooking?: boolean;
   dsPartialBookingPct?: string;
-  dsEnableMiddayChopFilter?: boolean;
   dsEnableVolumeSurge?: boolean;
   dsEnableTrendBiasFilter?: boolean;
   dsEnableMacroDayBias?: boolean;
-  dsEntryCutoffTime?: string;
   dsTimeframe?: "3minute" | "5minute";
   dsEnableDynamicSizing?: boolean;
   dsMaxCapital?: string;

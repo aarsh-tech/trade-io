@@ -1,11 +1,11 @@
 "use client";
 
 import { useMarketData } from "@/hooks/use-market-data";
-import { brokerApi, getSocketBaseUrl, marketApi, strategyApi } from "@/lib/api";
+import { brokerApi, marketApi, strategyApi } from "@/lib/api";
+import { connectAuthedSocket } from "@/lib/socket";
 import {  } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { io } from "socket.io-client";
 import { toast } from "sonner";
 import type { Strategy } from "./types";
 import { getLotSize } from "./types";
@@ -166,6 +166,13 @@ export function useStrategyDetail(id: string) {
     return () => { isMounted = false; };
   }, [testSymbol, strategy?.brokerAccountId]);
 
+  // The console must never blank itself: a transient empty payload (engine restarting, a stopped run whose
+  // logs the server no longer holds in memory) must not wipe lines the user is already reading.
+  const applyLogs = useCallback((next: string[] | undefined | null) => {
+    if (!Array.isArray(next)) return;
+    setLiveLogs((prev) => (next.length === 0 && prev.length > 0 ? prev : next));
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const [stRes, statusRes] = await Promise.all([
@@ -173,7 +180,7 @@ export function useStrategyDetail(id: string) {
         strategyApi.status(id),
       ]);
       setStrategy(stRes.data?.data ?? null);
-      setLiveLogs(statusRes.data?.data?.logs ?? []);
+      applyLogs(statusRes.data?.data?.logs);
       setLiveState(statusRes.data?.data?.state ?? null);
       setActiveOrders(statusRes.data?.data?.orders ?? []);
     } catch {
@@ -181,7 +188,7 @@ export function useStrategyDetail(id: string) {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, applyLogs]);
 
   useEffect(() => {
     load();
@@ -195,14 +202,7 @@ export function useStrategyDetail(id: string) {
     const token = localStorage.getItem("accessToken");
     if (!token) return;
 
-    const socket = io(`${getSocketBaseUrl()}/strategy`, {
-      transports: ["websocket", "polling"],
-      withCredentials: true,
-      auth: { token },
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-    });
+    const { socket, dispose } = connectAuthedSocket("/strategy");
 
     socket.on("connect", () => {
       setIsWsConnected(true);
@@ -212,7 +212,7 @@ export function useStrategyDetail(id: string) {
     socket.on(
       "strategy-event",
       (payload: { logs?: string[]; state?: any; orders?: any[] }) => {
-        if (payload.logs) setLiveLogs(payload.logs);
+        applyLogs(payload.logs);
         if (payload.state !== undefined) setLiveState(payload.state);
         if (payload.orders) {
           if (payload.orders.length > 0) {
@@ -233,10 +233,10 @@ export function useStrategyDetail(id: string) {
     });
 
     return () => {
-      socket.disconnect();
+      dispose();
       setIsWsConnected(false);
     };
-  }, [id]);
+  }, [id, applyLogs]);
 
   // Periodic status & strategy synchronization to guarantee state and trades started from mobile are synced on desktop
   useEffect(() => {
@@ -250,7 +250,7 @@ export function useStrategyDetail(id: string) {
           setStrategy((prev) => (prev ? { ...prev, ...stratRes.data.data } : stratRes.data.data));
         }
         if (statusRes.data?.data) {
-          if (statusRes.data.data.logs) setLiveLogs(statusRes.data.data.logs);
+          applyLogs(statusRes.data.data.logs);
           if (statusRes.data.data.state !== undefined) setLiveState(statusRes.data.data.state);
           if (statusRes.data.data.orders && statusRes.data.data.orders.length > 0) {
             setActiveOrders(statusRes.data.data.orders);
@@ -259,7 +259,7 @@ export function useStrategyDetail(id: string) {
       } catch { }
     }, isWsConnected ? 20000 : 10000);
     return () => clearInterval(interval);
-  }, [id, isWsConnected]);
+  }, [id, isWsConnected, applyLogs]);
 
   async function toggleEngine() {
     if (!strategy) return;
@@ -267,7 +267,6 @@ export function useStrategyDetail(id: string) {
     try {
       if (strategy.isActive) {
         await strategyApi.stop(id);
-        setLiveLogs([]);
         toast.success(`"${strategy.name}" stopped`);
       } else {
         await strategyApi.start(id);

@@ -5,6 +5,7 @@ import { GammaBlastExpiryConfig } from './dto/strategy.dto';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
+import { pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, RecoveredPosition, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
@@ -2283,8 +2284,7 @@ export class GammaBlastExpiryEngine {
       second: '2-digit',
     });
     const formatted = `[${timeStr}] ${message}`;
-    state.logs.push(formatted);
-    if (state.logs.length > 500) state.logs.shift();
+    pushEngineLog(state.logs, formatted);
     this.logger.log(`[Strategy ${state.strategyId.slice(0, 8)}] ${formatted}`);
   }
 

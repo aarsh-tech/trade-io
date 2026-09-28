@@ -202,7 +202,7 @@ export interface NiftyOptionsScalperConfig {
   minRvol?: number;                // Relative volume threshold multiplier (default: 0.9)
   enableTrendBiasFilter?: boolean; // Align scalp direction with Day VWAP (CE above VWAP, PE below VWAP) (default: true)
   enableMacroDayBias?: boolean;    // In Bull Day, suppress counter-trend PE pullbacks; in Bear Day, suppress counter-trend CE pullbacks (default: false)
-  entryStartTime?: string;        // Earliest entry time IST (default: '09:45' — captures high-momentum morning pullbacks)
+  entryStartTime?: string;        // Earliest entry time IST (default: '09:20' — acts from the first closed candles after the open)
   entryCutoffTime?: string;        // No new entries after this time IST (default: '14:15')
   minRejectionWickPct?: number;    // Minimum 15-EMA rejection wick ratio (default: 0.0)
   timeframe?: '3minute' | '5minute'; // Scalping candle timeframe (default: '5minute')

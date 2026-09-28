@@ -1,4 +1,4 @@
-import { Flame, TrendingUp, Zap, Target, BarChart2, Sparkles, type LucideIcon } from "lucide-react";
+import { BarChart2, Flame, Sparkles, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
 import type { StrategyFormState } from "../new/types";
 import { getLotSize } from "../new/types";
 
@@ -79,7 +79,7 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
     riskNote: "Fast trades; lots can scale with your available margin.",
     instrument: "Index options (NIFTY, SENSEX)",
     bestFor: "Short scalps with tight, point-based risk",
-    timing: "From 10:45",
+    timing: "From 09:20",
     icon: Target,
     tile: "bg-signal-subtle text-signal border-signal/30",
     defaultName: "Nifty Options Scalper",

@@ -4,6 +4,7 @@ import { withKiteRetry } from '../brokers/kite-errors';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
+import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
@@ -4370,10 +4371,7 @@ export class EmaVwapCrossoverEngine {
   private formatTime(d: Date) { return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }); }
   private log(state: StrategyState, msg: string) {
     const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    state.logs.push(`[${ts}] ${msg}`);
-    if (state.logs.length > 300) {
-      state.logs = state.logs.slice(-200);
-    }
+    pushEngineLog(state.logs, `[${ts}] ${msg}`);
     this.logger.log(`[${state.executionId}] ${msg}`);
   }
   private async persistLogs(state: StrategyState) {
@@ -4387,7 +4385,7 @@ export class EmaVwapCrossoverEngine {
         state.lastDbPersistTime = now;
         await this.prisma.strategyExecution.update({
           where: { id: state.executionId },
-          data: { logs: JSON.stringify(state.logs.slice(-500)) },
+          data: { logs: JSON.stringify(state.logs.slice(-MAX_ENGINE_LOGS)) },
         });
       }
 

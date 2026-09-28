@@ -1,10 +1,10 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
-import { io, Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { getSocketBaseUrl } from "@/lib/api";
+import { connectAuthedSocket } from "@/lib/socket";
 import { queryKeys } from "@/lib/query-keys";
 import { useMarketStore, type FeedStatus, type MarketTick } from "@/store/market-store";
 
@@ -36,14 +36,7 @@ export function MarketSocketProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (!localStorage.getItem("accessToken")) return;
 
-    const socket = io(`${getSocketBaseUrl()}/market`, {
-      // A function, so every (re)connect handshake uses the current token after a refresh.
-      auth: (cb) => cb({ token: localStorage.getItem("accessToken") }),
-      transports: ["websocket", "polling"],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-    });
+    const { socket, dispose } = connectAuthedSocket("/market");
     socketRef.current = socket;
     const store = useMarketStore.getState();
 
@@ -85,7 +78,7 @@ export function MarketSocketProvider({ children }: { children: React.ReactNode }
 
     return () => {
       if (timer !== null) clearTimeout(timer);
-      socket.disconnect();
+      dispose();
       socketRef.current = null;
       store.setConnected(false);
       store.setFeed({ status: "closed", lastExchangeTs: null, lastMessageAt: null });

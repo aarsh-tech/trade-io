@@ -21,8 +21,11 @@ module.exports = {
       instances: 1, // Fork mode: prevents race conditions on broker orders & duplicate WebSockets
       exec_mode: 'fork',
       autorestart: true,
-      max_restarts: 10,
-      restart_delay: 2000,
+      // A run shorter than min_uptime counts as a crash; the backoff spaces those retries out. A flat
+      // 10-restart cap used to leave the API (and every socket) permanently down after a brief crash burst.
+      min_uptime: '20s',
+      max_restarts: 50,
+      exp_backoff_restart_delay: 200,
       // V8 heap 512MB (engines + instrument/candle caches + socket server); PM2 restarts above 640MB RSS
       node_args: '--max-old-space-size=512',
       max_memory_restart: '640M',
