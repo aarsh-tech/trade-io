@@ -14,6 +14,7 @@ import { SwingScannerModule } from '../swing-scanner/swing-scanner.module';
 import { MarketModule } from '../market/market.module';
 import { AuthModule } from '../auth/auth.module';
 import { RiskModule } from '../risk/risk.module';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { RiskModule } from '../risk/risk.module';
     MarketModule,
     AuthModule,
     forwardRef(() => RiskModule),
+    OrdersModule,
   ],
   controllers: [StrategyController],
   providers: [

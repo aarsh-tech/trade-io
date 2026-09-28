@@ -13,6 +13,7 @@ import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrdersService } from '../orders/orders.service';
 
 @ApiTags('Strategies')
 @Controller('strategies')
@@ -28,6 +29,7 @@ export class StrategyController {
     private readonly gammaBlastEngine: GammaBlastExpiryEngine,
     private readonly scheduler: MarketSchedulerService,
     private readonly prisma: PrismaService,
+    private readonly ordersService: OrdersService,
   ) { }
 
   @Get()
@@ -163,6 +165,12 @@ export class StrategyController {
     let orders: any[] = [];
     if (currentExec) {
       orders = await this.strategyService.getExecutionOrders(currentExec.id);
+      // A stopped engine no longer reconciles its own orders. If any still read OPEN, ask the broker for the
+      // real status once so a filled entry / stop-loss is not shown as open.
+      if (!isRunning && strategy.brokerAccountId && !strategy.isPaperTrade && orders.some((o) => o.status === 'OPEN' || o.status === 'PENDING')) {
+        await this.ordersService.refreshOpenOrders(req.user.id);
+        orders = await this.strategyService.getExecutionOrders(currentExec.id);
+      }
     }
     if (!orders || orders.length === 0) {
       orders = await this.prisma.order.findMany({

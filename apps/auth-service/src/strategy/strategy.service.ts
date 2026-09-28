@@ -304,12 +304,21 @@ export class StrategyService {
 
     const avgProfitPerWin = wins.length > 0 ? totalProfit / wins.length : 0;
 
+    // Today's closed trades (IST day), so the page can show realised P&L even when the engine is not running
+    // and holds no in-memory state (auto-stopped on the daily cap, stopped, restarted).
+    const istDay = (d: any) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(d));
+    const today = istDay(new Date());
+    const todaysTrades = completedTrades.filter(t => t.createdAt && istDay(t.createdAt) === today);
+    const todayPnl = todaysTrades.reduce((sum, t) => sum + t.pnl, 0);
+
     return {
       totalTrades,
       winRate,
       netPnl,
       profitFactor,
-      avgProfitPerWin
+      avgProfitPerWin,
+      todayTrades: todaysTrades.length,
+      todayPnl,
     };
   }
 

@@ -29,14 +29,18 @@ export function MetricCards({ ctx }: { ctx: DetailCtx }) {
   const status = getRunStatus(strategy);
   const inPosition = isInPosition(liveState);
 
-  const realized = firstNumber(liveState, ["dailyRealizedPnlRs"]);
+  const perf = strategy.performance;
+
+  // The engine's own state only exists while it runs. Once it has stopped (daily cap, manual stop, restart),
+  // fall back to today's closed trades reconstructed from the stored orders.
+  const storedPnl = perf && (perf.todayTrades ?? 0) > 0 ? perf.todayPnl ?? null : null;
+  const realized = firstNumber(liveState, ["dailyRealizedPnlRs"]) ?? storedPnl;
   const hasPnl = realized !== null || inPosition;
   const todayPnl = (realized ?? 0) + (inPosition ? Number(displayPnlRs ?? 0) : 0);
 
-  const trades = firstNumber(liveState, ["tradesToday", "tradesTaken", "tradeCount", "dailyTradeCount"]);
+  const trades = firstNumber(liveState, ["tradesToday", "tradesTaken", "tradeCount", "dailyTradeCount"]) ?? (perf?.todayTrades ?? null);
   const maxTrades = strategy.config.maxTradesPerDay;
 
-  const perf = strategy.performance;
   const winRate = perf && perf.totalTrades > 0 ? perf.winRate : null;
 
   const statusText = status === "RUNNING" ? (inPosition ? "In position" : liveState?.isGoalAchieved ? "Target hit" : "Scanning") : status === "COMPLETED" ? "Completed" : "Stopped";

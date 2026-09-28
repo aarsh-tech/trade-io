@@ -352,6 +352,22 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   private lastSyncByUser = new Map<string, number>();
+  private lastOpenRefreshByUser = new Map<string, number>();
+
+  /**
+   * Pulls the broker's order book when the caller knows some stored orders are still OPEN, throttled per user.
+   * Kite postbacks normally keep rows current, but a missed postback (feed reconnecting, engine already
+   * stopped) would otherwise leave a filled or cancelled order showing OPEN until the 15:40 sync.
+   */
+  async refreshOpenOrders(userId: string, maxWaitMs = 2500): Promise<void> {
+    const last = this.lastOpenRefreshByUser.get(userId) || 0;
+    if (Date.now() - last < 15_000) return;
+    this.lastOpenRefreshByUser.set(userId, Date.now());
+    await Promise.race([
+      this.syncBrokerOrders(userId).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, maxWaitMs)),
+    ]);
+  }
 
   /**
    * Retrieves all orders for the user, triggering a sync if not synced recently

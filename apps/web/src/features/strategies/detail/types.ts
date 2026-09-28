@@ -75,5 +75,8 @@ export interface Strategy {
     netPnl: number;
     profitFactor: number;
     avgProfitPerWin: number;
+    /** Closed trades and realised P&L for today (IST), from stored orders; valid even when the engine is stopped. */
+    todayTrades?: number;
+    todayPnl?: number;
   };
 }

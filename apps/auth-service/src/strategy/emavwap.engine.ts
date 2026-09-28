@@ -424,6 +424,12 @@ export class EmaVwapCrossoverEngine {
    */
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
+    // An entry may still be in flight (order placed, position flag not set yet). Stopping now would remove the
+    // engine while the broker fills, leaving a live position that nothing monitors. Let the placement finish first.
+    if (state?.isPlacingTrade) {
+      const deadline = Date.now() + 20_000;
+      while (state.isPlacingTrade && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+    }
     if (state) {
       this.log(state, logReason);
       let client: any = null;
@@ -988,8 +994,10 @@ export class EmaVwapCrossoverEngine {
     if (!state) return;
     if (state.isProcessingTick) {
       const elapsedSinceTick = Date.now() - (state.lastTickStartTime || 0);
-      if (elapsedSinceTick > 15_000) {
-        this.log(state, `⚠️ [WATCHDOG RECOVERY] Previous market tick stalled (>15s). Forcibly resetting execution lock to maintain continuous trading.`);
+      // Never release the lock while an entry is being placed: a second tick would race the placement.
+      // The first auto-mode scan alone can take ~40s, so the threshold is well above that.
+      if (elapsedSinceTick > 60_000 && !state.isPlacingTrade) {
+        this.log(state, `⚠️ [WATCHDOG RECOVERY] Previous market tick stalled (>60s). Forcibly resetting execution lock to maintain continuous trading.`);
         state.isProcessingTick = false;
       } else {
         return;
@@ -1014,7 +1022,7 @@ export class EmaVwapCrossoverEngine {
       // Gated on !state.entryTriggered: a position that was just opened already counts toward
       // tradesPlacedToday, so this must not force-close it — it only blocks NEW entries once the
       // current position (if any) has naturally exited via its own SL/target.
-      if (!state.entryTriggered && state.tradesPlacedToday >= config.maxTradesPerDay) {
+      if (!state.entryTriggered && !state.isPlacingTrade && state.tradesPlacedToday >= config.maxTradesPerDay) {
         this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached.`);
         await this.persistLogs(state);
         await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
@@ -1330,6 +1338,11 @@ export class EmaVwapCrossoverEngine {
           }
         }
       }
+
+      // Auto mode has no real symbol until the scanner picks one. The first scan can take longer than a tick
+      // and is throttled to once per 30s, so ticks that arrive meanwhile must wait instead of asking Kite for
+      // candles of the placeholder "AUTO" (which logged "Instrument token not found for AUTO").
+      if (state.isAutoMode && !state.activeSymbol) return;
 
       const activeSym = state.activeSymbol || config.symbol;
       const scanConfig = { ...config, symbol: activeSym };

@@ -410,6 +410,12 @@ export class NiftyOptionsScalperEngine {
    */
   private async stopWithStatus(strategyId: string, status: 'COMPLETED' | 'STOPPED', logReason: string): Promise<void> {
     const state = this.running.get(strategyId);
+    // An entry may still be in flight (order placed, position flag not set yet). Stopping now would remove the
+    // engine while the broker fills, leaving a live position that nothing monitors. Let the placement finish first.
+    if (state?.isPlacingTrade) {
+      const deadline = Date.now() + 20_000;
+      while (state.isPlacingTrade && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+    }
     if (state) {
       this.log(state, logReason);
       let client: any = null;
@@ -877,14 +883,14 @@ export class NiftyOptionsScalperEngine {
     const { config } = state;
     const kite = client['kite'];
 
-    if (!state.entryTriggered && state.winningTradesToday >= (config.maxWinsPerDay || 1)) {
+    if (!state.entryTriggered && !state.isPlacingTrade && state.winningTradesToday >= (config.maxWinsPerDay || 1)) {
       this.log(state, `🎯 Daily win goal reached (${state.winningTradesToday} win). Auto-stopping scalper for today.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `🎯 Auto-Stopped: Daily 10-point target locked`);
       return;
     }
 
-    if (!state.entryTriggered && state.tradesPlacedToday >= config.maxTradesPerDay) {
+    if (!state.entryTriggered && !state.isPlacingTrade && state.tradesPlacedToday >= config.maxTradesPerDay) {
       this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay}) reached.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Auto-Stopped: Max daily trade cap reached`);
@@ -892,7 +898,7 @@ export class NiftyOptionsScalperEngine {
     }
 
     // 0. Daily Loss Circuit Breaker: Halt on reaching max losses to eliminate chop drawdowns
-    if (!state.entryTriggered && state.dailyLossesCount >= (config.maxLossesPerDay || 2)) {
+    if (!state.entryTriggered && !state.isPlacingTrade && state.dailyLossesCount >= (config.maxLossesPerDay || 2)) {
       this.log(state, `🛡 [CIRCUIT BREAKER] Daily loss limit (${state.dailyLossesCount} losses) reached. Auto-stopping scalper for today to preserve capital.`);
       await this.persistLogs(state);
       await this.stopWithStatus(strategyId, 'COMPLETED', `🛡 Auto-Stopped: Daily loss limit reached`);
