@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
-import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
+import { MAX_ENGINE_LOGS, loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -247,6 +247,10 @@ export class NiftyOptionsScalperEngine {
       enablePcrConfluence: parsedConfig.enablePcrConfluence === true,
     };
 
+    // A RUNNING row still open here means the previous run never stopped cleanly (process crash,
+    // memory-cap restart, redeploy) — recover its console history before superseding it, so a
+    // restart mid-session doesn't wipe the log the user is watching.
+    const resumedLogs = await loadResumableLogs(this.prisma, strategyId);
     await this.prisma.strategyExecution.updateMany({
       where: { strategyId, status: 'RUNNING' },
       data: { status: 'STOPPED', stoppedAt: new Date() },
@@ -292,7 +296,7 @@ export class NiftyOptionsScalperEngine {
       tradesPlacedToday: 0,
       winningTradesToday: 0,
       dailyLossesCount: 0,
-      logs: [],
+      logs: resumedLogs,
       lastProcessedTimestamp: 0,
       isCostSlTrailed: false,
       isProfitLockTrailed: false,
@@ -301,8 +305,12 @@ export class NiftyOptionsScalperEngine {
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Nifty 10-Point Scalper Started — ${config.symbol}:${config.exchange} (Target: +${config.targetPoints} pts, SL: -${config.stopLossPoints} pts, Cost Trail: +${config.trailCostAtPoints} pts, Strike: ${config.moneyness || 'ITM'})`);
-    this.log(state, `⚡ High-Speed Engine active: 3-sec tick frequency, The Banker & Runner (50% partial book), Two-Loss Shield, RVOL surge & Trend filters enabled (entries 09:20-15:05 IST, no midday pause)`);
+    if (resumedLogs.length > 0) {
+      this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${config.symbol}:${config.exchange})`);
+    } else {
+      this.log(state, `▶ Nifty 10-Point Scalper Started — ${config.symbol}:${config.exchange} (Target: +${config.targetPoints} pts, SL: -${config.stopLossPoints} pts, Cost Trail: +${config.trailCostAtPoints} pts, Strike: ${config.moneyness || 'ITM'})`);
+      this.log(state, `⚡ High-Speed Engine active: 3-sec tick frequency, The Banker & Runner (50% partial book), Two-Loss Shield, RVOL surge & Trend filters enabled (entries 09:20-15:05 IST, no midday pause)`);
+    }
     // Restore today's trade / win / loss counters so a restart cannot bypass the daily caps and shields
     if (!replayDate) {
       const tally = await tallyTodaysTrades(this.prisma, strategyId);

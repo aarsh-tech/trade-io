@@ -7,7 +7,7 @@ import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from '.
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
-import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
+import { MAX_ENGINE_LOGS, loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, strategyOrderWhere, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
@@ -168,6 +168,10 @@ export class Breakout15MinEngine {
     }
 
     const config: Breakout15MinConfig = JSON.parse(strategy.config);
+    // A RUNNING row still open here means the previous run never stopped cleanly (process crash,
+    // memory-cap restart, redeploy) — recover its console history before superseding it, so a
+    // restart mid-session doesn't wipe the log the user is watching.
+    const resumedLogs = await loadResumableLogs(this.prisma, strategyId);
     await this.prisma.strategyExecution.updateMany({
       where: { strategyId, status: 'RUNNING' },
       data: { status: 'STOPPED', stoppedAt: new Date() },
@@ -241,7 +245,7 @@ export class Breakout15MinEngine {
       targetOrderId: null,
       setupTimestamp: null,
       tradesPlacedToday: recoveredTradesToday,
-      logs: [],
+      logs: resumedLogs,
       isBreakevenTrailed: false,
       isProfitLockTrailed: false,
       isDynamicTrailingActive: false,
@@ -261,7 +265,11 @@ export class Breakout15MinEngine {
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Dynamic 15-Min Breakout Strategy started — Symbol: ${config.symbol}:${config.exchange} | Mode: ${state.isPaperTrade ? 'PAPER' : 'LIVE'} | Entry TF: ${config.entryTimeframe ?? '3min'} | Trailing: ${config.enableEmaVwapTrailing !== false ? `${config.trailingEmaPeriod ?? 9}-EMA & VWAP` : 'Ratchet'} | Moneyness: ${config.moneyness ?? 'ITM'} | Dynamic ATR: ${config.enableDynamicAtr !== false ? 'ON' : 'OFF'} | Traps: ${config.enableTrapReversal !== false ? 'ACTIVE' : 'OFF'}`);
+    if (resumedLogs.length > 0) {
+      this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${config.symbol}:${config.exchange}, ${state.isPaperTrade ? 'PAPER' : 'LIVE'})`);
+    } else {
+      this.log(state, `▶ Dynamic 15-Min Breakout Strategy started — Symbol: ${config.symbol}:${config.exchange} | Mode: ${state.isPaperTrade ? 'PAPER' : 'LIVE'} | Entry TF: ${config.entryTimeframe ?? '3min'} | Trailing: ${config.enableEmaVwapTrailing !== false ? `${config.trailingEmaPeriod ?? 9}-EMA & VWAP` : 'Ratchet'} | Moneyness: ${config.moneyness ?? 'ITM'} | Dynamic ATR: ${config.enableDynamicAtr !== false ? 'ON' : 'OFF'} | Traps: ${config.enableTrapReversal !== false ? 'ACTIVE' : 'OFF'}`);
+    }
 
     if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
       this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}`);

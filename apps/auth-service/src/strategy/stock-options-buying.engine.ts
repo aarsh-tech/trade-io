@@ -7,7 +7,7 @@ import { StockOptionsBuyingConfig } from './dto/strategy.dto';
 import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart-stock-picker';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { strategyEvents } from '../common/events';
-import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
+import { MAX_ENGINE_LOGS, loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { findOpenPosition, strategyOrderWhere, istDayStart, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
@@ -118,6 +118,10 @@ export class StockOptionsBuyingEngine {
     }
 
     const config: StockOptionsBuyingConfig = JSON.parse(strategy.config);
+    // A RUNNING row still open here means the previous run never stopped cleanly (process crash,
+    // memory-cap restart, redeploy) — recover its console history before superseding it, so a
+    // restart mid-session doesn't wipe the log the user is watching.
+    const resumedLogs = await loadResumableLogs(this.prisma, strategyId);
     await this.prisma.strategyExecution.updateMany({
       where: { strategyId, status: 'RUNNING' },
       data: { status: 'STOPPED', stoppedAt: new Date() },
@@ -149,16 +153,20 @@ export class StockOptionsBuyingEngine {
       lotSize: 0,
       lastProcessedTimestamp: 0,
       tradesPlacedToday: 0,
-      logs: [],
+      logs: resumedLogs,
       isAutoMode: isAuto,
       activeStockSymbol: isAuto ? null : config.symbol,
     };
 
     this.running.set(strategyId, state);
-    this.log(
-      state,
-      `▶ High-Accuracy Stock Options Buying engine started — Mode: ${isAuto ? 'AUTO (180+ F&O Momentum Scanner)' : `Manual (${config.symbol})`} | Bias: ${config.directionBias || 'BOTH'} | Capital: ₹${config.maxCapital} | Execution: ${strategy.isPaperTrade ? 'PAPER' : 'LIVE'}`,
-    );
+    if (resumedLogs.length > 0) {
+      this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${isAuto ? 'AUTO' : config.symbol})`);
+    } else {
+      this.log(
+        state,
+        `▶ High-Accuracy Stock Options Buying engine started — Mode: ${isAuto ? 'AUTO (180+ F&O Momentum Scanner)' : `Manual (${config.symbol})`} | Bias: ${config.directionBias || 'BOTH'} | Capital: ₹${config.maxCapital} | Execution: ${strategy.isPaperTrade ? 'PAPER' : 'LIVE'}`,
+      );
+    }
     // Restore today's trade count so a restart cannot exceed the daily cap
     state.tradesPlacedToday = await this.prisma.order.count({
       where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, side: 'BUY', status: 'COMPLETE' },

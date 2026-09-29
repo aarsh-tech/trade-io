@@ -19,6 +19,7 @@ export class TokenBucket {
   private tokens: number;
   private lastRefill = Date.now();
   private tail: Promise<void> = Promise.resolve();
+  private blockedUntil = 0;
 
   constructor(private readonly capacity: number, private readonly refillPerSec: number) {
     this.tokens = capacity;
@@ -30,10 +31,15 @@ export class TokenBucket {
     this.lastRefill = now;
   }
 
-  /** Resolves once one token has been taken. */
+  /** Resolves once one token has been taken (and any active cooldown has elapsed). */
   acquire(): Promise<void> {
     const turn = this.tail.then(async () => {
       for (;;) {
+        const waitMs = this.blockedUntil - Date.now();
+        if (waitMs > 0) {
+          await sleep(waitMs);
+          continue;
+        }
         this.refill();
         if (this.tokens >= 1) {
           this.tokens -= 1;
@@ -51,6 +57,16 @@ export class TokenBucket {
     this.refill();
     this.tokens = 0;
   }
+
+  /**
+   * Hold every caller (across all engines sharing this api_key) off this bucket for `ms`.
+   * Used once retries on a 429 are exhausted: Zerodha's own throttle window outlasts our
+   * short retry backoff, so without this every poller just re-hits it a few seconds later
+   * on its own schedule and the "Too many requests" storm never has a chance to clear.
+   */
+  cooldown(ms: number) {
+    this.blockedUntil = Math.max(this.blockedUntil, Date.now() + ms);
+  }
 }
 
 export function isRateLimitError(err: any): boolean {
@@ -61,6 +77,8 @@ export function isRateLimitError(err: any): boolean {
 const MAX_429_RETRIES = 4;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 8000;
+/** Cooldown applied to a whole endpoint class once retries are exhausted on a 429. */
+const RATE_LIMIT_COOLDOWN_MS = 20_000;
 
 /** Kite REST method -> endpoint class. Anything not listed is left untouched. */
 const METHOD_CLASS: Record<string, KiteEndpointClass> = {
@@ -167,9 +185,17 @@ export class KiteRateLimiter {
       try {
         return await fn();
       } catch (err: any) {
-        if (!isRateLimitError(err) || attempt >= MAX_429_RETRIES) throw err;
+        if (!isRateLimitError(err)) throw err;
         this.stats[cls].throttled429++;
         for (const bucket of this.buckets[cls]) bucket.drain();
+        if (attempt >= MAX_429_RETRIES) {
+          // Our own retries kept hitting 429: Zerodha's throttle window outlasts a few seconds
+          // of backoff. Hold this class off for every caller sharing this api_key so the next
+          // scheduled tick (a few seconds away) doesn't immediately re-trip it and reset the ban.
+          for (const bucket of this.buckets[cls]) bucket.cooldown(RATE_LIMIT_COOLDOWN_MS);
+          console.warn(`[KiteRateLimiter] 429 on ${cls} persisted after ${MAX_429_RETRIES} retries; cooling down ${RATE_LIMIT_COOLDOWN_MS}ms`);
+          throw err;
+        }
         const backoff = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempt);
         const delay = backoff / 2 + Math.random() * (backoff / 2);
         console.warn(`[KiteRateLimiter] 429 on ${cls}; retry ${attempt + 1}/${MAX_429_RETRIES} in ${Math.round(delay)}ms`);

@@ -5,7 +5,7 @@ import { GammaBlastExpiryConfig } from './dto/strategy.dto';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
-import { pushEngineLog } from '../common/utils/engine-log';
+import { loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, RecoveredPosition, protectionNotice, PositionUnknownError } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
@@ -146,6 +146,10 @@ export class GammaBlastExpiryEngine {
     });
     if (!strategy) throw new Error('Strategy not found');
 
+    // A RUNNING row still open here means the previous run never stopped cleanly (process crash,
+    // memory-cap restart, redeploy) — recover its console history before superseding it, so a
+    // restart mid-session doesn't wipe the log the user is watching.
+    const resumedLogs = await loadResumableLogs(this.prisma, strategyId);
     // Clean up any stale/orphaned 'RUNNING' executions for this strategy in DB
     await this.prisma.strategyExecution.updateMany({
       where: { strategyId, status: 'RUNNING' },
@@ -258,7 +262,7 @@ export class GammaBlastExpiryEngine {
       winningTradesToday: recoveredWinningTradesToday,
       dailyRealizedPnlRs: recoveredRealizedPnlRs,
       dailyTargetLocked: recoveredDailyTargetLocked,
-      logs: [],
+      logs: resumedLogs,
       peakPrice: 0,
       peakPnlRs: 0,
       isCostLocked: false,
@@ -346,7 +350,11 @@ export class GammaBlastExpiryEngine {
     const effectiveEndTime = config.endTime || '15:25';
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Gamma Blast (Smart Money Institutional Scalper) Started! Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
+    if (resumedLogs.length > 0) {
+      this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${underlying})`);
+    } else {
+      this.log(state, `▶ Gamma Blast (Smart Money Institutional Scalper) Started! Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
+    }
     this.log(state, `🎯 Active Tracking Contract: ${state.futureSymbol ? `${state.futureExchange}:${state.futureSymbol} (Future)` : `${underlying} (${exchange})`} | Lot Size: ${defaultLotSize} (${lots} Lot = ${targetQty} Qty)`);
     this.log(state, `⏰ Execution Window: ${effectiveStartTime} – ${effectiveEndTime} IST (09:15–09:30 Liquidity Mapping, 15m ORB Sniper Traps, Midday Consolidation & Afternoon Gamma)`);
     this.log(state, `💎 Strike Selection: BUDGET & SMC AWARE (Anti-Whipsaw Noise Insulation | High-Delta ATM/ITM | Afternoon Gamma Blast)`);

@@ -1,17 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
-import { withKiteRetry } from '../brokers/kite-errors';
-import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
+import { withKiteRetry } from '../brokers/kite-errors';
 import { strategyEvents } from '../common/events';
-import { MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
+import { loadResumableLogs, MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
+import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
-import { findOpenPosition, protectionNotice, PositionUnknownError } from './position-recovery';
-import { getInstrumentTickSize, getTopCandidateStocks, roundToInstrumentTick } from './smart-stock-picker';
+import { findOpenPosition, PositionUnknownError, protectionNotice } from './position-recovery';
 import { logSignal } from './signal-logger';
-import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
+import { getInstrumentTickSize, getTopCandidateStocks, roundToInstrumentTick } from './smart-stock-picker';
 
 interface Candle {
   date: Date;
@@ -166,6 +166,10 @@ export class EmaVwapCrossoverEngine {
       config.enableProfitFloor = false;
       config.enableEmaCandleExit = false;
     }
+    // A RUNNING row still open here means the previous run never stopped cleanly (process crash,
+    // memory-cap restart, redeploy) — recover its console history before superseding it, so a
+    // restart mid-session doesn't wipe the log the user is watching.
+    const resumedLogs = await loadResumableLogs(this.prisma, strategyId);
     await this.prisma.strategyExecution.updateMany({
       where: { strategyId, status: 'RUNNING' },
       data: { status: 'STOPPED', stoppedAt: new Date() },
@@ -294,7 +298,7 @@ export class EmaVwapCrossoverEngine {
       tradesPlacedToday: recoveredTradesToday,
       dailyRealizedPnlRs: recoveredRealizedPnlRs,
       dailyTargetLocked: recoveredDailyTargetLocked,
-      logs: [],
+      logs: resumedLogs,
       lastProcessedTimestamp: 0,
       isAutoMode: config.symbol === 'AUTO' || config.symbol?.startsWith('AUTO'),
       activeSymbol: (config.symbol === 'AUTO' || config.symbol?.startsWith('AUTO')) ? null : config.symbol,
@@ -304,7 +308,11 @@ export class EmaVwapCrossoverEngine {
     };
 
     this.running.set(strategyId, state);
-    this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange} | Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
+    if (resumedLogs.length > 0) {
+      this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${config.symbol}:${config.exchange}, ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'})`);
+    } else {
+      this.log(state, `▶ Strategy started — ${config.symbol}:${config.exchange} | Mode: ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'}`);
+    }
     this.log(state, `💰 Detected Trading Capital: ₹${detectedCapital.toLocaleString('en-IN')}${liveMarginDetected ? ' (Live Zerodha Margin)' : (strategy.isPaperTrade ? ' [Paper Trading Mode]' : ' [Default / Configured]')}`);
 
     if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
@@ -983,7 +991,7 @@ export class EmaVwapCrossoverEngine {
       }
 
       await this.persistLogs(state);
-    } catch (err) {
+    } catch (err: any) {
       this.log(state, `⚠ Catch-up failed: ${err.message}`);
       await this.persistLogs(state);
     }
@@ -1333,7 +1341,9 @@ export class EmaVwapCrossoverEngine {
             logSignal('SCAN', state.strategyId, { top: candidates.slice(0, 10).map(c => ({ s: c.symbol, score: c.score, trend: c.trend, dayChg: +c.dayChangePct.toFixed(2), fromOpen: +c.changeFromOpenPct.toFixed(2), turnoverCr: +c.turnoverCr.toFixed(1), rvol: c.rvol !== undefined ? +c.rvol.toFixed(2) : null })) });
             const topList = candidates.slice(0, 4).map(c => `${c.symbol} (Score: ${c.score}, ${c.dayChangePct >= 0 ? '+' : ''}${c.dayChangePct.toFixed(1)}%)`).join(', ');
             const currentLeader = activeSetups.length > 0 ? activeSetups[0].candidate.symbol : (candidates[0]?.symbol || 'None');
-            const setupDesc = activeSetups.length > 0 ? activeSetups[0].details.description : 'Monitoring 5m candles for breakout/breakdown trigger';
+            const setupDesc = candidates.length === 0
+              ? '⚠ Scanner universe came back empty — Zerodha instrument/quote fetch likely failed or rate-limited; will retry next scan'
+              : (activeSetups.length > 0 ? activeSetups[0].details.description : 'Monitoring 5m candles for breakout/breakdown trigger');
             this.log(state, `📡 [SCANNER HEARTBEAT] Scanned Nifty 500 & F&O leaders | Leaders: [${topList}] | Tracking: [${currentLeader}] — ${setupDesc}`);
           }
         }
@@ -2165,7 +2175,7 @@ export class EmaVwapCrossoverEngine {
     try {
       await this.tickerService.subscribeSymbol(state.brokerAccountId, symbol);
       this.log(state, `📡 Live tracking activated for ${exchange}:${symbol}`);
-    } catch (e) {
+    } catch (e: any) {
       this.log(state, `⚠ WebSocket subscribe notice: ${e.message}. Polling active.`);
     }
 
@@ -2474,7 +2484,7 @@ export class EmaVwapCrossoverEngine {
               await this.persistLogs(state);
               return;
             }
-          } catch (e) {
+          } catch (e: any) {
             this.logger.error(`[RT] Order check error: ${e.message}`);
           }
           isExiting = false;
@@ -2688,7 +2698,7 @@ export class EmaVwapCrossoverEngine {
           state.currentLtp = currentPrice;
           state.lastTickTime = Date.now();
         }
-      } catch (e) {
+      } catch (e: any) {
         this.log(state, `⚠ LTP API check notice for ${symbol}: ${e.message}`);
       }
     }
@@ -2868,7 +2878,7 @@ export class EmaVwapCrossoverEngine {
           await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
           await this.persistLogs(state);
         }
-      } catch (e) {
+      } catch (e: any) {
         this.log(state, `⚠ Position monitor order status check notice: ${e.message}`);
       }
     }
@@ -3292,7 +3302,7 @@ export class EmaVwapCrossoverEngine {
       state.peakPnlRs = 0;
       state.lockedProfitRs = 0;
       state.isTrailingEma = false;
-    } catch (e) {
+    } catch (e: any) {
       this.log(state, `❌ Historical exit failed: ${e.message}`);
     }
   }
@@ -3332,7 +3342,7 @@ export class EmaVwapCrossoverEngine {
         isPaper: state.isPaperTrade,
         createdAt,
       });
-    } catch (e) {
+    } catch (e: any) {
       this.logger.error(`Failed to track order in DB: ${e.message}`);
     }
   }
@@ -3626,7 +3636,7 @@ export class EmaVwapCrossoverEngine {
         }
       }
       return closest.close;
-    } catch (e) {
+    } catch (e: any) {
       this.logger.error(`Error getting historical option price for ${symbol} at ${timestamp.toISOString()}: ${e.message}`);
       return null;
     }
@@ -3704,7 +3714,7 @@ export class EmaVwapCrossoverEngine {
         const quotes: Record<string, any> = {};
         for (let i = 0; i < allSymbols.length; i += 200) {
           try { Object.assign(quotes, await client.getLTP(allSymbols.slice(i, i + 200))); }
-          catch (e) { this.log(state, `⚠ LTP batch failed: ${e.message}`); }
+          catch (e: any) { this.log(state, `⚠ LTP batch failed: ${e.message}`); }
         }
 
         for (const strike of candidateStrikes) {

@@ -114,6 +114,13 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
     if (!combinedSet.has(sym)) { combinedSet.add(sym); liquidSymbols.push(sym); }
   }
 
+  if (liquidSymbols.length === 0) {
+    // NSE instrument fetch failed or returned nothing — don't poison the cache with an empty
+    // universe for 4 hours. Return it unencached so the very next scan retries.
+    logger?.warn(`⚠ Stock scanner universe is empty (NSE instrument fetch failed?) — will retry on next scan instead of caching.`);
+    return { symbols: [], tokenMap, tickSizeMap };
+  }
+
   logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} NSE equity stocks (entire market, ${fnoSymbols.length} with F&O)`);
   cachedDynamicStocks = { symbols: liquidSymbols, tokenMap, tickSizeMap };
   cachedDynamicStocksTime = Date.now();
