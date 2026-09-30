@@ -4,7 +4,7 @@ import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrokerType } from '@prisma/client';
 import { canonicalKey, INDEX_INSTRUMENTS, InstrumentStore } from '../brokers/instrument-store';
-import { toKiteError } from '../brokers/kite-errors';
+import { TokenException, toKiteError } from '../brokers/kite-errors';
 import { clearObservedClosed, isMarketWindow, isTradingDay, istParts, markObservedClosed } from './market-calendar';
 import { CLOSED_FEED, FeedState, FeedStatus, MarketTick, OrderUpdateEvent } from './market-tick';
 
@@ -24,6 +24,17 @@ const REST_FALLBACK_MAX_SYMBOLS = 200;
  */
 const RECONNECT_TRIES = 100;
 const RECONNECT_GIVE_UP_AT = 90;
+/** After a REST check says the session is fine, don't re-check on every refused reconnect. */
+const AUTH_RECHECK_MS = 60_000;
+
+/**
+ * kiteconnect only surfaces socket-level errors; a bad or expired token shows up as the handshake being refused
+ * with 401/403 ("Unexpected server response: 403" from ws). Everything else (network resets, DNS, malformed
+ * frames such as "Invalid WebSocket frame", 429, 5xx) is transient and must never be read as a dead session.
+ */
+function isHandshakeAuthRejection(message: string): boolean {
+  return /Unexpected server response: (401|403)\b/.test(message) || message.includes('TokenException');
+}
 /**
  * Always subscribed in `full` mode on every connection: index packets are only 32 bytes and carry the exchange
  * timestamp, which gives the feed status a real exchange clock even though quote-mode stock packets have none.
@@ -270,6 +281,50 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       try { existing.disconnect(); } catch (_) {}
     }
     this.tickers.delete(accountId);
+  }
+
+  /**
+   * Kite refused the websocket handshake as unauthorised. A refused socket alone isn't proof the login is dead,
+   * so confirm over REST first: only a TokenException there retires the feed and marks the account EXPIRED
+   * (until the user logs in again). If the session checks out, or the check itself fails for another reason
+   * (network, rate limit), the library keeps reconnecting.
+   */
+  private async handleFeedAuthRejection(account: any, state: any, errMsg: string) {
+    if (state.verifyingAuth || state.retired) return;
+    if (Date.now() - (state.lastAuthCheckAt || 0) < AUTH_RECHECK_MS) return;
+    state.verifyingAuth = true;
+    state.lastAuthCheckAt = Date.now();
+    try {
+      let tokenInvalid = false;
+      let checkError = '';
+      try {
+        await this.brokerFactory.createClient(account).getProfile?.();
+      } catch (err: any) {
+        const kiteErr = toKiteError(err);
+        tokenInvalid = kiteErr instanceof TokenException;
+        checkError = kiteErr.message;
+      }
+
+      if (!tokenInvalid) {
+        this.logger.warn(
+          `Zerodha Ticker for account ${account.clientId} was refused (${errMsg}), but the session ` +
+            `${checkError ? `could not be confirmed dead (${checkError})` : 'is valid over REST'}; treating it as transient and reconnecting.`,
+        );
+        return;
+      }
+      if (state.retired) return;
+
+      this.logger.error(`Zerodha Ticker authentication failed for account ${account.clientId}: ${errMsg} / ${checkError}. Token is invalid/expired — halting auto-reconnect until you log in to Zerodha again.`);
+      this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
+      state.disconnect();
+      if (this.tickers.get(account.id) === state) this.tickers.delete(account.id);
+      this.cleanKiteTickerCache();
+      await this.prisma.brokerAccount
+        .update({ where: { id: account.id }, data: { tokenHealth: 'EXPIRED' } })
+        .catch(() => {});
+    } finally {
+      state.verifyingAuth = false;
+    }
   }
 
   /** Loads NSE/NFO/BFO masters once per trading day, from 08:45 IST on. Failures are retried next tick. */
@@ -706,26 +761,11 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
             ? JSON.stringify(err)
             : String(err || 'Unknown connection error'));
 
-        const isAuthError =
-          errMsg.includes('403') ||
-          errMsg.includes('TokenException') ||
-          errMsg.includes('Session') ||
-          errMsg.includes('expired') ||
-          errMsg.includes('invalid');
-
-        if (isAuthError) {
-          // Log only once per failed token to eliminate log spam
-          if (!this.failedAccounts.has(account.id)) {
-            this.logger.error(`Zerodha Ticker authentication error for account ${account.clientId}: ${errMsg}. Token is invalid/expired — halting auto-reconnect.`);
-          }
-          this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
-          state.disconnect();
-          if (this.tickers.get(account.id) === state) this.tickers.delete(account.id);
-          this.cleanKiteTickerCache();
-          this.prisma.brokerAccount
-            .update({ where: { id: account.id }, data: { tokenHealth: 'EXPIRED' } })
-            .catch(() => {});
+        if (state.retired) return;
+        if (isHandshakeAuthRejection(errMsg)) {
+          void this.handleFeedAuthRejection(account, state, errMsg);
         } else {
+          // Transient: the library reconnects on its own.
           this.logger.error(`Zerodha Ticker error for account ${account.clientId}: ${errMsg}`);
         }
       });
