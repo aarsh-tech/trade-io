@@ -19,6 +19,12 @@ const FEED_REEMIT_MS = 15_000;
 const REST_FALLBACK_INTERVAL_MS = 5_000;
 const REST_FALLBACK_MAX_SYMBOLS = 200;
 /**
+ * kiteconnect 5.x calls process.exit(1) once its reconnect loop runs out of tries (100 here). Retire the
+ * connection a little before that and let the 30 s sync open a fresh one, instead of the library killing the backend.
+ */
+const RECONNECT_TRIES = 100;
+const RECONNECT_GIVE_UP_AT = 90;
+/**
  * Always subscribed in `full` mode on every connection: index packets are only 32 bytes and carry the exchange
  * timestamp, which gives the feed status a real exchange clock even though quote-mode stock packets have none.
  */
@@ -33,6 +39,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   private warmInterval: NodeJS.Timeout;
   private feedInterval: NodeJS.Timeout;
   private feedPublished = new Map<string, { status: FeedState; at: number }>();
+  /** In-flight connection setups, so concurrent callers (strategy starts, 30 s sync) never open a second socket. */
+  private tickerSetups = new Map<string, Promise<void>>();
   private listeners = new Set<(ticks: Record<string, number>) => void>();
   private orderListeners = new Set<(accountId: string, update: OrderUpdateEvent) => void>();
 
@@ -365,7 +373,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
             symbolsByAccount.get(s.brokerAccountId).add(config.futureSymbol);
           }
         } catch (e) {
-          this.logger.error(`Error parsing strategy config for ticker: ${e.message}`);
+          const message = e instanceof Error ? e.message : String(e);
+          this.logger.error(`Error parsing strategy config for ticker: ${message}`);
         }
       });
 
@@ -388,7 +397,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch (err) {
-      this.logger.error(`Failed to sync tickers: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to sync tickers: ${message}`);
     }
   }
 
@@ -397,6 +407,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     if (!this.isIndianMarketOpen() || !symbols || symbols.length === 0) {
       return;
     }
+
+    // A connection for this account is being set up right now: wait for it, then just add symbols to it.
+    const pending = this.tickerSetups.get(accountId);
+    if (pending) await pending;
 
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
     if (!account || !account.isActive || !account.accessToken || account.tokenHealth === 'EXPIRED') {
@@ -464,7 +478,15 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (account.broker === BrokerType.ZERODHA) {
-      await this.setupZerodhaTicker(account, symbols);
+      // Another caller may have started a setup while we were reading the account.
+      const inflight = this.tickerSetups.get(accountId);
+      if (inflight) {
+        await inflight;
+        return this.ensureTickerRunning(accountId, symbols);
+      }
+      const setup = this.setupZerodhaTicker(account, symbols).finally(() => this.tickerSetups.delete(accountId));
+      this.tickerSetups.set(accountId, setup);
+      await setup;
     }
   }
 
@@ -550,17 +572,23 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         access_token: require('../common/utils/crypto').decrypt(account.accessToken),
       });
 
-      // Enable native auto-reconnection: up to 100 retries with 3s backoff
+      // Enable native auto-reconnection (the library clamps the delay to at least 5s)
       if (typeof ticker.autoReconnect === 'function') {
-        ticker.autoReconnect(true, 100, 3);
+        ticker.autoReconnect(true, RECONNECT_TRIES, 3);
       }
 
       // Per-connection state, shared with the event handlers below. `tokens` also drives re-subscribe
       // after a reconnect, so tokens added later (subscribeTokens) survive it.
       const state: any = {
+        // Auto-reconnect must go off BEFORE disconnect(): kiteconnect's close handler otherwise retries with
+        // reconnection disallowed and calls process.exit(1), taking the whole backend (every engine) down.
+        // `retired` makes a reconnect already scheduled by the library close itself instead of streaming.
         disconnect: () => {
+          state.retired = true;
+          try { ticker.autoReconnect(false); } catch (_) {}
           try { ticker.disconnect(); } catch (_) {}
         },
+        retired: false,
         instance: ticker,
         tokens: [] as number[],
         symbolToToken,
@@ -578,6 +606,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       };
 
       ticker.on('ticks', (ticks: any[]) => {
+        if (state.retired) return;
         const now = Date.now();
         state.lastMessageAt = now;
         const legacy: Record<string, number> = {};
@@ -625,7 +654,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       ticker.on('order_update', (order: any) => {
-        if (!order?.order_id) return;
+        if (state.retired || !order?.order_id) return;
         const update: OrderUpdateEvent = {
           orderId: String(order.order_id),
           status: order.status,
@@ -652,6 +681,11 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       });
 
       ticker.on('connect', () => {
+        // A reconnect the library had already scheduled before this connection was retired: close it again.
+        if (state.retired) {
+          state.disconnect();
+          return;
+        }
         this.logger.log(`Zerodha Ticker connected for account ${account.clientId}`);
         this.failedAccounts.delete(account.id);
         state.connected = true;
@@ -685,13 +719,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
             this.logger.error(`Zerodha Ticker authentication error for account ${account.clientId}: ${errMsg}. Token is invalid/expired — halting auto-reconnect.`);
           }
           this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
-          try {
-            if (typeof ticker.autoReconnect === 'function') {
-              ticker.autoReconnect(false);
-            }
-            ticker.disconnect();
-          } catch (_) {}
-          this.tickers.delete(account.id);
+          state.disconnect();
+          if (this.tickers.get(account.id) === state) this.tickers.delete(account.id);
           this.cleanKiteTickerCache();
           this.prisma.brokerAccount
             .update({ where: { id: account.id }, data: { tokenHealth: 'EXPIRED' } })
@@ -722,10 +751,16 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
 
       ticker.on('reconnect', (reconnectCount: number, reconnectInterval: number) => {
         if (this.failedAccounts.has(account.id)) {
-          try {
-            if (typeof ticker.autoReconnect === 'function') ticker.autoReconnect(false);
-            ticker.disconnect();
-          } catch (_) {}
+          state.disconnect();
+          return;
+        }
+        if (reconnectCount >= RECONNECT_GIVE_UP_AT) {
+          // Retire before the library's own limit (where it would process.exit); the next 30 s sync opens a
+          // fresh connection. Not marked failed: this is a network problem, not a bad token.
+          this.logger.error(`Zerodha Ticker for account ${account.clientId} still down after ${reconnectCount} reconnect attempts. Retiring it; a fresh connection opens on the next sync.`);
+          state.disconnect();
+          if (this.tickers.get(account.id) === state) this.tickers.delete(account.id);
+          this.cleanKiteTickerCache();
           return;
         }
         this.logger.log(`Zerodha Ticker reconnecting for account ${account.clientId}: attempt #${reconnectCount} (${reconnectInterval}ms interval)`);
@@ -734,7 +769,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       ticker.on('noreconnect', () => {
         this.logger.error(`Zerodha Ticker reconnection attempts exhausted for account ${account.clientId}. Cleaning up ticker instance.`);
         this.failedAccounts.set(account.id, { timestamp: Date.now(), accessToken: account.accessToken });
-        this.tickers.delete(account.id);
+        if (this.tickers.get(account.id) === state) this.tickers.delete(account.id);
         this.cleanKiteTickerCache();
       });
 
@@ -745,6 +780,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         MAX_TOKENS_PER_TICKER,
       );
       ticker.connect();
+      // Never leave an older connection running unreferenced (it would keep streaming and count against
+      // Kite's per-API-key connection limit).
+      const previous = this.tickers.get(account.id);
+      if (previous && previous !== state) previous.disconnect?.();
       this.tickers.set(account.id, state);
     } catch (err: any) {
       const msg = err?.message || String(err || '');
