@@ -40,7 +40,7 @@ export interface GammaBlastExpiryConfig {
   emaPeriod?: number;                  // EMA period for trend trailing (default: 15)
   costLockMultiple?: number;           // Multiplier to move SL to Cost (default: 1.4)
   profitLock2xMultiple?: number;       // Multiplier to lock +50% profit (default: 2.0)
-  enableHighConvictionBoost?: boolean;// Automatically boost lots on A+ 4/4 confluence (default: true)
+  enableHighConvictionBoost?: boolean;// Boost lots on A+ 4/4 confluence (default: false, opt-in)
   maxConvictionLots?: number;          // Max lots to trade on A+ high-conviction setup (e.g. 3 to 5 lots, default: 3)
   enablePartialProfitBooking?: boolean;// Book 50% lots at 2.0x milestone, trailing remainder (default: true)
   initialSlPct?: number;               // Initial SL % from entry premium (default: 50%)

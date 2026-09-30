@@ -8,7 +8,10 @@ import { strategyEvents } from '../common/events';
 import { loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, RecoveredPosition, protectionNotice, PositionUnknownError } from './position-recovery';
-import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
+import { getCompletedBrokerExitDetails, getLiveBrokerPosition, safeCancelPendingOrders } from './broker-position-guard';
+
+/** Zerodha caps modifications per order; stay under it so the SL order itself is never locked out. */
+const MAX_BROKER_SL_MODIFICATIONS = 20;
 
 interface Candle {
   date: Date;
@@ -66,6 +69,15 @@ interface GammaStrategyState {
   targetPrice?: number | null;
   peakPrice?: number | null;
   slOrderId?: string | null;
+  /** Trigger currently resting on the broker SL order (the engine's own stopLossPrice trails ahead of it). */
+  brokerSlTrigger?: number | null;
+  brokerSlModifyCount?: number;
+  brokerSlRetryAfter?: number;
+  isSyncingBrokerSl?: boolean;
+  /** Set while any exit (full or partial) is in flight, so two exit paths can never both sell. */
+  isExiting?: boolean;
+  /** Consecutive ticks the broker showed no position while the engine thinks one is open. */
+  brokerFlatChecks?: number;
   entryTriggered?: 'CALL_BLAST' | 'PUT_BLAST' | null;
   optionSymbol?: string | null;
   tradesPlacedToday: number;
@@ -105,6 +117,9 @@ interface GammaStrategyState {
   hasLoggedStandby?: boolean;
   liveSpotPrice?: number;
   liveFuturePrice?: number;
+  /** Last spot/future tick from the websocket; a quiet feed triggers a re-subscribe. */
+  lastFeedTickAt?: number;
+  lastFeedSubscribeAt?: number;
   spotSymbol?: string;
   candlesCache?: Candle[];
   lastCandleFetchTime?: number;
@@ -337,11 +352,14 @@ export class GammaBlastExpiryEngine {
       const futKey = state.futureSymbol ? `${state.futureExchange}:${state.futureSymbol}` : null;
       if (spotKey && ticks[spotKey]) {
         state.liveSpotPrice = ticks[spotKey];
+        state.lastFeedTickAt = Date.now();
       }
       if (futKey && ticks[futKey]) {
         state.liveFuturePrice = ticks[futKey];
+        state.lastFeedTickAt = Date.now();
       } else if (state.futureSymbol && ticks[state.futureSymbol]) {
         state.liveFuturePrice = ticks[state.futureSymbol];
+        state.lastFeedTickAt = Date.now();
       }
     });
     state.globalTickerUnsubscribe = globalTickerUnsubscribe;
@@ -394,6 +412,7 @@ export class GammaBlastExpiryEngine {
       state.stopLossPrice = pos.slPrice ?? state.initialSlPrice;
       state.peakPrice = entry;
       state.slOrderId = pos.slOrderId;
+      state.brokerSlTrigger = pos.slOrderId ? (pos.slPrice ?? null) : null;
       state.isPartialExited = pos.qty < pos.initialQty;
 
       this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'POWER'} RECOVERY] Reconnected to active strategy-owned option position: ${pos.symbol} (${pos.qty} Qty @ Avg ₹${entry.toFixed(2)}) | SL: ₹${state.stopLossPrice.toFixed(2)}`);
@@ -552,6 +571,20 @@ export class GammaBlastExpiryEngine {
     const state = this.running.get(strategyId);
     if (!state) return;
     const now = new Date();
+
+    // The replay simulates this morning's trades. For a live strategy they never happened, so their P&L
+    // must not reach the real day P&L / daily locks. Once today already has trades (a restart), replaying
+    // again would record the same simulated trades a second time.
+    if (!state.isPaperTrade) {
+      this.log(state, `ℹ Catch-up replay skipped in LIVE mode (simulated trades must not affect real P&L). Watching for live signals.`);
+      await this.persistLogs(state);
+      return;
+    }
+    if (state.tradesPlacedToday > 0) {
+      this.log(state, `ℹ Catch-up replay skipped: today's trades were already restored. Watching for live signals.`);
+      await this.persistLogs(state);
+      return;
+    }
 
     this.log(state, `🔍 Running catch-up for Daily Index Scalper (SENSEX & NIFTY)...`);
     const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
@@ -890,38 +923,49 @@ export class GammaBlastExpiryEngine {
 
     state.hasLoggedStandby = false; // Reset flag when inside active trading hours
 
+    // Keep our instruments on the websocket. Subscriptions are lost when the feed connection is replaced
+    // (reconnect give-up, token refresh) and skipped entirely for a start before the 09:00 feed window.
+    if (Date.now() - (state.lastFeedTickAt || 0) > 30_000 && Date.now() - (state.lastFeedSubscribeAt || 0) > 30_000) {
+      state.lastFeedSubscribeAt = Date.now();
+      const symbols = [state.spotSymbol, state.futureSymbol, state.entryTriggered ? state.optionSymbol : null];
+      for (const sym of symbols) {
+        if (sym) this.tickerService.subscribeSymbol(state.brokerAccountId, sym).catch(() => { });
+      }
+    }
+
     // If position is active, monitorPosition safety net handles it (holds and trails through 15:25–15:29)
     if (state.entryTriggered) {
-      // Auto-sync with broker: If option position was closed manually on Zerodha, reconcile state immediately
+      // An exit already in flight owns the position; a second path acting now could sell twice.
+      if (state.isExiting) return;
+
+      // Auto-sync with broker: the broker SL filled, or the position was closed manually on Zerodha.
       if (!state.isPaperTrade && kite && kite.getPositions && state.optionSymbol) {
         try {
           const brokerStatus = await getLiveBrokerPosition(kite, state.optionSymbol, this.logger);
-          if (!brokerStatus.isOpen) {
-            this.log(state, `ℹ [BROKER SYNC] Option position for ${state.optionSymbol} is CLOSED on Zerodha (Net Qty: 0). Auto-syncing state and cancelling broker SL.`);
-            await safeCancelPendingOrders(kite, client, [state.slOrderId], this.logger);
-            this.stopRealtimeMonitor(state);
+          if (brokerStatus.isOpen) {
+            state.brokerFlatChecks = 0;
+          } else {
+            const symbol = state.optionSymbol;
+            const exitDetails = await getCompletedBrokerExitDetails(kite, symbol, state.slOrderId, null, 'SELL', this.logger);
+            state.brokerFlatChecks = (state.brokerFlatChecks || 0) + 1;
+            // A found exit fill confirms it; otherwise wait for a second flat reading so a momentary
+            // positions glitch can't make us drop (and un-protect) a position that is still open.
+            if (exitDetails.found || state.brokerFlatChecks >= 2) {
+              state.brokerFlatChecks = 0;
+              if (state.isExiting) return;
+              this.log(state, `ℹ [BROKER SYNC] ${symbol} is CLOSED on Zerodha (Net Qty: 0)${exitDetails.found ? ` — filled by order ${exitDetails.orderId} @ ₹${exitDetails.exitPrice.toFixed(2)}` : ''}. Recording the trade and cancelling broker SL.`);
+              await safeCancelPendingOrders(kite, client, [state.slOrderId], this.logger);
+              this.stopRealtimeMonitor(state);
 
-            state.entryTriggered = null;
-            state.optionSymbol = null;
-            state.entryPrice = null;
-            state.stopLossPrice = null;
-            state.slOrderId = null;
-            state.executedQty = undefined;
-            state.peakPrice = 0;
-            state.isCostLocked = false;
-            state.is2xLocked = false;
-            state.is3xLocked = false;
-            state.is5xLocked = false;
-            state.isPartialExited = false;
-            state.isHighConvictionTrade = false;
-
-            strategyEvents.emit('strategy.update', {
-              strategyId: state.strategyId,
-              logs: state.logs,
-              state: this.getState(state.strategyId),
-            });
-            await this.persistLogs(state);
-            return;
+              const exitPrice = exitDetails.found && exitDetails.exitPrice > 0
+                ? exitDetails.exitPrice
+                : (state.currentLtp || state.entryPrice || 0);
+              const qty = state.executedQty || state.targetQty;
+              const wasSlOrder = exitDetails.found && exitDetails.orderId === state.slOrderId;
+              this.bookClosedTrade(state, exitPrice, qty, wasSlOrder ? 'BROKER_SL' : 'BROKER_SYNC');
+              await this.persistLogs(state);
+              return;
+            }
           }
         } catch (syncErr: any) {
           this.logger.debug?.(`Gamma blast broker sync notice: ${syncErr.message}`);
@@ -1420,7 +1464,7 @@ export class GammaBlastExpiryEngine {
       const exchange = state.activeExchange;
       const baseLots = state.lots || state.config.lots || 1;
     const maxConvictionLots = state.config.maxConvictionLots || 3;
-    const shouldBoost = isHighConviction && state.config.enableHighConvictionBoost !== false;
+    const shouldBoost = isHighConviction && state.config.enableHighConvictionBoost === true; // opt-in: never size up unasked
     let targetLots = shouldBoost ? Math.max(baseLots, maxConvictionLots) : baseLots;
 
     // ── Live Capital & Available Margin Safety Check ────────────────────────
@@ -1521,43 +1565,56 @@ export class GammaBlastExpiryEngine {
         });
 
       state.entryOrderId = entryId;
+      this.log(state, `✅ Entry Order placed (${entryId}) for ${qty} Qty @ Limit ₹${limitPrice.toFixed(2)}`);
+
+      // Live: a LIMIT entry can miss in a fast move. Only a confirmed fill becomes a position; an unfilled
+      // order is cancelled so it can never fill later as a position nobody is managing (and with no SL).
+      let filledQty = qty;
+      let fillPrice = entryPrice;
+      if (!state.isPaperTrade) {
+        const fill = await this.confirmEntryFill(state, client, kite, entryId, symbol);
+        if (!fill) {
+          state.entryOrderId = null;
+          state.targetPrice = null;
+          this.log(state, `⚠ Entry not filled — order cancelled. No position taken; waiting for the next signal.`);
+          return;
+        }
+        filledQty = fill.filledQty;
+        fillPrice = fill.avgPrice || entryPrice;
+        // Keep the planned SL / target distance relative to the actual fill.
+        const slip = fillPrice - entryPrice;
+        initialSl = this.roundTick(initialSl + slip);
+        if (state.targetPrice) state.targetPrice = this.roundTick(state.targetPrice + slip);
+        this.log(state, `🛒 Entry FILLED: ${filledQty}/${qty} Qty @ Avg ₹${fillPrice.toFixed(2)}${filledQty < qty ? ' (partial fill — rest cancelled)' : ''} | SL: ₹${initialSl.toFixed(2)}`);
+      }
+
       state.optionSymbol = symbol;
       state.entryTriggered = type;
-      state.entryPrice = entryPrice;
+      state.entryPrice = fillPrice;
       state.initialSlPrice = initialSl;
       state.stopLossPrice = initialSl;
-      state.peakPrice = entryPrice;
-      state.executedQty = qty;
+      state.peakPrice = fillPrice;
+      state.executedQty = filledQty;
       state.setupType = setupType;
       state.indexInvalidationPrice = indexInvalidationPrice;
 
-      this.log(state, `✅ Entry Order placed (${entryId}) for ${qty} Qty @ Limit ₹${limitPrice.toFixed(2)}`);
-
       // Track in DB
-      await this.trackOrderInDB(state, 'BUY', symbol, exchange, qty, entryPrice, entryId);
+      await this.trackOrderInDB(state, 'BUY', symbol, exchange, filledQty, fillPrice, entryId);
+
+      // Stopped while the fill was being confirmed: shutdown saw no position, so flatten it here.
+      if (!this.running.has(state.strategyId)) {
+        this.log(state, `🧯 Strategy stopped while entry was filling — squaring off ${symbol} immediately.`);
+        await this.exitPosition(state, client, fillPrice, 'FORCE_CLOSE');
+        await this.persistLogs(state);
+        return;
+      }
 
       // Arm broker SL Trigger Order for Live trades
       if (!state.isPaperTrade) {
-        const slTrigger = this.roundTick(initialSl);
-        const slLimit = this.roundTick(initialSl * 0.90);
-        let slOrderId: string | null = null;
-        for (let attempt = 1; attempt <= 2 && !slOrderId; attempt++) {
-          slOrderId = await this.placeOrder(state, {
-            symbol,
-            exchange,
-            product,
-            qty,
-            side: 'SELL',
-            orderType: 'SL',
-            price: slLimit,
-            triggerPrice: slTrigger,
-            intent: 'PROTECTIVE'
-          }).catch((e: any) => { this.log(state, `❌ SL Order attempt ${attempt}/2 failed: ${e.message}`); return null; });
-        }
-
+        const slOrderId = await this.armBrokerSl(state, symbol, filledQty, initialSl);
         state.slOrderId = slOrderId;
         if (slOrderId) {
-          this.log(state, `🛡 Broker SL Armed: Trigger ₹${slTrigger.toFixed(2)}, Limit ₹${slLimit.toFixed(2)} [OrderId: ${slOrderId}]`);
+          this.log(state, `🛡 Broker SL Armed: Trigger ₹${this.roundTick(initialSl).toFixed(2)}, Limit ₹${this.roundTick(this.roundTick(initialSl) * 0.90).toFixed(2)} [OrderId: ${slOrderId}]`);
         } else {
           this.log(state, `🚨 Broker SL could NOT be placed after retry. Flattening position immediately (never hold unprotected).`);
           if (state.entryOrderId) await client.cancelOrder(state.entryOrderId).catch(() => { });
@@ -1576,6 +1633,64 @@ export class GammaBlastExpiryEngine {
     } finally {
       state.isPlacingTrade = false;
     }
+  }
+
+  /**
+   * Waits for a live entry order to reach a final state and returns what actually filled, or null when
+   * nothing did. An order still open after the wait is cancelled first, so it can never fill later.
+   */
+  private async confirmEntryFill(
+    state: GammaStrategyState,
+    client: any,
+    kite: any,
+    orderId: string,
+    symbol: string,
+  ): Promise<{ filledQty: number; avgPrice: number } | null> {
+    type OrderSnap = { status: string; filledQty: number; avgPrice: number; message?: string };
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const isFinal = (s: string) => s === 'COMPLETE' || s === 'CANCELLED' || s === 'REJECTED';
+    const readOrder = async (): Promise<OrderSnap | null> => {
+      try {
+        const o = await client.getOrder(orderId);
+        return {
+          status: String(o?.status || '').toUpperCase(),
+          filledQty: Number(o?.filledQty) || 0,
+          avgPrice: Number(o?.avgPrice) || 0,
+          message: o?.statusMessage,
+        };
+      } catch {
+        return null;
+      }
+    };
+    const toFill = (o: OrderSnap) => {
+      if (o.status === 'REJECTED') this.log(state, `❌ Entry order ${orderId} REJECTED by broker: ${o.message || 'no reason given'}`);
+      return o.filledQty > 0 ? { filledQty: o.filledQty, avgPrice: o.avgPrice } : null;
+    };
+
+    let last: OrderSnap | null = null;
+    for (let i = 0; i < 6; i++) {
+      await sleep(1000);
+      last = (await readOrder()) ?? last;
+      if (last && isFinal(last.status)) return toFill(last);
+    }
+
+    this.log(state, `⏱ Entry ${orderId} not filled within 6s (status: ${last?.status || 'unknown'}) — cancelling.`);
+    await client.cancelOrder(orderId).catch(() => { });
+    // It may have filled (fully or partly) before the cancel landed.
+    for (let i = 0; i < 5; i++) {
+      await sleep(1000);
+      last = (await readOrder()) ?? last;
+      if (last && isFinal(last.status)) return toFill(last);
+    }
+
+    // Order state still unknown: trust the broker position so a real fill is never left unmanaged.
+    const pos = await getLiveBrokerPosition(kite, symbol, this.logger);
+    if (pos.netQty > 0) {
+      this.log(state, `⚠ Entry order state unclear, but broker shows ${pos.netQty} Qty open in ${symbol}. Managing it as the entry.`);
+      return { filledQty: pos.netQty, avgPrice: last?.avgPrice || 0 };
+    }
+    this.log(state, `🚨 Could not confirm entry order ${orderId} (last status: ${last?.status || 'unknown'}). Check Kite order book for ${symbol}.`);
+    return null;
   }
 
   // ── Zero-Latency Sub-Second Ratchet Trailing ───────────────────────────────
@@ -1599,7 +1714,7 @@ export class GammaBlastExpiryEngine {
 
     const unsubscribe = this.tickerService.registerListener(async (ticks) => {
       const currentPrice = ticks[symbol] || ticks[key];
-      if (!currentPrice || !state.entryTriggered || isExiting) return;
+      if (!currentPrice || !state.entryTriggered || isExiting || state.isExiting) return;
 
       const now = Date.now();
       state.lastTickTime = now;
@@ -1738,6 +1853,9 @@ export class GammaBlastExpiryEngine {
         await this.persistLogs(state);
         return;
       }
+
+      // Carry the trailed stop to the broker SL order (fire-and-forget; guarded against overlap).
+      this.syncBrokerSl(state, client).catch(() => { });
 
       // Throttle broadcast for UI live updates (500ms)
       if (now - (state.lastEmitTime || 0) >= 500) {
@@ -1897,50 +2015,122 @@ export class GammaBlastExpiryEngine {
     }
   }
 
+  /** Places the broker SL for `qty` (two attempts). Returns the order id, or null when it could not be placed. */
+  private async armBrokerSl(state: GammaStrategyState, symbol: string, qty: number, trigger: number): Promise<string | null> {
+    const slTrigger = this.roundTick(trigger);
+    const slLimit = this.roundTick(slTrigger * 0.90);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const slOrderId = await this.placeOrder(state, {
+          symbol,
+          exchange: state.activeExchange,
+          product: state.config.product || 'NRML',
+          qty,
+          side: 'SELL',
+          orderType: 'SL',
+          price: slLimit,
+          triggerPrice: slTrigger,
+          intent: 'PROTECTIVE'
+        });
+        state.slOrderId = slOrderId;
+        state.brokerSlTrigger = slTrigger;
+        state.brokerSlModifyCount = 0;
+        return slOrderId;
+      } catch (e: any) {
+        this.log(state, `❌ SL Order attempt ${attempt}/2 failed: ${e.message}`);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Moves the resting broker SL up to the engine's trailed stop, so locked-in gains stay protected even if this
+   * server or its price feed dies. Only moves up, in meaningful steps, and within Zerodha's per-order
+   * modification limit; a failure leaves the older (lower) broker SL in place and the engine's own stop active.
+   */
+  private async syncBrokerSl(state: GammaStrategyState, client: any) {
+    if (state.isPaperTrade || state.isExiting || state.isSyncingBrokerSl) return;
+    if (!state.slOrderId || !state.stopLossPrice || !client?.modifyOrder) return;
+    if ((state.brokerSlModifyCount || 0) >= MAX_BROKER_SL_MODIFICATIONS) return;
+    if (Date.now() < (state.brokerSlRetryAfter || 0)) return;
+
+    const newTrigger = this.roundTick(state.stopLossPrice);
+    const current = state.brokerSlTrigger || 0;
+    const minStep = Math.max(1, (state.entryPrice || newTrigger) * 0.03);
+    if (newTrigger - current < minStep) return;
+
+    state.isSyncingBrokerSl = true;
+    const slOrderId = state.slOrderId;
+    try {
+      const newLimit = this.roundTick(newTrigger * 0.90);
+      await client.modifyOrder(slOrderId, { triggerPrice: newTrigger, price: newLimit });
+      state.brokerSlTrigger = newTrigger;
+      state.brokerSlModifyCount = (state.brokerSlModifyCount || 0) + 1;
+      this.log(state, `🛡 Broker SL moved up: Trigger ₹${current.toFixed(2)} → ₹${newTrigger.toFixed(2)} (Limit ₹${newLimit.toFixed(2)}) [${slOrderId}]`);
+    } catch (e: any) {
+      state.brokerSlRetryAfter = Date.now() + 10_000;
+      this.log(state, `⚠ Could not move broker SL to ₹${newTrigger.toFixed(2)} (${e?.message || e}). Broker SL stays at ₹${current.toFixed(2)}; engine stop ₹${newTrigger.toFixed(2)} still active. Retrying in 10s.`);
+    } finally {
+      state.isSyncingBrokerSl = false;
+    }
+  }
+
   private async partialExitPosition(state: GammaStrategyState, client: any, exitPrice: number, partialQty: number, reason: string) {
+    if (state.isExiting || !state.entryTriggered) return;
+    state.isExiting = true;
     const symbol = state.optionSymbol || state.config.symbol;
     const exchange = state.activeExchange;
+    const activeQty = state.executedQty || state.targetQty;
+    const slTrigger = state.stopLossPrice || state.initialSlPrice || this.roundTick(exitPrice * 0.5);
+    let mustFlatten = false;
 
     try {
       let exitOrderId = '';
       if (state.isPaperTrade) {
         exitOrderId = `PAPER_PARTIAL_${Math.random().toString(36).substring(7).toUpperCase()}`;
       } else {
-        // Cancel pending broker SL order to avoid mismatch
-        if (state.slOrderId) {
-          await client.cancelOrder(state.slOrderId).catch(() => { });
+        // Sell part of what the broker actually holds. If it holds less (SL filled, manual close) or positions
+        // can't be read, skip: the resting SL stays untouched and broker sync reconciles the rest.
+        const broker = await getLiveBrokerPosition(client['kite'], symbol, this.logger);
+        if (broker.netQty < activeQty) {
+          this.log(state, `ℹ Partial booking skipped: Zerodha shows ${broker.netQty} Qty of ${symbol}, engine expected ${activeQty}.`);
+          return;
         }
 
-        exitOrderId = await this.placeOrder(state, {
-          symbol,
-          exchange,
-          product: state.config.product || 'NRML',
-          qty: partialQty,
-          side: 'SELL',
-          orderType: 'MARKET',
-          intent: 'EXIT'
-        });
-        this.log(state, `✅ Partial Market Exit Order Placed (${reason}): ${exitOrderId} for ${partialQty} Qty`);
+        // The resting SL covers the full qty; it has to go before part is sold, or both could fill.
+        if (state.slOrderId) await client.cancelOrder(state.slOrderId).catch(() => { });
+        state.slOrderId = null;
+        state.brokerSlTrigger = null;
 
-        // Re-arm broker SL for remaining quantity
-        const remainingQty = (state.executedQty || state.targetQty) - partialQty;
-        if (remainingQty > 0 && state.stopLossPrice) {
-          const slTrigger = this.roundTick(state.stopLossPrice);
-          const slLimit = this.roundTick(slTrigger * 0.90);
-          state.slOrderId = await this.placeOrder(state, {
+        try {
+          exitOrderId = await this.placeOrder(state, {
             symbol,
             exchange,
             product: state.config.product || 'NRML',
-            qty: remainingQty,
+            qty: partialQty,
             side: 'SELL',
-            orderType: 'SL',
-            price: slLimit,
-            triggerPrice: slTrigger,
-            intent: 'PROTECTIVE'
-          }).catch(() => null);
+            orderType: 'MARKET',
+            intent: 'EXIT'
+          });
+        } catch (e: any) {
+          this.log(state, `❌ Partial exit order failed (${e.message}). Re-arming SL for the full ${activeQty} Qty.`);
+          const slOrderId = await this.armBrokerSl(state, symbol, activeQty, slTrigger);
+          if (slOrderId) {
+            this.log(state, `🛡 Broker SL re-armed for ${activeQty} Qty: Trigger ₹${this.roundTick(slTrigger).toFixed(2)} [OrderId: ${slOrderId}]`);
+          } else {
+            mustFlatten = true;
+          }
+          return;
+        }
+        this.log(state, `✅ Partial Market Exit Order Placed (${reason}): ${exitOrderId} for ${partialQty} Qty`);
 
-          if (state.slOrderId) {
-            this.log(state, `🛡 Re-armed Broker SL for remaining ${remainingQty} Qty: Trigger ₹${slTrigger.toFixed(2)} [OrderId: ${state.slOrderId}]`);
+        const remainingQty = activeQty - partialQty;
+        if (remainingQty > 0) {
+          const slOrderId = await this.armBrokerSl(state, symbol, remainingQty, slTrigger);
+          if (slOrderId) {
+            this.log(state, `🛡 Re-armed Broker SL for remaining ${remainingQty} Qty: Trigger ₹${this.roundTick(slTrigger).toFixed(2)} [OrderId: ${slOrderId}]`);
+          } else {
+            mustFlatten = true;
           }
         }
       }
@@ -1950,15 +2140,29 @@ export class GammaBlastExpiryEngine {
       const entry = state.entryPrice || exitPrice;
       const bookedPnl = (exitPrice - entry) * partialQty;
       state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + bookedPnl;
-      state.executedQty = (state.executedQty || state.targetQty) - partialQty;
+      state.executedQty = activeQty - partialQty;
 
       this.log(state, `💰 [50% PARTIAL PROFIT SECURED] Sold ${partialQty} shares @ ₹${exitPrice.toFixed(2)} | Realized: +₹${bookedPnl.toFixed(2)} | 100% Principal Recovered! Remaining ${state.executedQty} shares trailing risk-free!`);
     } catch (e: any) {
       this.log(state, `⚠ Partial exit notice: ${e.message}`);
+    } finally {
+      state.isExiting = false;
+    }
+
+    if (mustFlatten && state.entryTriggered) {
+      this.log(state, `🚨 Broker SL could NOT be re-armed. Flattening the remaining position now (never hold unprotected).`);
+      await this.exitPosition(state, client, state.currentLtp || exitPrice, 'SL_PLACEMENT_FAILED');
+      if (state.entryTriggered) {
+        this.log(state, `🚨🚨 FLATTEN FAILED and NO SL is active on ${symbol}. CLOSE MANUALLY IN KITE NOW.`);
+      }
     }
   }
 
   private async exitPosition(state: GammaStrategyState, client: any, exitPrice: number, reason: string) {
+    // Every exit path (ticker, 5s monitor, EOD, manual, shutdown) funnels through here: only one may run.
+    if (state.isExiting || !state.entryTriggered) return;
+    state.isExiting = true;
+
     const symbol = state.optionSymbol || state.config.symbol;
     const exchange = state.activeExchange;
     const qty = state.executedQty || state.targetQty;
@@ -1970,30 +2174,33 @@ export class GammaBlastExpiryEngine {
       if (state.isPaperTrade) {
         exitOrderId = `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`;
       } else {
+        const slOrderId = state.slOrderId;
         // Cancel pending broker SL order
-        if (state.slOrderId) {
-          await client.cancelOrder(state.slOrderId).catch(() => { });
+        if (slOrderId) {
+          await client.cancelOrder(slOrderId).catch(() => { });
         }
 
-        // Capital Wipeout Guard: Verify broker net quantity before placing exit order
+        // Capital Wipeout Guard: sell only what the broker actually holds, never more.
         const kite = client['kite'];
-        let isManuallyClosed = false;
-        try {
-          const exitSafety = await isSafeToExit(kite, symbol, 'SELL', this.logger);
-          if (!exitSafety.safe) {
-            isManuallyClosed = true;
-            this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended short.`);
-          }
-        } catch (posErr: any) {
-          this.log(state, `⚠ Position sync check notice: ${posErr.message}`);
+        const broker = await getLiveBrokerPosition(kite, symbol, this.logger);
+        if (broker.isOpen && broker.netQty === 0) {
+          throw new Error(`Could not read Zerodha positions for ${symbol}`);
         }
 
-        if (!isManuallyClosed) {
+        if (broker.netQty <= 0) {
+          this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off on Zerodha (Broker Qty: ${broker.netQty}). Skipping duplicate exit order to prevent unintended short.`);
+          const details = await getCompletedBrokerExitDetails(kite, symbol, slOrderId, null, 'SELL', this.logger);
+          if (details.found && details.exitPrice > 0) exitPrice = details.exitPrice;
+        } else {
+          const sellQty = Math.min(qty, broker.netQty);
+          if (sellQty < qty) {
+            this.log(state, `⚠ Zerodha holds ${broker.netQty} Qty but engine expected ${qty}. Selling only ${sellQty}.`);
+          }
           exitOrderId = await this.placeOrder(state, {
             symbol,
             exchange,
             product: state.config.product || 'NRML',
-            qty,
+            qty: sellQty,
             side: 'SELL',
             orderType: 'MARKET',
             intent: 'EXIT'
@@ -2003,76 +2210,80 @@ export class GammaBlastExpiryEngine {
       }
 
       await this.trackOrderInDB(state, 'SELL', symbol, exchange, qty, exitPrice, exitOrderId, undefined, 'MARKET');
-      state.tradesPlacedToday++;
-
-      const entry = state.entryPrice || exitPrice;
-      const tradePnl = (exitPrice - entry) * qty;
-      state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
-
-      if (tradePnl > 0) state.winningTradesToday++;
-      if (state.winningTradesToday >= (state.config.maxWinsPerDay || 1)) {
-        state.dailyTargetLocked = true;
-        this.log(state, `🏆 Daily Profit Discipline: Reached ${state.winningTradesToday} winning trade(s)! Daily goal achieved. Locking strategy for today to protect capital.`);
-      }
-      if (state.config.targetRs && state.dailyRealizedPnlRs >= state.config.targetRs) {
-        state.dailyTargetLocked = true;
-        this.log(state, `🎯 Daily Target Discipline: Reached ₹${state.dailyRealizedPnlRs.toFixed(2)} (>= ₹${state.config.targetRs})! Locking strategy for today.`);
-      }
-      if (state.config.stopLossRs && state.dailyRealizedPnlRs <= -Math.abs(state.config.stopLossRs)) {
-        state.dailyTargetLocked = true;
-        this.log(state, `🛑 Daily Max Loss Shield: Realized ₹${state.dailyRealizedPnlRs.toFixed(2)} (<= -₹${state.config.stopLossRs})! Locking strategy for today to protect capital.`);
-      }
-
-      // 3. One-and-Done Profit Shield: If trade hit target, lock strategy for the day immediately!
-      if (reason === 'TARGET' || (state.dailyRealizedPnlRs > 0 && state.winningTradesToday >= (state.config.maxTradesPerDay || 1))) {
-        state.dailyTargetLocked = true;
-        this.log(state, `🏁 [DAILY TARGET LOCKED] Goal reached! Realized profit: +₹${state.dailyRealizedPnlRs.toFixed(2)}. Strategy safely locked for the day to preserve profits.`);
-      }
-
-      this.log(state, `🎉 Trade Closed (${reason}) @ ₹${exitPrice.toFixed(2)} | P&L: ${tradePnl >= 0 ? '+' : ''}₹${tradePnl.toFixed(2)} | Total Today: ₹${state.dailyRealizedPnlRs.toFixed(2)}`);
-
-      this.stopRealtimeMonitor(state);
-      state.entryTriggered = null;
-      state.optionSymbol = null;
-      state.entryPrice = null;
-      state.stopLossPrice = null;
-      state.slOrderId = null;
-      state.peakPrice = 0;
-      state.isCostLocked = false;
-      state.is2xLocked = false;
-      state.is3xLocked = false;
-      state.is5xLocked = false;
-      state.isPartialExited = false;
-      state.isHighConvictionTrade = false;
-
-      strategyEvents.emit('strategy.update', {
-        strategyId: state.strategyId,
-        logs: state.logs,
-        state: this.getState(state.strategyId),
-      });
+      this.bookClosedTrade(state, exitPrice, qty, reason);
     } catch (e: any) {
       this.log(state, `❌ Exit failed: ${e.message}`);
       // Exit order failed after the broker SL was cancelled: re-arm protection so the position is not naked.
       if (!state.isPaperTrade && state.entryTriggered && state.stopLossPrice) {
-        try {
-          const slTrigger = this.roundTick(state.stopLossPrice);
-          state.slOrderId = await this.placeOrder(state, {
-            symbol,
-            exchange,
-            product: state.config.product || 'NRML',
-            qty,
-            side: 'SELL',
-            orderType: 'SL',
-            price: this.roundTick(slTrigger * 0.90),
-            triggerPrice: slTrigger,
-            intent: 'PROTECTIVE'
-          });
-          this.log(state, `🛡 Exit failed — broker SL re-armed @ trigger ₹${slTrigger.toFixed(2)} [OrderId: ${state.slOrderId}]`);
-        } catch (e2: any) {
-          this.log(state, `🚨 Exit failed AND SL re-arm failed (${e2?.message || e2}). POSITION UNPROTECTED — close manually in Kite.`);
+        const slOrderId = await this.armBrokerSl(state, symbol, qty, state.stopLossPrice);
+        if (slOrderId) {
+          this.log(state, `🛡 Exit failed — broker SL re-armed @ trigger ₹${this.roundTick(state.stopLossPrice).toFixed(2)} [OrderId: ${slOrderId}]`);
+        } else {
+          state.slOrderId = null;
+          this.log(state, `🚨 Exit failed AND SL re-arm failed. POSITION UNPROTECTED — close manually in Kite.`);
         }
       }
+    } finally {
+      state.isExiting = false;
     }
+  }
+
+  /** Books a fully closed trade (P&L, trade count, daily locks) and clears the position from state. */
+  private bookClosedTrade(state: GammaStrategyState, exitPrice: number, qty: number, reason: string) {
+    state.tradesPlacedToday++;
+
+    const entry = state.entryPrice || exitPrice;
+    const tradePnl = (exitPrice - entry) * qty;
+    state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + tradePnl;
+
+    if (tradePnl > 0) state.winningTradesToday++;
+    if (state.winningTradesToday >= (state.config.maxWinsPerDay || 1)) {
+      state.dailyTargetLocked = true;
+      this.log(state, `🏆 Daily Profit Discipline: Reached ${state.winningTradesToday} winning trade(s)! Daily goal achieved. Locking strategy for today to protect capital.`);
+    }
+    if (state.config.targetRs && state.dailyRealizedPnlRs >= state.config.targetRs) {
+      state.dailyTargetLocked = true;
+      this.log(state, `🎯 Daily Target Discipline: Reached ₹${state.dailyRealizedPnlRs.toFixed(2)} (>= ₹${state.config.targetRs})! Locking strategy for today.`);
+    }
+    if (state.config.stopLossRs && state.dailyRealizedPnlRs <= -Math.abs(state.config.stopLossRs)) {
+      state.dailyTargetLocked = true;
+      this.log(state, `🛑 Daily Max Loss Shield: Realized ₹${state.dailyRealizedPnlRs.toFixed(2)} (<= -₹${state.config.stopLossRs})! Locking strategy for today to protect capital.`);
+    }
+
+    // 3. One-and-Done Profit Shield: If trade hit target, lock strategy for the day immediately!
+    if (reason === 'TARGET' || (state.dailyRealizedPnlRs > 0 && state.winningTradesToday >= (state.config.maxTradesPerDay || 1))) {
+      state.dailyTargetLocked = true;
+      this.log(state, `🏁 [DAILY TARGET LOCKED] Goal reached! Realized profit: +₹${state.dailyRealizedPnlRs.toFixed(2)}. Strategy safely locked for the day to preserve profits.`);
+    }
+
+    this.log(state, `🎉 Trade Closed (${reason}) @ ₹${exitPrice.toFixed(2)} | P&L: ${tradePnl >= 0 ? '+' : ''}₹${tradePnl.toFixed(2)} | Total Today: ₹${state.dailyRealizedPnlRs.toFixed(2)}`);
+
+    this.stopRealtimeMonitor(state);
+    state.entryTriggered = null;
+    state.entryOrderId = null;
+    state.optionSymbol = null;
+    state.entryPrice = null;
+    state.stopLossPrice = null;
+    state.targetPrice = null;
+    state.indexInvalidationPrice = null;
+    state.slOrderId = null;
+    state.brokerSlTrigger = null;
+    state.brokerSlModifyCount = 0;
+    state.brokerSlRetryAfter = 0;
+    state.brokerFlatChecks = 0;
+    state.peakPrice = 0;
+    state.isCostLocked = false;
+    state.is2xLocked = false;
+    state.is3xLocked = false;
+    state.is5xLocked = false;
+    state.isPartialExited = false;
+    state.isHighConvictionTrade = false;
+
+    strategyEvents.emit('strategy.update', {
+      strategyId: state.strategyId,
+      logs: state.logs,
+      state: this.getState(state.strategyId),
+    });
   }
 
   // ── Helper Utilities ───────────────────────────────────────────────────────
