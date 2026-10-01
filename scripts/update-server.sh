@@ -59,8 +59,12 @@ node apps/auth-service/scripts/verify-all-fixes.js
 
 echo -e "\n${GREEN}${BOLD}🎉 ALL PRE-FLIGHT TESTS PASSED! Safely restarting PM2...${NC}"
 
-# Restart Backend PM2 process
-pm2 restart algo-backend
+# Re-create the backend PM2 process from ecosystem.config.js. A plain `pm2 restart algo-backend` reuses the
+# settings PM2 saved when the process was first created, so memory-limit/heap changes in the file never applied
+# (on 2026-10-01 the server still ran an old 320MB limit and restarted every 60-90s). `pm2 save` keeps them across reboots.
+pm2 delete algo-backend >/dev/null 2>&1 || true
+pm2 start ecosystem.config.js --only algo-backend --env production
+pm2 save
 
 # Brief pause to allow process initialization
 sleep 2
