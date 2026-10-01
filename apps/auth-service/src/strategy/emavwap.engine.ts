@@ -9,7 +9,7 @@ import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
-import { findOpenPosition, PositionUnknownError, protectionNotice } from './position-recovery';
+import { findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
 import { logSignal } from './signal-logger';
 import { getInstrumentTickSize, getTopCandidateStocks, roundToInstrumentTick } from './smart-stock-picker';
 
@@ -178,17 +178,6 @@ export class EmaVwapCrossoverEngine {
 
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    const todayStart = new Date(`${todayStr}T00:00:00.000+05:30`);
-    const completedOrdersCount = await this.prisma.order.count({
-      where: {
-        execution: { strategyId },
-        createdAt: { gte: todayStart },
-        status: 'COMPLETE',
-        isPaperTrade: false
-      }
-    }).catch(() => 0);
-
     let detectedCapital = (config as any).maxCapital;
     let liveMarginDetected = false;
 
@@ -217,51 +206,18 @@ export class EmaVwapCrossoverEngine {
     }
     (config as any).maxCapital = detectedCapital;
 
-    // ── Recover today's executed trades and realized P&L from DB ──────────
-    const todayMidnight = new Date();
-    todayMidnight.setHours(0, 0, 0, 0);
-
-    const todayOrders = await this.prisma.order.findMany({
-      where: {
-        strategyId,
-        createdAt: { gte: todayMidnight },
-        status: 'COMPLETE',
-      },
-      orderBy: { createdAt: 'asc' },
-    }).catch(() => []);
-
-    const symbolOrders: Record<string, any[]> = {};
-    for (const o of todayOrders) {
-      if (!symbolOrders[o.symbol]) symbolOrders[o.symbol] = [];
-      symbolOrders[o.symbol].push(o);
-    }
-
-    let recoveredTradesToday = 0;
-    let recoveredRealizedPnlRs = 0;
-
-    for (const sym of Object.keys(symbolOrders)) {
-      const symList = symbolOrders[sym];
-      let pos = 0;
-      let cost = 0;
-
-      for (const o of symList) {
-        const p = o.price || o.avgPrice || 0;
-        if (pos === 0) {
-          recoveredTradesToday++;
-        }
-        if (o.side === 'BUY') {
-          pos += o.qty;
-          cost -= p * o.qty;
-        } else {
-          pos -= o.qty;
-          cost += p * o.qty;
-        }
-        if (pos === 0) {
-          recoveredRealizedPnlRs += cost;
-          cost = 0;
-        }
-      }
-    }
+    // ── Recover today's executed trades and realized P&L (broker order book for live) ──
+    // The in-memory counter dies with the process, so a restart must rebuild it from what actually
+    // filled; otherwise a restart after a trade lets the strategy trade again past maxTradesPerDay.
+    const day = await recoverTodaysTrades({
+      prisma: this.prisma,
+      factory: this.factory,
+      strategyId,
+      isPaper: strategy.isPaperTrade,
+      brokerAccount: strategy.brokerAccount,
+    });
+    const recoveredTradesToday = day.trades;
+    const recoveredRealizedPnlRs = day.realizedPnlRs;
 
     const targetThresholdRs = config.targetRs && config.targetRs > 0 ? config.targetRs : 500;
     const maxRiskRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : (targetThresholdRs * 1.5);
@@ -316,13 +272,15 @@ export class EmaVwapCrossoverEngine {
     this.log(state, `💰 Detected Trading Capital: ₹${detectedCapital.toLocaleString('en-IN')}${liveMarginDetected ? ' (Live Zerodha Margin)' : (strategy.isPaperTrade ? ' [Paper Trading Mode]' : ' [Default / Configured]')}`);
 
     if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
-      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}${recoveredDailyTargetLocked ? ' (Daily Limit Locked)' : ''}`);
+      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}${recoveredDailyTargetLocked ? ' (Daily Limit Locked)' : ''} [${day.source === 'BROKER' ? 'Zerodha order book' : 'saved orders'}]`);
     }
 
     // ── Open-position recovery after power cut / restart (LIVE from broker, PAPER from saved orders) ──
     // Runs before the completion checks below so a restart with an open position never
     // "completes" the strategy and leaves that position unmanaged.
     const recoveredPosition = await this.recoverOpenPosition(state, strategy.brokerAccount);
+    // An adopted position is a trade this strategy opened today, whatever the order records say.
+    if (recoveredPosition && state.tradesPlacedToday < 1) state.tradesPlacedToday = 1;
 
     // If max trades already reached or daily limit locked, immediately stop and do NOT trade
     if (!recoveredPosition && recoveredTradesToday >= config.maxTradesPerDay) {

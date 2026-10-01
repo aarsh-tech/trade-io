@@ -7,7 +7,7 @@ import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
-import { findOpenPosition, RecoveredPosition, protectionNotice, PositionUnknownError } from './position-recovery';
+import { findOpenPosition, RecoveredPosition, protectionNotice, PositionUnknownError, recoverTodaysTrades } from './position-recovery';
 import { getCompletedBrokerExitDetails, getLiveBrokerPosition, safeCancelPendingOrders } from './broker-position-guard';
 
 /** Zerodha caps modifications per order; stay under it so the SL order itself is never locked out. */
@@ -201,53 +201,19 @@ export class GammaBlastExpiryEngine {
     const lots = config.lots || 1;
     const targetQty = lots * defaultLotSize;
 
-    // ── Recover today's executed trades and realized P&L from DB ──────────
-    const todayMidnight = new Date();
-    todayMidnight.setHours(0, 0, 0, 0);
-
-    const todayOrders = await this.prisma.order.findMany({
-      where: {
-        strategyId,
-        createdAt: { gte: todayMidnight },
-        status: 'COMPLETE',
-      },
-      orderBy: { createdAt: 'asc' },
-    }).catch(() => []);
-
-    const symbolOrders: Record<string, any[]> = {};
-    for (const o of todayOrders) {
-      if (!symbolOrders[o.symbol]) symbolOrders[o.symbol] = [];
-      symbolOrders[o.symbol].push(o);
-    }
-
-    let recoveredTradesToday = 0;
-    let recoveredWinningTradesToday = 0;
-    let recoveredRealizedPnlRs = 0;
-
-    for (const sym of Object.keys(symbolOrders)) {
-      const symList = symbolOrders[sym];
-      let pos = 0;
-      let cost = 0;
-
-      for (const o of symList) {
-        const p = o.price || o.avgPrice || 0;
-        if (pos === 0) {
-          recoveredTradesToday++;
-        }
-        if (o.side === 'BUY') {
-          pos += o.qty;
-          cost -= p * o.qty;
-        } else {
-          pos -= o.qty;
-          cost += p * o.qty;
-        }
-        if (pos === 0) {
-          recoveredRealizedPnlRs += cost;
-          if (cost > 0) recoveredWinningTradesToday++;
-          cost = 0;
-        }
-      }
-    }
+    // ── Recover today's executed trades and realized P&L (broker order book for live) ──
+    // The in-memory counter dies with the process, so a restart must rebuild it from what actually
+    // filled; otherwise a restart after a trade lets the strategy trade again past maxTradesPerDay.
+    const day = await recoverTodaysTrades({
+      prisma: this.prisma,
+      factory: this.factory,
+      strategyId,
+      isPaper: !!strategy.isPaperTrade,
+      brokerAccount: strategy.brokerAccount,
+    });
+    const recoveredTradesToday = day.trades;
+    const recoveredWinningTradesToday = day.wins;
+    const recoveredRealizedPnlRs = day.realizedPnlRs;
 
     let recoveredDailyTargetLocked = false;
     if (recoveredWinningTradesToday >= (config.maxWinsPerDay || 1)) {
@@ -293,7 +259,7 @@ export class GammaBlastExpiryEngine {
     this.running.set(strategyId, state);
 
     if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
-      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay || 2} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}${recoveredDailyTargetLocked ? ' (Daily Limit Locked)' : ''}`);
+      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay || 2} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}${recoveredDailyTargetLocked ? ' (Daily Limit Locked)' : ''} [${day.source === 'BROKER' ? 'Zerodha order book' : 'saved orders'}]`);
     }
 
     // An open position (restart / crash) must be re-adopted, never "completed" away with its SL cancelled.
@@ -314,6 +280,8 @@ export class GammaBlastExpiryEngine {
       }
       throw err;
     }
+    // An adopted position is a trade this strategy opened today, whatever the order records say.
+    if (openPos && state.tradesPlacedToday < 1) state.tradesPlacedToday = 1;
 
     if (!openPos && recoveredTradesToday >= (config.maxTradesPerDay || 2)) {
       this.log(state, `⛔ Max daily trade cap (${config.maxTradesPerDay || 2}) already reached for today. Strategy completed.`);

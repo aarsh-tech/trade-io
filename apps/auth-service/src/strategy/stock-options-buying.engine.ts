@@ -8,7 +8,7 @@ import { autoSelectStock, getTopFnoCandidates, FnoCandidateStock } from './smart
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { strategyEvents } from '../common/events';
 import { MAX_ENGINE_LOGS, loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
-import { findOpenPosition, strategyOrderWhere, istDayStart, protectionNotice, PositionUnknownError } from './position-recovery';
+import { findOpenPosition, protectionNotice, PositionUnknownError, recoverTodaysTrades } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
 interface Candle {
@@ -167,12 +167,23 @@ export class StockOptionsBuyingEngine {
         `▶ High-Accuracy Stock Options Buying engine started — Mode: ${isAuto ? 'AUTO (180+ F&O Momentum Scanner)' : `Manual (${config.symbol})`} | Bias: ${config.directionBias || 'BOTH'} | Capital: ₹${config.maxCapital} | Execution: ${strategy.isPaperTrade ? 'PAPER' : 'LIVE'}`,
       );
     }
-    // Restore today's trade count so a restart cannot exceed the daily cap
-    state.tradesPlacedToday = await this.prisma.order.count({
-      where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, side: 'BUY', status: 'COMPLETE' },
-    }).catch(() => 0);
+    // Restore today's trade count so a restart cannot exceed the daily cap. Live counts come from the
+    // broker's order book: our own rows stay OPEN until an order_update or sync marks them COMPLETE.
+    const day = await recoverTodaysTrades({
+      prisma: this.prisma,
+      factory: this.factory,
+      strategyId,
+      isPaper: !!strategy.isPaperTrade,
+      brokerAccount,
+    });
+    state.tradesPlacedToday = day.trades;
+    if (day.trades > 0) {
+      this.log(state, `📊 [STATE RECOVERY] Restored today's trade count: ${day.trades} [${day.source === 'BROKER' ? 'Zerodha order book' : 'saved orders'}]`);
+    }
 
     const positionRecovered = await this.recoverOpenPosition(state, brokerAccount);
+    // An adopted position is a trade this strategy opened today, whatever the order records say.
+    if (positionRecovered && state.tradesPlacedToday < 1) state.tradesPlacedToday = 1;
     await this.persistLogs(state);
 
     // Tick every 15 seconds for rapid position monitoring & trigger checks

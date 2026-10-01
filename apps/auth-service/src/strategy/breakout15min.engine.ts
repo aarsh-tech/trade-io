@@ -9,7 +9,7 @@ import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';
 import { MAX_ENGINE_LOGS, loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
-import { findOpenPosition, strategyOrderWhere, protectionNotice, PositionUnknownError } from './position-recovery';
+import { findOpenPosition, protectionNotice, PositionUnknownError, recoverTodaysTrades } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
 interface Candle {
@@ -180,51 +180,18 @@ export class Breakout15MinEngine {
 
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
-    // ── Recover today's executed trades and realized P&L from DB ──────────
-    const todayMidnight = new Date();
-    todayMidnight.setHours(0, 0, 0, 0);
-
-    const todayOrders = await this.prisma.order.findMany({
-      where: {
-        ...strategyOrderWhere(strategyId),
-        createdAt: { gte: todayMidnight },
-        status: 'COMPLETE',
-      },
-      orderBy: { createdAt: 'asc' },
-    }).catch(() => []);
-
-    const symbolOrders: Record<string, any[]> = {};
-    for (const o of todayOrders) {
-      if (!symbolOrders[o.symbol]) symbolOrders[o.symbol] = [];
-      symbolOrders[o.symbol].push(o);
-    }
-
-    let recoveredTradesToday = 0;
-    let recoveredRealizedPnlRs = 0;
-
-    for (const sym of Object.keys(symbolOrders)) {
-      const symList = symbolOrders[sym];
-      let pos = 0;
-      let cost = 0;
-
-      for (const o of symList) {
-        const p = o.price || o.avgPrice || 0;
-        if (pos === 0) {
-          recoveredTradesToday++;
-        }
-        if (o.side === 'BUY') {
-          pos += o.qty;
-          cost -= p * o.qty;
-        } else {
-          pos -= o.qty;
-          cost += p * o.qty;
-        }
-        if (pos === 0) {
-          recoveredRealizedPnlRs += cost;
-          cost = 0;
-        }
-      }
-    }
+    // ── Recover today's executed trades and realized P&L (broker order book for live) ──
+    // The in-memory counter dies with the process, so a restart must rebuild it from what actually
+    // filled; otherwise a restart after a trade lets the strategy trade again past maxTradesPerDay.
+    const day = await recoverTodaysTrades({
+      prisma: this.prisma,
+      factory: this.factory,
+      strategyId,
+      isPaper: (strategy as any).isPaperTrade,
+      brokerAccount,
+    });
+    const recoveredTradesToday = day.trades;
+    const recoveredRealizedPnlRs = day.realizedPnlRs;
 
     const state: StrategyState = {
       strategyId,
@@ -272,13 +239,15 @@ export class Breakout15MinEngine {
     }
 
     if (recoveredTradesToday > 0 || recoveredRealizedPnlRs !== 0) {
-      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)}`);
+      this.log(state, `📊 [STATE RECOVERY] Restored today's historical state: ${recoveredTradesToday}/${config.maxTradesPerDay} trades executed | Realized P&L: ₹${recoveredRealizedPnlRs.toFixed(2)} [${day.source === 'BROKER' ? 'Zerodha order book' : 'saved orders'}]`);
     }
 
     // ── Open-position recovery (restart / crash) ─────────────────────────────
     // Must run before the completion checks below, otherwise a restart with an open position would
     // "complete" the strategy and leave that position unmanaged.
     if (await this.recoverOpenPosition(state, brokerAccount)) {
+      // An adopted position is a trade this strategy opened today, whatever the order records say.
+      if (state.tradesPlacedToday < 1) state.tradesPlacedToday = 1;
       await this.persistLogs(state);
       const recTimer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 60_000);
       this.timers.set(strategyId, recTimer);

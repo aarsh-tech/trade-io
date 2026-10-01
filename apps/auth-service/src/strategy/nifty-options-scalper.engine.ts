@@ -8,7 +8,7 @@ import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
-import { findOpenPosition, PositionUnknownError, protectionNotice, tallyTodaysTrades } from './position-recovery';
+import { findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
 
 interface Candle {
   date: Date;
@@ -259,16 +259,6 @@ export class NiftyOptionsScalperEngine {
     const execution = await this.prisma.strategyExecution.create({ data: { strategyId, status: 'RUNNING' } });
     await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: true } });
 
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    const todayStart = new Date(`${todayStr}T00:00:00.000+05:30`);
-    const completedOrdersCount = await this.prisma.order.count({
-      where: {
-        execution: { strategyId },
-        createdAt: { gte: todayStart },
-        status: 'COMPLETE'
-      }
-    }).catch(() => 0);
-
     const state: ScalperStrategyState = {
       strategyId,
       executionId: execution.id,
@@ -313,16 +303,25 @@ export class NiftyOptionsScalperEngine {
     }
     // Restore today's trade / win / loss counters so a restart cannot bypass the daily caps and shields
     if (!replayDate) {
-      const tally = await tallyTodaysTrades(this.prisma, strategyId);
+      // Live counts come from the broker's order book: our own rows stay OPEN until an order_update or sync marks them COMPLETE.
+      const tally = await recoverTodaysTrades({
+        prisma: this.prisma,
+        factory: this.factory,
+        strategyId,
+        isPaper: !!strategy.isPaperTrade,
+        brokerAccount: strategy.brokerAccount,
+      });
       state.tradesPlacedToday = tally.trades;
       state.winningTradesToday = tally.wins;
       state.dailyLossesCount = tally.losses;
       if (tally.trades > 0) {
-        this.log(state, `📊 [STATE RECOVERY] Restored today's state: ${tally.trades} trades | ${tally.wins} wins | ${tally.losses} losses | Realized P&L: ₹${tally.realizedPnlRs.toFixed(2)}`);
+        this.log(state, `📊 [STATE RECOVERY] Restored today's state: ${tally.trades} trades | ${tally.wins} wins | ${tally.losses} losses | Realized P&L: ₹${tally.realizedPnlRs.toFixed(2)} [${tally.source === 'BROKER' ? 'Zerodha order book' : 'saved orders'}]`);
       }
     }
 
     const positionRecovered = replayDate ? false : await this.recoverOpenPosition(state, strategy.brokerAccount);
+    // An adopted position is a trade this strategy opened today, whatever the order records say.
+    if (positionRecovered && state.tradesPlacedToday < 1) state.tradesPlacedToday = 1;
     await this.persistLogs(state);
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 3_000);

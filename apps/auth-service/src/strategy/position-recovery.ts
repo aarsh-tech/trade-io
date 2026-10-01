@@ -1,7 +1,10 @@
 import { ServiceUnavailableException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { Order } from '../brokers/interfaces/broker-client.interface';
 import { withKiteRetry } from '../brokers/kite-errors';
+import { buildOrderTag } from '../order-gateway/order-rules';
+import { parseKiteTime } from '../orders/kite-time';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
  * Shared crash / restart recovery for strategy engines.
@@ -293,15 +296,119 @@ export interface DailyTally {
   realizedPnlRs: number;
 }
 
-/** Today's completed round-trips for a strategy, rebuilt from saved COMPLETE orders. */
-export async function tallyTodaysTrades(prisma: PrismaService, strategyId: string): Promise<DailyTally> {
-  const orders: any[] = await prisma.order
+export interface RecoveredDay extends DailyTally {
+  /** BROKER: Kite's order book. DB: our own rows (paper, or the broker was unreadable). */
+  source: 'BROKER' | 'DB';
+}
+
+interface Fill {
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  qty: number;
+  price: number;
+  at: number;
+}
+
+/** Realized P&L and wins/losses of the round trips that went flat, walked per symbol in time order. */
+function closedRoundTrips(fills: Fill[]): Pick<DailyTally, 'wins' | 'losses' | 'realizedPnlRs'> {
+  const out = { wins: 0, losses: 0, realizedPnlRs: 0 };
+  const bySymbol = new Map<string, Fill[]>();
+  for (const f of fills) {
+    if (!bySymbol.has(f.symbol)) bySymbol.set(f.symbol, []);
+    bySymbol.get(f.symbol)!.push(f);
+  }
+  for (const list of bySymbol.values()) {
+    list.sort((a, b) => a.at - b.at);
+    let pos = 0;
+    let cash = 0;
+    for (const f of list) {
+      pos += f.side === 'BUY' ? f.qty : -f.qty;
+      cash += f.side === 'BUY' ? -f.price * f.qty : f.price * f.qty;
+      if (pos === 0) {
+        out.realizedPnlRs += cash;
+        if (cash > 0) out.wins++;
+        else if (cash < 0) out.losses++;
+        cash = 0;
+      }
+    }
+  }
+  return out;
+}
+
+/** An entry order that may have opened a position: anything but a rejection or an unfilled cancel. */
+function mayHaveFilled(status: string, filledQty: number): boolean {
+  if (filledQty > 0) return true;
+  const s = (status || '').toUpperCase();
+  return s !== 'REJECTED' && !s.includes('CANCEL');
+}
+
+/**
+ * Today's trade count, wins/losses and realized P&L for a strategy, used to rebuild its counters after a restart.
+ *
+ * LIVE reads the broker's order book, matching orders by the tag OrderGateway puts on every order
+ * (`S<id>E|X|S`) or by an order id this strategy saved. Our own rows are not enough: they are saved
+ * OPEN at placement and only become COMPLETE on a websocket order_update or a broker sync, so a
+ * restart shortly after a fill missed the trade and let the strategy trade again past its daily
+ * cap. If the broker is unreadable, every entry row that may have filled counts, so the cap errs
+ * towards stopping, never towards an extra trade.
+ * PAPER rows are written COMPLETE, so they are read as saved.
+ */
+export async function recoverTodaysTrades(args: {
+  prisma: PrismaService;
+  factory: BrokerClientFactory;
+  strategyId: string;
+  isPaper: boolean;
+  brokerAccount: any | null;
+}): Promise<RecoveredDay> {
+  const { prisma, strategyId, isPaper } = args;
+  const rows: any[] = await prisma.order
     .findMany({
-      where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, status: 'COMPLETE' },
+      where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, isPaperTrade: isPaper },
       orderBy: { createdAt: 'asc' },
     })
     .catch(() => []);
 
+  if (isPaper) {
+    return { ...tallyOrders(rows.filter((o) => o.status === 'COMPLETE')), source: 'DB' };
+  }
+
+  const entryTag = buildOrderTag(strategyId, 'ENTRY');
+  const ourTags = new Set<string>([entryTag, buildOrderTag(strategyId, 'EXIT'), buildOrderTag(strategyId, 'PROTECTIVE')]);
+  const rowTagById = new Map<string, string | null>(rows.filter((o) => o.brokerOrderId).map((o) => [o.brokerOrderId, o.tag ?? null]));
+
+  let brokerOrders: Order[] | null = null;
+  if (args.brokerAccount?.accessToken) {
+    const client = args.factory.createClient(args.brokerAccount);
+    brokerOrders = await withKiteRetry(() => client.getOrders(), 3, 400).catch((e: any) => {
+      console.warn(`[TradeRecovery] broker orders unreadable for ${strategyId}: ${e?.message || e}; counting from saved orders`);
+      return null;
+    });
+  }
+
+  if (brokerOrders) {
+    const ours = brokerOrders.filter((o) => (o.tag && ourTags.has(o.tag)) || rowTagById.has(o.orderId));
+    const trades = ours.filter(
+      (o) => (o.tag || rowTagById.get(o.orderId)) === entryTag && mayHaveFilled(o.status, Number(o.filledQty) || 0),
+    ).length;
+    const fills: Fill[] = ours
+      .filter((o) => Number(o.filledQty) > 0 && Number(o.avgPrice) > 0)
+      .map((o) => ({
+        symbol: o.symbol,
+        side: String(o.side).toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+        qty: Number(o.filledQty),
+        price: Number(o.avgPrice),
+        at: parseKiteTime(o.orderTime)?.getTime() ?? 0,
+      }));
+    return { trades, ...closedRoundTrips(fills), source: 'BROKER' };
+  }
+
+  const trades = rows.filter((o) => o.tag === entryTag && mayHaveFilled(o.status, Number(o.filledQty) || 0)).length;
+  const tally = tallyOrders(rows.filter((o) => o.status === 'COMPLETE'));
+  return { ...tally, trades: Math.max(trades, tally.trades), source: 'DB' };
+}
+
+/** Round-trips in saved COMPLETE order rows: a trade opens whenever a symbol's position leaves zero. */
+function tallyOrders(orders: any[]): DailyTally {
   const tally: DailyTally = { trades: 0, wins: 0, losses: 0, realizedPnlRs: 0 };
   const bySymbol = new Map<string, any[]>();
   for (const o of orders) {
