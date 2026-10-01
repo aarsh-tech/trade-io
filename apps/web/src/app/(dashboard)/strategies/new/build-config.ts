@@ -34,6 +34,25 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       stopLossPoints: Math.round(Number(form.stopLossRs || 500) / (lotSize || 20)),
       exitExactAtTarget: !!form.exitExactAtTarget,
     };
+  } else if (form.type === "EMA_VWAP_OPTIONS") {
+    const index = ["NIFTY", "BANKNIFTY", "SENSEX"].includes(form.symbol.trim()) ? form.symbol.trim() : "NIFTY";
+    config = {
+      symbol: index,
+      exchange: index === "SENSEX" ? "BFO" : "NFO",
+      instrumentType: "OPTION",
+      product: form.product || "MIS",
+      emaPeriod: Number(form.emaPeriod || 15),
+      vwapSource: form.vwapSource || "close",
+      stopLossRs: Number(form.stopLossRs),
+      maxTradesPerDay: Number(form.maxTradesPerDay || 2),
+      maxLots: Number(form.evoMaxLots || 10),
+      slBufferPct: Number(form.evoSlBufferPct || 2),
+      minSlBufferRs: Number(form.evoMinSlBufferRs || 1),
+      partialTargetR: Number(form.evoPartialTargetR || 2),
+      partialBookFraction: 0.5,
+      useSameDayExpiry: form.evoUseSameDayExpiry === true,
+      entryCutoffTime: form.evoEntryCutoffTime || "15:00",
+    };
   } else if (form.type === "NIFTY_OPTIONS_SCALPER") {
     config = {
       symbol: form.symbol.trim(),
@@ -157,6 +176,8 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       }),
     };
   } else {
+    // EMA-VWAP Crossover trades stocks only (index options are EMA_VWAP_OPTIONS); the switch still applies to legacy types.
+    const optionMode = form.type !== "EMA_VWAP_CROSSOVER" && form.isOptionBuyingOnly;
     config = {
       symbol: form.symbol.trim(),
       exchange: form.exchange,
@@ -164,8 +185,8 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       emaPeriod: Number(form.emaPeriod),
       vwapSource: form.vwapSource || 'close',
       // 1m entries are equity-only; the engine keeps 5m for option mode either way.
-      entryTimeframe: !form.isOptionBuyingOnly && form.entryTimeframe === "1min" ? "1min" : "5min",
-      isOptionBuyingOnly: form.isOptionBuyingOnly,
+      entryTimeframe: !optionMode && form.entryTimeframe === "1min" ? "1min" : "5min",
+      isOptionBuyingOnly: optionMode,
       qty,
       lots: Number(form.lots),
       product: form.product,
@@ -181,7 +202,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       minVolumeZ: form.volumeStrictness === "STRICT" ? 2 : form.volumeStrictness === "RELAXED" ? 1 : 1.5,
       minRvolFloor: 1.5,
       profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
-      ...(form.isOptionBuyingOnly && {
+      ...(optionMode && {
         minPremium: Number(form.minPremium),
         maxPremium: Number(form.maxPremium),
       }),

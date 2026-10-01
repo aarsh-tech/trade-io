@@ -494,6 +494,7 @@ export type DetailCtx = Omit<StrategyDetail, "strategy"> & {
   cfg: any;
   is15Min: any;
   isEmaVwap: any;
+  isEmaVwapOptions: boolean;
   isNiftyScalper: any;
   isStockOptions: any;
   isGammaBlast: any;
@@ -506,10 +507,11 @@ export function withStrategy(detail: StrategyDetail): DetailCtx | null {
   const cfg = strategy.config;
   const is15Min = strategy.type === "BREAKOUT_15MIN";
   const isEmaVwap = strategy.type === "EMA_VWAP_CROSSOVER";
+  const isEmaVwapOptions = strategy.type === "EMA_VWAP_OPTIONS";
   const isNiftyScalper = strategy.type === "NIFTY_OPTIONS_SCALPER";
   const isStockOptions = strategy.type === "STOCK_OPTIONS_BUYING";
   const isGammaBlast = strategy.type === "GAMMA_BLAST_EXPIRY";
   const isDailyScalper = strategy.type === "DAILY_SCALPER";
 
-  return { ...detail, strategy, cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast, isDailyScalper };
+  return { ...detail, strategy, cfg, is15Min, isEmaVwap, isEmaVwapOptions, isNiftyScalper, isStockOptions, isGammaBlast, isDailyScalper };
 }

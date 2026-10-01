@@ -26,6 +26,12 @@ export function createDefaultForm(): StrategyFormState {
     vwapSource: "close",
     entryTimeframe: "5min",
     isOptionBuyingOnly: true,
+    evoMaxLots: "10",
+    evoSlBufferPct: "2",
+    evoMinSlBufferRs: "1",
+    evoPartialTargetR: "2",
+    evoUseSameDayExpiry: false,
+    evoEntryCutoffTime: "15:00",
     emaFast: "9",
     emaSlow: "21",
     rsiPeriod: "14",
@@ -177,6 +183,14 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     entryTimeframe: type === "EMA_VWAP_CROSSOVER" && c.entryTimeframe === "1min" ? "1min" : "5min",
     isOptionBuyingOnly: bool(c.isOptionBuyingOnly, true),
     startAfterMin: str(c.startAfterMin, base.startAfterMin),
+
+    // EMA-VWAP options
+    evoMaxLots: str(c.maxLots, base.evoMaxLots),
+    evoSlBufferPct: str(c.slBufferPct, base.evoSlBufferPct),
+    evoMinSlBufferRs: str(c.minSlBufferRs, base.evoMinSlBufferRs),
+    evoPartialTargetR: str(c.partialTargetR, base.evoPartialTargetR),
+    evoUseSameDayExpiry: c.useSameDayExpiry === true,
+    evoEntryCutoffTime: str(c.entryCutoffTime, base.evoEntryCutoffTime),
 
     // Nifty options scalper
     dsTargetPoints: str(c.targetPoints, base.dsTargetPoints),

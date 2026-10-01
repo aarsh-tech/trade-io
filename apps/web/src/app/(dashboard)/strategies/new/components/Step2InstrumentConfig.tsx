@@ -3,11 +3,11 @@
 import React, { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Zap, Target, BarChart2, TrendingUp, Loader2, Sparkles, Clock, ArrowUpRight, ArrowDownRight, Shuffle, Crosshair } from "lucide-react";
+import { Zap, BarChart2, TrendingUp, Loader2, Sparkles, Clock, ArrowUpRight, ArrowDownRight, Shuffle, Crosshair } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StrategyFormState, getLotSize } from "../types";
 import { marketApi } from "@/lib/api";
-import { Advanced, Section } from "../../_components/form-ui";
+import { Advanced, Field, NumberField, Section } from "../../_components/form-ui";
 import { BrokerPicker } from "../../_components/broker-picker";
 import { InstrumentSearch, type InstrumentHit } from "../../_components/instrument-search";
 import type { BrokerAccount } from "../types";
@@ -286,6 +286,98 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
         </div>
       )}
 
+      {/* ── EMA-VWAP INDEX OPTIONS: INDEX, CONTRACT AND TIMING ── */}
+      {form.type === "EMA_VWAP_OPTIONS" && (
+        <>
+          <Section
+            title="Index"
+            description="The strategy watches one call and one put at the money, picked from the live index price, and reads setups on each option's own 5-minute chart."
+          >
+            <div role="radiogroup" aria-label="Index" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {([
+                { val: "NIFTY", label: "NIFTY 50", exch: "NFO" },
+                { val: "BANKNIFTY", label: "BANK NIFTY", exch: "NFO" },
+                { val: "SENSEX", label: "SENSEX", exch: "BFO" },
+              ] as const).map((ix) => {
+                const selected = form.symbol === ix.val;
+                return (
+                  <button
+                    key={ix.val}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => {
+                      set("symbol", ix.val);
+                      set("exchange", ix.exch);
+                      set("instrumentType", "OPTION");
+                      set("lotSize", undefined);
+                    }}
+                    className={cn(
+                      "flex min-h-14 flex-col items-start justify-center rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      selected ? "border-primary bg-brand-subtle ring-1 ring-primary/40" : "border-border bg-card hover:border-primary/50 hover:bg-muted",
+                    )}
+                  >
+                    <span className="text-sm font-semibold text-foreground">{ix.label}</span>
+                    <span className="text-xs text-muted-foreground">Options on {ix.exch}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Lot size comes from the exchange contract list{form.lotSize ? ` (currently ${form.lotSize} qty per lot)` : ""}. The number of lots is worked out on every trade from your max loss per trade.
+            </p>
+          </Section>
+
+          <Section title="Contracts and timing" description="Defaults suit most days. Expiry-day contracts move fastest, so they are off unless you turn them on.">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Product" hint="MIS is squared off by the strategy at 15:05.">
+                {(a11y) => (
+                  <select
+                    {...a11y}
+                    value={form.product}
+                    onChange={(e) => set("product", e.target.value)}
+                    className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    <option value="MIS">MIS (intraday)</option>
+                    <option value="NRML">NRML</option>
+                  </select>
+                )}
+              </Field>
+              <NumberField
+                label="Most lots per trade"
+                value={form.evoMaxLots}
+                onChange={(v) => set("evoMaxLots", v)}
+                min={1}
+                hint="A cap on top of the risk-based size."
+              />
+              <Field label="No new entries from" hint="IST. Open trades are still managed until the 15:05 square-off.">
+                {(a11y) => (
+                  <Input
+                    {...a11y}
+                    type="time"
+                    value={form.evoEntryCutoffTime}
+                    onChange={(e) => set("evoEntryCutoffTime", e.target.value)}
+                    className="font-semibold tabular-nums"
+                  />
+                )}
+              </Field>
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted">
+                <input
+                  type="checkbox"
+                  checked={form.evoUseSameDayExpiry === true}
+                  onChange={(e) => set("evoUseSameDayExpiry", e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+                />
+                <span>
+                  <span className="block text-xs font-semibold text-foreground">Trade the contract expiring today</span>
+                  <span className="block text-xs text-muted-foreground">Off: on expiry day the strategy uses the next expiry instead.</span>
+                </span>
+              </label>
+            </div>
+          </Section>
+        </>
+      )}
+
       {/* ── STOCK OPTIONS BUYING: DEDICATED AUTO VS MANUAL STOCK SELECTION ── */}
       {form.type === "STOCK_OPTIONS_BUYING" && (
         <div className="space-y-4">
@@ -425,7 +517,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
       )}
 
       {/* ── STANDARD INSTRUMENT SELECTOR FOR OTHER STRATEGIES OR MANUAL MODE ── */}
-      {form.type !== "GAMMA_BLAST_EXPIRY" && !(form.type === "STOCK_OPTIONS_BUYING" && form.sIsAutoStockSelect !== false && form.symbol === "AUTO") && (
+      {form.type !== "GAMMA_BLAST_EXPIRY" && form.type !== "EMA_VWAP_OPTIONS" && !(form.type === "STOCK_OPTIONS_BUYING" && form.sIsAutoStockSelect !== false && form.symbol === "AUTO") && (
         <>
           <div className="space-y-3">
             <InstrumentSearch onSelect={selectInstrument} label="Search symbol (stock, option or future)" placeholder="e.g. RELIANCE, APOLLOHOSP, NIFTY 22000 CE" />
@@ -846,58 +938,26 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
             <label className="text-xs sm:text-sm font-semibold text-foreground mb-2 block">EMA Period</label>
             <Input type="number" value={form.emaPeriod} onChange={(e) => set("emaPeriod", e.target.value)} className="font-semibold text-xs h-10 bg-background border-border text-foreground rounded-lg" />
           </div>
-          <div>
-            <label className="text-xs sm:text-sm font-semibold text-foreground mb-2 block">Trading Instrument</label>
-            <div className="p-1.5 rounded-lg bg-secondary/40 border border-border grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => set("isOptionBuyingOnly", false)}
-                className={cn(
-                  "flex flex-col items-center gap-1 py-3.5 rounded-lg text-xs font-semibold transition-all",
-                  !form.isOptionBuyingOnly
-                    ? "bg-card border border-border  text-accent-foreground "
-                    : "text-foreground/75 font-medium hover:text-foreground"
-                )}
-              >
-                <BarChart2 className="h-5 w-5 mb-0.5" />
-                <span>Equity / Stock</span>
-                <span className="text-[10px] font-normal opacity-80">Trade NSE/BSE directly</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => set("isOptionBuyingOnly", true)}
-                className={cn(
-                  "flex flex-col items-center gap-1 py-3.5 rounded-lg text-xs font-semibold transition-all",
-                  form.isOptionBuyingOnly
-                    ? "bg-card border border-border  text-accent-foreground "
-                    : "text-foreground/75 font-medium hover:text-foreground"
-                )}
-              >
-                <Target className="h-5 w-5 mb-0.5" />
-                <span>Options (CE/PE)</span>
-                <span className="text-[10px] font-normal opacity-80">Buy ATM options on NFO</span>
-              </button>
+          <p className="text-xs text-muted-foreground">
+            Trades the stock itself (intraday). For NIFTY, BANKNIFTY or SENSEX options, use the EMA-VWAP Index Options strategy.
+          </p>
+          <div className="p-4 rounded-lg border border-border bg-card space-y-2.5">
+            <div>
+              <label htmlFor="ema-vwap-entry-tf" className="text-xs sm:text-sm font-semibold text-foreground block">Entry Timeframe</label>
+              <p className="text-xs text-foreground/75 font-medium mt-0.5">
+                Candles used to find entries. The stop-loss and the 15-EMA trend exit always use 5-minute candles.
+              </p>
             </div>
+            <select
+              id="ema-vwap-entry-tf"
+              value={form.entryTimeframe || "5min"}
+              onChange={(e) => set("entryTimeframe", e.target.value as "1min" | "5min")}
+              className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-semibold"
+            >
+              <option value="5min">5-Minute Candles (Standard — trading starts 09:20)</option>
+              <option value="1min">1-Minute Candles (Earlier entries — trading starts 09:16, more signals)</option>
+            </select>
           </div>
-          {!form.isOptionBuyingOnly && (
-            <div className="p-4 rounded-lg border border-border bg-card space-y-2.5">
-              <div>
-                <label htmlFor="ema-vwap-entry-tf" className="text-xs sm:text-sm font-semibold text-foreground block">Entry Timeframe</label>
-                <p className="text-xs text-foreground/75 font-medium mt-0.5">
-                  Candles used to find entries. The stop-loss and the 15-EMA trend exit always use 5-minute candles.
-                </p>
-              </div>
-              <select
-                id="ema-vwap-entry-tf"
-                value={form.entryTimeframe || "5min"}
-                onChange={(e) => set("entryTimeframe", e.target.value as "1min" | "5min")}
-                className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-semibold"
-              >
-                <option value="5min">5-Minute Candles (Standard — trading starts 09:20)</option>
-                <option value="1min">1-Minute Candles (Earlier entries — trading starts 09:16, more signals)</option>
-              </select>
-            </div>
-          )}
         </div>
       )}
 

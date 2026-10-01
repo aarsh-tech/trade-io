@@ -664,6 +664,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                 const isNiftyScalper = s.type === "NIFTY_OPTIONS_SCALPER";
                 const is15Min = s.type === "BREAKOUT_15MIN";
                 const isEmaVwap = s.type === "EMA_VWAP_CROSSOVER";
+                const isEmaVwapOptions = s.type === "EMA_VWAP_OPTIONS";
 
                 return (
                   <div
@@ -702,7 +703,8 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                             isStockOptions && "bg-warn-subtle text-warn border-warn/30",
                             isNiftyScalper && "bg-signal-subtle text-signal border-signal/30",
                             is15Min && "bg-brand-subtle text-accent-foreground border-primary/30",
-                            isEmaVwap && "bg-profit-subtle text-profit border-profit/30"
+                            isEmaVwap && "bg-profit-subtle text-profit border-profit/30",
+                            isEmaVwapOptions && "bg-signal-subtle text-signal border-signal/30"
                           )}
                         >
                           {isStockOptions
@@ -713,7 +715,9 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                                 ? "15-Min Breakout"
                                 : isEmaVwap
                                   ? "15-EMA & VWAP"
-                                  : s.type}
+                                  : isEmaVwapOptions
+                                    ? "EMA-VWAP Options"
+                                    : s.type}
                         </span>
                       </div>
 

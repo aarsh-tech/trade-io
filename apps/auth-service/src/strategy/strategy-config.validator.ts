@@ -43,6 +43,10 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['minPremium', 'Min premium', 0, 1_000_000, false],
   ['maxPremium', 'Max premium', 0, 1_000_000, false],
   ['trapSweepBufferPts', 'Trap sniper invalidation buffer (pts)', 0.5, 200, false],
+  ['slBufferPct', 'SL buffer %', 0.1, 20, false],
+  ['minSlBufferRs', 'Minimum SL buffer (₹)', 0, 1000, false],
+  ['partialTargetR', 'Partial booking R-multiple', 0.5, 20, false],
+  ['partialBookFraction', 'Partial booking fraction', 0.1, 1, false],
 ];
 
 const TIME_FIELDS: [string, string][] = [
@@ -57,6 +61,7 @@ const TIME_FIELDS: [string, string][] = [
 const REQUIRED_BY_TYPE: Record<string, string[]> = {
   BREAKOUT_15MIN: ['symbol', 'stopLossRs', 'targetRs'],
   EMA_VWAP_CROSSOVER: ['symbol', 'stopLossRs', 'targetRs'],
+  EMA_VWAP_OPTIONS: ['symbol', 'stopLossRs'],
   EMA_RSI_OPTIONS: ['symbol', 'stopLossRs', 'targetRs'],
   STOCK_OPTIONS_BUYING: ['maxCapital', 'riskRewardRatio'],
   DAILY_SCALPER: ['symbol'],
@@ -92,6 +97,9 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
     errors.push('Entry timeframe must be 1min or 5min');
   }
   if (isSet(config.symbol) && String(config.symbol).trim() === '') errors.push('Symbol must not be blank');
+  if (type === 'EMA_VWAP_OPTIONS' && isSet(config.symbol) && !['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(String(config.symbol))) {
+    errors.push('Symbol must be NIFTY, BANKNIFTY or SENSEX');
+  }
 
   const times: Record<string, number> = {};
   for (const [key, label] of TIME_FIELDS) {

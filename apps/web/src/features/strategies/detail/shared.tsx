@@ -28,6 +28,7 @@ const TYPE_LABELS: Record<string, string> = {
   GAMMA_BLAST_EXPIRY: "Daily Index Scalper",
   BREAKOUT_15MIN: "15-Min Breakout",
   EMA_VWAP_CROSSOVER: "15-EMA & VWAP",
+  EMA_VWAP_OPTIONS: "EMA-VWAP Index Options",
   DAILY_SCALPER: "Daily Scalper",
 };
 

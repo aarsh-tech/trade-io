@@ -1,4 +1,4 @@
-import { BarChart2, Flame, Sparkles, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
+import { BarChart2, Crosshair, Flame, Sparkles, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
 import type { StrategyFormState } from "../new/types";
 import { getLotSize } from "../new/types";
 
@@ -45,6 +45,28 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
       product: "MIS",
       targetRs: "500",
       stopLossRs: "500",
+      maxTradesPerDay: "2",
+    },
+  },
+  {
+    type: "EMA_VWAP_OPTIONS",
+    label: "EMA-VWAP Index Options",
+    tagline: "Buys NIFTY, BANKNIFTY or SENSEX options when the option's own chart breaks out on a 15-EMA / VWAP crossover or an inside candle.",
+    risk: "High",
+    riskNote: "Lots are sized so a stop-loss hit loses at most your max loss per trade.",
+    instrument: "Index options (NIFTY, BANKNIFTY, SENSEX)",
+    bestFor: "Trend days on the index, with fixed rupee risk",
+    timing: "09:25 to 15:00, square-off 15:05",
+    icon: Crosshair,
+    tile: "bg-signal-subtle text-signal border-signal/30",
+    defaultName: "EMA-VWAP Index Options",
+    defaults: {
+      symbol: "NIFTY",
+      exchange: "NFO",
+      instrumentType: "OPTION",
+      product: "MIS",
+      lots: "1",
+      stopLossRs: "3000",
       maxTradesPerDay: "2",
     },
   },
@@ -190,6 +212,11 @@ const PRESETS: Record<string, Record<PresetLevel, P>> = {
     Balanced: { stopLossRs: "500", targetRs: "500", maxTradesPerDay: "2" },
     Aggressive: { stopLossRs: "800", targetRs: "1200", maxTradesPerDay: "3" },
   },
+  EMA_VWAP_OPTIONS: {
+    Conservative: { stopLossRs: "2000", maxTradesPerDay: "1" },
+    Balanced: { stopLossRs: "3000", maxTradesPerDay: "2" },
+    Aggressive: { stopLossRs: "5000", maxTradesPerDay: "3" },
+  },
   GAMMA_BLAST_EXPIRY: {
     Conservative: { stopLossRs: "300", targetRs: "1000", maxTradesPerDay: "1" },
     Balanced: { stopLossRs: "500", targetRs: "1500", maxTradesPerDay: "2" },
@@ -265,6 +292,15 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
         basis: dyn
           ? `Stop-loss points x ${form.lots || 1} base lot(s). Dynamic sizing can add lots (up to ${form.dsMaxLots || 25}), which raises these numbers.`
           : "Stop-loss points x quantity, times the trades allowed before the loss limit.",
+      };
+    }
+    case "EMA_VWAP_OPTIONS": {
+      const perTrade = n(form.stopLossRs);
+      return {
+        perTrade: perTrade || null,
+        perDay: perTrade ? perTrade * trades : null,
+        targetPerTrade: null,
+        basis: `Lots are sized so entry minus stop-loss stays within your max loss; a setup where 1 lot risks more is skipped. Gaps through the stop can lose a little more. Profit is not capped: half is booked at ${form.evoPartialTargetR || 2}R and the rest rides the 15-EMA.`,
       };
     }
     case "BREAKOUT_15MIN": {

@@ -1,6 +1,6 @@
 export interface StrategyFormState {
   name: string;
-  type: "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "NIFTY_OPTIONS_SCALPER" | "GAMMA_BLAST_EXPIRY" | "";
+  type: "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_VWAP_OPTIONS" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "NIFTY_OPTIONS_SCALPER" | "GAMMA_BLAST_EXPIRY" | "";
   // Common
   symbol: string;
   exchange: string;
@@ -26,6 +26,13 @@ export interface StrategyFormState {
   /** EMA-VWAP stocks: candles that find entries. 1min starts at 09:16; the stop-loss and trend exit stay on 5m. */
   entryTimeframe?: "1min" | "5min";
   isOptionBuyingOnly: boolean;
+  // EMA-VWAP Options (NIFTY / BANKNIFTY / SENSEX; `symbol` holds the index, `stopLossRs` the max loss per trade)
+  evoMaxLots: string;
+  evoSlBufferPct: string;
+  evoMinSlBufferRs: string;
+  evoPartialTargetR: string;
+  evoUseSameDayExpiry: boolean;
+  evoEntryCutoffTime: string;
   // EMA-RSI Options
   emaFast: string;
   emaSlow: string;

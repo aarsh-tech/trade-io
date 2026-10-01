@@ -136,6 +136,21 @@ export function Step3RiskManagement({ form, set, errors }: Step3Props) {
               error={errorFor(errors, ["Max losses per day"])}
             />
           </div>
+        ) : t === "EMA_VWAP_OPTIONS" ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NumberField
+              label="Max loss per trade"
+              prefix={"₹"}
+              value={form.stopLossRs}
+              onChange={(v) => set("stopLossRs", v)}
+              min={1}
+              decimal
+              required
+              hint="Lots are sized so a stop-loss hit loses at most this. A setup where 1 lot already risks more is skipped."
+              error={errorFor(errors, ["Stop-loss"]) ?? (Number(form.stopLossRs) > 0 ? null : "Enter an amount above 0.")}
+            />
+            {tradesField}
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <NumberField

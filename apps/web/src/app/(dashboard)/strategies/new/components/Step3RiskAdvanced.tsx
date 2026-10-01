@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Shield, Target, Zap, TrendingUp, Info, Activity } from "lucide-react";
 import { StrategyFormState } from "../types";
+import { NumberField } from "../../_components/form-ui";
 
 interface Step3Props {
   form: StrategyFormState;
@@ -778,6 +779,50 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
         </div>
       )}
 
+      {/* ── EMA-VWAP INDEX OPTIONS: STOP BUFFER AND EXITS ── */}
+      {form.type === "EMA_VWAP_OPTIONS" && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-1.5">
+            <p className="text-xs font-semibold text-foreground">How a trade is managed</p>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              <li>The stop-loss sits below the setup low by the buffer below, and is placed on the exchange.</li>
+              <li>At {form.evoPartialTargetR || "2"}R half the lots are booked and the stop moves to cost. With 1 lot nothing is booked; only the stop moves.</li>
+              <li>The rest exits on the first 5-minute close below the option&apos;s 15-EMA, or at the 15:05 square-off.</li>
+              <li>PCR and futures OI build-up are logged with every setup and trade. They never block a trade.</li>
+            </ul>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <NumberField
+              label="SL buffer"
+              suffix="% of low"
+              decimal
+              min={0.1}
+              value={form.evoSlBufferPct}
+              onChange={(v) => set("evoSlBufferPct", v)}
+              hint="Distance below the setup low."
+            />
+            <NumberField
+              label="Minimum SL buffer"
+              prefix={"₹"}
+              decimal
+              min={0}
+              value={form.evoMinSlBufferRs}
+              onChange={(v) => set("evoMinSlBufferRs", v)}
+              hint="Used when the % buffer is smaller."
+            />
+            <NumberField
+              label="Book half at"
+              suffix="R"
+              decimal
+              min={0.5}
+              value={form.evoPartialTargetR}
+              onChange={(v) => set("evoPartialTargetR", v)}
+              hint="R = entry minus stop-loss."
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── STANDARD RISK FOR EMA-VWAP & OPTIONS ── */}
       {(form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
         <div className="space-y-4">
@@ -804,7 +849,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
           )}
 
           {/* Volume confirmation (EMA-VWAP stocks) */}
-          {form.type === "EMA_VWAP_CROSSOVER" && !form.isOptionBuyingOnly && (
+          {form.type === "EMA_VWAP_CROSSOVER" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
@@ -852,7 +897,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
           )}
 
           {/* Target mode (EMA-VWAP stocks): how profits are taken */}
-          {form.type === "EMA_VWAP_CROSSOVER" && !form.isOptionBuyingOnly && (
+          {form.type === "EMA_VWAP_CROSSOVER" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
               <div className="flex items-center gap-2">
                 <Target className="h-4 w-4 text-profit shrink-0" />

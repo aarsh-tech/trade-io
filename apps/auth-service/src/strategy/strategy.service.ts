@@ -357,6 +357,31 @@ export class StrategyService {
         }
       }
 
+      if (strategyType === 'EMA_VWAP_OPTIONS') {
+        // "📋 Placed Option Trade: NFO:SYM — Entry: ₹x | Qty: n ..." then "🏁 <reason> — SYM exit at ₹y (entry ₹x) | Realized P&L: ₹z ..."
+        const entryMatch = line.match(/Placed Option Trade:s+(?:[A-Z]+:)?(S+)s+—s+Entry:s+₹([d.]+)s+|s+Qty:s+(d+)/);
+        if (entryMatch) {
+          openTrade = { side: 'BUY', symbol: entryMatch[1], entryPrice: parseFloat(entryMatch[2]), qty: parseInt(entryMatch[3], 10) };
+        }
+        const exitMatch = line.match(/🏁 (.+?) — S+ exit at ₹([d.]+).*?Realized P&L: ₹(-?[d.]+)/);
+        if (exitMatch && openTrade) {
+          const pnl = parseFloat(exitMatch[3]);
+          trades.push({
+            symbol: openTrade.symbol,
+            entryPrice: openTrade.entryPrice,
+            exitPrice: parseFloat(exitMatch[2]),
+            qty: openTrade.qty,
+            side: openTrade.side,
+            pnl,
+            isWin: pnl > 0,
+            reason: exitMatch[1],
+            source: 'log'
+          });
+          openTrade = null;
+        }
+        continue;
+      }
+
       if (strategyType === 'BREAKOUT_15MIN') {
         const entryMatch = line.match(/Placing\s+(?:🚀\s+BREAKOUT|⚡\s+REVERSAL)?:\s+(\S+)\s+—\s+Entry:\s+₹([\d.]+)/i);
         if (entryMatch) {

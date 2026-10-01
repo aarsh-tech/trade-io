@@ -795,6 +795,7 @@ function StrategyCard({
 
   const is15Min = s.type === "BREAKOUT_15MIN";
   const isEmaVwap = s.type === "EMA_VWAP_CROSSOVER";
+  const isEmaVwapOptions = s.type === "EMA_VWAP_OPTIONS";
   const isNiftyScalper = s.type === "NIFTY_OPTIONS_SCALPER";
   const isStockOptions = s.type === "STOCK_OPTIONS_BUYING";
   const isGammaBlast = s.type === "GAMMA_BLAST_EXPIRY";
@@ -803,39 +804,43 @@ function StrategyCard({
   const paper = Boolean(s.isPaperTrade ?? cfg.isPaperTrade);
   const pnl = typeof s.todayPnl === "number" ? s.todayPnl : null;
 
-  const stopLossText = isStockOptions
-    ? "Breakeven @ T1"
-    : isGammaBlast
-      ? `${cfg.initialSlPct || 50}% premium`
-      : isNiftyScalper
-        ? "-7 pts"
-        : is15Min
-          ? "Candle SL"
-          : cfg.exitExactAtTarget
-            ? `Fixed ₹${cfg.stopLossRs ?? 500}`
-            : isEmaVwap
-              ? "Candle low"
-              : cfg.stopLossRs
-                ? `₹${cfg.stopLossRs}`
-                : "Dynamic";
-
-  const targetText = isStockOptions
-    ? cfg.target1RR && cfg.target2RR
-      ? `1:${cfg.target1RR} / 1:${cfg.target2RR} RR`
-      : "1:1.5 / 1:3 RR"
-    : isGammaBlast
-      ? "2x to 5x ratchet"
-      : isNiftyScalper
-        ? `+${cfg.targetPoints ?? 10} pts`
-        : cfg.exitExactAtTarget
-          ? `Fixed ₹${cfg.targetRs ?? 500}`
+  const stopLossText = isEmaVwapOptions
+    ? `Max ₹${cfg.stopLossRs ?? 0}/trade`
+    : isStockOptions
+      ? "Breakeven @ T1"
+      : isGammaBlast
+        ? `${cfg.initialSlPct || 50}% premium`
+        : isNiftyScalper
+          ? "-7 pts"
           : is15Min
-            ? "1:2 RR + trail"
-            : isEmaVwap
-              ? (cfg.targetMode === "PARTIAL" ? "Book half + 15-EMA trail" : cfg.targetMode === "QUICK" ? "Quick 0.5R + trail" : "0.5x daily ATR")
-              : cfg.targetRs
-                ? `₹${cfg.targetRs}`
-                : "Dynamic";
+            ? "Candle SL"
+            : cfg.exitExactAtTarget
+              ? `Fixed ₹${cfg.stopLossRs ?? 500}`
+              : isEmaVwap
+                ? "Candle low"
+                : cfg.stopLossRs
+                  ? `₹${cfg.stopLossRs}`
+                  : "Dynamic";
+
+  const targetText = isEmaVwapOptions
+    ? `Half at ${cfg.partialTargetR ?? 2}R + 15-EMA`
+    : isStockOptions
+      ? cfg.target1RR && cfg.target2RR
+        ? `1:${cfg.target1RR} / 1:${cfg.target2RR} RR`
+        : "1:1.5 / 1:3 RR"
+      : isGammaBlast
+        ? "2x to 5x ratchet"
+        : isNiftyScalper
+          ? `+${cfg.targetPoints ?? 10} pts`
+          : cfg.exitExactAtTarget
+            ? `Fixed ₹${cfg.targetRs ?? 500}`
+            : is15Min
+              ? "1:2 RR + trail"
+              : isEmaVwap
+                ? (cfg.targetMode === "PARTIAL" ? "Book half + 15-EMA trail" : cfg.targetMode === "QUICK" ? "Quick 0.5R + trail" : "0.5x daily ATR")
+                : cfg.targetRs
+                  ? `₹${cfg.targetRs}`
+                  : "Dynamic";
 
   return (
     <Card
