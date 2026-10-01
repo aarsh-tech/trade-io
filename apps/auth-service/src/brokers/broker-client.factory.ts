@@ -8,7 +8,7 @@ import * as http from 'http';
 import axios from 'axios';
 import { KiteRateLimiter } from './kite-rate-limiter';
 import { toKiteError } from './kite-errors';
-import { InstrumentStore, resolveIndex } from './instrument-store';
+import { getSharedInstruments, InstrumentStore, resolveIndex } from './instrument-store';
 
 // Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
 export const keepAliveHttpsAgent = new https.Agent({
@@ -450,22 +450,7 @@ class ZerodhaClient implements IBrokerClient {
   }
 
   async getInstruments(exchange: string): Promise<any[]> {
-    return InstrumentStore.get(exchange, async () => {
-      const rawData = await this.kite.getInstruments(exchange);
-      // Lightweight slim projection: retains all required fields while reducing V8 object overhead by 80%
-      return (rawData || []).map((i: any) => ({
-        instrument_token: Number(i.instrument_token),
-        tradingsymbol: i.tradingsymbol,
-        name: i.name,
-        exchange: i.exchange,
-        segment: i.segment,
-        lot_size: i.lot_size ? Number(i.lot_size) : undefined,
-        tick_size: i.tick_size ? Number(i.tick_size) : undefined,
-        strike: i.strike ? Number(i.strike) : undefined,
-        instrument_type: i.instrument_type,
-        expiry: i.expiry,
-      }));
-    });
+    return getSharedInstruments(this.kite, exchange);
   }
 
   async searchInstruments(query: string): Promise<{ symbol: string; name: string; exchange: string; lotSize?: number; segment?: string }[]> {

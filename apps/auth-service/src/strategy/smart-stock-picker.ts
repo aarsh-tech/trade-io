@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { getSharedInstruments } from '../brokers/instrument-store';
 import { NIFTY_500_UNIVERSE, FO_STOCKS_LIST } from '../market/market.constants';
 
 // ─── Minimal Filter for Pure Penny / Illiquid / Extreme High-Price Symbols ───────────────────
@@ -54,7 +55,7 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
   // 1. Fetch NSE Equity instruments
   let nseInstruments: any[] = [];
   try {
-    nseInstruments = await kite.getInstruments('NSE');
+    nseInstruments = await getSharedInstruments(kite, 'NSE');
   } catch (err: any) {
     logger?.warn(`Failed to fetch NSE instruments from Zerodha: ${err.message}`);
   }
@@ -84,7 +85,7 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
   // 2. Fetch NFO instruments to get Zerodha's official F&O liquid stock universe
   let fnoSymbols: string[] = [];
   try {
-    const nfoInstruments = await kite.getInstruments('NFO');
+    const nfoInstruments = await getSharedInstruments(kite, 'NFO');
     const fnoSet = new Set<string>();
     nfoInstruments.forEach((i: any) => {
       if (i.name) {
@@ -593,7 +594,7 @@ export async function getTopFnoCandidates(
     fnoSymbols = cachedFnoSymbolsList;
   } else {
     try {
-      const nfoInstruments = await kite.getInstruments('NFO');
+      const nfoInstruments = await getSharedInstruments(kite, 'NFO');
       const fnoSet = new Set<string>();
       nfoInstruments.forEach((i: any) => {
         if (i.name && i.segment === 'NFO-OPT') {

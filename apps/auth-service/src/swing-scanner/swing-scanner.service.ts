@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
+import { getSharedInstruments } from '../brokers/instrument-store';
 import { toKiteError, withKiteRetry } from '../brokers/kite-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { analyzeStock, DailyCandle } from './vcp.analyzer';
@@ -112,10 +113,10 @@ export class SwingScannerService {
 
     this.logger.log(`Starting swing scan for user ${userId} — ${SCAN_UNIVERSE.length} stocks`);
 
-    // Fetch NSE instruments for token resolution (cached by kite SDK)
+    // NSE instruments for token resolution (shared daily master)
     let instruments: any[];
     try {
-      instruments = await kite.getInstruments('NSE');
+      instruments = await getSharedInstruments(kite, 'NSE');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new BadRequestException(`Failed to fetch NSE instruments: ${message}`);
@@ -124,7 +125,7 @@ export class SwingScannerService {
     // Fetch NFO instruments to map F&O lot sizes dynamically
     let nfoInstruments: any[] = [];
     try {
-      nfoInstruments = await kite.getInstruments('NFO');
+      nfoInstruments = await getSharedInstruments(kite, 'NFO');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Failed to fetch NFO instruments: ${message}`);

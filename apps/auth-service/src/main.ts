@@ -128,5 +128,29 @@ async function bootstrap() {
   }
 }
 
+/**
+ * PM2 restarts the backend above max_memory_restart (ecosystem.config.js), which drops every engine's
+ * in-memory state and console mid-session. Record memory in the PM2 log so a restart can be traced to
+ * it: every 5 minutes, every minute once RSS is high, and at shutdown (PM2 sends SIGINT before killing).
+ */
+const MEMORY_WARN_MB = Number(process.env.MEMORY_WARN_MB) || 450;
+const memoryLogger = new Logger('Memory');
+const memorySnapshot = () => {
+  const m = process.memoryUsage();
+  const mb = (n: number) => Math.round(n / 1048576);
+  return { rss: mb(m.rss), text: `rss=${mb(m.rss)}MB heapUsed=${mb(m.heapUsed)}MB heapTotal=${mb(m.heapTotal)}MB external=${mb(m.external)}MB` };
+};
+let memoryTicks = 0;
+setInterval(() => {
+  const snap = memorySnapshot();
+  if (snap.rss >= MEMORY_WARN_MB) memoryLogger.warn(`High memory: ${snap.text}`);
+  else if (memoryTicks % 5 === 0) memoryLogger.log(snap.text);
+  memoryTicks++;
+}, 60_000).unref();
+// `once`: Nest's shutdown hook re-sends the signal to exit, which must find no listener left.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => memoryLogger.warn(`${signal} received, shutting down: ${memorySnapshot().text}`));
+}
+
 bootstrap();
 

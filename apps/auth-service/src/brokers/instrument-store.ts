@@ -133,3 +133,28 @@ export class InstrumentStore {
     return this.entries.get(exchange)?.byKey.get(`${exchange}:${tradingsymbol}`);
   }
 }
+
+/** Keeps only the fields consumers read; the raw dump carries ~2x the per-row V8 overhead. */
+export function slimInstruments(raw: any[]): Instrument[] {
+  return (raw || []).map((i: any) => ({
+    instrument_token: Number(i.instrument_token),
+    tradingsymbol: i.tradingsymbol,
+    name: i.name,
+    exchange: i.exchange,
+    segment: i.segment,
+    lot_size: i.lot_size ? Number(i.lot_size) : undefined,
+    tick_size: i.tick_size ? Number(i.tick_size) : undefined,
+    strike: i.strike ? Number(i.strike) : undefined,
+    instrument_type: i.instrument_type,
+    expiry: i.expiry,
+  }));
+}
+
+/**
+ * The shared master for callers that hold a raw KiteConnect instance (scanners). Calling
+ * `kite.getInstruments` directly re-downloads and re-parses the full dump (~120 MB of heap for
+ * NFO) on every cold start, next to the copy already held here.
+ */
+export function getSharedInstruments(kite: { getInstruments(exchange: string): Promise<any[]> }, exchange: string): Promise<Instrument[]> {
+  return InstrumentStore.get(exchange, async () => slimInstruments(await kite.getInstruments(exchange)));
+}
