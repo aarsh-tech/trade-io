@@ -165,6 +165,26 @@ export interface EmaVwapCrossoverConfig {
   disabledSetupTypes?: string[];      // Setup types to skip (default: ['TREND_BREAKOUT'] — negative expectancy in backtest)
 }
 
+// ─── EMA-VWAP Options Config ─────────────────────────────────────────────────
+// NIFTY / BANKNIFTY / SENSEX options. Setups are read on the option's own 5m chart (15-EMA + VWAP of the premium);
+// the engine watches one CE and one PE at the money and only ever buys.
+export interface EmaVwapOptionsConfig {
+  symbol: 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
+  stopLossRs: number;                  // Max loss per trade (₹): lots are sized so (entry − SL) × qty stays within it; skipped if 1 lot exceeds it
+  emaPeriod?: number;                  // default 15
+  vwapSource?: 'close' | 'hlc3';       // default 'close'
+  product?: 'MIS' | 'NRML';            // default 'MIS'
+  maxTradesPerDay?: number;            // default 2
+  maxLots?: number;                    // hard cap on lots per trade (default 10)
+  maxCapital?: number;                 // paper only: capital for the affordability check (live uses the Zerodha margin)
+  slBufferPct?: number;                // SL buffer below the setup low, % of that low (default 2)
+  minSlBufferRs?: number;              // minimum SL buffer in ₹ (default 1)
+  partialTargetR?: number;             // book part of the position at this many R (default 2)
+  partialBookFraction?: number;        // fraction of the lots booked there (default 0.5)
+  useSameDayExpiry?: boolean;          // trade the contract expiring today (default false: on expiry day use the next expiry)
+  entryCutoffTime?: string;            // no new entries from this IST time (default '15:00'; square-off is 15:05)
+}
+
 export interface NiftyOptionsScalperConfig {
   symbol: string;
   exchange: string;

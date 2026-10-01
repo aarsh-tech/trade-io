@@ -8,6 +8,7 @@ import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
+import { computeAtmPcr, optionUnderlying } from './option-chain-sentiment';
 import { findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
 
 interface Candle {
@@ -2374,72 +2375,11 @@ export class NiftyOptionsScalperEngine {
   }
 
   /**
-   * Live ATM option-chain Put/Call OI confluence — an informational "conviction" tag only,
-   * ported from Gamma Blast's PCR/OI check. It never blocks or filters an entry; it just tells the
-   * trader (via the log) whether the option chain's own positioning agrees with the direction a
-   * trigger already fired in. Returns null (silently) on any lookup failure — a signal never waits
-   * on this, and a missing tag never suppresses a trade.
+   * Live ATM option-chain Put/Call OI confluence (see option-chain-sentiment.ts) — an informational "conviction"
+   * tag only. It never blocks or filters an entry, and returns null on any lookup failure.
    */
   private async computePcrConfluence(client: any, config: NiftyOptionsScalperConfig, futurePrice: number): Promise<{ pcr: number; isBullishConfluence: boolean; isBearishConfluence: boolean } | null> {
-    try {
-      const kite = client['kite'] || client;
-      if (!kite || !kite.getQuote) return null;
-
-      const upper = (config.symbol || 'NIFTY').toUpperCase().trim();
-      let underlying = 'NIFTY';
-      if (upper.includes('BANKNIFTY')) underlying = 'BANKNIFTY';
-      else if (upper.includes('FINNIFTY')) underlying = 'FINNIFTY';
-      else if (upper.includes('MIDCPNIFTY')) underlying = 'MIDCPNIFTY';
-      else if (upper.includes('SENSEX')) underlying = 'SENSEX';
-
-      const exchange = underlying === 'SENSEX' ? 'BFO' : 'NFO';
-      const segment = underlying === 'SENSEX' ? 'BFO-OPT' : 'NFO-OPT';
-      const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : (underlying === 'MIDCPNIFTY' ? 25 : 100);
-
-      const instruments = await client.getInstruments(exchange);
-      const options = (instruments || []).filter((i: any) => i.name === underlying && (i.segment === segment || i.segment === `${exchange}-OPT`));
-      if (options.length === 0) return null;
-
-      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-      const getExpiryStr = (expiry: any): string => {
-        const d = new Date(expiry);
-        return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
-      };
-      const uniqueExpiries = Array.from(new Set(options.map((i: any) => getExpiryStr(i.expiry)))).filter(e => e !== '' && e >= todayStr).sort();
-      if (uniqueExpiries.length === 0) return null;
-      const nearestExpiry = uniqueExpiries[0];
-      const weeklyOptions = options.filter((i: any) => getExpiryStr(i.expiry) === nearestExpiry);
-
-      // ATM ± 3 strikes each side is enough to gauge near-the-money OI skew without an expensive full-chain fetch.
-      const atm = Math.round(futurePrice / step) * step;
-      const band = new Set([-3, -2, -1, 0, 1, 2, 3].map(m => atm + m * step));
-      const candidates = weeklyOptions.filter((i: any) => band.has(Number(i.strike)));
-      if (candidates.length === 0) return null;
-
-      const symbols = candidates.map((i: any) => `${exchange}:${i.tradingsymbol}`);
-      const quotes = await kite.getQuote(symbols).catch(() => null);
-      if (!quotes) return null;
-
-      let totalCallOi = 0, totalPutOi = 0;
-      for (const inst of candidates) {
-        const q = quotes[`${exchange}:${inst.tradingsymbol}`];
-        if (!q) continue;
-        if (inst.instrument_type === 'CE') totalCallOi += q.oi || 0;
-        else if (inst.instrument_type === 'PE') totalPutOi += q.oi || 0;
-      }
-      if (totalCallOi <= 0 && totalPutOi <= 0) return null;
-
-      const pcr = totalCallOi > 0 ? (totalPutOi / totalCallOi) : 1.0;
-      return {
-        pcr: Number(pcr.toFixed(2)),
-        // Same thresholds Gamma Blast tags "High-Conviction A+" with: PCR skewed the trade's way,
-        // or the opposing side simply carries less open interest.
-        isBullishConfluence: pcr >= 1.05 || totalCallOi < totalPutOi,
-        isBearishConfluence: pcr <= 0.95 || totalPutOi < totalCallOi,
-      };
-    } catch {
-      return null;
-    }
+    return computeAtmPcr(client, optionUnderlying(config.symbol), futurePrice);
   }
 
   private async findOptionSymbol(client: any, state: ScalperStrategyState, futurePrice: number, type: 'CE' | 'PE', triggerTime?: Date): Promise<string | null> {
