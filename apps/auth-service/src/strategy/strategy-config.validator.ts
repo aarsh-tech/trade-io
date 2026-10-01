@@ -88,6 +88,9 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
   if (isSet(config.targetMode) && !['FULL', 'PARTIAL', 'QUICK'].includes(String(config.targetMode))) {
     errors.push('Target mode must be one of FULL, PARTIAL, QUICK');
   }
+  if (type === 'EMA_VWAP_CROSSOVER' && isSet(config.entryTimeframe) && !['1min', '5min'].includes(String(config.entryTimeframe))) {
+    errors.push('Entry timeframe must be 1min or 5min');
+  }
   if (isSet(config.symbol) && String(config.symbol).trim() === '') errors.push('Symbol must not be blank');
 
   const times: Record<string, number> = {};

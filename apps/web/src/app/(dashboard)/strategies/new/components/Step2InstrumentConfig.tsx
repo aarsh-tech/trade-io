@@ -879,6 +879,25 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
               </button>
             </div>
           </div>
+          {!form.isOptionBuyingOnly && (
+            <div className="p-4 rounded-lg border border-border bg-card space-y-2.5">
+              <div>
+                <label htmlFor="ema-vwap-entry-tf" className="text-xs sm:text-sm font-semibold text-foreground block">Entry Timeframe</label>
+                <p className="text-xs text-foreground/75 font-medium mt-0.5">
+                  Candles used to find entries. The stop-loss and the 15-EMA trend exit always use 5-minute candles.
+                </p>
+              </div>
+              <select
+                id="ema-vwap-entry-tf"
+                value={form.entryTimeframe || "5min"}
+                onChange={(e) => set("entryTimeframe", e.target.value as "1min" | "5min")}
+                className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-semibold"
+              >
+                <option value="5min">5-Minute Candles (Standard — trading starts 09:20)</option>
+                <option value="1min">1-Minute Candles (Earlier entries — trading starts 09:16, more signals)</option>
+              </select>
+            </div>
+          )}
         </div>
       )}
 

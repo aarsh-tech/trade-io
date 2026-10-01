@@ -23,6 +23,8 @@ export interface StrategyFormState {
   // EMA-VWAP crossover
   emaPeriod: string;
   vwapSource: "close" | "hlc3";
+  /** EMA-VWAP stocks: candles that find entries. 1min starts at 09:16; the stop-loss and trend exit stay on 5m. */
+  entryTimeframe?: "1min" | "5min";
   isOptionBuyingOnly: boolean;
   // EMA-RSI Options
   emaFast: string;

@@ -24,6 +24,7 @@ export function createDefaultForm(): StrategyFormState {
     profitFloorBufferRs: "100",
     emaPeriod: "15",
     vwapSource: "close",
+    entryTimeframe: "5min",
     isOptionBuyingOnly: true,
     emaFast: "9",
     emaSlow: "21",
@@ -173,6 +174,7 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     profitFloorBufferRs: str(c.profitFloorBufferRs, base.profitFloorBufferRs),
     emaPeriod: str(c.emaPeriod, base.emaPeriod),
     vwapSource: c.vwapSource === "hlc3" ? "hlc3" : "close",
+    entryTimeframe: type === "EMA_VWAP_CROSSOVER" && c.entryTimeframe === "1min" ? "1min" : "5min",
     isOptionBuyingOnly: bool(c.isOptionBuyingOnly, true),
     startAfterMin: str(c.startAfterMin, base.startAfterMin),
 

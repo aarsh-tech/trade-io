@@ -163,6 +163,8 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       instrumentType: form.instrumentType,
       emaPeriod: Number(form.emaPeriod),
       vwapSource: form.vwapSource || 'close',
+      // 1m entries are equity-only; the engine keeps 5m for option mode either way.
+      entryTimeframe: !form.isOptionBuyingOnly && form.entryTimeframe === "1min" ? "1min" : "5min",
       isOptionBuyingOnly: form.isOptionBuyingOnly,
       qty,
       lots: Number(form.lots),

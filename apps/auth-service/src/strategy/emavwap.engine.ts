@@ -78,6 +78,8 @@ interface StrategyState {
   lastDbPersistTime?: number;
   lastPersistedLogCount?: number;
   hasLoggedOpeningWindow?: boolean;
+  /** 1m auto mode: the scanner was warmed once during 09:15-09:16 so the first real scan is fast. */
+  hasWarmedOpeningScan?: boolean;
   lastFallbackLogTime?: number;
   currentLtp?: number;
   currentPnlRs?: number;
@@ -1207,23 +1209,38 @@ export class EmaVwapCrossoverEngine {
         }
       }
 
-      // ── 09:15 to 09:20 AM: Opening Range (ORB) Formation & Noise Filter Window ─────────────
-      if (currentHhmm < 9 * 60 + 20) {
+      // ── Opening Range Formation & Noise Filter Window: no entries until the first entry candle has closed ──
+      // 5m entries: 09:15-09:20. 1m entries: 09:15-09:16.
+      const entryTf = this.getEntryTf(config);
+      if (currentHhmm < 9 * 60 + 15 + entryTf.minutes) {
         if (!state.hasLoggedOpeningWindow) {
           state.hasLoggedOpeningWindow = true;
-          this.log(state, `⏳ [09:15 - 09:20 AM OBSERVATION WINDOW] Opening 5m candle forming. Filtering opening whipsaws and establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ 09:20 AM sharp.`);
+          const startsAt = entryTf.minutes === 1 ? '09:16' : '09:20';
+          this.log(state, `⏳ [09:15 - ${startsAt} AM OBSERVATION WINDOW] Opening ${entryTf.minutes}m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ ${startsAt} AM sharp.`);
           await this.persistLogs(state);
+        }
+        // 1m auto mode: the first scan of the day loads volume history for ~40 stocks (15-40s at Kite's 3 req/s).
+        // Run it once now, during the first minute, so the 09:16 scan only fetches the few new names and can enter at once.
+        if (entryTf.minutes === 1 && state.isAutoMode && !state.hasWarmedOpeningScan && now.getSeconds() >= 20) {
+          state.hasWarmedOpeningScan = true;
+          const excluded = new Set(state.cooldownSymbols?.keys() || []);
+          await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 15, excluded, (config as any).minStockPrice || 30)
+            .catch((e: any) => this.logger.debug?.(`Opening scan warm-up failed: ${e?.message}`));
         }
         return;
       }
 
       // ── Auto-Mode Multi-Stock Scanning ──────────────────────────────────────
-      // Allow continuous scanning if no position is open. If waiting for confirmation on an idle setup (>= 5 mins / 1 candle without trigger), evaluate other active leaders!
-      const isIdleWaiting = !!(state.waitingForConfirmation && state.setupTimestamp && (now.getTime() - state.setupTimestamp >= 5 * 60 * 1000));
+      // Allow continuous scanning if no position is open. If waiting for confirmation on an idle setup (>= 1 entry candle without trigger), evaluate other active leaders!
+      const isIdleWaiting = !!(state.waitingForConfirmation && state.setupTimestamp && (now.getTime() - state.setupTimestamp >= entryTf.minutes * 60 * 1000));
       if (state.isAutoMode && !state.entryTriggered && (!state.waitingForConfirmation || isIdleWaiting) && !state.isPlacingTrade) {
         const nowMs = Date.now();
-        // Throttle auto-scanning to at most once every 30 seconds to respect Zerodha 3 req/sec rate limit
-        if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000) {
+        // Throttle auto-scanning to at most once every 30 seconds to respect Zerodha 3 req/sec rate limit.
+        // 1m entries also rescan as soon as a new 1m candle has closed (2s grace for Kite to publish it), so a
+        // 09:16 setup is seen at ~09:16:02 instead of up to 30s later.
+        const isNewEntryCandle = entryTf.minutes === 1 && !!state.lastAutoScanTime
+          && Math.floor(state.lastAutoScanTime / 60_000) !== Math.floor(nowMs / 60_000) && now.getSeconds() >= 2;
+        if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000 || isNewEntryCandle) {
           state.lastAutoScanTime = nowMs;
           const excluded = new Set(state.cooldownSymbols?.keys() || []);
           const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 15, excluded, (config as any).minStockPrice || 30);
@@ -1233,15 +1250,15 @@ export class EmaVwapCrossoverEngine {
           for (const candidate of candidates.slice(0, 4)) {
             try {
               const testConfig = { ...config, symbol: candidate.symbol, exchange: candidate.exchange };
-              const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
+              const cCandles = await this.fetchCandles(client, testConfig as any, entryTf.interval, now);
               const emaPeriod = config.emaPeriod || 15;
               if (cCandles && cCandles.length >= emaPeriod + 2) {
-                const closedCCandles = this.filterClosedCandles(cCandles, now, 5);
+                const closedCCandles = this.filterClosedCandles(cCandles, now, entryTf.minutes);
                 if (closedCCandles.length >= 2) {
                   const cEmas = this.calculateEMA(closedCCandles, emaPeriod);
                   const cVwaps = this.calculateVWAP(closedCCandles, config.vwapSource || 'close');
-                  await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now);
-                  const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config, candidate.symbol);
+                  await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now, entryTf.interval);
+                  const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config, candidate.symbol, { interval: entryTf.interval });
                   if (setup) {
                     activeSetups.push({
                       candidate: { ...candidate, score: candidate.score + setup.scoreBoost },
@@ -1324,11 +1341,11 @@ export class EmaVwapCrossoverEngine {
         this.log(state, `Resolved future contract for index: ${state.futureExchange}:${state.futureSymbol}`);
       }
 
-      const candles = await this.fetchCandles(client, scanConfig, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
+      const candles = await this.fetchCandles(client, scanConfig, entryTf.interval, now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined);
       if (candles.length < 2) return;
 
       // ── Filter for closed candles only ─────────────────────────────────────
-      const closedCandles = this.filterClosedCandles(candles, now, 5);
+      const closedCandles = this.filterClosedCandles(candles, now, entryTf.minutes);
       if (closedCandles.length < 2) return;
 
       // Don't scan for signals if the last closed candle is from a previous day
@@ -1347,9 +1364,9 @@ export class EmaVwapCrossoverEngine {
 
       // ── Confirmation / Breakout Check ──────────────────────────────────────
       if (state.waitingForConfirmation) {
-        // Fast-pivot timeout: Allow max 2 candles (10m) for standard breakout/pullback setups, or 4 for opening drive
+        // Fast-pivot timeout: Allow max 2 entry candles for standard breakout/pullback setups, or 4 for opening drive
         const maxWaitCandles = (state.setupType === 'OPEN_LOW_DRIVE' || state.setupType === 'OPEN_HIGH_DRIVE') ? 4 : 2;
-        const timeframeMs = 5 * 60 * 1000;
+        const timeframeMs = entryTf.minutes * 60 * 1000;
         const elapsed = now.getTime() - state.setupTimestamp!;
         if (elapsed > maxWaitCandles * timeframeMs) {
           this.log(state, `⏳ Setup on [${activeSym}] expired (${maxWaitCandles} candles passed without trigger). Resetting.`);
@@ -1442,21 +1459,28 @@ export class EmaVwapCrossoverEngine {
         if (lastClosedCandleTime > lastProcessedForSym) {
           state.lastProcessedTimestampBySymbol.set(targetSym, lastClosedCandleTime);
           state.lastProcessedTimestamp = lastClosedCandleTime;
-          const rangeStr = this.formatCandleRange(closedCandles[lastIdx].date, 5);
-          const closeTimeStr = this.formatCandleCloseTime(closedCandles[lastIdx].date, 5);
+          const rangeStr = this.formatCandleRange(closedCandles[lastIdx].date, entryTf.minutes);
+          const closeTimeStr = this.formatCandleCloseTime(closedCandles[lastIdx].date, entryTf.minutes);
           const currEma = emas[lastIdx];
           const currVwap = vwaps[lastIdx];
           const closedCandle = closedCandles[lastIdx];
-          this.log(state, `[${targetSym}] 🔍 5m Candle [${rangeStr}] closed at ${closeTimeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | 15-EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
+          this.log(state, `[${targetSym}] 🔍 ${entryTf.minutes}m Candle [${rangeStr}] closed at ${closeTimeStr} | Close: ₹${closedCandle.close.toFixed(2)} (H: ₹${closedCandle.high.toFixed(2)}, L: ₹${closedCandle.low.toFixed(2)}) | 15-EMA: ₹${currEma?.toFixed(2)}, VWAP: ₹${currVwap?.toFixed(2)}`);
 
           if (!state.waitingForConfirmation) {
-            if (!state.futureSymbol) await this.ensureVolumeBaseline(client, targetSym, config.exchange, now);
-            const setup = this.evaluateStockSetup(closedCandles, emas, vwaps, now, config, targetSym);
+            if (!state.futureSymbol) await this.ensureVolumeBaseline(client, targetSym, config.exchange, now, entryTf.interval);
+            // 1m entries keep the 5m stop: the swing-shelf SL is built from 5m candles, including the one still
+            // forming, so it exists from 09:16 even though the first 5m candle only closes at 09:20.
+            let slCandles: Candle[] | undefined;
+            if (entryTf.minutes === 1) {
+              slCandles = await this.fetchCandles(client, scanConfig, '5minute', now, state.futureSymbol || undefined, state.futureSymbol ? state.futureExchange : undefined)
+                .catch(() => undefined);
+            }
+            const setup = this.evaluateStockSetup(closedCandles, emas, vwaps, now, config, targetSym, { interval: entryTf.interval, slCandles });
             const setupTimeMs = setup?.candleTime.getTime();
             const isAlreadyInvalidated = state.invalidatedCrossoverTime === setupTimeMs;
 
             if (setup && !isAlreadyInvalidated) {
-              logSignal('SETUP', state.strategyId, { symbol: targetSym, trend: setup.trend, setupType: setup.setupType, trigger: setup.triggerHigh ?? setup.triggerLow, slPrice: setup.slPrice, scoreBoost: setup.scoreBoost, close: closedCandle.close, ema: currEma, vwap: currVwap, paper: !!state.isPaperTrade });
+              logSignal('SETUP', state.strategyId, { symbol: targetSym, trend: setup.trend, setupType: setup.setupType, trigger: setup.triggerHigh ?? setup.triggerLow, slPrice: setup.slPrice, scoreBoost: setup.scoreBoost, close: closedCandle.close, ema: currEma, vwap: currVwap, entryTf: entryTf.interval, paper: !!state.isPaperTrade });
               const checkSymbol = state.futureSymbol || targetSym;
               const checkExchange = state.futureSymbol ? state.futureExchange : config.exchange;
               const ltpData = await withKiteRetry(() => kite.getLTP([`${checkExchange}:${checkSymbol}`]), 2).catch((e: any) => {
@@ -3553,14 +3577,23 @@ export class EmaVwapCrossoverEngine {
     const istDateStr = this.getIstDateStr(now);
     const from = new Date(`${istDateStr}T09:15:00.000+05:30`);
     from.setDate(from.getDate() - 5); // Go back 5 days to ensure enough historical candles
+    const isMinute = interval === 'minute';
+    // 1m: ~3 sessions (1,200 bars) so daily ATR, PDH/PDL and the same-time volume fallback see the prior days, as 250 5m bars do.
+    const keepBars = isMinute ? 1200 : 250;
+    const timeoutMs = isMinute ? 5000 : 3500;
     try {
       const fetchPromise = client.getHistoricalData(sym, exch, interval, from, now);
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout fetching candles for ${sym} (${interval}) after 3500ms`)), 3500)
+        setTimeout(() => reject(new Error(`Timeout fetching candles for ${sym} (${interval}) after ${timeoutMs}ms`)), timeoutMs)
       );
       const data = await Promise.race([fetchPromise, timeoutPromise]) as any;
-      const candles = (data || []).slice(-250).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
-      this.candleCache.set(cacheKey, { candles, expiresAt: Date.now() + 30_000 });
+      const candles = (data || []).slice(-keepBars).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
+      // Never serve a cached copy across a candle boundary: the cached last candle was still forming, and
+      // filterClosedCandles would treat that partial candle as closed once the boundary has passed.
+      const barMs = (isMinute ? 1 : parseInt(interval, 10) || 0) * 60_000;
+      const nowMs = Date.now();
+      const nextBoundaryMs = barMs > 0 ? Math.ceil((nowMs + 1) / barMs) * barMs + 1_000 : Infinity;
+      this.candleCache.set(cacheKey, { candles, expiresAt: Math.min(nowMs + 30_000, nextBoundaryMs) });
       return candles;
     } catch (err: any) {
       if (cached?.candles?.length) {
@@ -3825,7 +3858,9 @@ export class EmaVwapCrossoverEngine {
    * Setup detection + volume-confirmation gate.
    * Every setup (long or short) must be confirmed by a volume spike on its signal candle. The spike is judged against
    * THAT STOCK's own history (same clock-time candle, previous 10 sessions), so a noisy stock needs a bigger spike than a
-   * calm one (dynamic). Runs on every newly closed 5m candle, so volume is re-checked continuously after 09:20.
+   * calm one (dynamic). Runs on every newly closed entry candle, so volume is re-checked continuously.
+   * `interval` is the timeframe of `candles` (its volume baseline is kept per timeframe); `slCandles` (5m) makes the
+   * stop-loss come from 5m structure when `candles` are 1m.
    */
   private evaluateStockSetup(
     candles: Candle[],
@@ -3833,12 +3868,13 @@ export class EmaVwapCrossoverEngine {
     vwaps: (number | null)[],
     now: Date,
     config: EmaVwapCrossoverConfig,
-    symbol?: string
+    symbol?: string,
+    tf: { interval?: 'minute' | '5minute'; slCandles?: Candle[] } = {}
   ): StockSetup | null {
-    const setup = this.evaluateStockSetupRaw(candles, emas, vwaps, now, config, symbol);
+    const setup = this.evaluateStockSetupRaw(candles, emas, vwaps, now, config, symbol, tf.slCandles);
     if (!setup) return null;
     if (config.enableRvolVolumeFilter === false) return setup;
-    const symKey = symbol ?? config.symbol;
+    const symKey = this.volumeBaselineKey(symbol ?? config.symbol, tf.interval ?? '5minute');
     const opts = {
       dynamic: config.enableDynamicVolume !== false,
       minZ: config.minVolumeZ && config.minVolumeZ > 0 ? config.minVolumeZ : 1.5,
@@ -3856,19 +3892,26 @@ export class EmaVwapCrossoverEngine {
     return setup;
   }
 
-  /** Loads (once per stock per day) the same-clock-time 5m volumes of the previous 10 sessions for the dynamic volume gate. */
-  private async ensureVolumeBaseline(client: any, symbol: string, exchange: string, now: Date): Promise<void> {
+  private volumeBaselineKey(symbol: string, interval: 'minute' | '5minute'): string {
+    return `${symbol}:${interval}`;
+  }
+
+  /** Loads (once per stock per day per timeframe) the same-clock-time candle volumes of the previous 10 sessions for the dynamic volume gate. */
+  private async ensureVolumeBaseline(client: any, symbol: string, exchange: string, now: Date, interval: 'minute' | '5minute' = '5minute'): Promise<void> {
     if (!symbol || !client?.getHistoricalData) return;
     const todayStr = this.getIstDateStr(now);
-    const cached = this.volumeBaselines.get(symbol);
+    const key = this.volumeBaselineKey(symbol, interval);
+    const cached = this.volumeBaselines.get(key);
     if (cached && cached.dateStr === todayStr && (!cached.retryAfter || Date.now() < cached.retryAfter)) return;
     try {
       const dayStart = new Date(`${todayStr}T09:15:00.000+05:30`);
       const from = new Date(dayStart.getTime() - 16 * 24 * 3600 * 1000);
       const to = new Date(dayStart.getTime() - 60 * 1000); // previous sessions only
+      // 16 days of 1m bars is ~4,000 candles, so it gets a longer timeout than the 5m history.
+      const timeoutMs = interval === 'minute' ? 8000 : 4000;
       const data = await Promise.race([
-        client.getHistoricalData(symbol, exchange, '5minute', from, to),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('volume-history timeout')), 4000)),
+        client.getHistoricalData(symbol, exchange, interval, from, to),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('volume-history timeout')), timeoutMs)),
       ]) as any[];
       const byDay = new Map<string, Map<number, number>>();
       for (const c of data || []) {
@@ -3886,10 +3929,10 @@ export class EmaVwapCrossoverEngine {
           slots.get(slot)!.push(v);
         }
       }
-      this.volumeBaselines.set(symbol, { dateStr: todayStr, slots });
+      this.volumeBaselines.set(key, { dateStr: todayStr, slots });
     } catch (err: any) {
-      this.logger.debug?.(`Volume baseline unavailable for ${symbol}: ${err?.message}. Using 3-session fallback.`);
-      this.volumeBaselines.set(symbol, { dateStr: todayStr, slots: new Map(), retryAfter: Date.now() + 10 * 60 * 1000 });
+      this.logger.debug?.(`Volume baseline unavailable for ${symbol} (${interval}): ${err?.message}. Using 3-session fallback.`);
+      this.volumeBaselines.set(key, { dateStr: todayStr, slots: new Map(), retryAfter: Date.now() + 10 * 60 * 1000 });
     }
   }
 
@@ -3899,7 +3942,8 @@ export class EmaVwapCrossoverEngine {
     vwaps: (number | null)[],
     now: Date,
     config: EmaVwapCrossoverConfig,
-    symbol?: string
+    symbol?: string,
+    slCandles?: Candle[]
   ): StockSetup | null {
     if (!candles || candles.length < 2) return null;
     const todayStr = this.getIstDateStr(now);
@@ -3942,16 +3986,24 @@ export class EmaVwapCrossoverEngine {
     const dynamicMaxEmaDistPct = Math.max(0.75, Math.min(2.20, avgCandleRangePct * 1.8));
 
     // ── Structural Swing Shelf & Dynamic Breathing Space ────────────────────────
-    // Look back at the last 3 to 6 candles of today's price action to find the genuine consolidation shelf/base
-    const shelfLookback = Math.min(6, Math.max(3, todayCandles.length));
-    const shelfCandles = todayCandles.slice(todayCandles.length - shelfLookback);
-    const shelfLow = Math.min(...shelfCandles.map(tc => tc.candle.low));
-    const shelfHigh = Math.max(...shelfCandles.map(tc => tc.candle.high));
+    // Look back at the last 3 to 6 candles of today's price action to find the genuine consolidation shelf/base.
+    // 1m entries pass `slCandles` (5m, including the forming one) so the shelf and buffer, and with them the stop,
+    // are exactly the 5m structure: 3-6 five-minute candles, not 3-6 minutes.
+    const slToday = (slCandles ?? []).filter(c => this.getIstDateStr(c.date) === todayStr);
+    const useSlCandles = slToday.length > 0;
+    const shelfSource = useSlCandles ? slToday : todayCandles.map(tc => tc.candle);
+    const shelfLookback = Math.min(6, Math.max(3, shelfSource.length));
+    // Clamp at 0: with fewer than 3 candles a negative start would slice from the END and keep only the last candle.
+    const shelfCandles = shelfSource.slice(Math.max(0, shelfSource.length - shelfLookback));
+    const shelfLow = Math.min(...shelfCandles.map(c => c.low));
+    const shelfHigh = Math.max(...shelfCandles.map(c => c.high));
 
-    // Dynamic volatility buffer based on instrument tick size and ATR
+    // Dynamic volatility buffer based on instrument tick size and ATR (of the SL timeframe's last 10 candles)
     const targetSym = symbol || config.symbol;
     const symTick = getInstrumentTickSize(targetSym, currCandle.close);
-    const volatilityBuffer = Math.max(symTick * 4, currCandle.close * (avgCandleRangePct * 0.01 * 0.35));
+    const slRecentCandles = useSlCandles ? slCandles!.slice(-10) : recentCandles;
+    const slAvgRangePct = slRecentCandles.reduce((sum, c) => sum + (((c.high - c.low) / (c.close || 1)) * 100), 0) / Math.max(1, slRecentCandles.length);
+    const volatilityBuffer = Math.max(symTick * 4, currCandle.close * (slAvgRangePct * 0.01 * 0.35));
     // Intraday breathing boundaries: Min 0.85% (prevents noise stops), capped at 2.20% to accommodate true day low/mother low
     const minBreathingDist = Math.max(symTick * 8, currCandle.close * 0.0085);
     const maxBreathingDist = Math.max(symTick * 15, currCandle.close * 0.022);
@@ -4572,6 +4624,16 @@ export class EmaVwapCrossoverEngine {
       return { isVolumeValid: rvol >= opts.trailingRvol, rvol, basis: 'trailing', volume, baseline: base };
     }
     return { isVolumeValid: true, rvol: 1, basis: 'none', volume, baseline: 0 };
+  }
+
+  /**
+   * Candles used to FIND entries. 1min is equity-only (option mode keeps 5m). Whatever this returns, the stop-loss is
+   * placed on 5m structure and the 15-EMA trend exit runs on 5m candle closes.
+   */
+  private getEntryTf(config: EmaVwapCrossoverConfig): { interval: 'minute' | '5minute'; minutes: 1 | 5 } {
+    return config.entryTimeframe === '1min' && !config.isOptionBuyingOnly
+      ? { interval: 'minute', minutes: 1 }
+      : { interval: '5minute', minutes: 5 };
   }
 
   /** Which exit-target mode applies. FIXED_RS = the ₹ target/SL mode; LEGACY = option trades keep the old logic. */

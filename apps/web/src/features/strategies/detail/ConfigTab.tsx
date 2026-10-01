@@ -89,6 +89,9 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
 
   const entry: Row[] = [];
   if (isEmaVwap || isStockOptions) entry.push({ label: "EMA period", value: String(cfg.emaPeriod ?? 15) });
+  if (isEmaVwap && !cfg.isOptionBuyingOnly) {
+    entry.push({ label: "Entry timeframe", value: cfg.entryTimeframe === "1min" ? "1-minute (from 09:16), SL & exit on 5m" : "5-minute (from 09:20)" });
+  }
   if (is15Min) {
     entry.push(
       { label: "Opening range", value: "9:15 to 9:30 breakout" },

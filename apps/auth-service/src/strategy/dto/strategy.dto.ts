@@ -127,6 +127,7 @@ export interface EmaVwapCrossoverConfig {
   exchange: string;
   emaPeriod: number;
   vwapSource?: 'close' | 'hlc3';
+  entryTimeframe?: '1min' | '5min'; // Candles used to FIND entries (default '5min'). 1min is equity-only and starts at 09:16; the stop-loss and the 15-EMA trend exit always use 5m structure.
   isOptionBuyingOnly: boolean;
   qty: number;
   lots: number;
