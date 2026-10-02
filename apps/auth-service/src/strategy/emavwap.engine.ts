@@ -920,14 +920,21 @@ export class EmaVwapCrossoverEngine {
         // Auto-sync with broker: If position for activeSymbol was closed at broker, sync state immediately
         // Gated on !state.isExiting so this doesn't race with a concurrent exitPosition() call (e.g. from the
         // realtime websocket monitor) doing its own accounting for the same position at the same time.
-        if (!state.isPaperTrade && kite && kite.getPositions && !state.isPlacingTrade && !state.isExiting) {
+        // Gated on a filled quantity: while the LIMIT entry is still working with nothing filled the broker is flat by
+        // definition, and reading that as "closed" would book a phantom P&L and leave the entry order live at Zerodha.
+        if (!state.isPaperTrade && kite && kite.getPositions && !state.isPlacingTrade && !state.isExiting && (state.executedQty || 0) > 0) {
           state.isExiting = true;
           try {
             const symbolToMonitor = state.activeSymbol || config.symbol;
-            const brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger);
+            let brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger);
+            if (!brokerStatus.isOpen) {
+              // The positions book can lag a fresh fill by a moment: confirm "flat" with a second read before reconciling.
+              await new Promise(r => setTimeout(r, 1500));
+              brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger);
+            }
             if (!brokerStatus.isOpen) {
               this.log(state, `ℹ [BROKER SYNC] Position for ${symbolToMonitor} is CLOSED on Zerodha (Net Qty: 0). Reconciling strategy state and cancelling pending broker orders.`);
-              await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId], this.logger);
+              await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId, state.entryOrderId], this.logger);
               this.stopRealtimeMonitor(state);
 
               const exitSide: 'BUY' | 'SELL' = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
@@ -1985,6 +1992,9 @@ export class EmaVwapCrossoverEngine {
       const now = Date.now();
       state.lastTickTime = now;
       state.currentLtp = currentPrice;
+      // Live entry still working with nothing filled: no position yet. The poll monitor's fill sync arms the stop on the
+      // first fill and cancels the entry after 15s; exit rules must not fire on an order that never filled.
+      if (!state.isPaperTrade && !((state.executedQty || 0) > 0)) return;
 
       const isLong = state.entryTriggered === 'LONG';
       const activeQty = state.executedQty || state.config.qty;
@@ -2307,6 +2317,54 @@ export class EmaVwapCrossoverEngine {
     state.tickerUnsubscribe = unsubscribe;
   }
 
+  /**
+   * Cancels whatever is left of a working entry order and syncs the filled quantity and price from the order book.
+   * FILLED: shares are held, go on with the exit. UNFILLED: nothing filled, the entry is forgotten (not a trade).
+   * UNCONFIRMED: the order book could not confirm the entry is final; the position stays active and is retried.
+   */
+  private async settlePendingEntry(state: StrategyState, client: any): Promise<'FILLED' | 'UNFILLED' | 'UNCONFIRMED'> {
+    const kite = client['kite'];
+    const entryId = state.entryOrderId!;
+    const FINAL = ['COMPLETE', 'CANCELLED', 'REJECTED'];
+    const read = async (): Promise<any | null> => {
+      const orders: any[] | null = await kite.getOrders().catch(() => null);
+      return orders?.find((o: any) => o.order_id === entryId) ?? null;
+    };
+
+    let order = await read();
+    if (order && !FINAL.includes(order.status)) {
+      this.log(state, `⏳ Entry order ${entryId} is still ${order.status} (${Number(order.filled_quantity) || 0}/${order.quantity} filled) — cancelling the rest before the exit.`);
+      await this.cancelBrokerOrderSafe(client, entryId);
+      for (let i = 0; i < 4 && !FINAL.includes(order.status); i++) {
+        await new Promise(r => setTimeout(r, 500));
+        order = (await read()) ?? order;
+      }
+    }
+
+    if (!order) {
+      if ((state.executedQty || 0) > 0) return 'FILLED';
+      this.log(state, `⚠ Entry order ${entryId} not found in the order book — checking again on the next poll before exiting.`);
+      return 'UNCONFIRMED';
+    }
+
+    const filled = Number(order.filled_quantity) || 0;
+    if (filled > (state.executedQty || 0)) {
+      state.executedQty = filled;
+      if (Number(order.average_price) > 0) state.entryPrice = Number(order.average_price);
+    }
+    if (!FINAL.includes(order.status)) {
+      this.log(state, `⚠ Entry order ${entryId} is still ${order.status} after the cancel request — keeping the position active and retrying on the next poll.`);
+      return 'UNCONFIRMED';
+    }
+    if ((state.executedQty || 0) > 0) {
+      state.config.qty = state.executedQty!;
+      return 'FILLED';
+    }
+    this.clearUnfilledEntry(state);
+    this.log(state, `ℹ Entry order ${entryId} ${order.status} with nothing filled — no position to exit, not counted as a trade (${state.tradesPlacedToday}/${state.config.maxTradesPerDay}).`);
+    return 'UNFILLED';
+  }
+
   /** Forgets an entry that was cancelled with nothing filled: no position, and it does not count toward maxTradesPerDay. */
   private clearUnfilledEntry(state: StrategyState) {
     this.stopRealtimeMonitor(state);
@@ -2511,6 +2569,10 @@ export class EmaVwapCrossoverEngine {
       return;
     }
 
+    // Entry still working with nothing filled (live): no position to manage yet. Step 0 above syncs fills and cancels
+    // the entry after 15s; the 15:05 cutoff above settles it through exitPosition().
+    if (!state.isPaperTrade && !((state.executedQty || 0) > 0)) return;
+
     // ── 2. Fresh LTP Resolution (API fallback if WebSocket has no tick in >3.5s) ──
     const isWebSocketStale = !state.lastTickTime || (Date.now() - state.lastTickTime > 3500);
     let currentPrice = state.currentLtp;
@@ -2714,6 +2776,22 @@ export class EmaVwapCrossoverEngine {
       return;
     }
     state.isExiting = true;
+
+    // A LIMIT entry may still be working at the broker (nothing or only part filled). Settle it first: cancel what is
+    // left and take the real filled quantity, so no order is left behind that could open a position nobody manages.
+    if (!state.isPaperTrade && state.entryOrderId && client?.['kite'] && (state.executedQty || 0) < (state.config.qty || 0)) {
+      let settled: 'FILLED' | 'UNFILLED' | 'UNCONFIRMED' = 'UNCONFIRMED';
+      try {
+        settled = await this.settlePendingEntry(state, client);
+      } catch (e: any) {
+        this.log(state, `⚠ Could not settle the working entry order: ${e?.message || e}`);
+      }
+      if (settled !== 'FILLED') {
+        state.isExiting = false;
+        if (settled === 'UNCONFIRMED' && state.entryTriggered) this.startRealtimeMonitor(state, client).catch(() => { });
+        return;
+      }
+    }
 
     const { config } = state;
     const symbol = state.activeSymbol || config.symbol;

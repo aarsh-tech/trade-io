@@ -1054,6 +1054,7 @@ export class EmaVwapOptionsEngine {
 
     if (p.stage === 'INITIAL' && price >= p.partialTarget) {
       await this.takePartial(state, client, price, now);
+      if (!state.position) return;
     }
 
     if (now.getTime() - state.lastPnlLog >= 30_000) {
@@ -1081,16 +1082,49 @@ export class EmaVwapOptionsEngine {
         const kite = client['kite'] || client;
         const safety = await isSafeToExit(kite, c.symbol, 'SELL', this.logger);
         const sellQty = safety.safe ? Math.min(bookQty, Math.abs(safety.brokerQty)) : 0;
-        if (sellQty <= 0) {
-          this.log(state, `ℹ Partial booking skipped: the broker shows no sellable ${c.symbol} (qty ${safety.brokerQty}).`);
+        if (sellQty <= 0 || sellQty >= p.qty) {
+          this.log(state, `ℹ Partial booking skipped: the broker shows ${safety.brokerQty} ${c.symbol}, not enough to book ${bookQty} and keep a runner.`);
         } else {
-          try {
-            orderId = await this.placeOrder(state, { symbol: c.symbol, exchange: c.exchange, product: state.config.product, qty: sellQty, side: 'SELL', orderType: 'MARKET', intent: 'EXIT' });
-            const o = await this.awaitOrder(client, orderId, 5000);
-            filledQty = o?.filledQty ?? 0;
-            if (o?.avgPrice) avg = o.avgPrice;
-          } catch (e: any) {
-            this.log(state, `⚠ Partial booking order failed: ${e?.message || e}`);
+          // Zerodha counts a sell beyond the long quantity (including the working SL sell) as a fresh short that needs
+          // margin, and rejects it. So the stop is cut to the quantity that stays open BEFORE the partial sell goes out.
+          // syncStopLoss() below brings it back in line with whatever is really still open.
+          let slReady = true;
+          if (p.slOrderId) {
+            try {
+              await client.modifyOrder(p.slOrderId, { quantity: p.qty - sellQty });
+            } catch (e: any) {
+              slReady = false;
+              const sl = await this.readOrder(kite, p.slOrderId);
+              if (sl && sl.status === 'COMPLETE' && sl.filledQty > 0) {
+                this.log(state, `🛑 Broker SL ${p.slOrderId} filled @ ₹${sl.avgPrice.toFixed(2)} before the partial booking.`);
+                this.closePosition(state, client, sl.avgPrice || p.sl, 'BROKER_SL', p.slOrderId);
+                return;
+              }
+              this.log(state, `⚠ Partial booking skipped: could not reduce broker SL ${p.slOrderId} to ${p.qty - sellQty} qty first (${e?.message || e}). The whole position rides on.`);
+            }
+          }
+          if (slReady) {
+            try {
+              orderId = await this.placeOrder(state, { symbol: c.symbol, exchange: c.exchange, product: state.config.product, qty: sellQty, side: 'SELL', orderType: 'MARKET', intent: 'EXIT' });
+              let o = await this.awaitOrder(client, orderId, 5000);
+              if (o && !['COMPLETE', 'REJECTED', 'CANCELLED'].includes(o.status)) {
+                await client.cancelOrder(orderId).catch(() => undefined);
+                o = (await this.awaitOrder(client, orderId, 2000)) ?? o;
+              }
+              if (o) {
+                filledQty = Math.min(sellQty, o.filledQty);
+                if (o.avgPrice) avg = o.avgPrice;
+              } else {
+                // Order book unreadable: the position book says how much was sold.
+                const after = await getLiveBrokerPosition(kite, c.symbol, this.logger);
+                if (after.netQty > 0) filledQty = Math.max(0, Math.min(sellQty, p.qty - after.netQty));
+              }
+              if (filledQty < sellQty) {
+                this.log(state, `⚠ Partial booking order ${orderId} ${o?.status ?? 'not confirmed'}${o?.message ? `: ${o.message}` : ''} — sold ${filledQty}/${sellQty}. The broker SL is set back to the open quantity.`);
+              }
+            } catch (e: any) {
+              this.log(state, `⚠ Partial booking order failed: ${e?.message || e}. The broker SL is set back to the full quantity.`);
+            }
           }
         }
       }

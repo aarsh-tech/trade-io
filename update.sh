@@ -42,10 +42,16 @@ git fetch origin main
 git pull origin main
 echo -e "      Updated Commit: ${GREEN}$(git log -1 --oneline)${NC}"
 
-# 4. Generate Prisma Client
-echo -e "\n${CYAN}[4/6] Generating Prisma Client...${NC}"
+# 4. Apply database migrations, then generate the Prisma Client. A failed migration aborts here (set -e + trap),
+#    before the build and the PM2 restart, so new code never runs against an old database schema.
+#    If this ever fails with P3005 ("database schema is not empty"), the DB was created without migration history:
+#    mark the migrations it already has as applied once, e.g.
+#      pnpm exec prisma migrate resolve --applied 20260101000000_baseline --schema=./prisma/schema.prisma
+#    (repeat for every migration whose changes are already in the DB), then run this script again.
+echo -e "\n${CYAN}[4/6] Applying database migrations & generating Prisma Client...${NC}"
+pnpm exec prisma migrate deploy --schema=./prisma/schema.prisma
 pnpm db:generate
-echo -e "      ${GREEN}✅ Prisma schema updated.${NC}"
+echo -e "      ${GREEN}✅ Database migrated and Prisma client generated.${NC}"
 
 # 5. Compile Backend Bundle
 echo -e "\n${CYAN}[5/6] Building backend with pnpm...${NC}"
