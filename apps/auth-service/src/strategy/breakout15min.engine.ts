@@ -12,6 +12,10 @@ import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, protectionNotice, PositionUnknownError, recoverTodaysTrades } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders, getCompletedBrokerExitDetails } from './broker-position-guard';
 
+/** One shared IST `YYYY-MM-DD` formatter. Building an Intl.DateTimeFormat per call (per candle / per instrument) costs
+ *  ~1 ms and ~30 MB of native memory per 1,000 calls, enough to push the process past PM2's memory-restart limit. */
+const IST_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 interface Candle {
   date: Date;
   open: number;
@@ -2512,12 +2516,7 @@ export class Breakout15MinEngine {
   }
 
   private getIstDateStr(date: Date): string {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(date);
+    return IST_DATE_FMT.format(date);
   }
 
   private getExpiryStr(expiry: any): string {

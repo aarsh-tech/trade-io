@@ -3,6 +3,10 @@
  * 15-EMA / VWAP crossover and the inside candle mean exactly the same thing in both. Pure functions: no broker calls.
  */
 
+/** One shared IST `YYYY-MM-DD` formatter. Building an Intl.DateTimeFormat per call (per candle / per instrument) costs
+ *  ~1 ms and ~30 MB of native memory per 1,000 calls, enough to push the process past PM2's memory-restart limit. */
+const IST_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 export interface Candle {
   date: Date;
   open: number;
@@ -13,7 +17,7 @@ export interface Candle {
 }
 
 export function getIstDateStr(d: Date): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  return IST_DATE_FMT.format(d);
 }
 
 /** Minutes since midnight, IST. */

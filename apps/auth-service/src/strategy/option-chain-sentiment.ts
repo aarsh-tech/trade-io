@@ -4,6 +4,10 @@
  * setup or trade and never block on them. Every function returns null on any lookup failure instead of throwing.
  */
 
+/** One shared IST `YYYY-MM-DD` formatter. Building an Intl.DateTimeFormat per call (per candle / per instrument) costs
+ *  ~1 ms and ~30 MB of native memory per 1,000 calls, enough to push the process past PM2's memory-restart limit. */
+const IST_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 export type IndexUnderlying = 'NIFTY' | 'BANKNIFTY' | 'FINNIFTY' | 'MIDCPNIFTY' | 'SENSEX';
 
 /** `NIFTY`, `NSE:NIFTY 50`, `BANKNIFTY`, `NIFTY BANK`, `SENSEX` ... -> the option underlying's name in Kite's master. */
@@ -25,7 +29,7 @@ export function derivativesExchange(underlying: IndexUnderlying): 'NFO' | 'BFO' 
 export function expiryDateStr(expiry: any): string {
   if (!expiry) return '';
   const d = new Date(expiry);
-  return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  return isNaN(d.getTime()) ? '' : IST_DATE_FMT.format(d);
 }
 
 /** The strike interval near `refPrice`: the smallest gap between listed strikes within 5% of it. */

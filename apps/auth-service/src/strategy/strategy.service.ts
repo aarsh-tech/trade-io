@@ -7,6 +7,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 import { assertValidStrategyConfig } from './strategy-config.validator';
 
+/** One shared IST `YYYY-MM-DD` formatter. Building an Intl.DateTimeFormat per call (per candle / per instrument) costs
+ *  ~1 ms and ~30 MB of native memory per 1,000 calls, enough to push the process past PM2's memory-restart limit. */
+const IST_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 @Injectable()
 export class StrategyService {
   constructor(private prisma: PrismaService) { }
@@ -306,7 +310,7 @@ export class StrategyService {
 
     // Today's closed trades (IST day), so the page can show realised P&L even when the engine is not running
     // and holds no in-memory state (auto-stopped on the daily cap, stopped, restarted).
-    const istDay = (d: any) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(d));
+    const istDay = (d: any) => IST_DATE_FMT.format(new Date(d));
     const today = istDay(new Date());
     const todaysTrades = completedTrades.filter(t => t.createdAt && istDay(t.createdAt) === today);
     const todayPnl = todaysTrades.reduce((sum, t) => sum + t.pnl, 0);

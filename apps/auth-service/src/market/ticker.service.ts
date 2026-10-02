@@ -61,8 +61,10 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
    */
   private dynamicSymbols = new Map<string, { day: string; symbols: Set<string> }>();
 
+  private readonly istDayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
   private istDay(): string {
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    return this.istDayFmt.format(new Date());
   }
 
   private rememberSymbol(accountId: string, symbol: string) {

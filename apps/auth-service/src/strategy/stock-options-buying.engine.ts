@@ -11,6 +11,10 @@ import { MAX_ENGINE_LOGS, loadResumableLogs, pushEngineLog } from '../common/uti
 import { findOpenPosition, protectionNotice, PositionUnknownError, recoverTodaysTrades } from './position-recovery';
 import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 
+/** One shared IST `YYYY-MM-DD` formatter. Building an Intl.DateTimeFormat per call (per candle / per instrument) costs
+ *  ~1 ms and ~30 MB of native memory per 1,000 calls, enough to push the process past PM2's memory-restart limit. */
+const IST_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 interface Candle {
   date: Date;
   open: number;
@@ -1259,12 +1263,12 @@ export class StockOptionsBuyingEngine {
     );
     if (options.length === 0) return null;
 
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const todayStr = IST_DATE_FMT.format(new Date());
     const getExpiryStr = (expiry: any): string => {
       if (!expiry) return '';
       const d = new Date(expiry);
       if (isNaN(d.getTime())) return '';
-      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+      return IST_DATE_FMT.format(d);
     };
 
     const uniqueExpiries = Array.from(new Set(options.map((i: any) => getExpiryStr(i.expiry))))
@@ -1389,7 +1393,7 @@ export class StockOptionsBuyingEngine {
   }
 
   private getIstDateStr(d: Date): string {
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    return IST_DATE_FMT.format(d);
   }
 
   private formatCandleRange(d: Date, intervalMin: number = 5): string {

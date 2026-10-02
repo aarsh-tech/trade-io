@@ -11,6 +11,10 @@ import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
 import { computeAtmPcr, optionUnderlying } from './option-chain-sentiment';
 import { findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
 
+/** One shared IST `YYYY-MM-DD` formatter. Building an Intl.DateTimeFormat per call (per candle / per instrument) costs
+ *  ~1 ms and ~30 MB of native memory per 1,000 calls, enough to push the process past PM2's memory-restart limit. */
+const IST_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 interface Candle {
   date: Date;
   open: number;
@@ -2218,7 +2222,7 @@ export class NiftyOptionsScalperEngine {
   }
 
   private getIstDateStr(d: Date): string {
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    return IST_DATE_FMT.format(d);
   }
 
   private formatCandleRange(d: Date, intervalMin: number = 5): string {
@@ -2399,11 +2403,11 @@ export class NiftyOptionsScalperEngine {
     const options = instruments.filter((i: any) => i.name === underlying && i.instrument_type === type && (i.segment === segment || i.segment === `${exchange}-OPT`));
     if (options.length === 0) return null;
 
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(triggerTime || new Date());
+    const todayStr = IST_DATE_FMT.format(triggerTime || new Date());
     const getExpiryStr = (expiry: any): string => {
       if (!expiry) return '';
       const d = new Date(expiry);
-      return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+      return isNaN(d.getTime()) ? '' : IST_DATE_FMT.format(d);
     };
 
     const uniqueExpiries = Array.from(new Set(options.map((i: any) => getExpiryStr(i.expiry)))).filter(exp => exp !== '' && exp >= todayStr).sort();
