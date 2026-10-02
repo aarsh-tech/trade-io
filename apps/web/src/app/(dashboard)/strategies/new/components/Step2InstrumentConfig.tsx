@@ -958,6 +958,13 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
               <option value="1min">1-Minute Candles (Earlier entries — trading starts 09:16, more signals)</option>
             </select>
           </div>
+          <NumberField
+            label="Stocks checked per scan"
+            value={form.scanDepth ?? "20"}
+            onChange={(v) => set("scanDepth", v)}
+            min={1}
+            hint="AUTO stock selection only. The top-ranked momentum stocks checked for a setup on every scan (1 to 25); the best-scoring setup is traded."
+          />
         </div>
       )}
 

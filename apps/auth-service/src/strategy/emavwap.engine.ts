@@ -125,12 +125,25 @@ interface StrategyState {
 /** Live: price beyond the stop this long without the exchange SL filling → market exit (same as the options engine). */
 const SL_BREACH_GRACE_MS = 3000;
 
+/** Auto mode: how many of the scanner's top-ranked stocks are checked for a setup on every scan (config `scanDepth`). */
+const DEFAULT_SCAN_DEPTH = 20;
+const MAX_SCAN_DEPTH = 25;
+/** Candles checked per batch: matches Kite's 3 req/s historical limit, so queued calls never sit past their timeout. */
+const SCAN_BATCH_SIZE = 3;
+/** A candle's final values are published a moment after it closes (the 1m rescan waits 2s for the same reason). */
+const CLOSED_CANDLE_SETTLE_MS = 2000;
+
 @Injectable()
 export class EmaVwapCrossoverEngine {
   private readonly logger = new Logger(EmaVwapCrossoverEngine.name);
   private readonly running = new Map<string, StrategyState>();
   private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
-  private readonly candleCache = new Map<string, { candles: Candle[]; expiresAt: number }>();
+  /**
+   * expiresAt: reuse limit for callers that read the still-forming candle (30s, never past a candle close).
+   * closedUntil: reuse limit for callers that only read closed candles (the scanner): the next candle close, provided the
+   * fetch came after the last close had settled. 0 = no such reuse.
+   */
+  private readonly candleCache = new Map<string, { candles: Candle[]; expiresAt: number; closedUntil: number }>();
   /** Per-stock volume history: same-clock-time 5m volumes of the previous 10 sessions (loaded once per stock per day). */
   private readonly volumeBaselines = new Map<string, { dateStr: string; slots: Map<number, number[]>; retryAfter?: number }>();
   /** Symbols the instrument master had no tick size for, so ensureTickSize doesn't rescan the master every tick. */
@@ -1141,13 +1154,19 @@ export class EmaVwapCrossoverEngine {
           this.log(state, `⏳ [09:15 - ${startsAt} AM OBSERVATION WINDOW] Opening ${entryTf.minutes}m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ ${startsAt} AM sharp.`);
           await this.persistLogs(state);
         }
-        // 1m auto mode: the first scan of the day loads volume history for ~40 stocks (15-40s at Kite's 3 req/s).
-        // Run it once now, during the first minute, so the 09:16 scan only fetches the few new names and can enter at once.
-        if (entryTf.minutes === 1 && state.isAutoMode && !state.hasWarmedOpeningScan && now.getSeconds() >= 20) {
+        // Auto mode: the first scan of the day loads volume history for ~40 stocks (15-40s at Kite's 3 req/s), plus each
+        // checked stock's own same-time volume baseline. Load both once now, inside the opening window, so the first
+        // entry scan only fetches the few new names and can enter at once.
+        if (state.isAutoMode && !state.hasWarmedOpeningScan && now.getSeconds() >= 20) {
           state.hasWarmedOpeningScan = true;
           const excluded = this.excludedSymbols(state);
-          await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 15, excluded, (config as any).minStockPrice || 30)
-            .catch((e: any) => this.logger.debug?.(`Opening scan warm-up failed: ${e?.message}`));
+          const scanDepth = this.getScanDepth(config);
+          const warm = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30)
+            .catch((e: any) => { this.logger.debug?.(`Opening scan warm-up failed: ${e?.message}`); return []; });
+          const shortlist = warm.slice(0, scanDepth);
+          for (let i = 0; i < shortlist.length; i += SCAN_BATCH_SIZE) {
+            await Promise.allSettled(shortlist.slice(i, i + SCAN_BATCH_SIZE).map(c => this.ensureVolumeBaseline(client, c.symbol, c.exchange, now, entryTf.interval)));
+          }
         }
         return;
       }
@@ -1167,35 +1186,37 @@ export class EmaVwapCrossoverEngine {
         if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000 || isNewEntryCandle) {
           state.lastAutoScanTime = nowMs;
           const excluded = this.excludedSymbols(state);
-          const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 15, excluded, (config as any).minStockPrice || 30);
+          const scanDepth = this.getScanDepth(config);
+          const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30);
           const activeSetups: Array<{ candidate: any; details: any }> = [];
 
-          // Evaluate top 4 momentum leaders sequentially with a 150ms throttle delay to prevent rate limit
-          for (const candidate of candidates.slice(0, 4)) {
-            try {
-              const testConfig = { ...config, symbol: candidate.symbol, exchange: candidate.exchange };
-              const cCandles = await this.fetchCandles(client, testConfig as any, entryTf.interval, now);
-              const emaPeriod = config.emaPeriod || 15;
-              if (cCandles && cCandles.length >= emaPeriod + 2) {
+          // Check the top `scanDepth` momentum leaders for a setup; the best-scoring one with a setup is traded.
+          // Closed candles are reused until the next candle closes, so after the first scan of a candle this costs no
+          // history calls. Batches of 3 match Kite's 3 req/s historical limit (the central limiter does the pacing).
+          const evaluated = candidates.slice(0, scanDepth);
+          for (let i = 0; i < evaluated.length; i += SCAN_BATCH_SIZE) {
+            await Promise.allSettled(evaluated.slice(i, i + SCAN_BATCH_SIZE).map(async (candidate) => {
+              try {
+                const testConfig = { ...config, symbol: candidate.symbol, exchange: candidate.exchange };
+                const cCandles = await this.fetchCandles(client, testConfig as any, entryTf.interval, now, undefined, undefined, { closedOnly: true });
+                const emaPeriod = config.emaPeriod || 15;
+                if (!cCandles || cCandles.length < emaPeriod + 2) return;
                 const closedCCandles = filterClosedCandles(cCandles, now, entryTf.minutes);
-                if (closedCCandles.length >= 2) {
-                  const cEmas = calculateEMA(closedCCandles, emaPeriod);
-                  const cVwaps = calculateVWAP(closedCCandles, config.vwapSource || 'close');
-                  await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now, entryTf.interval);
-                  const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config, candidate.symbol, { interval: entryTf.interval });
-                  if (setup) {
-                    activeSetups.push({
-                      candidate: { ...candidate, score: candidate.score + setup.scoreBoost },
-                      details: setup,
-                    });
-                  }
+                if (closedCCandles.length < 2) return;
+                const cEmas = calculateEMA(closedCCandles, emaPeriod);
+                const cVwaps = calculateVWAP(closedCCandles, config.vwapSource || 'close');
+                await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now, entryTf.interval);
+                const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config, candidate.symbol, { interval: entryTf.interval });
+                if (setup) {
+                  activeSetups.push({
+                    candidate: { ...candidate, score: candidate.score + setup.scoreBoost },
+                    details: setup,
+                  });
                 }
+              } catch (candErr: any) {
+                this.logger.debug?.(`Candidate evaluation error for ${candidate.symbol}: ${candErr?.message}`);
               }
-            } catch (candErr: any) {
-              this.logger.debug?.(`Candidate evaluation error for ${candidate.symbol}: ${candErr?.message}`);
-            }
-            // Throttle between candidates to stay strictly below Zerodha's 3 req/sec limit
-            await new Promise(r => setTimeout(r, 150));
+            }));
           }
 
           if (activeSetups.length > 0) {
@@ -1243,7 +1264,7 @@ export class EmaVwapCrossoverEngine {
             const setupDesc = candidates.length === 0
               ? '⚠ Scanner universe came back empty — Zerodha instrument/quote fetch likely failed or rate-limited; will retry next scan'
               : (activeSetups.length > 0 ? activeSetups[0].details.description : 'Monitoring 5m candles for breakout/breakdown trigger');
-            this.log(state, `📡 [SCANNER HEARTBEAT] Scanned Nifty 500 & F&O leaders | Leaders: [${topList}] | Tracking: [${currentLeader}] — ${setupDesc}`);
+            this.log(state, `📡 [SCANNER HEARTBEAT] Scanned Nifty 500 & F&O leaders | Leaders: [${topList}] | Checked top ${evaluated.length} for setups (${activeSetups.length} active) | Tracking: [${currentLeader}] — ${setupDesc}`);
           }
         }
       }
@@ -3538,12 +3559,17 @@ export class EmaVwapCrossoverEngine {
     return endDate.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
-  private async fetchCandles(client: any, config: any, interval: string, now: Date, symbol?: string, exchange?: string): Promise<Candle[]> {
+  /**
+   * `closedOnly`: the caller drops the still-forming candle (filterClosedCandles), so a copy fetched after the last
+   * candle close settled stays valid until the next close. This keeps a 20-stock scan at ~20 history calls per candle
+   * instead of 20 per 30-second scan.
+   */
+  private async fetchCandles(client: any, config: any, interval: string, now: Date, symbol?: string, exchange?: string, opts?: { closedOnly?: boolean }): Promise<Candle[]> {
     const sym = symbol || config.symbol;
     const exch = exchange || config.exchange;
     const cacheKey = `${exch}:${sym}:${interval}`;
     const cached = this.candleCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
+    if (cached && Date.now() < (opts?.closedOnly ? Math.max(cached.expiresAt, cached.closedUntil) : cached.expiresAt)) {
       return cached.candles;
     }
 
@@ -3563,10 +3589,13 @@ export class EmaVwapCrossoverEngine {
       const candles = (data || []).slice(-keepBars).map((c: any) => ({ date: new Date(c.date), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }));
       // Never serve a cached copy across a candle boundary: the cached last candle was still forming, and
       // filterClosedCandles would treat that partial candle as closed once the boundary has passed.
+      // (Expiry is the close itself: a copy read even 1s after it would hand the partial candle on as closed.)
       const barMs = (isMinute ? 1 : parseInt(interval, 10) || 0) * 60_000;
       const nowMs = Date.now();
-      const nextBoundaryMs = barMs > 0 ? Math.ceil((nowMs + 1) / barMs) * barMs + 1_000 : Infinity;
-      this.candleCache.set(cacheKey, { candles, expiresAt: Math.min(nowMs + 30_000, nextBoundaryMs) });
+      const lastBoundaryMs = barMs > 0 ? Math.floor(nowMs / barMs) * barMs : 0;
+      const nextBoundaryMs = barMs > 0 ? lastBoundaryMs + barMs : Infinity;
+      const closedUntil = barMs > 0 && nowMs - lastBoundaryMs >= CLOSED_CANDLE_SETTLE_MS ? nextBoundaryMs : 0;
+      this.candleCache.set(cacheKey, { candles, expiresAt: Math.min(nowMs + 30_000, nextBoundaryMs), closedUntil });
       return candles;
     } catch (err: any) {
       if (cached?.candles?.length) {
@@ -4446,6 +4475,12 @@ export class EmaVwapCrossoverEngine {
     return config.entryTimeframe === '1min'
       ? { interval: 'minute', minutes: 1 }
       : { interval: '5minute', minutes: 5 };
+  }
+
+  /** Auto mode: how many top-ranked stocks are checked for a setup on each scan (default 20, at most 25). */
+  private getScanDepth(config: EmaVwapCrossoverConfig): number {
+    const n = Math.floor(Number(config.scanDepth));
+    return Number.isFinite(n) && n >= 1 ? Math.min(MAX_SCAN_DEPTH, n) : DEFAULT_SCAN_DEPTH;
   }
 
   /** Which exit-target mode applies. FIXED_RS = the ₹ target/SL mode. */

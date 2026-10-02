@@ -147,6 +147,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
   if (isEmaVwap) {
     entry.push(
       { label: "Entry signal", value: "15-EMA and VWAP crossover" },
+      { label: "Stocks checked per scan", value: cfg.symbol === "AUTO" ? `Top ${cfg.scanDepth ?? 20}, best setup traded` : undefined },
       { label: "Volume confirmation", ...toggle(cfg.enableRvolVolumeFilter !== false, cfg.enableDynamicVolume === false ? `>= ${cfg.minRvol ?? 2.5}x average` : `z >= ${cfg.minVolumeZ ?? 1.5} vs the stock's own 10-session history`) },
     );
   }

@@ -25,6 +25,8 @@ export interface StrategyFormState {
   vwapSource: "close" | "hlc3";
   /** EMA-VWAP stocks: candles that find entries. 1min starts at 09:16; the stop-loss and trend exit stay on 5m. */
   entryTimeframe?: "1min" | "5min";
+  /** EMA-VWAP stocks, AUTO mode: top-ranked stocks checked for a setup on every scan (1-25, default 20). */
+  scanDepth?: string;
   isOptionBuyingOnly: boolean;
   // EMA-VWAP Options (NIFTY / BANKNIFTY / SENSEX; `symbol` holds the index, `stopLossRs` the max loss per trade)
   evoMaxLots: string;

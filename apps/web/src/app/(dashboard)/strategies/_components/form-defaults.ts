@@ -25,6 +25,7 @@ export function createDefaultForm(): StrategyFormState {
     emaPeriod: "15",
     vwapSource: "close",
     entryTimeframe: "5min",
+    scanDepth: "20",
     isOptionBuyingOnly: true,
     evoMaxLots: "10",
     evoSlBufferPct: "2",
@@ -181,6 +182,7 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     emaPeriod: str(c.emaPeriod, base.emaPeriod),
     vwapSource: c.vwapSource === "hlc3" ? "hlc3" : "close",
     entryTimeframe: type === "EMA_VWAP_CROSSOVER" && c.entryTimeframe === "1min" ? "1min" : "5min",
+    scanDepth: str(c.scanDepth, base.scanDepth),
     isOptionBuyingOnly: bool(c.isOptionBuyingOnly, true),
     startAfterMin: str(c.startAfterMin, base.startAfterMin),
 

@@ -161,6 +161,7 @@ export interface EmaVwapCrossoverConfig {
   enableEmaCandleExit?: boolean;      // Exit immediately when a confirmed 5m candle closes against trend across 15-EMA (default: true)
   enableTrendReEntry?: boolean;       // Allow 1 trend continuation re-entry if price reclaims EMA with volume (default: true)
   minStockPrice?: number;             // Minimum stock price floor for auto scanner (default: ₹300)
+  scanDepth?: number;                 // Auto mode: top-ranked stocks checked for a setup on every scan; the best-scoring setup is traded (default: 20, max 25)
   enableHybridTrailing?: boolean;     // Hybrid mode: In Exact Target mode, trail SL to 15-EMA & VWAP with 0.30% noise buffer once Break-Even is locked (default: true)
   entryCutoffTime?: string;           // Optional user-set entry cutoff, IST (default: none; hard stop at 15:00 because of the 15:05 square-off)
   disabledSetupTypes?: string[];      // Setup types to skip (default: ['TREND_BREAKOUT'] — negative expectancy in backtest)

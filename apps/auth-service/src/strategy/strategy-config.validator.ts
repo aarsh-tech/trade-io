@@ -47,6 +47,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['minSlBufferRs', 'Minimum SL buffer (₹)', 0, 1000, false],
   ['partialTargetR', 'Partial booking R-multiple', 0.5, 20, false],
   ['partialBookFraction', 'Partial booking fraction', 0.1, 1, false],
+  ['scanDepth', 'Stocks checked per scan', 1, 25, true],
 ];
 
 const TIME_FIELDS: [string, string][] = [
