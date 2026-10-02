@@ -242,14 +242,6 @@ class ZerodhaClient implements IBrokerClient {
         throw new Error(`🛑 [SAFETY GUARD] Order quantity ${requestedQty} exceeds exchange freeze limit of ${freezeLimit} for ${params.symbol}. Order blocked.`);
       }
 
-      // ── Safety Guard 2: Max Order Rupee Value (Fat-Finger Guard) ──
-      const estPrice = Number(params.price) || Number(params.triggerPrice) || 0;
-      const MAX_ORDER_VALUE_CAP = 250000; // ₹2.5 Lakh hard limit per order
-      if (estPrice > 0 && requestedQty * estPrice > MAX_ORDER_VALUE_CAP) {
-        throw new Error(`🛑 [FAT-FINGER GUARD] Order value ₹${(requestedQty * estPrice).toLocaleString('en-IN')} exceeds safety cap of ₹${MAX_ORDER_VALUE_CAP.toLocaleString('en-IN')}.`);
-      }
-
-      // ── Safety Guard 3: Rate Limiting & Idempotency Dedup (Entries ONLY) ──
       const isExitOrSl = Boolean(
         (params.intent && params.intent !== 'ENTRY') ||
         params.tag?.toUpperCase().includes('EXIT') ||
@@ -259,6 +251,16 @@ class ZerodhaClient implements IBrokerClient {
         params.orderType === 'SL' ||
         params.orderType === 'SL-M'
       );
+
+      // ── Safety Guard 2: Max Order Rupee Value (Fat-Finger Guard) — new positions only ──
+      // Exits and protective stops (explicit EXIT / PROTECTIVE intent) only ever close what an entry opened, so they
+      // are never blocked here: a stop-loss refused for its rupee value would leave a live position unprotected.
+      const isClosingIntent = params.intent === 'EXIT' || params.intent === 'PROTECTIVE';
+      const estPrice = Number(params.price) || Number(params.triggerPrice) || 0;
+      const MAX_ORDER_VALUE_CAP = 250000; // ₹2.5 Lakh hard limit per entry order
+      if (!isClosingIntent && estPrice > 0 && requestedQty * estPrice > MAX_ORDER_VALUE_CAP) {
+        throw new Error(`🛑 [FAT-FINGER GUARD] Order value ₹${(requestedQty * estPrice).toLocaleString('en-IN')} exceeds safety cap of ₹${MAX_ORDER_VALUE_CAP.toLocaleString('en-IN')}.`);
+      }
 
       // Exits and Stop-Loss orders are NEVER rate-limited to guarantee capital safety
       if (!isExitOrSl) {

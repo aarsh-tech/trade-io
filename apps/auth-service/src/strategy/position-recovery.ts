@@ -20,6 +20,8 @@ import { PrismaService } from '../prisma/prisma.service';
 export interface RecoveredPosition {
   symbol: string;
   exchange: string;
+  /** Broker product of the live position (MIS / NRML / CNC); absent for paper. */
+  product?: string;
   side: 'LONG' | 'SHORT';
   qty: number;
   /** Quantity when the position was opened (differs from qty after a partial booking). */
@@ -260,6 +262,7 @@ async function findLive(
     return {
       symbol,
       exchange: openPos.exchange,
+      product: openPos.product || undefined,
       side: rawQty > 0 ? 'LONG' : 'SHORT',
       qty: Math.abs(rawQty),
       initialQty: Math.abs(rawQty),

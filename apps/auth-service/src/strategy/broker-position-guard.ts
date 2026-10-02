@@ -1,5 +1,23 @@
 import { Logger } from '@nestjs/common';
 
+/**
+ * Optional preference for position lookups. Kite keeps one position row per (symbol, exchange, product), so a manual
+ * CNC holding or a BSE trade in the same stock is a different row from the strategy's NSE MIS position. The row that
+ * matches exchange AND product wins; only when no such row exists does any row of the symbol count (the old
+ * behaviour), so a product that changed (e.g. an NRML fallback before a restart) can never read as "flat".
+ */
+export interface PositionMatch {
+  exchange?: string;
+  product?: string;
+}
+
+function rowMatches(p: any, cleanSym: string, match?: PositionMatch): boolean {
+  if (normalizeSymbol(p?.tradingsymbol) !== cleanSym) return false;
+  if (match?.exchange && p.exchange && String(p.exchange).toUpperCase() !== match.exchange.toUpperCase()) return false;
+  if (match?.product && p.product && String(p.product).toUpperCase() !== match.product.toUpperCase()) return false;
+  return true;
+}
+
 export interface BrokerPositionStatus {
   netQty: number;
   dayBuyQty: number;
@@ -34,7 +52,8 @@ export function normalizeSymbol(sym: string): string {
 export async function getLiveBrokerPosition(
   kite: any,
   symbol: string,
-  logger?: Logger
+  logger?: Logger,
+  match?: PositionMatch
 ): Promise<BrokerPositionStatus> {
   const cleanSym = normalizeSymbol(symbol);
   if (!kite || !kite.getPositions || !cleanSym) {
@@ -47,14 +66,12 @@ export async function getLiveBrokerPosition(
     const dayList: any[] = posData?.day || [];
 
     // Find in net positions first
-    const netPos = netList.find(
-      (p: any) => normalizeSymbol(p.tradingsymbol) === cleanSym
-    );
+    const pick = (list: any[]) =>
+      (match ? list.find((p: any) => rowMatches(p, cleanSym, match)) : undefined) ?? list.find((p: any) => rowMatches(p, cleanSym));
+    const netPos = pick(netList);
 
     // Find in day positions as secondary confirmation
-    const dayPos = dayList.find(
-      (p: any) => normalizeSymbol(p.tradingsymbol) === cleanSym
-    );
+    const dayPos = pick(dayList);
 
     const targetPos = netPos || dayPos;
     if (!targetPos) {
@@ -108,14 +125,15 @@ export async function isSafeToExit(
   kite: any,
   symbol: string,
   intendedExitSide: 'BUY' | 'SELL',
-  logger?: Logger
+  logger?: Logger,
+  match?: PositionMatch
 ): Promise<{ safe: boolean; brokerQty: number; reason?: string }> {
   if (!kite || !kite.getPositions) {
     // If no broker client (e.g. paper trading), allow exit
     return { safe: true, brokerQty: 0 };
   }
 
-  const status = await getLiveBrokerPosition(kite, symbol, logger);
+  const status = await getLiveBrokerPosition(kite, symbol, logger, match);
   const qty = status.netQty;
 
   if (intendedExitSide === 'SELL') {
@@ -171,7 +189,8 @@ export async function getCompletedBrokerExitDetails(
   slOrderId?: string | null,
   targetOrderId?: string | null,
   expectedExitSide?: 'BUY' | 'SELL',
-  logger?: Logger
+  logger?: Logger,
+  match?: PositionMatch
 ): Promise<{
   orderId: string;
   exitPrice: number;
@@ -212,10 +231,12 @@ export async function getCompletedBrokerExitDetails(
       }
     }
 
-    // 3. Fallback: match by expected exit side among recent complete orders
+    // 3. Fallback: match by expected exit side among recent complete orders (same exchange/product when given,
+    //    so a manual trade in the same stock is not taken for the strategy's exit)
     if (expectedExitSide) {
-      const sideMatches = completeOrders
-        .filter((o: any) => (o.transaction_type || '').toUpperCase() === expectedExitSide.toUpperCase())
+      const onSide = completeOrders.filter((o: any) => (o.transaction_type || '').toUpperCase() === expectedExitSide.toUpperCase());
+      const exact = match ? onSide.filter((o: any) => rowMatches(o, cleanSym, match)) : [];
+      const sideMatches = (exact.length > 0 ? exact : onSide)
         .sort((a, b) => new Date(b.order_timestamp || 0).getTime() - new Date(a.order_timestamp || 0).getTime());
 
       if (sideMatches.length > 0) {

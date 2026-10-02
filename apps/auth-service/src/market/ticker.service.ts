@@ -54,6 +54,37 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   private tickerSetups = new Map<string, Promise<void>>();
   private listeners = new Set<(ticks: Record<string, number>) => void>();
   private orderListeners = new Set<(accountId: string, update: OrderUpdateEvent) => void>();
+  /**
+   * Symbols engines subscribed on the fly (the stock being traded, option legs), per account, for the current IST day.
+   * A ticker that gets rebuilt (access-token change, reconnect give-up) is created from the strategy configs only, so
+   * these are re-added to it; otherwise an engine keeps believing it is subscribed and never gets another tick.
+   */
+  private dynamicSymbols = new Map<string, { day: string; symbols: Set<string> }>();
+
+  private istDay(): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  }
+
+  private rememberSymbol(accountId: string, symbol: string) {
+    if (!accountId || !symbol) return;
+    const day = this.istDay();
+    let entry = this.dynamicSymbols.get(accountId);
+    if (!entry || entry.day !== day) {
+      entry = { day, symbols: new Set<string>() };
+      this.dynamicSymbols.set(accountId, entry);
+    }
+    entry.symbols.add(symbol);
+  }
+
+  private rememberedSymbols(accountId: string): string[] {
+    const entry = this.dynamicSymbols.get(accountId);
+    if (!entry) return [];
+    if (entry.day !== this.istDay()) {
+      this.dynamicSymbols.delete(accountId);
+      return [];
+    }
+    return Array.from(entry.symbols);
+  }
 
   /** Engine-facing tick stream: `{ SYMBOL: ltp, 'EXCH:SYMBOL': ltp }`. Browsers get the normalised `ticks` event instead. */
   registerListener(callback: (ticks: Record<string, number>) => void) {
@@ -89,6 +120,7 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async subscribeSymbol(accountId: string, symbol: string) {
+    this.rememberSymbol(accountId, symbol);
     if (!this.isIndianMarketOpen()) return;
     if (!this.tickers.has(accountId)) {
       await this.ensureTickerRunning(accountId, [symbol]);
@@ -458,6 +490,8 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureTickerRunning(accountId: string, symbols: string[]) {
+    // Engines' on-the-fly subscriptions ride along, so a rebuilt connection (or the 30 s sync) restores them.
+    symbols = Array.from(new Set([...(symbols || []), ...this.rememberedSymbols(accountId)]));
     // Never open a websocket if market is closed or 0 symbols to subscribe
     if (!this.isIndianMarketOpen() || !symbols || symbols.length === 0) {
       return;
@@ -592,7 +626,9 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
         if (!tokenToSymbol.has(tok)) {
           tokenToSymbol.set(tok, { symbol: sym, exchange: exch });
         }
-        symbolToToken.set(sym, tok);
+        // The bare symbol keeps the FIRST exchange that lists it (NSE is loaded first), so a BSE listing of the same
+        // stock never takes over "RELIANCE" and hands engines BSE prices. Exchange-prefixed keys stay exact.
+        if (!symbolToToken.has(sym)) symbolToToken.set(sym, tok);
         symbolToToken.set(`${exch}:${sym}`, tok);
       });
 

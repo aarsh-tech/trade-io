@@ -114,7 +114,16 @@ interface StrategyState {
   partialBooked?: boolean;
   partialAttempts?: number;
   isBookingPartial?: boolean;
+  /** First tick (ms) at which price was beyond the stop while the broker SL had not filled. */
+  slBreachAt?: number | null;
+  /** Close (ms) of the candle on which the pending setup was detected; setup validity is counted from here. */
+  setupArmedAt?: number | null;
+  /** Symbols the broker refused for a new entry (e.g. MIS blocked), with the time (ms) until which they are skipped. */
+  rejectedSymbols?: Map<string, number>;
 }
+
+/** Live: price beyond the stop this long without the exchange SL filling → market exit (same as the options engine). */
+const SL_BREACH_GRACE_MS = 3000;
 
 @Injectable()
 export class EmaVwapCrossoverEngine {
@@ -331,6 +340,8 @@ export class EmaVwapCrossoverEngine {
 
       state.activeSymbol = pos.symbol;
       if (pos.exchange) state.config.exchange = pos.exchange;
+      // The held product (e.g. NRML after an MIS-rejection fallback) drives exit orders and the position-row match.
+      if (pos.product) (state.config as any).product = pos.product;
       state.partialBooked = true; // unknown whether a partial was already booked before the restart: never book again
       state.partialTargetPrice = null;
       state.entryTriggered = pos.side;
@@ -545,7 +556,7 @@ export class EmaVwapCrossoverEngine {
 
     try {
       if (state.config.symbol === 'AUTO') {
-        const excluded = new Set(state.cooldownSymbols?.keys() || []);
+        const excluded = this.excludedSymbols(state);
         const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 25, excluded, (state.config as any).minStockPrice || 30);
         this.log(state, `🚀 Multi-Stock Momentum Scanner: Scanning top Zerodha liquid leaders for active setups...`);
 
@@ -926,11 +937,11 @@ export class EmaVwapCrossoverEngine {
           state.isExiting = true;
           try {
             const symbolToMonitor = state.activeSymbol || config.symbol;
-            let brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger);
+            let brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger, this.brokerMatch(state));
             if (!brokerStatus.isOpen) {
               // The positions book can lag a fresh fill by a moment: confirm "flat" with a second read before reconciling.
               await new Promise(r => setTimeout(r, 1500));
-              brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger);
+              brokerStatus = await getLiveBrokerPosition(kite, symbolToMonitor, this.logger, this.brokerMatch(state));
             }
             if (!brokerStatus.isOpen) {
               this.log(state, `ℹ [BROKER SYNC] Position for ${symbolToMonitor} is CLOSED on Zerodha (Net Qty: 0). Reconciling strategy state and cancelling pending broker orders.`);
@@ -938,7 +949,7 @@ export class EmaVwapCrossoverEngine {
               this.stopRealtimeMonitor(state);
 
               const exitSide: 'BUY' | 'SELL' = state.entryTriggered === 'LONG' ? 'SELL' : 'BUY';
-              const exitDetails = await getCompletedBrokerExitDetails(kite, symbolToMonitor, state.slOrderId, state.targetOrderId, exitSide, this.logger);
+              const exitDetails = await getCompletedBrokerExitDetails(kite, symbolToMonitor, state.slOrderId, state.targetOrderId, exitSide, this.logger, this.brokerMatch(state));
 
               let actualExitPrice = exitDetails.exitPrice;
               if (!actualExitPrice || actualExitPrice <= 0) {
@@ -1134,7 +1145,7 @@ export class EmaVwapCrossoverEngine {
         // Run it once now, during the first minute, so the 09:16 scan only fetches the few new names and can enter at once.
         if (entryTf.minutes === 1 && state.isAutoMode && !state.hasWarmedOpeningScan && now.getSeconds() >= 20) {
           state.hasWarmedOpeningScan = true;
-          const excluded = new Set(state.cooldownSymbols?.keys() || []);
+          const excluded = this.excludedSymbols(state);
           await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 15, excluded, (config as any).minStockPrice || 30)
             .catch((e: any) => this.logger.debug?.(`Opening scan warm-up failed: ${e?.message}`));
         }
@@ -1143,7 +1154,9 @@ export class EmaVwapCrossoverEngine {
 
       // ── Auto-Mode Multi-Stock Scanning ──────────────────────────────────────
       // Allow continuous scanning if no position is open. If waiting for confirmation on an idle setup (>= 1 entry candle without trigger), evaluate other active leaders!
-      const isIdleWaiting = !!(state.waitingForConfirmation && state.setupTimestamp && (now.getTime() - state.setupTimestamp >= entryTf.minutes * 60 * 1000));
+      // Idle = a whole entry candle has passed since the setup was detected (its candle closed) without a trigger.
+      const setupArmedAt = state.setupArmedAt ?? (state.setupTimestamp ? state.setupTimestamp + entryTf.minutes * 60 * 1000 : null);
+      const isIdleWaiting = !!(state.waitingForConfirmation && setupArmedAt && (now.getTime() - setupArmedAt >= entryTf.minutes * 60 * 1000));
       if (state.isAutoMode && !state.entryTriggered && (!state.waitingForConfirmation || isIdleWaiting) && !state.isPlacingTrade) {
         const nowMs = Date.now();
         // Throttle auto-scanning to at most once every 30 seconds to respect Zerodha 3 req/sec rate limit.
@@ -1153,7 +1166,7 @@ export class EmaVwapCrossoverEngine {
           && Math.floor(state.lastAutoScanTime / 60_000) !== Math.floor(nowMs / 60_000) && now.getSeconds() >= 2;
         if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000 || isNewEntryCandle) {
           state.lastAutoScanTime = nowMs;
-          const excluded = new Set(state.cooldownSymbols?.keys() || []);
+          const excluded = this.excludedSymbols(state);
           const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, 15, excluded, (config as any).minStockPrice || 30);
           const activeSetups: Array<{ candidate: any; details: any }> = [];
 
@@ -1271,7 +1284,10 @@ export class EmaVwapCrossoverEngine {
         // Fast-pivot timeout: Allow max 2 entry candles for standard breakout/pullback setups, or 4 for opening drive
         const maxWaitCandles = (state.setupType === 'OPEN_LOW_DRIVE' || state.setupType === 'OPEN_HIGH_DRIVE') ? 4 : 2;
         const timeframeMs = entryTf.minutes * 60 * 1000;
-        const elapsed = now.getTime() - state.setupTimestamp!;
+        // Counted from the close of the candle the setup was detected on, so "2 candles" really means the next two
+        // candles (a crossover found one or two candles late gets its full window instead of expiring at once).
+        const armedAt = state.setupArmedAt ?? (state.setupTimestamp! + timeframeMs);
+        const elapsed = now.getTime() - armedAt;
         if (elapsed > maxWaitCandles * timeframeMs) {
           this.log(state, `⏳ Setup on [${activeSym}] expired (${maxWaitCandles} candles passed without trigger). Resetting.`);
           if (state.isAutoMode && activeSym) {
@@ -1400,6 +1416,7 @@ export class EmaVwapCrossoverEngine {
                 state.confirmationLow = null;
                 state.invalidationPrice = setup.slPrice;
                 state.setupTimestamp = setupTimeMs!;
+                state.setupArmedAt = closedCandle.date.getTime() + entryTf.minutes * 60 * 1000;
                 this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger High: ₹${(setup.triggerHigh || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}. Monitoring for trigger...`);
 
                 // Instant execution check if already at/above trigger high:
@@ -1419,6 +1436,7 @@ export class EmaVwapCrossoverEngine {
                 state.confirmationLow = setup.triggerLow;
                 state.invalidationPrice = setup.slPrice;
                 state.setupTimestamp = setupTimeMs!;
+                state.setupArmedAt = closedCandle.date.getTime() + entryTf.minutes * 60 * 1000;
                 this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger Low: ₹${(setup.triggerLow || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}. Monitoring for trigger...`);
 
                 // Instant execution check if already at/below trigger low:
@@ -1458,6 +1476,14 @@ export class EmaVwapCrossoverEngine {
     if (state.entryTriggered || state.isPlacingTrade) {
       this.log(state, `⛔ Strategy already has an active open position (${state.entryTriggered}) or order in-flight. Skipping 2nd trade.`);
       return;
+    }
+    if (!triggerTime) {
+      const rejectedSym = state.activeSymbol || config.symbol;
+      const blockedUntil = state.rejectedSymbols?.get(rejectedSym);
+      if (blockedUntil && Date.now() < blockedUntil) {
+        this.log(state, `⏭ ${rejectedSym}: skipping ${side} — Zerodha refused an entry in this stock earlier (blocked until ${this.formatTime(new Date(blockedUntil))}).`);
+        return;
+      }
     }
     // Setups may trigger at ANY time of the session. The only limits: an optional user-set entryCutoffTime, and a hard
     // technical stop at 15:00 IST because every position is force-squared-off at 15:05 (an entry after 15:00 could only pay costs).
@@ -1782,6 +1808,7 @@ export class EmaVwapCrossoverEngine {
             if (nrmlAffordableQty < 1 || liveCash < entry) {
               this.log(state, `❌ NRML Fallback aborted: Available cash ₹${liveCash.toFixed(2)} is insufficient to buy 1 share of ${symbol} at ₹${entry.toFixed(2)}.`);
               if (entryId) state.tradesPlacedToday = Math.max(0, state.tradesPlacedToday - 1);
+              this.blockRejectedSymbol(state, symbol, rejectReason);
               return;
             }
 
@@ -1818,6 +1845,7 @@ export class EmaVwapCrossoverEngine {
                 } else if (status === 'REJECTED' || status === 'CANCELLED') {
                   this.log(state, `❌ NRML Entry order ${entryId} was ${status}: ${nrmlOrder.status_message || 'Order rejected by broker'}`);
                   state.tradesPlacedToday = Math.max(0, state.tradesPlacedToday - 1);
+                  this.blockRejectedSymbol(state, symbol, `${rejectReason} / NRML: ${nrmlOrder.status_message || status}`);
                   return;
                 } else {
                   this.log(state, `⏳ NRML Entry order ${entryId} is ${status} (0 filled so far). Monitoring for fills...`);
@@ -1828,6 +1856,7 @@ export class EmaVwapCrossoverEngine {
             } catch (nrmlErr: any) {
               this.log(state, `❌ NRML Fallback order failed: ${nrmlErr.message}`);
               if (!initialOrderError) state.tradesPlacedToday = Math.max(0, state.tradesPlacedToday - 1);
+              this.blockRejectedSymbol(state, symbol, `${rejectReason} / NRML: ${nrmlErr.message}`);
               return;
             }
           }
@@ -1837,6 +1866,7 @@ export class EmaVwapCrossoverEngine {
           if (!initialOrderError && entryId) {
             state.tradesPlacedToday = Math.max(0, state.tradesPlacedToday - 1);
           }
+          this.blockRejectedSymbol(state, symbol, rejectReason);
           return;
         }
       }
@@ -1970,7 +2000,9 @@ export class EmaVwapCrossoverEngine {
 
     const symbol = state.activeSymbol || state.config.symbol;
     const exchange = state.config.exchange;
-    const kite = client['kite'];
+    // A paper position recovered after a restart without a Zerodha login has no client: it is still adopted and
+    // watched (prices arrive once a session exists); only live-order calls need `kite`.
+    const kite = client?.['kite'] ?? null;
 
     // Dynamically subscribe the traded symbol to the WebSocket
     try {
@@ -1986,7 +2018,8 @@ export class EmaVwapCrossoverEngine {
 
     const unsubscribe = this.tickerService.registerListener(async (ticks) => {
       // Process ticks for our symbol (or exchange prefixed symbol)
-      const currentPrice = ticks[symbol] || ticks[`${exchange}:${symbol}`] || ticks[`NSE:${symbol}`];
+      // Exchange-prefixed key first: the bare key can carry another exchange's price (BSE listing of the same stock).
+      const currentPrice = ticks[`${exchange || 'NSE'}:${symbol}`] || ticks[symbol];
       if (!currentPrice || !state.entryTriggered || isExiting || state.isExiting) return;
 
       const now = Date.now();
@@ -2261,6 +2294,8 @@ export class EmaVwapCrossoverEngine {
         const isNearBoundary = isLong
           ? (currentPrice <= state.stopLossPrice! || currentPrice >= state.targetPrice!)
           : (currentPrice >= state.stopLossPrice! || currentPrice <= state.targetPrice!);
+        const isSlBreached = isLong ? currentPrice <= state.stopLossPrice! : currentPrice >= state.stopLossPrice!;
+        if (!isSlBreached) state.slBreachAt = null;
 
         if (isNearBoundary) {
           if (isExiting) return;
@@ -2290,6 +2325,20 @@ export class EmaVwapCrossoverEngine {
           } catch (e: any) {
             this.logger.error(`[RT] Order check error: ${e.message}`);
           }
+          // Gap through the stop: the exchange SL is a LIMIT a few ticks past its trigger, so a fast move can jump
+          // the limit and leave it unfilled. If price stays beyond the SL for the grace period, exit at market.
+          if (isSlBreached) {
+            if (!state.slBreachAt) {
+              state.slBreachAt = now;
+            } else if (now - state.slBreachAt >= SL_BREACH_GRACE_MS) {
+              this.log(state, `🛑 ${symbol} ₹${currentPrice.toFixed(2)} has been beyond the SL ₹${state.stopLossPrice!.toFixed(2)} for ${Math.round((now - state.slBreachAt) / 1000)}s and the broker SL has not filled — exiting at market.`);
+              state.slBreachAt = null;
+              this.stopRealtimeMonitor(state);
+              await this.exitPosition(state, client, currentPrice, 'SL');
+              await this.persistLogs(state);
+              return;
+            }
+          }
           isExiting = false;
         }
       }
@@ -2315,6 +2364,38 @@ export class EmaVwapCrossoverEngine {
     });
 
     state.tickerUnsubscribe = unsubscribe;
+  }
+
+  /**
+   * Zerodha refused a new entry in this stock. MIS blocked for the stock (or another product restriction) holds all
+   * day, so it is skipped until tomorrow; any other refusal (margin, a transient RMS rule) skips it for 15 minutes.
+   * Applies to the scanner (auto mode) and to placeTrade (any mode), so the same refused order is not sent again.
+   */
+  private blockRejectedSymbol(state: StrategyState, symbol: string, reason: string) {
+    if (!symbol) return;
+    const allDay = /\bMIS\b|blocked|not allowed|product/i.test(reason || '');
+    const until = allDay
+      ? new Date(`${getIstDateStr(new Date())}T23:59:59.999+05:30`).getTime()
+      : Date.now() + 15 * 60 * 1000;
+    if (!state.rejectedSymbols) state.rejectedSymbols = new Map();
+    state.rejectedSymbols.set(symbol, until);
+    this.log(state, `⏸ ${symbol} skipped ${allDay ? 'for the rest of the day' : 'for 15 minutes'} after Zerodha refused the entry${reason ? ` (${reason})` : ''}.`);
+  }
+
+  /** The strategy's own Zerodha position row: its exchange and product (a manual CNC/BSE trade in the stock is another row). */
+  private brokerMatch(state: StrategyState): { exchange: string; product: string } {
+    return { exchange: state.config.exchange || 'NSE', product: (state.config as any).product ?? 'MIS' };
+  }
+
+  /** Symbols the scanner must not pick: post-exit / expired-setup cooldowns and broker-refused stocks. */
+  private excludedSymbols(state: StrategyState): Set<string> {
+    const out = new Set<string>(state.cooldownSymbols?.keys() || []);
+    const nowMs = Date.now();
+    for (const [sym, until] of state.rejectedSymbols ?? []) {
+      if (nowMs < until) out.add(sym);
+      else state.rejectedSymbols!.delete(sym);
+    }
+    return out;
   }
 
   /**
@@ -2480,6 +2561,17 @@ export class EmaVwapCrossoverEngine {
             }
           }
 
+          // The entry ended (rejected by the exchange/RMS after the first check, or cancelled outside the engine) with
+          // nothing filled: there is no position. Forget it instead of waiting on it for the rest of the day.
+          if ((status === 'REJECTED' || status === 'CANCELLED') && filled === 0 && !((state.executedQty || 0) > 0)) {
+            const reason = entryOrder.status_message || status;
+            const sym = state.activeSymbol || state.config.symbol;
+            this.clearUnfilledEntry(state);
+            this.log(state, `❌ Entry order ${entryOrder.order_id} ${status} with nothing filled${reason ? `: ${reason}` : ''} — not counted as a trade (${state.tradesPlacedToday}/${state.config.maxTradesPerDay}).`);
+            if (status === 'REJECTED') this.blockRejectedSymbol(state, sym, reason);
+            return;
+          }
+
           // Timeout check: If entry order is >15s old and still OPEN / partial, cancel remainder
           const orderAgeMs = Date.now() - (state.setupTimestamp || 0);
           if (orderAgeMs > 15000 && (status === 'OPEN' || status === 'TRIGGER PENDING')) {
@@ -2604,6 +2696,18 @@ export class EmaVwapCrossoverEngine {
     state.currentPnlRs = pnlRs;
     state.currentPnlPct = pnlPct;
     state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
+
+    // 35-minute stagnation time-stop. The websocket listener runs it on every tick; while the feed is silent it runs
+    // here on the polled price instead, so it keeps working through a feed reconnect.
+    if (isWebSocketStale && state.entryTime && Date.now() - new Date(state.entryTime).getTime() >= 35 * 60 * 1000 && Math.abs(pnlPct) < 0.25) {
+      this.log(state, `⏱ [STAGNATION EXIT] ${symbol} has remained flat (< 0.25% move) for 35+ mins. Auto-squaring off near breakeven (P&L: ₹${pnlRs.toFixed(2)}) to liberate margin for active momentum leaders!`);
+      if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
+      state.cooldownSymbols.set(symbol, Date.now() + 30 * 60 * 1000);
+      this.stopRealtimeMonitor(state);
+      await this.exitPosition(state, client, currentPrice, 'FORCE_CLOSE');
+      await this.persistLogs(state);
+      return;
+    }
 
     const targetThresholdRs = state.config.targetRs || 500;
     const isTarget1Reached = isLong ? (currentPrice >= state.targetPrice!) : (currentPrice <= state.targetPrice!);
@@ -2878,7 +2982,7 @@ export class EmaVwapCrossoverEngine {
           let isManuallyClosed = false;
           let marketExitQty = remainingQtyToExit;
           try {
-            const exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger);
+            const exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger, this.brokerMatch(state));
             if (!exitSafety.safe) {
               isManuallyClosed = true;
               this.log(state, `ℹ [AUTO-SYNC] ${symbol} was already squared off on Zerodha (Broker Qty: ${exitSafety.brokerQty}). Skipping duplicate exit order to prevent unintended naked position.`);
@@ -2914,7 +3018,7 @@ export class EmaVwapCrossoverEngine {
         if (kite && kite.getPositions && !state.isPaperTrade) {
           try {
             await new Promise(r => setTimeout(r, 600)); // Allow exchange match to settle
-            const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger);
+            const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger, this.brokerMatch(state));
             if (finalPos.isOpen && finalPos.netQty !== 0) {
               const orphanSide = finalPos.netQty > 0 ? 'SELL' : 'BUY';
               const orphanQty = Math.abs(finalPos.netQty);
@@ -3056,7 +3160,7 @@ export class EmaVwapCrossoverEngine {
         try {
           const kite = client['kite'];
           await new Promise(r => setTimeout(r, 600));
-          const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger);
+          const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger, this.brokerMatch(state));
           if (!finalPos.isOpen || finalPos.netQty === 0) {
             const approxExitPrice = state.currentLtp || exitPrice || cachedEntryPrice;
             const tradePnl = (cachedEntryPrice > 0 && approxExitPrice > 0)
@@ -3516,7 +3620,7 @@ export class EmaVwapCrossoverEngine {
         }
       } catch { }
 
-      const excluded = new Set(state.cooldownSymbols?.keys() || []);
+      const excluded = this.excludedSymbols(state);
       const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 12, excluded, (state.config as any).minStockPrice || 30);
       if (candidates.length === 0) return false;
 
@@ -4421,7 +4525,7 @@ export class EmaVwapCrossoverEngine {
       let fillPrice = price;
       if (!state.isPaperTrade) {
         if (!kite) return;
-        const safety = await isSafeToExit(kite, symbol, exitSide, this.logger);
+        const safety = await isSafeToExit(kite, symbol, exitSide, this.logger, this.brokerMatch(state));
         if (!safety.safe || (safety.brokerQty && Math.abs(safety.brokerQty) < totalQty)) {
           state.partialBooked = true;
           this.log(state, `ℹ [PARTIAL BOOKING] Skipped: broker position (${safety.brokerQty ?? 0}) does not match the expected ${totalQty} share(s).`);
