@@ -11,7 +11,7 @@ import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit } fr
 import { EmaVwapOptionsConfig } from './dto/strategy.dto';
 import { calculateEMA, calculateVWAP, Candle, filterClosedCandles, findLatestEmaVwapCrossToday, getIstDateStr, getIstHhmm, isInsideCandle } from './emavwap-signals';
 import { computeAtmPcr, computeFuturesOiBuildup, derivativesExchange, expiryDateStr, IndexUnderlying, indexOptionChain, optionUnderlying, strikeStepNear } from './option-chain-sentiment';
-import { findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
+import { countTodaysTradesForEntry, findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
 import { logSignal } from './signal-logger';
 
 /**
@@ -361,7 +361,7 @@ export class EmaVwapOptionsEngine {
       const notice = protectionNotice(pos);
       if (notice) this.log(state, notice);
 
-      if (!state.isPaperTrade && client && !pos.slOrderId) await this.armStopLoss(state, client);
+      if (!state.isPaperTrade && client && !pos.slOrderId) await this.armStopLoss(state);
       return true;
     } catch (err: any) {
       if (err instanceof PositionUnknownError) {
@@ -858,6 +858,20 @@ export class EmaVwapOptionsEngine {
       return;
     }
 
+    // Hard daily cap: re-count today's trades from Zerodha's order book (paper: saved orders) before every entry,
+    // so a counter lost to a restart can never allow an extra trade. Unreadable = no entry.
+    const tradesToday = await countTodaysTradesForEntry({ prisma: this.prisma, factory: this.factory, strategyId: state.strategyId, brokerAccountId: state.brokerAccountId, isPaper: state.isPaperTrade });
+    if (tradesToday === null) {
+      this.log(state, `⛔ Could not verify today's trade count (Zerodha and DB unreadable) — skipping ${c.symbol} to stay within the ${cfg.maxTradesPerDay}-trade limit.`);
+      return;
+    }
+    if (tradesToday >= cfg.maxTradesPerDay) {
+      state.tradesToday = Math.max(state.tradesToday, tradesToday);
+      state.completeReason = `⛔ Max ${cfg.maxTradesPerDay} trades already taken today (re-checked against Zerodha / saved orders). Strategy completed.`;
+      this.log(state, `⛔ Daily trade limit reached: ${tradesToday}/${cfg.maxTradesPerDay} trades already taken today. Skipping ${c.symbol}.`);
+      return;
+    }
+
     const refEntry = Math.max(ltp, setup.entry);
     const riskPerUnit = refEntry - setup.sl;
     const lotRisk = riskPerUnit * c.lotSize;
@@ -931,7 +945,7 @@ export class EmaVwapOptionsEngine {
       await this.recordPaperOrder(state, c, 'SELL', p.qty, p.sl, `${fill.orderId}_SL`, 'SL', 'OPEN', p.sl);
       p.slOrderId = `${fill.orderId}_SL`;
     } else {
-      await this.armStopLoss(state, client);
+      await this.armStopLoss(state);
       if (!p.slOrderId) {
         this.log(state, `🚨 Broker SL could not be placed. Flattening the position now.`);
         await this.exitPosition(state, client, 'NO_PROTECTION', state.legs[c.type].ltp ?? fill.price);
@@ -1011,6 +1025,8 @@ export class EmaVwapOptionsEngine {
         state.lastBrokerPosCheck = now.getTime();
         const pos = await getLiveBrokerPosition(kite, p.contract.symbol, this.logger);
         if (!pos.isOpen) {
+          // A manual exit in Kite leaves the SL sell working; if it later triggered it would open a short.
+          if (p.slOrderId) await client.cancelOrder(p.slOrderId).catch(() => undefined);
           const exit = await getCompletedBrokerExitDetails(kite, p.contract.symbol, p.slOrderId, null, 'SELL', this.logger);
           const px = exit.found && exit.exitPrice > 0 ? exit.exitPrice : (leg.ltp ?? p.entryPrice);
           this.log(state, `ℹ [AUTO-SYNC] ${p.contract.symbol} is flat at the broker (closed outside the engine) — exit ₹${px.toFixed(2)}${exit.found ? ` (order ${exit.orderId})` : ' (last price; exit order not found)'}.`);
@@ -1153,7 +1169,7 @@ export class EmaVwapOptionsEngine {
   }
 
   /** Places the exchange SL-limit sell for the open quantity (two attempts). */
-  private async armStopLoss(state: EngineState, client: any) {
+  private async armStopLoss(state: EngineState) {
     const p = state.position!;
     const c = p.contract;
     const trigger = roundDown(p.sl, c.tickSize);
@@ -1182,7 +1198,7 @@ export class EmaVwapOptionsEngine {
       return;
     }
     if (!p.slOrderId) {
-      await this.armStopLoss(state, client);
+      await this.armStopLoss(state);
       return;
     }
     try {
@@ -1198,7 +1214,7 @@ export class EmaVwapOptionsEngine {
         return;
       }
       p.slOrderId = null;
-      await this.armStopLoss(state, client);
+      await this.armStopLoss(state);
       if (!p.slOrderId) this.log(state, `🚨 ${c.symbol} has NO broker stop-loss now. The engine still exits on the SL price; watch it in Kite.`);
     }
   }
@@ -1241,6 +1257,14 @@ export class EmaVwapOptionsEngine {
       await sleep(700);
       safety = await isSafeToExit(kite, c.symbol, 'SELL', this.logger);
     }
+    if (safety.unknown) {
+      // Unreadable is not flat (the SL was just cancelled): put the stop back and retry the exit.
+      p.retryExit = reason;
+      p.slOrderId = null;
+      this.log(state, `⚠ Zerodha positions for ${c.symbol} could not be read — exit not sent. Re-arming the SL and retrying.`);
+      await this.armStopLoss(state);
+      return;
+    }
     if (!safety.safe) {
       const exit = await getCompletedBrokerExitDetails(kite, c.symbol, p.slOrderId, null, 'SELL', this.logger);
       const px = exit.found && exit.exitPrice > 0 ? exit.exitPrice : refPrice;
@@ -1257,7 +1281,7 @@ export class EmaVwapOptionsEngine {
       this.log(state, `❌ Exit order for ${c.symbol} failed: ${e?.message || e}. Re-arming the SL and retrying.`);
       p.retryExit = reason;
       p.slOrderId = null;
-      await this.armStopLoss(state, client);
+      await this.armStopLoss(state);
       return;
     }
     const o = await this.awaitOrder(client, orderId, 5000);
@@ -1276,7 +1300,7 @@ export class EmaVwapOptionsEngine {
       p.slOrderId = null;
       p.retryExit = reason;
       this.log(state, `🚨 ${c.symbol} not confirmed flat after the exit order (${o?.status ?? 'status unknown'}, broker qty ${unreadable ? 'unreadable' : after.netQty}). Re-arming the SL for ${remaining} qty and retrying.`);
-      await this.armStopLoss(state, client);
+      await this.armStopLoss(state);
       return;
     }
 

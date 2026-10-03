@@ -127,7 +127,7 @@ export async function isSafeToExit(
   intendedExitSide: 'BUY' | 'SELL',
   logger?: Logger,
   match?: PositionMatch
-): Promise<{ safe: boolean; brokerQty: number; reason?: string }> {
+): Promise<{ safe: boolean; brokerQty: number; reason?: string; unknown?: boolean }> {
   if (!kite || !kite.getPositions) {
     // If no broker client (e.g. paper trading), allow exit
     return { safe: true, brokerQty: 0 };
@@ -135,6 +135,10 @@ export async function isSafeToExit(
 
   const status = await getLiveBrokerPosition(kite, symbol, logger, match);
   const qty = status.netQty;
+  // The position book could not be read: not safe to send an exit, but not proof of "flat" either.
+  if (status.isOpen && qty === 0) {
+    return { safe: false, brokerQty: 0, unknown: true, reason: `Position book for ${symbol} could not be read` };
+  }
 
   if (intendedExitSide === 'SELL') {
     // Exiting a LONG: requires positive net quantity on broker

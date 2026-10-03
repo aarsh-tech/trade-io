@@ -355,6 +355,7 @@ function mayHaveFilled(status: string, filledQty: number): boolean {
  * cap. If the broker is unreadable, every entry row that may have filled counts, so the cap errs
  * towards stopping, never towards an extra trade.
  * PAPER rows are written COMPLETE, so they are read as saved.
+ * `strict`: a DB read error throws instead of reading as "no orders" (the entry gate must never see 0 by accident).
  */
 export async function recoverTodaysTrades(args: {
   prisma: PrismaService;
@@ -362,6 +363,7 @@ export async function recoverTodaysTrades(args: {
   strategyId: string;
   isPaper: boolean;
   brokerAccount: any | null;
+  strict?: boolean;
 }): Promise<RecoveredDay> {
   const { prisma, strategyId, isPaper } = args;
   const rows: any[] = await prisma.order
@@ -369,7 +371,10 @@ export async function recoverTodaysTrades(args: {
       where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, isPaperTrade: isPaper },
       orderBy: { createdAt: 'asc' },
     })
-    .catch(() => []);
+    .catch((e: any) => {
+      if (args.strict) throw e;
+      return [];
+    });
 
   if (isPaper) {
     return { ...tallyOrders(rows.filter((o) => o.status === 'COMPLETE')), source: 'DB' };
@@ -408,6 +413,27 @@ export async function recoverTodaysTrades(args: {
   const trades = rows.filter((o) => o.tag === entryTag && mayHaveFilled(o.status, Number(o.filledQty) || 0)).length;
   const tally = tallyOrders(rows.filter((o) => o.status === 'COMPLETE'));
   return { ...tally, trades: Math.max(trades, tally.trades), source: 'DB' };
+}
+
+/**
+ * Entry gate for the daily trade cap: today's trades re-counted from the broker's order book (live) or saved orders
+ * (paper) right before an entry, so the cap holds even when an engine's in-memory counter was lost to a restart.
+ * Returns the count, or null when it cannot be read (the caller must then not enter).
+ */
+export async function countTodaysTradesForEntry(args: {
+  prisma: PrismaService;
+  factory: BrokerClientFactory;
+  strategyId: string;
+  brokerAccountId: string;
+  isPaper: boolean;
+}): Promise<number | null> {
+  try {
+    const brokerAccount = args.isPaper ? null : await args.prisma.brokerAccount.findUnique({ where: { id: args.brokerAccountId } });
+    const day = await recoverTodaysTrades({ prisma: args.prisma, factory: args.factory, strategyId: args.strategyId, isPaper: args.isPaper, brokerAccount, strict: true });
+    return day.trades;
+  } catch {
+    return null;
+  }
 }
 
 /** Round-trips in saved COMPLETE order rows: a trade opens whenever a symbol's position leaves zero. */
