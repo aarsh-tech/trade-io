@@ -18,6 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Breakout15MinEngine } from './breakout15min.engine';
 import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { EmaVwapOptionsEngine } from './emavwap-options.engine';
+import { StocksInPlayEngine } from './stocks-in-play.engine';
 import { StockOptionsBuyingEngine } from './stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from './nifty-options-scalper.engine';
 import { GammaBlastExpiryEngine } from './gamma-blast-expiry.engine';
@@ -153,6 +154,7 @@ export class StrategyGateway implements OnGatewayConnection, OnGatewayDisconnect
       if (type === 'BREAKOUT_15MIN') return this.moduleRef.get(Breakout15MinEngine, { strict: false });
       if (type === 'EMA_VWAP_CROSSOVER' || type === 'EMA_RSI_OPTIONS' || type === 'DAILY_SCALPER') return this.moduleRef.get(EmaVwapCrossoverEngine, { strict: false });
       if (type === 'EMA_VWAP_OPTIONS') return this.moduleRef.get(EmaVwapOptionsEngine, { strict: false });
+      if (type === 'STOCKS_IN_PLAY') return this.moduleRef.get(StocksInPlayEngine, { strict: false });
       if (type === 'STOCK_OPTIONS_BUYING') return this.moduleRef.get(StockOptionsBuyingEngine, { strict: false });
       if (type === 'NIFTY_OPTIONS_SCALPER') return this.moduleRef.get(NiftyOptionsScalperEngine, { strict: false });
       if (type === 'GAMMA_BLAST_EXPIRY') return this.moduleRef.get(GammaBlastExpiryEngine, { strict: false });

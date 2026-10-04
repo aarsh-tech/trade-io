@@ -796,6 +796,7 @@ function StrategyCard({
   const is15Min = s.type === "BREAKOUT_15MIN";
   const isEmaVwap = s.type === "EMA_VWAP_CROSSOVER";
   const isEmaVwapOptions = s.type === "EMA_VWAP_OPTIONS";
+  const isStocksInPlay = s.type === "STOCKS_IN_PLAY";
   const isNiftyScalper = s.type === "NIFTY_OPTIONS_SCALPER";
   const isStockOptions = s.type === "STOCK_OPTIONS_BUYING";
   const isGammaBlast = s.type === "GAMMA_BLAST_EXPIRY";
@@ -804,7 +805,7 @@ function StrategyCard({
   const paper = Boolean(s.isPaperTrade ?? cfg.isPaperTrade);
   const pnl = typeof s.todayPnl === "number" ? s.todayPnl : null;
 
-  const stopLossText = isEmaVwapOptions
+  const stopLossText = isEmaVwapOptions || isStocksInPlay
     ? `Max ₹${cfg.stopLossRs ?? 0}/trade`
     : isStockOptions
       ? "Breakeven @ T1"
@@ -822,7 +823,9 @@ function StrategyCard({
                   ? `₹${cfg.stopLossRs}`
                   : "Dynamic";
 
-  const targetText = isEmaVwapOptions
+  const targetText = isStocksInPlay
+    ? "Hold to 15:05"
+    : isEmaVwapOptions
     ? `Half at ${cfg.partialTargetR ?? 2}R + 15-EMA`
     : isStockOptions
       ? cfg.target1RR && cfg.target2RR

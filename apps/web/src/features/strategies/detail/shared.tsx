@@ -29,6 +29,7 @@ const TYPE_LABELS: Record<string, string> = {
   BREAKOUT_15MIN: "15-Min Breakout",
   EMA_VWAP_CROSSOVER: "15-EMA & VWAP",
   EMA_VWAP_OPTIONS: "EMA-VWAP Index Options",
+  STOCKS_IN_PLAY: "Stocks-in-Play Breakout",
   DAILY_SCALPER: "Daily Scalper",
 };
 

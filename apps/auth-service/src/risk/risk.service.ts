@@ -12,6 +12,7 @@ import { PositionFlattener } from '../order-gateway/position-flattener.service';
 import { Breakout15MinEngine } from '../strategy/breakout15min.engine';
 import { EmaVwapCrossoverEngine } from '../strategy/emavwap.engine';
 import { EmaVwapOptionsEngine } from '../strategy/emavwap-options.engine';
+import { StocksInPlayEngine } from '../strategy/stocks-in-play.engine';
 import { StockOptionsBuyingEngine } from '../strategy/stock-options-buying.engine';
 import { NiftyOptionsScalperEngine } from '../strategy/nifty-options-scalper.engine';
 import { GammaBlastExpiryEngine } from '../strategy/gamma-blast-expiry.engine';
@@ -34,6 +35,8 @@ export class RiskService {
     private readonly emaVwapEngine: EmaVwapCrossoverEngine,
     @Inject(forwardRef(() => EmaVwapOptionsEngine))
     private readonly emaVwapOptionsEngine: EmaVwapOptionsEngine,
+    @Inject(forwardRef(() => StocksInPlayEngine))
+    private readonly stocksInPlayEngine: StocksInPlayEngine,
     @Inject(forwardRef(() => StockOptionsBuyingEngine))
     private readonly stockOptionsEngine: StockOptionsBuyingEngine,
     @Inject(forwardRef(() => NiftyOptionsScalperEngine))
@@ -403,6 +406,7 @@ export class RiskService {
     if (type === 'BREAKOUT_15MIN') return this.breakoutEngine;
     if (type === 'EMA_VWAP_CROSSOVER') return this.emaVwapEngine;
     if (type === 'EMA_VWAP_OPTIONS') return this.emaVwapOptionsEngine;
+    if (type === 'STOCKS_IN_PLAY') return this.stocksInPlayEngine;
     if (type === 'STOCK_OPTIONS_BUYING') return this.stockOptionsEngine;
     if (type === 'NIFTY_OPTIONS_SCALPER') return this.niftyScalperEngine;
     if (type === 'GAMMA_BLAST_EXPIRY') return this.gammaBlastEngine;

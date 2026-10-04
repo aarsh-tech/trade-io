@@ -5,6 +5,7 @@ export enum StrategyTypeEnum {
   BREAKOUT_15MIN = 'BREAKOUT_15MIN',
   EMA_VWAP_CROSSOVER = 'EMA_VWAP_CROSSOVER',
   EMA_VWAP_OPTIONS = 'EMA_VWAP_OPTIONS',
+  STOCKS_IN_PLAY = 'STOCKS_IN_PLAY',
   EMA_RSI_OPTIONS = 'EMA_RSI_OPTIONS',
   DAILY_SCALPER = 'DAILY_SCALPER',
   STOCK_OPTIONS_BUYING = 'STOCK_OPTIONS_BUYING',
@@ -184,6 +185,20 @@ export interface EmaVwapOptionsConfig {
   partialTargetR?: number;             // book part of the position at this many R (default 2)
   partialBookFraction?: number;        // fraction of the lots booked there (default 0.5)
   useSameDayExpiry?: boolean;          // trade the contract expiring today (default false: on expiry day use the next expiry)
+  entryCutoffTime?: string;            // no new entries from this IST time (default '15:00'; square-off is 15:05)
+}
+
+export interface StocksInPlayConfig {
+  stopLossRs: number;                  // Max loss per trade (₹): qty = stopLossRs / stop distance, capped by capital
+  maxPositions?: number;               // positions open together and trades per day (default 2, max 5)
+  minRvol?: number;                    // first 5m candle volume vs its 10-session average (default 10)
+  stopAtrFraction?: number;            // stop distance as a fraction of the 14-day ATR (default 0.2)
+  minAvgValueCr?: number;              // min average daily traded value over 14 sessions, ₹ crore (default 25)
+  minPrice?: number;                   // min stock price (default ₹50)
+  allowShorts?: boolean;               // trade red first candles short (default true)
+  allowLongs?: boolean;                // trade green first candles long (default false: no edge in the backtest)
+  leverage?: number;                   // intraday leverage used for sizing (default 4, max 5)
+  maxCapital?: number;                 // live: cap on capital used; paper: capital (default ₹15,000)
   entryCutoffTime?: string;            // no new entries from this IST time (default '15:00'; square-off is 15:05)
 }
 

@@ -136,6 +136,30 @@ export function Step3RiskManagement({ form, set, errors }: Step3Props) {
               error={errorFor(errors, ["Max losses per day"])}
             />
           </div>
+        ) : t === "STOCKS_IN_PLAY" ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NumberField
+              label="Max loss per trade"
+              prefix={"₹"}
+              value={form.stopLossRs}
+              onChange={(v) => set("stopLossRs", v)}
+              min={1}
+              decimal
+              required
+              hint="Shares are sized so the stop loses at most this. Capital usually limits the size first."
+              error={errorFor(errors, ["Stop-loss"]) ?? (Number(form.stopLossRs) > 0 ? null : "Enter an amount above 0.")}
+            />
+            <NumberField
+              label="Capital to use"
+              prefix={"₹"}
+              value={form.sipMaxCapital}
+              onChange={(v) => set("sipMaxCapital", v)}
+              min={0}
+              decimal
+              hint="Optional cap. Live: at most your free Zerodha margin. Paper: blank means ₹15,000."
+              error={errorFor(errors, ["Max capital"])}
+            />
+          </div>
         ) : t === "EMA_VWAP_OPTIONS" ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <NumberField

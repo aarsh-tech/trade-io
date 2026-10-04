@@ -53,6 +53,25 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       useSameDayExpiry: form.evoUseSameDayExpiry === true,
       entryCutoffTime: form.evoEntryCutoffTime || "15:00",
     };
+  } else if (form.type === "STOCKS_IN_PLAY") {
+    config = {
+      symbol: "AUTO",
+      exchange: "NSE",
+      instrumentType: "STOCK",
+      product: "MIS",
+      stopLossRs: Number(form.stopLossRs),
+      maxPositions: Number(form.maxTradesPerDay || 2),
+      maxTradesPerDay: Number(form.maxTradesPerDay || 2),
+      minRvol: Number(form.sipMinRvol || 10),
+      stopAtrFraction: Number(form.sipStopAtr || 0.2),
+      minAvgValueCr: Number(form.sipMinAvgValueCr || 25),
+      minPrice: 50,
+      allowShorts: true,
+      allowLongs: form.sipAllowLongs === true,
+      leverage: Number(form.sipLeverage || 4),
+      ...(Number(form.sipMaxCapital) > 0 && { maxCapital: Number(form.sipMaxCapital) }),
+      entryCutoffTime: form.sipEntryCutoffTime || "15:00",
+    };
   } else if (form.type === "NIFTY_OPTIONS_SCALPER") {
     config = {
       symbol: form.symbol.trim(),

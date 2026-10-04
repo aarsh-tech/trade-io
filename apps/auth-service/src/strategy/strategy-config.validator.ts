@@ -47,6 +47,12 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['minSlBufferRs', 'Minimum SL buffer (₹)', 0, 1000, false],
   ['partialTargetR', 'Partial booking R-multiple', 0.5, 20, false],
   ['partialBookFraction', 'Partial booking fraction', 0.1, 1, false],
+  ['maxPositions', 'Max positions', 1, 5, true],
+  ['minRvol', 'Volume multiple (RVOL)', 0.5, 100, false],
+  ['stopAtrFraction', 'Stop (x ATR)', 0.05, 1, false],
+  ['minAvgValueCr', 'Min avg daily value (₹ Cr)', 0, 100_000, false],
+  ['minPrice', 'Min stock price (₹)', 1, 1_000_000, false],
+  ['leverage', 'Leverage', 1, 5, false],
   ['scanDepth', 'Stocks checked per scan', 1, 25, true],
 ];
 
@@ -63,6 +69,7 @@ const REQUIRED_BY_TYPE: Record<string, string[]> = {
   BREAKOUT_15MIN: ['symbol', 'stopLossRs', 'targetRs'],
   EMA_VWAP_CROSSOVER: ['symbol', 'stopLossRs', 'targetRs'],
   EMA_VWAP_OPTIONS: ['symbol', 'stopLossRs'],
+  STOCKS_IN_PLAY: ['stopLossRs'],
   EMA_RSI_OPTIONS: ['symbol', 'stopLossRs', 'targetRs'],
   STOCK_OPTIONS_BUYING: ['maxCapital', 'riskRewardRatio'],
   DAILY_SCALPER: ['symbol'],

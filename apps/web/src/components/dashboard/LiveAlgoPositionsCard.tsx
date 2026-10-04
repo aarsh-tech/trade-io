@@ -717,7 +717,9 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                                   ? "15-EMA & VWAP"
                                   : isEmaVwapOptions
                                     ? "EMA-VWAP Options"
-                                    : s.type}
+                                    : s.type === "STOCKS_IN_PLAY"
+                                      ? "Stocks in Play"
+                                      : s.type}
                         </span>
                       </div>
 

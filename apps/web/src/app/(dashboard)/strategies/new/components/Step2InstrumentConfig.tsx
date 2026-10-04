@@ -378,6 +378,66 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
         </>
       )}
 
+      {/* ── STOCKS-IN-PLAY BREAKOUT: STOCK SELECTION AND TIMING ── */}
+      {form.type === "STOCKS_IN_PLAY" && (
+        <>
+          <Section
+            title="Which stocks it trades"
+            description="No symbol to pick. At 09:20 the strategy checks every NIFTY 500 and F&O stock and keeps the ones whose first 5-minute candle traded far above their usual opening volume (news, results, block deals)."
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <NumberField
+                label="Opening volume multiple"
+                value={form.sipMinRvol}
+                onChange={(v) => set("sipMinRvol", v)}
+                min={2}
+                decimal
+                hint="First candle volume vs its 10-day average. The backtest edge was in stocks at 10x or more; lower values trade more and earned less."
+              />
+              <NumberField
+                label="Max positions (= trades per day)"
+                value={form.maxTradesPerDay}
+                onChange={(v) => set("maxTradesPerDay", v)}
+                min={1}
+                hint="Positions can be open together; capital is split between them. 2 had the steadiest backtest."
+              />
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.sipAllowLongs === true}
+                  onChange={(e) => set("sipAllowLongs", e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+                />
+                <span>
+                  <span className="block text-xs font-semibold text-foreground">Also buy stocks whose first candle is green</span>
+                  <span className="block text-xs text-muted-foreground">Off by default: in 2 years of NSE data the long side earned about nothing after costs; the edge came from shorting red first candles.</span>
+                </span>
+              </label>
+            </div>
+          </Section>
+
+          <Section title="Timing" description="Entries happen the moment price breaks the first candle (shorts: its low). Every position is held until its stop or the 15:05 square-off.">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="No new entries from" hint="IST. Open positions are still managed until 15:05.">
+                {(a11y) => (
+                  <Input
+                    {...a11y}
+                    type="time"
+                    value={form.sipEntryCutoffTime}
+                    onChange={(e) => set("sipEntryCutoffTime", e.target.value)}
+                    className="font-semibold tabular-nums"
+                  />
+                )}
+              </Field>
+              <div className="rounded-lg border border-border bg-card p-3 text-xs text-muted-foreground">
+                <span className="block font-semibold text-foreground">Product: MIS (intraday)</span>
+                Short selling needs MIS. Stocks where Zerodha blocks MIS are skipped.
+              </div>
+            </div>
+          </Section>
+        </>
+      )}
+
       {/* ── STOCK OPTIONS BUYING: DEDICATED AUTO VS MANUAL STOCK SELECTION ── */}
       {form.type === "STOCK_OPTIONS_BUYING" && (
         <div className="space-y-4">
@@ -517,7 +577,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
       )}
 
       {/* ── STANDARD INSTRUMENT SELECTOR FOR OTHER STRATEGIES OR MANUAL MODE ── */}
-      {form.type !== "GAMMA_BLAST_EXPIRY" && form.type !== "EMA_VWAP_OPTIONS" && !(form.type === "STOCK_OPTIONS_BUYING" && form.sIsAutoStockSelect !== false && form.symbol === "AUTO") && (
+      {form.type !== "GAMMA_BLAST_EXPIRY" && form.type !== "EMA_VWAP_OPTIONS" && form.type !== "STOCKS_IN_PLAY" && !(form.type === "STOCK_OPTIONS_BUYING" && form.sIsAutoStockSelect !== false && form.symbol === "AUTO") && (
         <>
           <div className="space-y-3">
             <InstrumentSearch onSelect={selectInstrument} label="Search symbol (stock, option or future)" placeholder="e.g. RELIANCE, APOLLOHOSP, NIFTY 22000 CE" />

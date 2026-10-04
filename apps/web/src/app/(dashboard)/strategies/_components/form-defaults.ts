@@ -33,6 +33,13 @@ export function createDefaultForm(): StrategyFormState {
     evoPartialTargetR: "2",
     evoUseSameDayExpiry: false,
     evoEntryCutoffTime: "15:00",
+    sipMinRvol: "10",
+    sipStopAtr: "0.2",
+    sipMinAvgValueCr: "25",
+    sipAllowLongs: false,
+    sipLeverage: "4",
+    sipMaxCapital: "",
+    sipEntryCutoffTime: "15:00",
     emaFast: "9",
     emaSlow: "21",
     rsiPeriod: "14",
@@ -193,6 +200,16 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     evoPartialTargetR: str(c.partialTargetR, base.evoPartialTargetR),
     evoUseSameDayExpiry: c.useSameDayExpiry === true,
     evoEntryCutoffTime: str(c.entryCutoffTime, base.evoEntryCutoffTime),
+
+    // Stocks-in-Play ORB (max positions live in maxPositions; the form edits them as maxTradesPerDay)
+    ...(type === "STOCKS_IN_PLAY" && { maxTradesPerDay: str(c.maxPositions, base.maxTradesPerDay) }),
+    sipMinRvol: str(c.minRvol, base.sipMinRvol),
+    sipStopAtr: str(c.stopAtrFraction, base.sipStopAtr),
+    sipMinAvgValueCr: str(c.minAvgValueCr, base.sipMinAvgValueCr),
+    sipAllowLongs: c.allowLongs === true,
+    sipLeverage: str(c.leverage, base.sipLeverage),
+    sipMaxCapital: str(c.maxCapital, base.sipMaxCapital),
+    sipEntryCutoffTime: str(c.entryCutoffTime, base.sipEntryCutoffTime),
 
     // Nifty options scalper
     dsTargetPoints: str(c.targetPoints, base.dsTargetPoints),

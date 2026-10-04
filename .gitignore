@@ -38,3 +38,6 @@ backtest/backups/
 apps/auth-service/logs/
 backtest/results/v3/
 backtest/data/bin/
+# pipeline simulator: packed candle cache (sim/prep.js) and engine replay output
+backtest/sim/cache/
+backtest/sim/replay-*.json

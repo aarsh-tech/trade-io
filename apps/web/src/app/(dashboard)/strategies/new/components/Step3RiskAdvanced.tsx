@@ -779,6 +779,51 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
         </div>
       )}
 
+      {/* ── STOCKS-IN-PLAY BREAKOUT: STOP, LIQUIDITY AND LEVERAGE ── */}
+      {form.type === "STOCKS_IN_PLAY" && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-1.5">
+            <p className="text-xs font-semibold text-foreground">How a trade is managed</p>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              <li>Entry is a market order the moment price breaks the first candle&apos;s low (or high, for longs).</li>
+              <li>The stop-loss sits the distance below away from the fill and is placed on the exchange at once.</li>
+              <li>There is no target. A position exits at its stop or at the 15:05 square-off.</li>
+              <li>Expect about 2 losing trades for every winner; the winners are usually several times larger.</li>
+            </ul>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <NumberField
+              label="Stop distance"
+              suffix="x daily ATR"
+              decimal
+              min={0.05}
+              value={form.sipStopAtr}
+              onChange={(v) => set("sipStopAtr", v)}
+              hint="0.2 = a fifth of the stock's average daily range (14 days)."
+            />
+            <NumberField
+              label="Min avg daily value"
+              prefix={"₹"}
+              suffix="Cr"
+              decimal
+              min={0}
+              value={form.sipMinAvgValueCr}
+              onChange={(v) => set("sipMinAvgValueCr", v)}
+              hint="Skips thinly traded stocks, where fills slip more."
+            />
+            <NumberField
+              label="Leverage"
+              suffix="x"
+              decimal
+              min={1}
+              value={form.sipLeverage}
+              onChange={(v) => set("sipLeverage", v)}
+              hint="Used for sizing. Zerodha gives up to 5x MIS on most liquid stocks."
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── EMA-VWAP INDEX OPTIONS: STOP BUFFER AND EXITS ── */}
       {form.type === "EMA_VWAP_OPTIONS" && (
         <div className="space-y-4">

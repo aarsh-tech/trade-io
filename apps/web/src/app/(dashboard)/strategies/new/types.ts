@@ -1,6 +1,6 @@
 export interface StrategyFormState {
   name: string;
-  type: "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_VWAP_OPTIONS" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "NIFTY_OPTIONS_SCALPER" | "GAMMA_BLAST_EXPIRY" | "";
+  type: "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_VWAP_OPTIONS" | "STOCKS_IN_PLAY" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "NIFTY_OPTIONS_SCALPER" | "GAMMA_BLAST_EXPIRY" | "";
   // Common
   symbol: string;
   exchange: string;
@@ -35,6 +35,14 @@ export interface StrategyFormState {
   evoPartialTargetR: string;
   evoUseSameDayExpiry: boolean;
   evoEntryCutoffTime: string;
+  // Stocks-in-Play ORB (`stopLossRs` = max loss per trade, `maxTradesPerDay` = max positions)
+  sipMinRvol: string;
+  sipStopAtr: string;
+  sipMinAvgValueCr: string;
+  sipAllowLongs: boolean;
+  sipLeverage: string;
+  sipMaxCapital: string;
+  sipEntryCutoffTime: string;
   // EMA-RSI Options
   emaFast: string;
   emaSlow: string;

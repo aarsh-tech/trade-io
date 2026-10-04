@@ -71,6 +71,27 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
     },
   },
   {
+    type: "STOCKS_IN_PLAY",
+    label: "Stocks-in-Play Breakout",
+    tagline: "At 09:20 finds the stocks trading 10x their usual opening volume and shorts the break of their first 5-minute candle, holding until 15:05 unless stopped.",
+    risk: "High",
+    riskNote: "Most trades are small stopped-out losses; a few all-day moves carry the result. Losing weeks are normal.",
+    instrument: "Stocks (intraday, MIS, short selling)",
+    bestFor: "News and results days, with fixed rupee risk per trade",
+    timing: "09:20 to 15:00, square-off 15:05",
+    icon: Flame,
+    tile: "bg-loss-subtle text-loss border-loss/30",
+    defaultName: "Stocks-in-Play Breakout",
+    defaults: {
+      symbol: "AUTO",
+      exchange: "NSE",
+      instrumentType: "STOCK",
+      product: "MIS",
+      stopLossRs: "400",
+      maxTradesPerDay: "2",
+    },
+  },
+  {
     type: "BREAKOUT_15MIN",
     label: "15-Min Breakout",
     tagline: "Trades the break of the first 15-minute range, and reverses when a breakout turns out to be a trap.",
@@ -217,6 +238,11 @@ const PRESETS: Record<string, Record<PresetLevel, P>> = {
     Balanced: { stopLossRs: "3000", maxTradesPerDay: "2" },
     Aggressive: { stopLossRs: "5000", maxTradesPerDay: "3" },
   },
+  STOCKS_IN_PLAY: {
+    Conservative: { stopLossRs: "250", maxTradesPerDay: "1" },
+    Balanced: { stopLossRs: "400", maxTradesPerDay: "2" },
+    Aggressive: { stopLossRs: "600", maxTradesPerDay: "3" },
+  },
   GAMMA_BLAST_EXPIRY: {
     Conservative: { stopLossRs: "300", targetRs: "1000", maxTradesPerDay: "1" },
     Balanced: { stopLossRs: "500", targetRs: "1500", maxTradesPerDay: "2" },
@@ -301,6 +327,15 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
         perDay: perTrade ? perTrade * trades : null,
         targetPerTrade: null,
         basis: `Lots are sized so entry minus stop-loss stays within your max loss; a setup where 1 lot risks more is skipped. Gaps through the stop can lose a little more. Profit is not capped: half is booked at ${form.evoPartialTargetR || 2}R and the rest rides the 15-EMA.`,
+      };
+    }
+    case "STOCKS_IN_PLAY": {
+      const perTrade = n(form.stopLossRs);
+      return {
+        perTrade: perTrade || null,
+        perDay: perTrade ? perTrade * trades : null,
+        targetPerTrade: null,
+        basis: `Shares are sized so the stop (${form.sipStopAtr || 0.2} x the stock's daily ATR) loses at most your max loss, and capital allows (${form.sipLeverage || 4}x, split over ${trades || 2} positions), so most trades risk less. A gap through the stop can lose a little more. No target: winners run to 15:05.`,
       };
     }
     case "BREAKOUT_15MIN": {
