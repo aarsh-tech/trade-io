@@ -10,8 +10,10 @@ export interface StrategyFormState {
   stopLossRs: string;
   targetRs: string;
   exitExactAtTarget?: boolean;
-  /** EMA-VWAP stock exits: FULL = one volatility target | PARTIAL = book half at the target, rest trails | QUICK = book half at ~0.5R, rest trails */
-  targetMode?: "FULL" | "PARTIAL" | "QUICK";
+  /** EMA-VWAP stock exits: FULL = one volatility target | PARTIAL = book half at the target, rest trails | QUICK = book half at ~0.5R, rest trails | EMA = no target, all of it trails */
+  targetMode?: "FULL" | "PARTIAL" | "QUICK" | "EMA";
+  /** EMA-VWAP stocks: close a trade still within 0.25% of entry after this many minutes ("0" = off, default "35"). */
+  stagnationMinutes?: string;
   /** EMA-VWAP stocks: require a volume spike on the signal candle, judged against the stock's own history. */
   volumeFilter?: boolean;
   volumeStrictness?: "RELAXED" | "BALANCED" | "STRICT";

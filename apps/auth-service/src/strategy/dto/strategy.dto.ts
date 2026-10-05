@@ -150,10 +150,11 @@ export interface EmaVwapCrossoverConfig {
   minRvolFloor?: number;              // Dynamic gate: also require at least this multiple of the stock's own average (default: 1.5)
   minRvol?: number;                   // Fallback flat multiple vs. other days' same-time-slot volume, when a stock has no 10-session history yet (default: 2.5)
   trailingRvolFloor?: number;         // Last-resort flat multiple vs. today's own preceding candles, used only when no cross-day baseline exists at all (default: 1.3, kept low because the baseline is already inflated by the same trend it's checking)
-  targetMode?: 'FULL' | 'PARTIAL' | 'QUICK'; // Exit target (default FULL): FULL = one volatility target, no trailing | PARTIAL = book part at the volatility target, rest rides the 15-EMA candle-close exit | QUICK = book part at a small ~0.5R target, rest rides. Ignored when exitExactAtTarget (₹ target) is on.
+  targetMode?: 'FULL' | 'PARTIAL' | 'QUICK' | 'EMA'; // Exit target (default FULL): FULL = one volatility target, no trailing | PARTIAL = book part at the volatility target, rest rides the 15-EMA candle-close exit | QUICK = book part at a small ~0.5R target, rest rides | EMA = no target, the whole position rides the 15-EMA candle-close exit. Ignored when exitExactAtTarget (₹ target) is on.
   targetAtrMultiple?: number;         // FULL/PARTIAL first target = this x the stock's daily ATR% (default 0.5)
   quickTargetR?: number;              // QUICK first target in R multiples of the structural stop (default 0.5)
   partialBookFraction?: number;       // PARTIAL/QUICK: fraction of the position sold at the first target (default 0.5)
+  stagnationMinutes?: number;         // Close a trade still within 0.25% of entry after this many minutes (default 35, 0 = off)
   partialMoveSlToBreakeven?: boolean; // PARTIAL/QUICK: move the runner's stop to break-even after booking (default true)
   enableTickTrailExit?: boolean;      // Intra-candle EMA/VWAP trailing exits (default: OFF). OFF = exit only on a 5m candle CLOSE across the 15-EMA + structural SL
   enableDailyPnLLock?: boolean;       // One-and-Done rule: lock day on hitting profit target or max loss (default: true)

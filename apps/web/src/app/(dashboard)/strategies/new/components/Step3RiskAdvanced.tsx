@@ -3,7 +3,7 @@
 import React from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Shield, Target, Zap, TrendingUp, Info, Activity } from "lucide-react";
+import { Shield, Target, Zap, TrendingUp, Info, Activity, Timer } from "lucide-react";
 import { StrategyFormState } from "../types";
 import { NumberField } from "../../_components/form-ui";
 
@@ -952,11 +952,12 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 Targets are sized from each stock&apos;s own daily volatility (ATR), not a fixed number. The stop-loss stays at the structural swing level in every mode.
                 {form.exitExactAtTarget && " Turned off while the Fixed Rupee Target below is on."}
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Profit target mode">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Profit target mode">
                 {([
                   { value: "FULL", title: "Full exit", body: "One target at 0.5x the stock's daily range, whole position exits there. No trailing. Highest win rate in backtests." },
                   { value: "PARTIAL", title: "Partial booking", body: "Book half at that target, the other half rides until a 5m candle closes across the 15-EMA. Runner stop moves to break-even." },
                   { value: "QUICK", title: "Quick wins", body: "Book half at a small 0.5R target (hit about half the time), the rest rides the 15-EMA candle-close exit." },
+                  { value: "EMA", title: "Ride the 15-EMA", body: "No target and no half-booking. The whole position stays in until a 5m candle closes across the 15-EMA, the stop is hit, or 15:05. Best result in the 2-year backtest with the stagnation exit off." },
                 ] as const).map((opt) => {
                   const selected = (form.targetMode || "FULL") === opt.value && !form.exitExactAtTarget;
                   return (
@@ -971,6 +972,41 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                     >
                       <p className="text-xs font-semibold text-foreground">{opt.title}</p>
                       <p className="text-[11px] text-foreground/75 font-medium leading-relaxed mt-1">{opt.body}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Stagnation exit (EMA-VWAP stocks): time-stop for trades that go nowhere */}
+          {form.type === "EMA_VWAP_CROSSOVER" && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <Timer className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-sm font-semibold text-foreground">Stagnation Exit</span>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                Closes the trade if it is still within 0.25% of the entry price after this long. In the 2-year backtest a longer time (or off) did better: 35 min closed many trades near break-even before they moved.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Stagnation exit">
+                {([
+                  { value: "0", title: "Off" },
+                  { value: "35", title: "35 min" },
+                  { value: "60", title: "60 min" },
+                  { value: "120", title: "120 min" },
+                ] as const).map((opt) => {
+                  const selected = (form.stagnationMinutes ?? "35") === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => set("stagnationMinutes", opt.value)}
+                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
+                    >
+                      {opt.title}
                     </button>
                   );
                 })}

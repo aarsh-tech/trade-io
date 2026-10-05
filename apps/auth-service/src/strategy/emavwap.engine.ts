@@ -175,7 +175,8 @@ export class EmaVwapCrossoverEngine {
     const ignoredOptionSwitch = config.isOptionBuyingOnly === true;
     config.isOptionBuyingOnly = false;
     // FULL target mode = one volatility-based target with the exchange-side LIMIT order, no trailing and no EMA candle exit
-    // (reuses the fixed-target machinery). PARTIAL / QUICK keep trend-riding (15-EMA candle-close exit) for the runner.
+    // (reuses the fixed-target machinery). PARTIAL / QUICK keep trend-riding (15-EMA candle-close exit) for the runner;
+    // EMA rides the whole position on it.
     if (!config.exitExactAtTarget && (config.targetMode ?? 'FULL') === 'FULL') {
       config.enableProfitFloor = false;
       config.enableEmaCandleExit = false;
@@ -1640,7 +1641,7 @@ export class EmaVwapCrossoverEngine {
 
       // ── Volatility-based target (equity; FULL / PARTIAL / QUICK modes) ────────────
       const targetMode = this.getTargetMode(config);
-      if (targetMode === 'FULL' || targetMode === 'PARTIAL' || targetMode === 'QUICK') {
+      if (targetMode !== 'FIXED_RS') {
         const vt = this.calculateVolatilityTarget(entry, sl, finalSide, targetMode, config, state.dailyAtrPct, symbol);
         tgt = vt.targetPrice;
         state.logicalTargetReason = vt.reason;
@@ -2085,16 +2086,17 @@ export class EmaVwapCrossoverEngine {
         return;
       }
 
-      // ── 1.05 35-Minute Intraday Stagnation Exit (Time Stop for Chop Traps like LODHA) ────
-      if (state.entryTime && state.entryTriggered) {
+      // ── 1.05 Intraday Stagnation Exit (Time Stop for Chop Traps like LODHA; config.stagnationMinutes, default 35, 0 = off) ──
+      const stagnationMs = this.getStagnationMs(state.config);
+      if (stagnationMs !== null && state.entryTime && state.entryTriggered) {
         const entryDurationMs = now - new Date(state.entryTime).getTime();
-        // If position has been held for >= 35 minutes and has made < 0.25% move (stagnant dead chop)
-        if (entryDurationMs >= 35 * 60 * 1000 && Math.abs(pnlPct) < 0.25) {
+        // Held for the stagnation window and still within 0.25% of entry (stagnant dead chop)
+        if (entryDurationMs >= stagnationMs && Math.abs(pnlPct) < 0.25) {
           if (isExiting || state.isExiting) return;
           isExiting = true;
           this.log(
             state,
-            `⏱ [STAGNATION EXIT] ${symbol} has remained flat (< 0.25% move) for 35+ mins. Auto-squaring off near breakeven (P&L: ₹${pnlRs.toFixed(2)}) to liberate margin for active momentum leaders!`
+            `⏱ [STAGNATION EXIT] ${symbol} has remained flat (< 0.25% move) for ${Math.round(stagnationMs / 60000)}+ mins. Auto-squaring off near breakeven (P&L: ₹${pnlRs.toFixed(2)}) to liberate margin for active momentum leaders!`
           );
           if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
           state.cooldownSymbols.set(symbol, now + 30 * 60 * 1000); // 30 min cooldown
@@ -2323,10 +2325,11 @@ export class EmaVwapCrossoverEngine {
           return;
         }
       } else {
-        const isNearBoundary = isLong
-          ? (currentPrice <= state.stopLossPrice! || currentPrice >= state.targetPrice!)
-          : (currentPrice >= state.stopLossPrice! || currentPrice <= state.targetPrice!);
         const isSlBreached = isLong ? currentPrice <= state.stopLossPrice! : currentPrice >= state.stopLossPrice!;
+        // The target only counts when a broker target order exists (FULL / fixed-₹ modes). Trend-riding modes have none, and
+        // price can sit beyond their reference target for hours: polling the order book on every tick there is wasted calls.
+        const isPastTarget = !!state.targetOrderId && (isLong ? currentPrice >= state.targetPrice! : currentPrice <= state.targetPrice!);
+        const isNearBoundary = isSlBreached || isPastTarget;
         if (!isSlBreached) state.slBreachAt = null;
 
         if (isNearBoundary) {
@@ -2729,10 +2732,11 @@ export class EmaVwapCrossoverEngine {
     state.currentPnlPct = pnlPct;
     state.peakPnlRs = Math.max(state.peakPnlRs || 0, pnlRs);
 
-    // 35-minute stagnation time-stop. The websocket listener runs it on every tick; while the feed is silent it runs
-    // here on the polled price instead, so it keeps working through a feed reconnect.
-    if (isWebSocketStale && state.entryTime && Date.now() - new Date(state.entryTime).getTime() >= 35 * 60 * 1000 && Math.abs(pnlPct) < 0.25) {
-      this.log(state, `⏱ [STAGNATION EXIT] ${symbol} has remained flat (< 0.25% move) for 35+ mins. Auto-squaring off near breakeven (P&L: ₹${pnlRs.toFixed(2)}) to liberate margin for active momentum leaders!`);
+    // Stagnation time-stop (config.stagnationMinutes). The websocket listener runs it on every tick; while the feed is silent
+    // it runs here on the polled price instead, so it keeps working through a feed reconnect.
+    const stagnationMs = this.getStagnationMs(state.config);
+    if (isWebSocketStale && stagnationMs !== null && state.entryTime && Date.now() - new Date(state.entryTime).getTime() >= stagnationMs && Math.abs(pnlPct) < 0.25) {
+      this.log(state, `⏱ [STAGNATION EXIT] ${symbol} has remained flat (< 0.25% move) for ${Math.round(stagnationMs / 60000)}+ mins. Auto-squaring off near breakeven (P&L: ₹${pnlRs.toFixed(2)}) to liberate margin for active momentum leaders!`);
       if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
       state.cooldownSymbols.set(symbol, Date.now() + 30 * 60 * 1000);
       this.stopRealtimeMonitor(state);
@@ -4290,20 +4294,29 @@ export class EmaVwapCrossoverEngine {
   }
 
   /** Which exit-target mode applies. FIXED_RS = the ₹ target/SL mode. */
-  private getTargetMode(config: EmaVwapCrossoverConfig): 'FIXED_RS' | 'FULL' | 'PARTIAL' | 'QUICK' {
+  private getTargetMode(config: EmaVwapCrossoverConfig): 'FIXED_RS' | 'FULL' | 'PARTIAL' | 'QUICK' | 'EMA' {
     if (config.exitExactAtTarget) return 'FIXED_RS';
     const m = config.targetMode;
-    return m === 'PARTIAL' || m === 'QUICK' ? m : 'FULL';
+    return m === 'PARTIAL' || m === 'QUICK' || m === 'EMA' ? m : 'FULL';
+  }
+
+  /** Stagnation time-stop in ms: close a trade still within 0.25% of entry after this long. null = off (stagnationMinutes 0). */
+  private getStagnationMs(config: EmaVwapCrossoverConfig): number | null {
+    const raw = config.stagnationMinutes as unknown;
+    const m = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
+    if (!Number.isFinite(m) || m < 0) return 35 * 60 * 1000;
+    return m === 0 ? null : m * 60 * 1000;
   }
 
   /**
    * Volatility-scaled first target.
    *  FULL / PARTIAL: 0.5 x the stock's daily ATR% (its typical daily range), kept between 0.5R and 2R of the structural stop.
    *  QUICK: a small fixed R multiple (default 0.5R) that is reached about half of the time.
+   *  EMA: computed like FULL for the logs only; nothing exits there, the whole position rides the 15-EMA candle-close exit.
    * Backtest (545 stocks, 2y): the old PDC/PDH/Fibonacci target sat ~1.7R away and was hit only ~10% of the time.
    */
   private calculateVolatilityTarget(
-    entry: number, sl: number, side: 'BUY' | 'SELL', mode: 'FULL' | 'PARTIAL' | 'QUICK',
+    entry: number, sl: number, side: 'BUY' | 'SELL', mode: 'FULL' | 'PARTIAL' | 'QUICK' | 'EMA',
     config: EmaVwapCrossoverConfig, dailyAtrPct: number | undefined, symbol: string
   ): { targetPrice: number; reason: string } {
     const tick = getInstrumentTickSize(symbol, entry);
@@ -4320,6 +4333,7 @@ export class EmaVwapCrossoverEngine {
       const raw = entry * (atr / 100) * mult;
       dist = Math.min(risk * 2, Math.max(risk * 0.5, raw));
       reason = `${mult} x daily ATR (${atr.toFixed(2)}%) = +₹${raw.toFixed(2)}/sh, bounded to ${(dist / risk).toFixed(2)}R (+₹${dist.toFixed(2)}/sh)`;
+      if (mode === 'EMA') reason += ' — reference only: no target exit, the whole position rides the 15-EMA candle-close exit';
     }
     dist = Math.max(dist, tick * 3);
     const targetPrice = this.roundTick(side === 'BUY' ? entry + dist : entry - dist, symbol);

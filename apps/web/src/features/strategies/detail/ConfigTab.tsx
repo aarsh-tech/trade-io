@@ -59,6 +59,12 @@ function stopLoss(ctx: DetailCtx): string {
   return rs(cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? 500) ?? "Dynamic";
 }
 
+/** EMA-VWAP stocks stagnation time-stop: unset = the engine default of 35 min, 0 = off. */
+function stagnationText(v: unknown): string {
+  const min = v === undefined || v === null || v === "" ? 35 : Number(v);
+  return min === 0 ? "Off" : `Closes if within 0.25% of entry after ${Number.isFinite(min) && min > 0 ? min : 35} min`;
+}
+
 function targetText(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast } = ctx;
   if (ctx.isEmaVwapOptions) return `Half at ${cfg.partialTargetR ?? 2}R, rest on a 5m close below the 15-EMA`;
@@ -68,7 +74,7 @@ function targetText(ctx: DetailCtx): string {
   if (isNiftyScalper) return `+${cfg.targetPoints ?? 10} pts, then trail`;
   if (isStockOptions) return `1:${cfg.target1RR ?? 1.5} and 1:${cfg.target2RR ?? 3} RR`;
   if (is15Min) return `1:${Number(cfg.riskRewardRatio ?? 2).toFixed(1)} RR, then trail`;
-  if (isEmaVwap) return cfg.targetMode === "PARTIAL" ? "Half at 0.5x daily ATR, rest trails 15-EMA candle close" : cfg.targetMode === "QUICK" ? "Half at 0.5R, rest trails 15-EMA candle close" : "One target at 0.5x daily ATR (no trailing)";
+  if (isEmaVwap) return cfg.targetMode === "PARTIAL" ? "Half at 0.5x daily ATR, rest trails 15-EMA candle close" : cfg.targetMode === "QUICK" ? "Half at 0.5R, rest trails 15-EMA candle close" : cfg.targetMode === "EMA" ? "None: whole position trails 15-EMA candle close" : "One target at 0.5x daily ATR (no trailing)";
   return rs(cfg.targetRs ?? cfg.dailyTargetRs ?? 500) ?? "Dynamic";
 }
 
@@ -207,6 +213,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
     { label: "Ratchet trailing", ...(isGammaBlast ? toggle(cfg.enableRatchetTrailing, "1.5x, 2x, 3x locks") : { value: undefined }) },
     { label: "Structural candle SL", ...(is15Min ? toggle(cfg.useStructuralCandleSl, "tight 45 to 80 pt risk") : { value: undefined }) },
     { label: "Theta stagnancy cutoff", value: isStockOptions ? `${cfg.maxStagnantTimeMin ?? 25} min` : undefined },
+    { label: "Stagnation exit", value: isEmaVwap ? stagnationText(cfg.stagnationMinutes) : undefined },
     { label: "Auto square-off", value: isEmaVwapOptions || strategy.type === "STOCKS_IN_PLAY" ? "15:05 IST" : "15:15 IST" },
   ];
 

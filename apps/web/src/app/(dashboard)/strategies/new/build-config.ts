@@ -205,7 +205,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       vwapSource: form.vwapSource || 'close',
       // 1m entries are equity-only; the engine keeps 5m for option mode either way.
       entryTimeframe: !optionMode && form.entryTimeframe === "1min" ? "1min" : "5min",
-      ...(form.type === "EMA_VWAP_CROSSOVER" && { scanDepth: Number(form.scanDepth || 20) }),
+      ...(form.type === "EMA_VWAP_CROSSOVER" && { scanDepth: Number(form.scanDepth || 20), stagnationMinutes: Number(form.stagnationMinutes ?? 35) }),
       isOptionBuyingOnly: optionMode,
       qty,
       lots: Number(form.lots),

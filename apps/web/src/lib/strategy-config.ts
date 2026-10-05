@@ -53,6 +53,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['minPrice', 'Min stock price (₹)', 1, 1_000_000, false],
   ['leverage', 'Leverage', 1, 5, false],
   ['scanDepth', 'Stocks checked per scan', 1, 25, true],
+  ['stagnationMinutes', 'Stagnation exit (minutes)', 0, 360, true],
 ];
 
 const TIME_FIELDS: [string, string][] = [
@@ -97,8 +98,8 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
   if (isSet(config.product) && !PRODUCTS.includes(String(config.product))) {
     errors.push(`Product must be one of ${PRODUCTS.join(', ')}`);
   }
-  if (isSet(config.targetMode) && !['FULL', 'PARTIAL', 'QUICK'].includes(String(config.targetMode))) {
-    errors.push('Target mode must be one of FULL, PARTIAL, QUICK');
+  if (isSet(config.targetMode) && !['FULL', 'PARTIAL', 'QUICK', 'EMA'].includes(String(config.targetMode))) {
+    errors.push('Target mode must be one of FULL, PARTIAL, QUICK, EMA');
   }
   if (type === 'EMA_VWAP_CROSSOVER' && isSet(config.entryTimeframe) && !['1min', '5min'].includes(String(config.entryTimeframe))) {
     errors.push('Entry timeframe must be 1min or 5min');
