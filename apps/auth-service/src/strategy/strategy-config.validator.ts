@@ -55,6 +55,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['leverage', 'Leverage', 1, 5, false],
   ['scanDepth', 'Stocks checked per scan', 1, 25, true],
   ['stagnationMinutes', 'Stagnation exit (minutes)', 0, 360, true],
+  ['minVolumeMultiple', 'Crossover volume multiple', 0, 10, false],
 ];
 
 const TIME_FIELDS: [string, string][] = [

@@ -183,8 +183,11 @@ export interface EmaVwapOptionsConfig {
   maxCapital?: number;                 // paper only: capital for the affordability check (live uses the Zerodha margin)
   slBufferPct?: number;                // SL buffer below the setup low, % of that low (default 2)
   minSlBufferRs?: number;              // minimum SL buffer in ₹ (default 1)
-  partialTargetR?: number;             // book part of the position at this many R (default 2)
-  partialBookFraction?: number;        // fraction of the lots booked there (default 0.5)
+  targetMode?: 'EMA' | 'PARTIAL';      // EMA (default): no target, the whole position exits on a 5m close below the 15-EMA | PARTIAL: book part at partialTargetR, SL to cost, rest rides
+  insideCandleSetup?: boolean;         // also trade inside candles (default false: EMA/VWAP crossover only)
+  minVolumeMultiple?: number;          // crossover candle volume >= this x the previous 10 candles' average (default 1.5, 0 = off)
+  partialTargetR?: number;             // PARTIAL: book part of the position at this many R (default 2)
+  partialBookFraction?: number;        // PARTIAL: fraction of the lots booked there (default 0.5)
   useSameDayExpiry?: boolean;          // trade the contract expiring today (default false: on expiry day use the next expiry)
   entryCutoffTime?: string;            // no new entries from this IST time (default '15:00'; square-off is 15:05)
 }

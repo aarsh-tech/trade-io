@@ -831,12 +831,60 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             <p className="text-xs font-semibold text-foreground">How a trade is managed</p>
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
               <li>The stop-loss sits below the setup low by the buffer below, and is placed on the exchange.</li>
-              <li>At {form.evoPartialTargetR || "2"}R half the lots are booked and the stop moves to cost. With 1 lot nothing is booked; only the stop moves.</li>
-              <li>The rest exits on the first 5-minute close below the option&apos;s 15-EMA, or at the 15:05 square-off.</li>
+              {form.evoTargetMode === "PARTIAL" ? (
+                <>
+                  <li>At {form.evoPartialTargetR || "2"}R half the lots are booked and the stop moves to cost. With 1 lot nothing is booked; only the stop moves.</li>
+                  <li>The rest exits on the first 5-minute close below the option&apos;s 15-EMA, or at the 15:05 square-off.</li>
+                </>
+              ) : (
+                <li>No target: the whole position exits on the first 5-minute close below the option&apos;s 15-EMA (after the entry candle), at the stop-loss, or at the 15:05 square-off.</li>
+              )}
               <li>PCR and futures OI build-up are logged with every setup and trade. They never block a trade.</li>
             </ul>
           </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Exit">
+            {([
+              { value: "EMA", title: "Ride the 15-EMA", body: "No target and no half-booking. The whole position stays in until a 5-minute candle closes below the option's 15-EMA, the stop is hit, or 15:05. Best version on real NIFTY option candles (Jul to Oct 2026)." },
+              { value: "PARTIAL", title: "Book half, then trail", body: "Book half the lots at a set R and move the stop to cost; the rest rides the 15-EMA close exit." },
+            ] as const).map((opt) => {
+              const selected = (form.evoTargetMode || "EMA") === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => set("evoTargetMode", opt.value)}
+                  className={`rounded-lg border-2 p-3 text-left transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
+                >
+                  <span className="block text-xs font-semibold text-foreground">{opt.title}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">{opt.body}</span>
+                </button>
+              );
+            })}
+          </div>
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted">
+            <input
+              type="checkbox"
+              checked={form.evoInsideCandle === true}
+              onChange={(e) => set("evoInsideCandle", e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+            />
+            <span>
+              <span className="block text-xs font-semibold text-foreground">Also trade inside candles</span>
+              <span className="block text-xs text-muted-foreground">Off: only the 15-EMA / VWAP crossover candle is traded. On real option candles the inside-candle trades mostly exited near cost and lost money on charges.</span>
+            </span>
+          </label>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <NumberField
+              label="Crossover volume"
+              suffix="x avg"
+              decimal
+              min={0}
+              value={form.evoMinVolumeMultiple}
+              onChange={(v) => set("evoMinVolumeMultiple", v)}
+              hint="Crossover candle volume vs the last 10 candles. Quiet crossovers are usually chop. 0 = off."
+            />
             <NumberField
               label="SL buffer"
               suffix="% of low"
@@ -855,15 +903,17 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               onChange={(v) => set("evoMinSlBufferRs", v)}
               hint="Used when the % buffer is smaller."
             />
-            <NumberField
-              label="Book half at"
-              suffix="R"
-              decimal
-              min={0.5}
-              value={form.evoPartialTargetR}
-              onChange={(v) => set("evoPartialTargetR", v)}
-              hint="R = entry minus stop-loss."
-            />
+            {form.evoTargetMode === "PARTIAL" && (
+              <NumberField
+                label="Book half at"
+                suffix="R"
+                decimal
+                min={0.5}
+                value={form.evoPartialTargetR}
+                onChange={(v) => set("evoPartialTargetR", v)}
+                hint="R = entry minus stop-loss."
+              />
+            )}
           </div>
         </div>
       )}

@@ -826,7 +826,7 @@ function StrategyCard({
   const targetText = isStocksInPlay
     ? "Hold to 15:05"
     : isEmaVwapOptions
-    ? `Half at ${cfg.partialTargetR ?? 2}R + 15-EMA`
+    ? (cfg.targetMode === "PARTIAL" ? `Half at ${cfg.partialTargetR ?? 2}R + 15-EMA` : "15-EMA trail")
     : isStockOptions
       ? cfg.target1RR && cfg.target2RR
         ? `1:${cfg.target1RR} / 1:${cfg.target2RR} RR`

@@ -35,6 +35,12 @@ export interface StrategyFormState {
   evoSlBufferPct: string;
   evoMinSlBufferRs: string;
   evoPartialTargetR: string;
+  /** EMA: whole position exits on a 5m close below the option's 15-EMA. PARTIAL: half at evoPartialTargetR first. */
+  evoTargetMode: "EMA" | "PARTIAL";
+  /** Also trade inside candles; off = EMA/VWAP crossover only. */
+  evoInsideCandle: boolean;
+  /** Crossover candle volume vs the previous 10 candles' average (0 = off). */
+  evoMinVolumeMultiple: string;
   evoUseSameDayExpiry: boolean;
   evoEntryCutoffTime: string;
   // Stocks-in-Play ORB (`stopLossRs` = max loss per trade, `maxTradesPerDay` = max positions)

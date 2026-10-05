@@ -67,7 +67,7 @@ function stagnationText(v: unknown): string {
 
 function targetText(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast } = ctx;
-  if (ctx.isEmaVwapOptions) return `Half at ${cfg.partialTargetR ?? 2}R, rest on a 5m close below the 15-EMA`;
+  if (ctx.isEmaVwapOptions) return cfg.targetMode === "PARTIAL" ? `Half at ${cfg.partialTargetR ?? 2}R, rest on a 5m close below the 15-EMA` : "None: whole position exits on a 5m close below the 15-EMA";
   if (ctx.strategy.type === "STOCKS_IN_PLAY") return "None: held until the stop or 15:05";
   if (cfg.exitExactAtTarget) return isGammaBlast && cfg.targetPoints ? `+${cfg.targetPoints} pts (${rs(cfg.targetRs ?? 1000)})` : `Fixed ${rs(cfg.targetRs ?? 500)}`;
   if (isGammaBlast) return cfg.targetPoints ? `+${cfg.targetPoints} pts (${rs(cfg.targetRs ?? 1000)})` : (rs(cfg.targetRs ?? 1500) as string);
@@ -174,7 +174,8 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
   if (isEmaVwapOptions) {
     entry.push(
       { label: "Contracts watched", value: "ATM call and put, from the spot index price" },
-      { label: "Setups", value: `${cfg.emaPeriod ?? 15}-EMA / VWAP crossover and inside candle, on the option's own 5m chart` },
+      { label: "Setups", value: `${cfg.emaPeriod ?? 15}-EMA / VWAP crossover${cfg.insideCandleSetup === true ? " and inside candle" : " only"}, on the option's own 5m chart` },
+      { label: "Volume filter", value: Number(cfg.minVolumeMultiple ?? 1.5) > 0 ? `Crossover candle volume ≥ ${cfg.minVolumeMultiple ?? 1.5}x the last 10 candles` : "Off" },
       { label: "Setup valid for", value: "2 candles" },
       { label: "Expiry-day contract", value: cfg.useSameDayExpiry === true ? "Traded" : "Off (next expiry on expiry day)", tone: cfg.useSameDayExpiry === true ? undefined : "muted" },
       { label: "Entry window", value: `Until ${cfg.entryCutoffTime ?? "15:00"} IST` },
@@ -204,7 +205,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
         : isGammaBlast
           ? toggle(cfg.enablePartialProfitBooking, "50% at 2x, runner trails")
           : isEmaVwapOptions
-            ? { value: `Half the lots at ${cfg.partialTargetR ?? 2}R, then SL to cost (1 lot: SL to cost only)` }
+            ? { value: cfg.targetMode === "PARTIAL" ? `Half the lots at ${cfg.partialTargetR ?? 2}R, then SL to cost (1 lot: SL to cost only)` : "Off" }
             : isEmaVwap && !cfg.exitExactAtTarget && (cfg.targetMode === "PARTIAL" || cfg.targetMode === "QUICK")
               ? { value: "Half at the first target, runner exits on a 15-EMA candle close" }
               : { value: undefined }),

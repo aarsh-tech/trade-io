@@ -51,7 +51,7 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
   {
     type: "EMA_VWAP_OPTIONS",
     label: "EMA-VWAP Index Options",
-    tagline: "Buys NIFTY, BANKNIFTY or SENSEX options when the option's own chart breaks out on a 15-EMA / VWAP crossover or an inside candle.",
+    tagline: "Buys NIFTY, BANKNIFTY or SENSEX options when the option's own chart breaks out on a 15-EMA / VWAP crossover, then rides the 15-EMA.",
     risk: "High",
     riskNote: "Lots are sized so a stop-loss hit loses at most your max loss per trade.",
     instrument: "Index options (NIFTY, BANKNIFTY, SENSEX)",
@@ -326,7 +326,7 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
         perTrade: perTrade || null,
         perDay: perTrade ? perTrade * trades : null,
         targetPerTrade: null,
-        basis: `Lots are sized so entry minus stop-loss stays within your max loss; a setup where 1 lot risks more is skipped. Gaps through the stop can lose a little more. Profit is not capped: half is booked at ${form.evoPartialTargetR || 2}R and the rest rides the 15-EMA.`,
+        basis: `Lots are sized so entry minus stop-loss stays within your max loss; a setup where 1 lot risks more is skipped. Gaps through the stop can lose a little more. Profit is not capped: ${form.evoTargetMode === "PARTIAL" ? `half is booked at ${form.evoPartialTargetR || 2}R and the rest rides the 15-EMA` : "the whole position rides the 15-EMA"}.`,
       };
     }
     case "STOCKS_IN_PLAY": {

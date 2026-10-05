@@ -21,14 +21,19 @@ import { logSignal } from './signal-logger';
  * - Watches one CE and one PE at the money (strikes picked from the spot index price, nearest expiry; on expiry day
  *   the next expiry unless `useSameDayExpiry`). An idle leg moves to the new ATM strike when the spot moves.
  * - Setups, always a buy of that option:
- *   CROSSOVER: the 15-EMA crosses above VWAP on a green candle that closes above both. Entry = its high,
- *     SL = its low − buffer, valid for the next 2 candles.
- *   INSIDE: a candle inside the previous (mother) candle while EMA > VWAP. Entry = mother high,
- *     SL = mother low − buffer, valid for the next 2 candles. Every new inside candle is a fresh setup.
+ *   CROSSOVER: the 15-EMA crosses above VWAP on a green candle that closes above both, on at least
+ *     `minVolumeMultiple` (default 1.5) x the previous 10 candles' average volume — quiet crossovers are chop.
+ *     Entry = its high, SL = its low − buffer, valid for the next 2 candles.
+ *   INSIDE (only with `insideCandleSetup`, off by default): a candle inside the previous (mother) candle while
+ *     EMA > VWAP. Entry = mother high, SL = mother low − buffer, valid for the next 2 candles. Every new inside
+ *     candle is a fresh setup.
  *   Buffer = 2% of that low, at least ₹1. A setup is dropped if the premium trades below its low first.
  * - Sizing: lots so (entry − SL) × qty ≤ max loss per trade; skipped if one lot already exceeds it.
- * - Exit: at 2R book half the lots and move the SL to cost; the rest exits on the first 5m candle that closes below
- *   the option's 15-EMA. 15:05 square-off. One position at a time.
+ * - Exit (`targetMode`): EMA (default) = no target; the whole position exits on the first 5m candle after the entry
+ *   candle that closes below the option's 15-EMA, or at the SL. PARTIAL = at 2R book half the lots and move the SL
+ *   to cost; the rest exits on that 15-EMA close. 15:05 square-off. One position at a time.
+ *   Real option candles (NIFTY, Jul-Oct 2026): crossover only + EMA exit + 1 trade a day was the only version in
+ *   profit; inside candles were mostly ~0R scratches that paid costs.
  * - PCR and futures OI build-up are logged on every setup, entry and exit, never used as a filter.
  */
 
@@ -59,6 +64,11 @@ interface ResolvedConfig {
   minSlBufferRs: number;
   partialTargetR: number;
   partialBookFraction: number;
+  /** EMA: whole position rides the 15-EMA close exit. PARTIAL: book part at partialTargetR, SL to cost, rest rides. */
+  targetMode: 'EMA' | 'PARTIAL';
+  insideCandleSetup: boolean;
+  /** Crossover candle volume must be at least this many times the previous 10 candles' average; 0 = off. */
+  minVolumeMultiple: number;
   useSameDayExpiry: boolean;
   entryCutoffTime: string;
 }
@@ -246,7 +256,7 @@ export class EmaVwapOptionsEngine {
       this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${config.symbol} options, ${mode})`);
     } else {
       this.log(state, `▶ EMA-VWAP Options started — ${config.symbol} options on ${derivativesExchange(config.symbol)} | ${mode}`);
-      this.log(state, `⚙ Setups on the option's own 5m chart (${config.emaPeriod}-EMA + VWAP): EMA/VWAP crossover and inside candle | Max loss/trade ₹${config.stopLossRs} | SL buffer ${config.slBufferPct}% (min ₹${config.minSlBufferRs}) | Book ${Math.round(config.partialBookFraction * 100)}% at ${config.partialTargetR}R, SL to cost, rest exits on a 5m close below the ${config.emaPeriod}-EMA | Max ${config.maxTradesPerDay} trades | Entries until ${config.entryCutoffTime}, square-off 15:05 | Same-day expiry: ${config.useSameDayExpiry ? 'ON' : 'OFF'}`);
+      this.log(state, `⚙ Setups on the option's own 5m chart (${config.emaPeriod}-EMA + VWAP): EMA/VWAP crossover${config.minVolumeMultiple > 0 ? ` on ≥${config.minVolumeMultiple}x average volume` : ''}${config.insideCandleSetup ? ' and inside candle' : ' only'} | Max loss/trade ₹${config.stopLossRs}, max ${config.maxLots} lot(s) | SL buffer ${config.slBufferPct}% (min ₹${config.minSlBufferRs}) | ${config.targetMode === 'EMA' ? `No target: the whole position exits on a 5m close below the ${config.emaPeriod}-EMA` : `Book ${Math.round(config.partialBookFraction * 100)}% at ${config.partialTargetR}R, SL to cost, rest exits on a 5m close below the ${config.emaPeriod}-EMA`} | Max ${config.maxTradesPerDay} trades | Entries until ${config.entryCutoffTime}, square-off 15:05 | Same-day expiry: ${config.useSameDayExpiry ? 'ON' : 'OFF'}`);
     }
 
     // Today's trades come from the broker's order book (live) or saved paper orders, so a restart cannot trade past the cap.
@@ -298,6 +308,10 @@ export class EmaVwapOptionsEngine {
       minSlBufferRs: num(raw.minSlBufferRs, 1),
       partialTargetR: num(raw.partialTargetR, 2),
       partialBookFraction: Math.min(1, num(raw.partialBookFraction, 0.5)),
+      targetMode: raw.targetMode === 'PARTIAL' ? 'PARTIAL' : 'EMA',
+      insideCandleSetup: raw.insideCandleSetup === true,
+      // 0 is a real value here (filter off), so it cannot go through num().
+      minVolumeMultiple: raw.minVolumeMultiple === undefined || raw.minVolumeMultiple === null || (raw.minVolumeMultiple as any) === '' ? 1.5 : Math.max(0, Number(raw.minVolumeMultiple) || 0),
       useSameDayExpiry: raw.useSameDayExpiry === true,
       entryCutoffTime: /^\d{1,2}:\d{2}$/.test(raw.entryCutoffTime || '') ? raw.entryCutoffTime : DEFAULT_ENTRY_CUTOFF,
     };
@@ -357,7 +371,7 @@ export class EmaVwapOptionsEngine {
       };
       state.legs[contract.type].contract = contract;
 
-      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'LIVE'} RECOVERY] Re-adopted ${contract.exchange}:${contract.symbol}: ${pos.qty} qty @ ₹${entry.toFixed(2)} | SL ₹${sl.toFixed(2)}${pos.slPrice ? '' : ' (no saved SL — set from the max loss)'}${pos.slOrderId ? ` [Order ${pos.slOrderId}]` : ''} | Stage: ${isRunner ? 'runner (SL at cost / partial booked)' : `initial, ${state.config.partialTargetR}R at ₹${state.position.partialTarget.toFixed(2)}`}`);
+      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'LIVE'} RECOVERY] Re-adopted ${contract.exchange}:${contract.symbol}: ${pos.qty} qty @ ₹${entry.toFixed(2)} | SL ₹${sl.toFixed(2)}${pos.slPrice ? '' : ' (no saved SL — set from the max loss)'}${pos.slOrderId ? ` [Order ${pos.slOrderId}]` : ''} | Stage: ${state.config.targetMode === 'EMA' ? `exits on a 5m close below the ${state.config.emaPeriod}-EMA` : isRunner ? 'runner (SL at cost / partial booked)' : `initial, ${state.config.partialTargetR}R at ₹${state.position.partialTarget.toFixed(2)}`}`);
       const notice = protectionNotice(pos);
       if (notice) this.log(state, notice);
 
@@ -455,7 +469,7 @@ export class EmaVwapOptionsEngine {
       entryPrice: p?.entryPrice ?? null,
       currentLtp: ltp,
       stopLossPrice: p?.sl ?? null,
-      targetPrice: p && p.stage === 'INITIAL' ? p.partialTarget : null,
+      targetPrice: p && p.stage === 'INITIAL' && s.config.targetMode === 'PARTIAL' ? p.partialTarget : null,
       stage: p?.stage ?? null,
       pnlRs,
       pnlPct: p ? (((ltp ?? p.entryPrice) - p.entryPrice) / p.entryPrice) * 100 : 0,
@@ -741,9 +755,12 @@ export class EmaVwapOptionsEngine {
 
     if (p && p.contract.symbol === leg.contract?.symbol) {
       const ema = emas[i];
-      const closedAfterRunner = p.runnerSince !== null && last.date.getTime() + FIVE_MIN_MS > p.runnerSince;
-      if (p.stage === 'RUNNER' && ema !== null && closedAfterRunner && last.close < ema) {
-        this.log(state, `📉 5m candle ${this.hhmmOf(last.date)} closed at ₹${last.close.toFixed(2)}, below the ${state.config.emaPeriod}-EMA ₹${ema.toFixed(2)} — exiting the runner.`);
+      // EMA mode trails from the first candle that opens after the entry; PARTIAL mode only once the runner stage starts.
+      const trailing = state.config.targetMode === 'EMA'
+        ? last.date.getTime() >= p.openedAt
+        : p.stage === 'RUNNER' && p.runnerSince !== null && last.date.getTime() + FIVE_MIN_MS > p.runnerSince;
+      if (trailing && ema !== null && last.close < ema) {
+        this.log(state, `📉 5m candle ${this.hhmmOf(last.date)} closed at ₹${last.close.toFixed(2)}, below the ${state.config.emaPeriod}-EMA ₹${ema.toFixed(2)} — exiting ${state.config.targetMode === 'EMA' ? 'the position' : 'the runner'}.`);
         await this.exitPosition(state, client, 'EMA_EXIT', leg.ltp ?? last.close);
       }
       return;
@@ -777,11 +794,11 @@ export class EmaVwapOptionsEngine {
     let kind: SetupKind | null = null;
     let entry = 0, structureLow = 0;
     const cross = findLatestEmaVwapCrossToday(i, candles, emas, vwaps);
-    if (cross && cross.trend === 'LONG' && cross.crossoverIdx === i) {
+    if (cross && cross.trend === 'LONG' && cross.crossoverIdx === i && this.crossoverVolumeOk(state, c, candles, i)) {
       kind = 'CROSSOVER';
       entry = last.high;
       structureLow = last.low;
-    } else if (getIstDateStr(candles[i - 1].date) === today && isInsideCandle(candles[i - 1], last) && ema !== null && vwap !== null && ema > vwap) {
+    } else if (state.config.insideCandleSetup && getIstDateStr(candles[i - 1].date) === today && isInsideCandle(candles[i - 1], last) && ema !== null && vwap !== null && ema > vwap) {
       kind = 'INSIDE';
       entry = candles[i - 1].high;
       structureLow = candles[i - 1].low;
@@ -796,10 +813,27 @@ export class EmaVwapOptionsEngine {
     if (now.getTime() >= setupClose + SETUP_VALID_CANDLES * FIVE_MIN_MS) return;
     leg.setup = { kind, candleTime: last.date.getTime(), entry, structureLow, sl, expiresAt: setupClose + SETUP_VALID_CANDLES * FIVE_MIN_MS };
     const what = kind === 'CROSSOVER'
-      ? `EMA crossed above VWAP on the ${this.hhmmOf(last.date)} candle (H ₹${last.high.toFixed(2)} / L ₹${last.low.toFixed(2)} / C ₹${last.close.toFixed(2)})`
+      ? `EMA crossed above VWAP on the ${this.hhmmOf(last.date)} candle (H ₹${last.high.toFixed(2)} / L ₹${last.low.toFixed(2)} / C ₹${last.close.toFixed(2)}, volume ${last.volume})`
       : `inside candle ${this.hhmmOf(last.date)} within mother ${this.hhmmOf(candles[i - 1].date)} (H ₹${candles[i - 1].high.toFixed(2)} / L ₹${candles[i - 1].low.toFixed(2)})`;
     this.log(state, `📐 ${kind} setup on ${c.exchange}:${c.symbol}: ${what} | EMA ₹${ema?.toFixed(2)} / VWAP ₹${vwap?.toFixed(2)} | Buy above ₹${entry.toFixed(2)}, SL ₹${sl.toFixed(2)} (risk ₹${(entry - sl).toFixed(2)}/unit) | valid until ${this.hhmmOf(new Date(leg.setup.expiresAt))}`);
     this.logContext(state, client, 'SETUP', { kind, symbol: c.symbol, optionType: c.type, entry, sl, ema, vwap, candleTime: last.date.toISOString() });
+  }
+
+  /**
+   * Chop filter: a real breakout trades on a volume surge, a crossover inside a range does not. True when the crossover
+   * candle's volume is at least minVolumeMultiple x the previous 10 candles' average, the filter is off, or there is
+   * no volume history to compare with.
+   */
+  private crossoverVolumeOk(state: EngineState, c: Contract, candles: Candle[], i: number): boolean {
+    const mult = state.config.minVolumeMultiple;
+    if (!(mult > 0)) return true;
+    const prev = candles.slice(Math.max(0, i - 10), i);
+    const avg = prev.reduce((a, k) => a + k.volume, 0) / (prev.length || 1);
+    if (!(avg > 0)) return true;
+    const ratio = candles[i].volume / avg;
+    if (ratio >= mult) return true;
+    this.log(state, `⏭ ${c.symbol} crossover on the ${this.hhmmOf(candles[i].date)} candle skipped: volume ${candles[i].volume} is ${ratio.toFixed(2)}x the last ${prev.length} candles' average ${Math.round(avg)} (needs ${mult}x) — likely chop.`);
+    return false;
   }
 
   private getEntryCutoffPassed(state: EngineState, now: Date): boolean {
@@ -934,7 +968,7 @@ export class EmaVwapOptionsEngine {
       lastExitAttempt: 0,
     };
     const p = state.position;
-    this.log(state, `📋 Placed Option Trade: ${c.exchange}:${c.symbol} — Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${p.sl.toFixed(2)} (risk ₹${(risk * fill.qty).toFixed(2)}) | ${cfg.partialTargetR}R: ₹${p.partialTarget.toFixed(2)} | Trade ${state.tradesToday}/${cfg.maxTradesPerDay} | Order ${fill.orderId}`);
+    this.log(state, `📋 Placed Option Trade: ${c.exchange}:${c.symbol} — Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${p.sl.toFixed(2)} (risk ₹${(risk * fill.qty).toFixed(2)}) | ${cfg.targetMode === 'EMA' ? `exits on a 5m close below the ${cfg.emaPeriod}-EMA` : `${cfg.partialTargetR}R: ₹${p.partialTarget.toFixed(2)}`} | Trade ${state.tradesToday}/${cfg.maxTradesPerDay} | Order ${fill.orderId}`);
     this.logContext(state, client, 'ENTRY', { kind: setup.kind, symbol: c.symbol, optionType: c.type, entry: fill.price, setupEntry: setup.entry, sl: p.sl, qty: fill.qty, lots, partialTarget: p.partialTarget });
 
     if (fill.price <= setup.sl) {
@@ -1068,7 +1102,7 @@ export class EmaVwapOptionsEngine {
       p.slBreachAt = null;
     }
 
-    if (p.stage === 'INITIAL' && price >= p.partialTarget) {
+    if (state.config.targetMode === 'PARTIAL' && p.stage === 'INITIAL' && price >= p.partialTarget) {
       await this.takePartial(state, client, price, now);
       if (!state.position) return;
     }
@@ -1076,7 +1110,7 @@ export class EmaVwapOptionsEngine {
     if (now.getTime() - state.lastPnlLog >= 30_000) {
       state.lastPnlLog = now.getTime();
       const open = (price - p.entryPrice) * p.qty;
-      this.log(state, `📊 [LIVE P&L] ${p.contract.symbol}: ₹${price.toFixed(2)} | Open ${open >= 0 ? '+' : ''}₹${open.toFixed(2)}${p.realizedRs ? ` | Booked ₹${p.realizedRs.toFixed(2)}` : ''} | SL ₹${p.sl.toFixed(2)} | ${p.stage === 'INITIAL' ? `${state.config.partialTargetR}R ₹${p.partialTarget.toFixed(2)}` : `runner, exits on a 5m close below the ${state.config.emaPeriod}-EMA${leg.ema ? ` (₹${leg.ema.toFixed(2)})` : ''}`}`);
+      this.log(state, `📊 [LIVE P&L] ${p.contract.symbol}: ₹${price.toFixed(2)} | Open ${open >= 0 ? '+' : ''}₹${open.toFixed(2)}${p.realizedRs ? ` | Booked ₹${p.realizedRs.toFixed(2)}` : ''} | SL ₹${p.sl.toFixed(2)} | ${p.stage === 'INITIAL' && state.config.targetMode === 'PARTIAL' ? `${state.config.partialTargetR}R ₹${p.partialTarget.toFixed(2)}` : `${state.config.targetMode === 'EMA' ? 'trailing' : 'runner'}, exits on a 5m close below the ${state.config.emaPeriod}-EMA${leg.ema ? ` (₹${leg.ema.toFixed(2)})` : ''}`}`);
     }
   }
 
