@@ -5,7 +5,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { EMPTY, formatINR, formatPct, formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Loader2, Radio, TrendingUp, Zap } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { DetailCtx } from "./useStrategyDetail";
 import { isInPosition } from "./shared";
 
@@ -59,6 +59,63 @@ function RangeBar({ sl, target, entry, ltp }: { sl: number; target: number; entr
   );
 }
 
+interface FibLevels {
+  anchor0: number;
+  anchor1: number;
+  levels: { ratio: number; price: number }[];
+  provisional: boolean;
+}
+
+function asFibLevels(v: unknown): FibLevels | null {
+  const f = v as FibLevels | null | undefined;
+  return f && Array.isArray(f.levels) && f.levels.length > 0 ? f : null;
+}
+
+/**
+ * Fibonacci ladder of the opening 5m candle, highest price on top, with LTP slotted in where it trades.
+ * Levels already passed in the trade's direction are dimmed; the nearest one ahead is marked. Reference only.
+ */
+function FibLadder({ fib, ltp, isLong }: { fib: FibLevels; ltp: number | null; isLong: boolean }) {
+  const rows = [...fib.levels].sort((a, b) => b.price - a.price);
+  const ahead = (price: number) => ltp === null || (isLong ? price > ltp : price < ltp);
+  const next = ltp === null ? null : rows.filter((r) => ahead(r.price)).sort((a, b) => Math.abs(a.price - ltp) - Math.abs(b.price - ltp))[0] ?? null;
+  const items: ReactNode[] = [];
+  let ltpPlaced = ltp === null;
+  const ltpRow = (
+    <li key="ltp" className="flex items-center gap-2 py-0.5">
+      <span className="h-px flex-1 bg-primary" aria-hidden />
+      <span className="num text-[11px] font-semibold text-primary">LTP {formatPrice(ltp)}</span>
+      <span className="h-px flex-1 bg-primary" aria-hidden />
+    </li>
+  );
+  for (const r of rows) {
+    if (!ltpPlaced && ltp !== null && ltp >= r.price) { items.push(ltpRow); ltpPlaced = true; }
+    const passed = !ahead(r.price);
+    const isNext = next !== null && r.ratio === next.ratio;
+    const isAnchor = r.ratio === 0 || r.ratio === 1;
+    items.push(
+      <li key={r.ratio} className={cn("flex items-center justify-between gap-3 py-0.5", passed && "text-muted-foreground/70")}>
+        <span className={cn("num w-12", isAnchor && "font-semibold text-foreground")}>{r.ratio}</span>
+        <span className="flex-1 truncate text-[11px] text-muted-foreground">
+          {isNext ? <span className={cn("font-semibold", isLong ? "text-profit" : "text-loss")}>next</span> : r.ratio === 0 ? "anchor" : r.ratio === 1 ? "candle end" : ""}
+        </span>
+        <span className={cn("num font-medium", !passed && "text-foreground", isNext && "font-semibold")}>{formatPrice(r.price)}</span>
+        <span className="num w-16 text-right text-[11px] text-muted-foreground">{ltp !== null ? formatPrice(r.price - ltp, { signed: true }) : ""}</span>
+      </li>,
+    );
+  }
+  if (!ltpPlaced) items.push(ltpRow);
+  return (
+    <div className="rounded-md bg-sunken px-3 py-2">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+        <p className="text-[11px] font-medium text-muted-foreground">Fibonacci levels · opening 5m candle</p>
+        <p className="text-[11px] text-muted-foreground">reference only{fib.provisional ? " · candle still forming" : ""}</p>
+      </div>
+      <ul className="text-xs">{items}</ul>
+    </div>
+  );
+}
+
 export function PositionHero({ ctx }: { ctx: DetailCtx }) {
   const { strategy, liveState, displayPnlRs, displayPnlPct, displayLtp, isSquareOffBusy, handleInstantSquareOff, isLong } = ctx;
   const [confirmSquareOff, setConfirmSquareOff] = useState(false);
@@ -88,6 +145,7 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
   const sideIsLong = side === "LONG" || side === "CALL" || side === "BUY";
   const symbol = liveState?.optionSymbol || liveState?.activeSymbol || liveState?.futureSymbol || strategy.config.symbol;
 
+  const fib = asFibLevels(liveState?.fibLevels);
   const toSl = ltp && sl ? Math.abs(ltp - sl) : null;
   const toTarget = ltp && target ? Math.abs(target - ltp) : null;
 
@@ -126,6 +184,8 @@ export function PositionHero({ ctx }: { ctx: DetailCtx }) {
           </p>
         </div>
       ) : null}
+
+      {fib ? <FibLadder fib={fib} ltp={ltp} isLong={sideIsLong} /> : null}
 
       {liveState?.isTrailingEma && (
         <div className="flex items-center gap-2 rounded-md bg-profit-subtle px-3 py-2 text-xs font-medium text-profit">

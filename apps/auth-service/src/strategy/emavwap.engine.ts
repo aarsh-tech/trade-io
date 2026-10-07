@@ -102,6 +102,10 @@ interface StrategyState {
   pdh?: number | null;
   pdl?: number | null;
   pdc?: number | null;
+  /** Fibonacci ladder of today's opening 5m candle for the open position (reference only). */
+  fibLevels?: FibLevels | null;
+  /** Earliest ms for the next refreshFibLevels candle fetch. */
+  fibRetryAt?: number;
   partialTargetPrice?: number | null;
   partialBooked?: boolean;
   partialAttempts?: number;
@@ -125,6 +129,21 @@ const DEFAULT_MAX_STOP_PCT = 2.2;
 const MIN_STOP_PCT = 0.85;
 /** Sessions in the daily ATR (from the volume-history download). */
 const ATR_SESSIONS = 10;
+/** Fibonacci ratios marked on the opening 5m candle (0 = its far end, 1 = the end in the trade's direction). */
+const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.414, 1.618, 2, 2.272, 2.414, 2.618];
+
+/**
+ * Fibonacci ladder of today's opening 5m candle (09:15-09:20), drawn in the open position's direction: for a long 0 is
+ * the candle's low and 1 its high, for a short 0 is its high and 1 its low; ratios above 1 extend beyond it.
+ * Reference only: no order, stop or exit uses these levels (backtest: price turns at them no more often than elsewhere).
+ */
+interface FibLevels {
+  anchor0: number;
+  anchor1: number;
+  levels: { ratio: number; price: number }[];
+  /** The opening candle was still forming when this was computed (entry before 09:20); refreshed once it closes. */
+  provisional: boolean;
+}
 /** Candles checked per batch: matches Kite's 3 req/s historical limit, so queued calls never sit past their timeout. */
 const SCAN_BATCH_SIZE = 3;
 /** A candle's final values are published a moment after it closes (the 1m rescan waits 2s for the same reason). */
@@ -515,6 +534,7 @@ export class EmaVwapCrossoverEngine {
       pdh: s.pdh,
       pdl: s.pdl,
       pdc: s.pdc,
+      fibLevels: s.entryTriggered ? s.fibLevels ?? null : null,
     };
   }
 
@@ -939,6 +959,7 @@ export class EmaVwapCrossoverEngine {
 
       // ── Phase 3: Monitor Active Position (Strict Single-Stock Policy) ────────
       if (state.entryTriggered) {
+        await this.refreshFibLevels(state, client, now);
         // Auto-sync with broker: If position for activeSymbol was closed at broker, sync state immediately
         // Gated on !state.isExiting so this doesn't race with a concurrent exitPosition() call (e.g. from the
         // realtime websocket monitor) doing its own accounting for the same position at the same time.
@@ -1620,6 +1641,8 @@ export class EmaVwapCrossoverEngine {
 
       let logicalTargetInfo: { targetPrice: number; targetReason: string; fib1272: number; fib1618: number; pdh: number | null; pdl: number | null; pdc: number | null } | null = null;
       let stockMetrics: { dailyAtrPct: number; dynamicExhaustionPct: number; dynamicOpeningCapPct: number; dynamicExtensionPct: number; dynamicParabolicPct: number } | null = null;
+      state.fibLevels = null;
+      state.fibRetryAt = 0;
 
       try {
         const histCandles = await this.fetchCandles(client, config, '5minute', triggerTime || new Date(), symbol, exchange);
@@ -1642,6 +1665,7 @@ export class EmaVwapCrossoverEngine {
           state.pdh = logicalTargetInfo.pdh ?? undefined;
           state.pdl = logicalTargetInfo.pdl ?? undefined;
           state.pdc = logicalTargetInfo.pdc ?? undefined;
+          state.fibLevels = this.calculateOpeningFib(histCandles, finalSide === 'BUY' ? 'LONG' : 'SHORT', triggerTime || new Date(), symbol);
         }
       } catch (targetErr: any) {
         this.log(state, `⚠ Historical candles for logical target fetch notice: ${targetErr.message}`);
@@ -1768,6 +1792,8 @@ export class EmaVwapCrossoverEngine {
           `📐 [KEY LEVELS] PDH: ${pdhStr} | PDL: ${pdlStr} | PDC: ${pdcStr} | Daily ATR: ${atrStr} | Stop: ₹${sl.toFixed(2)} (${((Math.abs(entry - sl) / entry) * 100).toFixed(2)}% from entry, max ${this.getMaxStopPct(config)}%)`
         );
       }
+
+      if (state.fibLevels) this.log(state, this.formatFibLog(state.fibLevels));
 
       this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}${config.exitExactAtTarget ? ' (Fixed Exact Target Mode)' : ''}`);
       if (!this.running.has(state.strategyId)) {
@@ -3446,6 +3472,52 @@ export class EmaVwapCrossoverEngine {
     const swingLow5D = Math.min(...pastDays.map(d => d.low));
 
     return { pdh, pdl, pdc, swingHigh5D, swingLow5D };
+  }
+
+  /** Fibonacci ladder of today's opening 5m candle (any candle interval: the 09:15-09:20 bars are merged). null = no such candle yet. */
+  private calculateOpeningFib(candles: Candle[], side: 'LONG' | 'SHORT', now: Date, symbol: string): FibLevels | null {
+    const todayStr = getIstDateStr(now);
+    let high = -Infinity, low = Infinity;
+    for (const c of candles) {
+      if (getIstDateStr(c.date) !== todayStr) continue;
+      const hhmm = getIstHhmm(c.date);
+      if (hhmm < 9 * 60 + 15 || hhmm >= 9 * 60 + 20) continue;
+      high = Math.max(high, c.high);
+      low = Math.min(low, c.low);
+    }
+    if (!(high > low)) return null;
+    const anchor0 = side === 'LONG' ? low : high;
+    const anchor1 = side === 'LONG' ? high : low;
+    return {
+      anchor0,
+      anchor1,
+      levels: FIB_RATIOS.map(ratio => ({ ratio, price: this.roundTick(anchor0 + ratio * (anchor1 - anchor0), symbol) })),
+      provisional: getIstHhmm(now) < 9 * 60 + 20,
+    };
+  }
+
+  private formatFibLog(fib: FibLevels): string {
+    const ladder = fib.levels.filter(l => l.ratio >= 0.5).map(l => `${l.ratio} ₹${l.price.toFixed(2)}`).join(' | ');
+    return `📏 [FIB LEVELS] Opening 5m candle 0 = ₹${fib.anchor0.toFixed(2)}, 1 = ₹${fib.anchor1.toFixed(2)}${fib.provisional ? ' (candle still forming)' : ''} → ${ladder} — reference only, no exits use them`;
+  }
+
+  /** Fills in the Fibonacci ladder for an open position that has none (restart recovery) or got it before the opening candle closed. */
+  private async refreshFibLevels(state: StrategyState, client: any, now: Date) {
+    if (!state.entryTriggered || (state.fibLevels && !state.fibLevels.provisional)) return;
+    if (state.fibLevels?.provisional && getIstHhmm(now) < 9 * 60 + 20) return;
+    if (Date.now() < (state.fibRetryAt ?? 0)) return;
+    state.fibRetryAt = Date.now() + 60_000;
+    const symbol = state.activeSymbol || state.config.symbol;
+    try {
+      const candles = await this.fetchCandles(client, state.config, '5minute', now, symbol, state.config.exchange);
+      const fib = this.calculateOpeningFib(candles, state.entryTriggered, now, symbol);
+      if (fib) {
+        state.fibLevels = fib;
+        if (!fib.provisional) this.log(state, this.formatFibLog(fib));
+      }
+    } catch (err: any) {
+      this.logger.debug?.(`Fib levels fetch for ${symbol}: ${err?.message}`);
+    }
   }
 
   /**
