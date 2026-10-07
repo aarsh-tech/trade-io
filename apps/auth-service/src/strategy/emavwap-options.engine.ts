@@ -431,7 +431,9 @@ export class EmaVwapOptionsEngine {
       }).catch(() => undefined);
       strategyEvents.emit('strategy.update', { strategyId, logs: state.logs, state: this.snapshot(state) });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } }).catch(() => undefined);
+    // A day's normal end (COMPLETED) keeps autoStart so the strategy runs again next session; any stop clears it.
+    const data = status === 'COMPLETED' ? { isActive: false } : { isActive: false, autoStart: false };
+    await this.prisma.strategy.update({ where: { id: strategyId }, data }).catch(() => undefined);
   }
 
   isRunning(strategyId: string): boolean {

@@ -436,7 +436,9 @@ export class Breakout15MinEngine {
         data: { status, stoppedAt: new Date(), logs: JSON.stringify(state.logs.slice(-MAX_ENGINE_LOGS)) },
       });
     }
-    await this.prisma.strategy.update({ where: { id: strategyId }, data: { isActive: false, autoStart: false } });
+    // A day's normal end (COMPLETED) keeps autoStart so the strategy runs again next session; any stop clears it.
+    const data = status === 'COMPLETED' ? { isActive: false } : { isActive: false, autoStart: false };
+    await this.prisma.strategy.update({ where: { id: strategyId }, data });
   }
 
   isRunning(strategyId: string): boolean {

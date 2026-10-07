@@ -405,6 +405,10 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
         try {
           await engine.stop(strategy.id);
+          // engine.stop() is a user stop and disarms auto-start; market close is a normal day end, so keep it armed.
+          if (strategy.autoStart) {
+            await this.prisma.strategy.update({ where: { id: strategy.id }, data: { autoStart: true } });
+          }
           this.logger.log(`⏹ Auto-stopped "${strategy.name}" at market close`);
         } catch (err) {
           this.logger.error(`Auto-stop failed for "${strategy.name}": ${err.message}`);
