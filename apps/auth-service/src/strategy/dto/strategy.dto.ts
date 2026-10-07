@@ -155,6 +155,7 @@ export interface EmaVwapCrossoverConfig {
   quickTargetR?: number;              // QUICK first target in R multiples of the structural stop (default 0.5)
   partialBookFraction?: number;       // PARTIAL/QUICK: fraction of the position sold at the first target (default 0.5)
   stagnationMinutes?: number;         // Close a trade still within 0.25% of entry after this many minutes (default 35, 0 = off)
+  maxStopPct?: number;                // Widest structural stop-loss, % of entry (default 2.2). Tighter = bigger qty for the same ₹ risk
   partialMoveSlToBreakeven?: boolean; // PARTIAL/QUICK: move the runner's stop to break-even after booking (default true)
   enableTickTrailExit?: boolean;      // Intra-candle EMA/VWAP trailing exits (default: OFF). OFF = exit only on a 5m candle CLOSE across the 15-EMA + structural SL
   enableDailyPnLLock?: boolean;       // One-and-Done rule: lock day on hitting profit target or max loss (default: true)

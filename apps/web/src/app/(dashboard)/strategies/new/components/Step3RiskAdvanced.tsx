@@ -1064,6 +1064,41 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
+          {/* Max stop distance (EMA-VWAP stocks): caps how far the structural stop may sit from the entry */}
+          {form.type === "EMA_VWAP_CROSSOVER" && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-sm font-semibold text-foreground">Max Stop Distance</span>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                The stop sits beyond the day&apos;s swing low/high, but never further than this from the entry. A tighter stop buys more shares for the same max loss, so a normal move earns more. In the 2-year backtest 1.2% made about 3x what 2.2% made, with more trades stopped out.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Max stop distance">
+                {([
+                  { value: "1", title: "1.0%" },
+                  { value: "1.2", title: "1.2%" },
+                  { value: "1.5", title: "1.5%" },
+                  { value: "2.2", title: "2.2% (old)" },
+                ] as const).map((opt) => {
+                  const selected = Number(form.maxStopPct || "2.2") === Number(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => set("maxStopPct", opt.value)}
+                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
+                    >
+                      {opt.title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Exit Exact at Target Toggle */}
           <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
             <div className="flex items-center justify-between">

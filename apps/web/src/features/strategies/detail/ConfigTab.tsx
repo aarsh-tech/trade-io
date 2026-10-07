@@ -215,6 +215,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
     { label: "Structural candle SL", ...(is15Min ? toggle(cfg.useStructuralCandleSl, "tight 45 to 80 pt risk") : { value: undefined }) },
     { label: "Theta stagnancy cutoff", value: isStockOptions ? `${cfg.maxStagnantTimeMin ?? 25} min` : undefined },
     { label: "Stagnation exit", value: isEmaVwap ? stagnationText(cfg.stagnationMinutes) : undefined },
+    { label: "Max stop distance", value: isEmaVwap ? `${Number(cfg.maxStopPct) > 0 ? Number(cfg.maxStopPct) : 2.2}% of entry` : undefined },
     { label: "Auto square-off", value: isEmaVwapOptions || strategy.type === "STOCKS_IN_PLAY" ? "15:05 IST" : "15:15 IST" },
   ];
 

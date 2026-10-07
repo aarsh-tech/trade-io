@@ -14,6 +14,8 @@ export interface StrategyFormState {
   targetMode?: "FULL" | "PARTIAL" | "QUICK" | "EMA";
   /** EMA-VWAP stocks: close a trade still within 0.25% of entry after this many minutes ("0" = off, default "35"). */
   stagnationMinutes?: string;
+  /** EMA-VWAP stocks: widest structural stop-loss, % of entry (default "2.2"). */
+  maxStopPct?: string;
   /** EMA-VWAP stocks: require a volume spike on the signal candle, judged against the stock's own history. */
   volumeFilter?: boolean;
   volumeStrictness?: "RELAXED" | "BALANCED" | "STRICT";

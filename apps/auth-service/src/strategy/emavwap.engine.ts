@@ -120,6 +120,11 @@ const SL_BREACH_GRACE_MS = 3000;
 /** Auto mode: how many of the scanner's top-ranked stocks are checked for a setup on every scan (config `scanDepth`). */
 const DEFAULT_SCAN_DEPTH = 20;
 const MAX_SCAN_DEPTH = 25;
+/** Widest stop allowed, % of entry (maxStopPct). The 2-year backtest did better the tighter this was (2.2% -> 1.0%). */
+const DEFAULT_MAX_STOP_PCT = 2.2;
+const MIN_STOP_PCT = 0.85;
+/** Sessions in the daily ATR (from the volume-history download). */
+const ATR_SESSIONS = 10;
 /** Candles checked per batch: matches Kite's 3 req/s historical limit, so queued calls never sit past their timeout. */
 const SCAN_BATCH_SIZE = 3;
 /** A candle's final values are published a moment after it closes (the 1m rescan waits 2s for the same reason). */
@@ -138,6 +143,8 @@ export class EmaVwapCrossoverEngine {
   private readonly candleCache = new Map<string, { candles: Candle[]; expiresAt: number; closedUntil: number }>();
   /** Per-stock volume history: same-clock-time 5m volumes of the previous 10 sessions (loaded once per stock per day). */
   private readonly volumeBaselines = new Map<string, { dateStr: string; slots: Map<number, number[]>; retryAfter?: number }>();
+  /** Per-stock daily ATR% over the previous ATR_SESSIONS sessions, built from the same download as the volume history. */
+  private readonly dailyAtrBySymbol = new Map<string, { dateStr: string; atrPct: number; sessions: number }>();
   /** Symbols the instrument master had no tick size for, so ensureTickSize doesn't rescan the master every tick. */
   private readonly tickSizeMisses = new Set<string>();
 
@@ -1573,6 +1580,7 @@ export class EmaVwapCrossoverEngine {
       let tgt: number;
 
       const maxRiskThresholdRs = config.stopLossRs && config.stopLossRs > 0 ? config.stopLossRs : 500;
+      const maxStopPct = this.getMaxStopPct(config);
 
       if (finalSide === 'BUY') {
         // True Structural Swing Shelf SL: Place comfortably below entry/swing shelf low with breathing buffer
@@ -1583,9 +1591,9 @@ export class EmaVwapCrossoverEngine {
         } else {
           rawSl = entry - Math.max(symTickSize * 10, entry * 0.011);
         }
-        // Strict Intraday Equity SL boundaries: Max 2.20% of entry price (accommodating true mother low/day low), Min 0.85% breathing distance
-        const maxAllowedDist = Math.max(symTickSize * 15, entry * 0.022);
-        const minBreathingDist = Math.max(symTickSize * 8, entry * 0.0085);
+        // Strict Intraday Equity SL boundaries: Max maxStopPct of entry price (default 2.2%, accommodating true mother low/day low), Min 0.85% breathing distance
+        const maxAllowedDist = Math.max(symTickSize * 15, entry * maxStopPct / 100);
+        const minBreathingDist = Math.max(symTickSize * 8, entry * Math.min(MIN_STOP_PCT, maxStopPct) / 100);
         const boundedSl = Math.min(entry - minBreathingDist, Math.max(rawSl, entry - maxAllowedDist));
         sl = this.roundTick(boundedSl, symbol);
         if (sl >= entry) sl = this.roundTick(entry - symTickSize * 5, symbol);
@@ -1600,9 +1608,9 @@ export class EmaVwapCrossoverEngine {
         } else {
           rawSl = entry + Math.max(symTickSize * 10, entry * 0.011);
         }
-        // Strict Intraday Equity SL boundaries: Max 2.20% of entry price (accommodating true mother high/day high), Min 0.85% breathing distance
-        const maxAllowedDist = Math.max(symTickSize * 15, entry * 0.022);
-        const minBreathingDist = Math.max(symTickSize * 8, entry * 0.0085);
+        // Strict Intraday Equity SL boundaries: Max maxStopPct of entry price (default 2.2%, accommodating true mother high/day high), Min 0.85% breathing distance
+        const maxAllowedDist = Math.max(symTickSize * 15, entry * maxStopPct / 100);
+        const minBreathingDist = Math.max(symTickSize * 8, entry * Math.min(MIN_STOP_PCT, maxStopPct) / 100);
         const boundedSl = Math.max(entry + minBreathingDist, Math.min(rawSl, entry + maxAllowedDist));
         sl = this.roundTick(boundedSl, symbol);
         if (sl <= entry) sl = this.roundTick(entry + symTickSize * 5, symbol);
@@ -1616,7 +1624,7 @@ export class EmaVwapCrossoverEngine {
       try {
         const histCandles = await this.fetchCandles(client, config, '5minute', triggerTime || new Date(), symbol, exchange);
         if (histCandles && histCandles.length > 0) {
-          stockMetrics = this.calculateDynamicStockMetrics(histCandles, triggerTime || new Date());
+          stockMetrics = this.calculateDynamicStockMetrics(histCandles, triggerTime || new Date(), symbol);
           state.dailyAtrPct = stockMetrics.dailyAtrPct;
           state.dynamicParabolicPct = stockMetrics.dynamicParabolicPct;
 
@@ -1750,10 +1758,14 @@ export class EmaVwapCrossoverEngine {
         const pdhStr = logicalTargetInfo.pdh ? `₹${logicalTargetInfo.pdh.toFixed(2)}` : 'N/A';
         const pdlStr = logicalTargetInfo.pdl ? `₹${logicalTargetInfo.pdl.toFixed(2)}` : 'N/A';
         const pdcStr = logicalTargetInfo.pdc ? `₹${logicalTargetInfo.pdc.toFixed(2)}` : 'N/A';
-        const atrStr = stockMetrics ? `${stockMetrics.dailyAtrPct.toFixed(2)}%` : 'N/A';
+        const sessionAtr = this.dailyAtrBySymbol.get(symbol);
+        const atrStr = stockMetrics
+          ? `${stockMetrics.dailyAtrPct.toFixed(2)}% (${sessionAtr && sessionAtr.dateStr === getIstDateStr(triggerTime || new Date()) ? `${sessionAtr.sessions} sessions` : 'last 2-3 sessions'})`
+          : 'N/A';
+        // Reference levels only: the target itself is the [TARGET MODE] line above (the Fibonacci/PDC levels are not used for exits).
         this.log(
           state,
-          `🎯 [LOGICAL TARGET & FIBONACCI CONFLUENCE] Target: ₹${tgt.toFixed(2)} (${logicalTargetInfo.targetReason}) | Fib 1.272: ₹${logicalTargetInfo.fib1272.toFixed(2)} | Fib 1.618: ₹${logicalTargetInfo.fib1618.toFixed(2)} | PDH: ${pdhStr} | PDL: ${pdlStr} | PDC: ${pdcStr} | 5-Day ATR: ${atrStr}`
+          `📐 [KEY LEVELS] PDH: ${pdhStr} | PDL: ${pdlStr} | PDC: ${pdcStr} | Daily ATR: ${atrStr} | Stop: ₹${sl.toFixed(2)} (${((Math.abs(entry - sl) / entry) * 100).toFixed(2)}% from entry, max ${this.getMaxStopPct(config)}%)`
         );
       }
 
@@ -1943,7 +1955,10 @@ export class EmaVwapCrossoverEngine {
               this.log(state, `🎯 Broker LIMIT Target Armed (${state.executedQty} shares @ ₹${tgtPrice.toFixed(2)}) | OrderId: ${targetOrderId}`);
             }
           } else {
-            this.log(state, `💡 Trend Trailing Mode active — SL placed at broker for ${state.executedQty} shares (Trigger: ₹${slTriggerPrice.toFixed(2)}, Limit: ₹${slLimitPrice.toFixed(2)}), Target 1 (₹${tgtPrice.toFixed(2)}) will activate dynamic 15-EMA Trailing SL to ride full trend.`);
+            const rideNote = this.getTargetMode(config) === 'EMA'
+              ? `no target order — exits on a 5m candle close across the 15-EMA, the stop, or 15:05 (₹${tgtPrice.toFixed(2)} is a reference level only)`
+              : `part books at ₹${tgtPrice.toFixed(2)}, the rest rides the 15-EMA candle-close exit`;
+            this.log(state, `💡 Trend Trailing Mode active — SL placed at broker for ${state.executedQty} shares (Trigger: ₹${slTriggerPrice.toFixed(2)}, Limit: ₹${slLimitPrice.toFixed(2)}); ${rideNote}.`);
           }
         } else {
           this.log(state, `⏳ Entry order pending execution. Stop Loss order will be placed as soon as initial shares fill.`);
@@ -3433,7 +3448,12 @@ export class EmaVwapCrossoverEngine {
     return { pdh, pdl, pdc, swingHigh5D, swingLow5D };
   }
 
-  private calculateDynamicStockMetrics(candles: Candle[], now: Date): {
+  /**
+   * Daily ATR% plus the volatility-scaled limits derived from it. The ATR is the stock's average (high - low) / open over the
+   * previous ATR_SESSIONS sessions when ensureVolumeBaseline has loaded them today; otherwise the prior days inside `candles`
+   * (the 5-calendar-day fetch, only 2-3 sessions).
+   */
+  private calculateDynamicStockMetrics(candles: Candle[], now: Date, symbol?: string): {
     dailyAtrPct: number;
     dynamicExhaustionPct: number;
     dynamicOpeningCapPct: number;
@@ -3458,7 +3478,10 @@ export class EmaVwapCrossoverEngine {
     }
     const pastDays = Array.from(dayMap.values());
     let dailyAtrPct = 2.5;
-    if (pastDays.length > 0) {
+    const sessionAtr = symbol ? this.dailyAtrBySymbol.get(symbol) : undefined;
+    if (sessionAtr && sessionAtr.dateStr === todayStr) {
+      dailyAtrPct = sessionAtr.atrPct;
+    } else if (pastDays.length > 0) {
       const ranges = pastDays.map(d => d.open > 0 ? ((d.high - d.low) / d.open) * 100 : 0).filter(r => r > 0);
       if (ranges.length > 0) {
         dailyAtrPct = ranges.reduce((a, b) => a + b, 0) / ranges.length;
@@ -3712,10 +3735,15 @@ export class EmaVwapCrossoverEngine {
         new Promise((_, reject) => setTimeout(() => reject(new Error('volume-history timeout')), timeoutMs)),
       ]) as any[];
       const byDay = new Map<string, Map<number, number>>();
+      const dayRange = new Map<string, { open: number; high: number; low: number }>();
       for (const c of data || []) {
         const d = new Date(c.date);
         const dStr = getIstDateStr(d);
-        if (dStr >= todayStr || !(c.volume > 0)) continue;
+        if (dStr >= todayStr) continue;
+        const r = dayRange.get(dStr);
+        if (!r) dayRange.set(dStr, { open: c.open, high: c.high, low: c.low });
+        else { r.high = Math.max(r.high, c.high); r.low = Math.min(r.low, c.low); }
+        if (!(c.volume > 0)) continue;
         if (!byDay.has(dStr)) byDay.set(dStr, new Map());
         byDay.get(dStr)!.set(getIstHhmm(d), c.volume);
       }
@@ -3728,6 +3756,14 @@ export class EmaVwapCrossoverEngine {
         }
       }
       this.volumeBaselines.set(key, { dateStr: todayStr, slots });
+      const ranges = Array.from(dayRange.keys()).sort().slice(-ATR_SESSIONS)
+        .map(dStr => dayRange.get(dStr)!)
+        .filter(r => r.open > 0 && r.high >= r.low)
+        .map(r => ((r.high - r.low) / r.open) * 100);
+      if (ranges.length >= 3) {
+        const atrPct = Math.max(1.2, Math.min(10.0, ranges.reduce((a, b) => a + b, 0) / ranges.length));
+        this.dailyAtrBySymbol.set(symbol, { dateStr: todayStr, atrPct, sessions: ranges.length });
+      }
     } catch (err: any) {
       this.logger.debug?.(`Volume baseline unavailable for ${symbol} (${interval}): ${err?.message}. Using 3-session fallback.`);
       this.volumeBaselines.set(key, { dateStr: todayStr, slots: new Map(), retryAfter: Date.now() + 10 * 60 * 1000 });
@@ -3773,7 +3809,7 @@ export class EmaVwapCrossoverEngine {
     const moveFromOpenPct = dayOpen > 0 ? ((currCandle.close - dayOpen) / dayOpen) * 100 : 0;
 
     // Calculate Dynamic Stock Volatility & Adaptive Metrics from Zerodha multi-day candles
-    const metrics = this.calculateDynamicStockMetrics(candles, now);
+    const metrics = this.calculateDynamicStockMetrics(candles, now, symbol || config.symbol);
     const { pdh, pdl } = this.extractPdhPdlPdc(candles, now);
 
     // Calculate Dynamic Average Candle Range (ATR/ACR) over last 10 candles
@@ -3801,9 +3837,10 @@ export class EmaVwapCrossoverEngine {
     const slRecentCandles = useSlCandles ? slCandles!.slice(-10) : recentCandles;
     const slAvgRangePct = slRecentCandles.reduce((sum, c) => sum + (((c.high - c.low) / (c.close || 1)) * 100), 0) / Math.max(1, slRecentCandles.length);
     const volatilityBuffer = Math.max(symTick * 4, currCandle.close * (slAvgRangePct * 0.01 * 0.35));
-    // Intraday breathing boundaries: Min 0.85% (prevents noise stops), capped at 2.20% to accommodate true day low/mother low
-    const minBreathingDist = Math.max(symTick * 8, currCandle.close * 0.0085);
-    const maxBreathingDist = Math.max(symTick * 15, currCandle.close * 0.022);
+    // Intraday breathing boundaries: Min 0.85% (prevents noise stops), capped at maxStopPct (default 2.2%) to accommodate true day low/mother low
+    const maxStopPct = this.getMaxStopPct(config);
+    const minBreathingDist = Math.max(symTick * 8, currCandle.close * Math.min(MIN_STOP_PCT, maxStopPct) / 100);
+    const maxBreathingDist = Math.max(symTick * 15, currCandle.close * maxStopPct / 100);
 
     const getSwingShelfSl = (dir: 'LONG' | 'SHORT', candleExtreme: number): number => {
       if (dir === 'LONG') {
@@ -3829,7 +3866,7 @@ export class EmaVwapCrossoverEngine {
 
     // ── 1. Pattern 1 (TOP PRIORITY): Fresh 5m EMA-VWAP Crossover (The IFCI Trade Setup) ──
     // Enters when price/15-EMA cleanly crosses and confirms across VWAP with tight structural SL
-    const crossoverDetails = this.getLatestCrossoverTodayDetails(lastIdx, candles, emas, vwaps);
+    const crossoverDetails = this.getLatestCrossoverTodayDetails(lastIdx, candles, emas, vwaps, symbol || config.symbol);
     if (crossoverDetails && (lastIdx - crossoverDetails.crossoverIdx) <= 2) {
       const cCandle = candles[crossoverDetails.crossoverIdx];
       const isLong = crossoverDetails.trend === 'LONG';
@@ -4118,7 +4155,7 @@ export class EmaVwapCrossoverEngine {
       });
     } catch { }
   }
-  private getLatestCrossoverTodayDetails(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[]): { trend: 'LONG' | 'SHORT'; crossoverIdx: number; ema: number; vwap: number; crossoverTime: Date } | null {
+  private getLatestCrossoverTodayDetails(idx: number, candles: Candle[], emas: (number | null)[], vwaps: (number | null)[], symbol?: string): { trend: 'LONG' | 'SHORT'; crossoverIdx: number; ema: number; vwap: number; crossoverTime: Date } | null {
     const todayStr = getIstDateStr(candles[idx].date);
     const cross = findLatestEmaVwapCrossToday(idx, candles, emas, vwaps);
     const latestCrossover = cross?.trend ?? null;
@@ -4131,7 +4168,7 @@ export class EmaVwapCrossoverEngine {
       if (currentEma === null || currentVwap === null) return null;
 
       // Dynamic Volatility Exhaustion Guard: Scaled to stock's actual Daily ATR%
-      const metrics = this.calculateDynamicStockMetrics(candles, new Date());
+      const metrics = this.calculateDynamicStockMetrics(candles, new Date(), symbol);
       let firstDayCandle: Candle | null = null;
       for (let k = 0; k < candles.length; k++) {
         if (getIstDateStr(candles[k].date) === todayStr) {
@@ -4291,6 +4328,12 @@ export class EmaVwapCrossoverEngine {
   private getScanDepth(config: EmaVwapCrossoverConfig): number {
     const n = Math.floor(Number(config.scanDepth));
     return Number.isFinite(n) && n >= 1 ? Math.min(MAX_SCAN_DEPTH, n) : DEFAULT_SCAN_DEPTH;
+  }
+
+  /** Widest structural stop, % of entry (config.maxStopPct, default 2.2, kept within 0.85-5). */
+  private getMaxStopPct(config: EmaVwapCrossoverConfig): number {
+    const v = Number(config.maxStopPct);
+    return Number.isFinite(v) && v > 0 ? Math.max(MIN_STOP_PCT, Math.min(5, v)) : DEFAULT_MAX_STOP_PCT;
   }
 
   /** Which exit-target mode applies. FIXED_RS = the ₹ target/SL mode. */
