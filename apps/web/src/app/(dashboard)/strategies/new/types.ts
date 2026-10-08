@@ -16,6 +16,8 @@ export interface StrategyFormState {
   stagnationMinutes?: string;
   /** EMA-VWAP stocks: widest structural stop-loss, % of entry (default "2.2"). */
   maxStopPct?: string;
+  /** EMA-VWAP stocks, EMA target mode: at +1.5R move the stop to +0.5R, at +3R to +2R (default on). */
+  profitLock?: boolean;
   /** EMA-VWAP stocks: require a volume spike on the signal candle, judged against the stock's own history. */
   volumeFilter?: boolean;
   volumeStrictness?: "RELAXED" | "BALANCED" | "STRICT";

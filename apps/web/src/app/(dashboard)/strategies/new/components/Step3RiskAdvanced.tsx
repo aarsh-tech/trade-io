@@ -1029,6 +1029,31 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
+          {/* Profit lock (EMA-VWAP stocks, ride-the-15-EMA mode): steps the stop into profit */}
+          {form.type === "EMA_VWAP_CROSSOVER" && form.targetMode === "EMA" && !form.exitExactAtTarget && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-profit shrink-0" />
+                  <span className="text-sm font-semibold text-foreground">Profit Lock</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.profitLock !== false}
+                    onChange={(e) => set("profitLock", e.target.checked)}
+                    className="sr-only peer"
+                    aria-label="Profit lock"
+                  />
+                  <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
+                </label>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                R is the entry&apos;s stop distance (your max loss). Once the trade is +1.5R the stop moves to +0.5R, and at +3R to +2R, so a big open profit can&apos;t turn into a small one. The 15-EMA candle-close exit still applies. In the 2-year backtest this made about 40% more than leaving the stop where it started, in both years.
+              </p>
+            </div>
+          )}
+
           {/* Stagnation exit (EMA-VWAP stocks): time-stop for trades that go nowhere */}
           {form.type === "EMA_VWAP_CROSSOVER" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">

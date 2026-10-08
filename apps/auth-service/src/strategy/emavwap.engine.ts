@@ -109,6 +109,8 @@ interface StrategyState {
   partialTargetPrice?: number | null;
   partialBooked?: boolean;
   partialAttempts?: number;
+  initialStopPrice?: number;   // the entry's structural stop (1R for the profit lock)
+  profitLockStep?: number;     // PROFIT_LOCK_STEPS reached so far
   isBookingPartial?: boolean;
   /** First tick (ms) at which price was beyond the stop while the broker SL had not filled. */
   slBreachAt?: number | null;
@@ -127,6 +129,11 @@ const MAX_SCAN_DEPTH = 25;
 /** Widest stop allowed, % of entry (maxStopPct). The 2-year backtest did better the tighter this was (2.2% -> 1.0%). */
 const DEFAULT_MAX_STOP_PCT = 2.2;
 const MIN_STOP_PCT = 0.85;
+/**
+ * Profit lock for the 15-EMA ride (config.profitLock, default on): [reached R, stop moved to R]. 2-year 5m backtest (₹30k,
+ * 1 trade/day, 1.2% stop): +₹31.7k vs +₹22.6k with the stop left at the entry stop, better in both years (8 Oct 2026).
+ */
+const PROFIT_LOCK_STEPS: ReadonlyArray<readonly [number, number]> = [[1.5, 0.5], [3, 2]];
 /** Sessions in the daily ATR (from the volume-history download). */
 const ATR_SESSIONS = 10;
 /** Fibonacci ratios marked on the opening 5m candle (0 = its far end, 1 = the end in the trade's direction). */
@@ -1049,6 +1056,8 @@ export class EmaVwapCrossoverEngine {
               state.setupType = undefined;
               state.peakPnlRs = 0;
               state.isTrailingEma = false;
+              state.initialStopPrice = undefined;
+              state.profitLockStep = 0;
 
               strategyEvents.emit('strategy.update', {
                 strategyId: state.strategyId,
@@ -1995,6 +2004,8 @@ export class EmaVwapCrossoverEngine {
 
       state.entryTriggered = side === 'BUY' ? 'LONG' : 'SHORT';
       state.stopLossPrice = sl;
+      state.initialStopPrice = sl;
+      state.profitLockStep = 0;
       state.targetPrice = tgt;
       const placedMode = this.getTargetMode(config);
       state.partialTargetPrice = (placedMode === 'PARTIAL' || placedMode === 'QUICK') ? tgt : null;
@@ -2243,6 +2254,9 @@ export class EmaVwapCrossoverEngine {
       if (this.isPartialBookingDue(state, currentPrice)) {
         await this.bookPartial(state, client, kite, currentPrice);
       }
+
+      // ── 1.95 Profit lock (EMA ride mode): +1.5R → stop to +0.5R, +3R → stop to +2R ──
+      await this.applyProfitLock(state, client, kite, symbol, currentPrice);
 
       // ── 2. Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ───────────────
       const entryPrice = state.entryPrice || currentPrice;
@@ -2544,6 +2558,8 @@ export class EmaVwapCrossoverEngine {
     state.currentPnlRs = 0;
     state.peakPnlRs = 0;
     state.isTrailingEma = false;
+    state.initialStopPrice = undefined;
+    state.profitLockStep = 0;
   }
 
   private stopRealtimeMonitor(state: StrategyState) {
@@ -2864,6 +2880,9 @@ export class EmaVwapCrossoverEngine {
     if (this.isPartialBookingDue(state, currentPrice)) {
       await this.bookPartial(state, client, kite, currentPrice);
     }
+
+    // ── Profit lock (EMA ride mode) ──────────────────────────────────────────
+    await this.applyProfitLock(state, client, kite, symbol, currentPrice);
 
     // ── Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ─────────────────
     // Check Target 1 / Dynamic VWAP & EMA Trailing
@@ -3226,6 +3245,8 @@ export class EmaVwapCrossoverEngine {
       state.setupType = undefined;
       state.peakPnlRs = 0;
       state.isTrailingEma = false;
+      state.initialStopPrice = undefined;
+      state.profitLockStep = 0;
       state.partialTargetPrice = null;
       state.partialBooked = false;
       state.isBookingPartial = false;
@@ -3275,6 +3296,8 @@ export class EmaVwapCrossoverEngine {
             state.setupType = undefined;
             state.peakPnlRs = 0;
             state.isTrailingEma = false;
+            state.initialStopPrice = undefined;
+            state.profitLockStep = 0;
             state.partialTargetPrice = null;
             state.partialBooked = false;
             state.isBookingPartial = false;
@@ -3391,6 +3414,8 @@ export class EmaVwapCrossoverEngine {
       state.setupType = undefined;
       state.peakPnlRs = 0;
       state.isTrailingEma = false;
+      state.initialStopPrice = undefined;
+      state.profitLockStep = 0;
     } catch (e: any) {
       this.log(state, `❌ Historical exit failed: ${e.message}`);
     }
@@ -4553,6 +4578,42 @@ export class EmaVwapCrossoverEngine {
     } finally {
       state.isBookingPartial = false;
     }
+  }
+
+  /**
+   * Profit lock (config.profitLock, default on; 15-EMA ride mode only). R = the entry's structural stop distance. Once
+   * price is +1.5R the stop moves to +0.5R, at +3R to +2R (PROFIT_LOCK_STEPS). The stop only tightens and the 15-EMA
+   * candle-close exit is unchanged. Re-syncs the exchange stop on every call until it matches (the modify is
+   * rate-limited and can fail); that is a no-op once synced.
+   */
+  private async applyProfitLock(state: StrategyState, client: any, kite: any, symbol: string, price: number) {
+    if (state.config.profitLock === false || this.getTargetMode(state.config) !== 'EMA') return;
+    const entry = state.entryPrice;
+    if (!entry || !state.stopLossPrice || !price) return;
+    const isLong = state.entryTriggered === 'LONG';
+    if (state.initialStopPrice == null) {
+      // Position adopted after a restart: its stop is the entry stop only while it is still on the loss side.
+      if (isLong ? state.stopLossPrice >= entry : state.stopLossPrice <= entry) return;
+      state.initialStopPrice = state.stopLossPrice;
+    }
+    const risk = Math.abs(entry - state.initialStopPrice);
+    if (!(risk > 0)) return;
+    const move = isLong ? price - entry : entry - price;
+    const done = state.profitLockStep || 0;
+    let step = done;
+    while (step < PROFIT_LOCK_STEPS.length && move >= PROFIT_LOCK_STEPS[step][0] * risk) step++;
+    if (step > done) {
+      state.profitLockStep = step;
+      const [reachedR, lockR] = PROFIT_LOCK_STEPS[step - 1];
+      const lockSl = this.roundTick(isLong ? entry + risk * lockR : entry - risk * lockR, symbol);
+      if (isLong ? lockSl > state.stopLossPrice : lockSl < state.stopLossPrice) {
+        state.stopLossPrice = lockSl;
+        const qty = state.executedQty || state.config.qty;
+        const lockedRs = (isLong ? lockSl - entry : entry - lockSl) * qty;
+        this.log(state, `🔒 [PROFIT LOCK] ${symbol} reached +${reachedR}R @ ₹${price.toFixed(2)} — stop moved to +${lockR}R ₹${lockSl.toFixed(2)}, locking +₹${lockedRs.toFixed(2)}. The 15-EMA close exit still applies.`);
+      }
+    }
+    if (state.profitLockStep) await this.updateBrokerSlSafe(client, kite, state, symbol);
   }
 
   /**
