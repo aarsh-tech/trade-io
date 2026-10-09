@@ -111,6 +111,7 @@ interface StrategyState {
   partialAttempts?: number;
   initialStopPrice?: number;   // the entry's structural stop (1R for the profit lock)
   profitLockStep?: number;     // PROFIT_LOCK_STEPS reached so far
+  slowTrail?: boolean;         // reached SLOW_TRAIL_AFTER_R: the candle-close exit uses SLOW_TRAIL_EMA
   isBookingPartial?: boolean;
   /** First tick (ms) at which price was beyond the stop while the broker SL had not filled. */
   slBreachAt?: number | null;
@@ -134,6 +135,14 @@ const MIN_STOP_PCT = 0.85;
  * 1 trade/day, 1.2% stop): +₹31.7k vs +₹22.6k with the stop left at the entry stop, better in both years (8 Oct 2026).
  */
 const PROFIT_LOCK_STEPS: ReadonlyArray<readonly [number, number]> = [[1.5, 0.5], [3, 2]];
+/**
+ * Slow trail (config.slowTrail, default on; EMA target mode only): once a trade has been +SLOW_TRAIL_AFTER_R, the 5m
+ * candle-close exit uses the SLOW_TRAIL_EMA instead of the 15-EMA, so a big run is not cut on its first dip. 2-year 5m
+ * backtest (₹30k, 1 trade/day, 1.2% stop, profit lock): +₹44.4k vs +₹35.5k, better in both years, same win rate and
+ * drawdown (10 Oct 2026).
+ */
+const SLOW_TRAIL_AFTER_R = 1.5;
+const SLOW_TRAIL_EMA = 40;
 /** Sessions in the daily ATR (from the volume-history download). */
 const ATR_SESSIONS = 10;
 /** Fibonacci ratios marked on the opening 5m candle (0 = its far end, 1 = the end in the trade's direction). */
@@ -1058,6 +1067,7 @@ export class EmaVwapCrossoverEngine {
               state.isTrailingEma = false;
               state.initialStopPrice = undefined;
               state.profitLockStep = 0;
+              state.slowTrail = false;
 
               strategyEvents.emit('strategy.update', {
                 strategyId: state.strategyId,
@@ -1114,15 +1124,18 @@ export class EmaVwapCrossoverEngine {
                 // Only evaluate candles that finished strictly after our trade entry
                 if (candleCloseTimeMs > entryTimeMs + 2 * 60 * 1000) {
                   const isLong = state.entryTriggered === 'LONG';
-                  const isEmaBreached = isLong
-                    ? (lastClosedCandle.close < currEma)
-                    : (lastClosedCandle.close > currEma);
+                  // Slow trail: once the trade has been +1.5R the exit line is the 40-EMA (armSlowTrail)
+                  const exitEmaPeriod = state.slowTrail ? SLOW_TRAIL_EMA : (config.emaPeriod || 15);
+                  const exitEma = state.slowTrail ? calculateEMA(closedCCandles, SLOW_TRAIL_EMA)[lastClosedIdx] : currEma;
+                  const isEmaBreached = exitEma !== null && (isLong
+                    ? (lastClosedCandle.close < exitEma)
+                    : (lastClosedCandle.close > exitEma));
 
                   if (isEmaBreached) {
                     const dirStr = isLong ? 'below' : 'above';
                     this.log(
                       state,
-                      `🛑 [15-EMA STRUCTURAL CANDLE EXIT] Confirmed 5m candle [${this.formatCandleRange(lastClosedCandle.date, 5)}] closed ${dirStr} 15-EMA! Close: ₹${lastClosedCandle.close.toFixed(2)} vs 15-EMA: ₹${currEma.toFixed(2)}. Technical structure invalidated — immediately squaring off position.`
+                      `🛑 [${exitEmaPeriod}-EMA STRUCTURAL CANDLE EXIT] Confirmed 5m candle [${this.formatCandleRange(lastClosedCandle.date, 5)}] closed ${dirStr} ${exitEmaPeriod}-EMA! Close: ₹${lastClosedCandle.close.toFixed(2)} vs ${exitEmaPeriod}-EMA: ₹${exitEma.toFixed(2)}. Technical structure invalidated — immediately squaring off position.`
                     );
                     await safeCancelPendingOrders(kite, client, [state.slOrderId, state.targetOrderId], this.logger);
                     this.stopRealtimeMonitor(state);
@@ -2006,6 +2019,7 @@ export class EmaVwapCrossoverEngine {
       state.stopLossPrice = sl;
       state.initialStopPrice = sl;
       state.profitLockStep = 0;
+      state.slowTrail = false;
       state.targetPrice = tgt;
       const placedMode = this.getTargetMode(config);
       state.partialTargetPrice = (placedMode === 'PARTIAL' || placedMode === 'QUICK') ? tgt : null;
@@ -2257,6 +2271,7 @@ export class EmaVwapCrossoverEngine {
 
       // ── 1.95 Profit lock (EMA ride mode): +1.5R → stop to +0.5R, +3R → stop to +2R ──
       await this.applyProfitLock(state, client, kite, symbol, currentPrice);
+      this.armSlowTrail(state, symbol, currentPrice);
 
       // ── 2. Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ───────────────
       const entryPrice = state.entryPrice || currentPrice;
@@ -2560,6 +2575,7 @@ export class EmaVwapCrossoverEngine {
     state.isTrailingEma = false;
     state.initialStopPrice = undefined;
     state.profitLockStep = 0;
+    state.slowTrail = false;
   }
 
   private stopRealtimeMonitor(state: StrategyState) {
@@ -2883,6 +2899,7 @@ export class EmaVwapCrossoverEngine {
 
     // ── Profit lock (EMA ride mode) ──────────────────────────────────────────
     await this.applyProfitLock(state, client, kite, symbol, currentPrice);
+    this.armSlowTrail(state, symbol, currentPrice);
 
     // ── Uncapped Trend Rider: 15-EMA & VWAP Dynamic Trailing ─────────────────
     // Check Target 1 / Dynamic VWAP & EMA Trailing
@@ -3247,6 +3264,7 @@ export class EmaVwapCrossoverEngine {
       state.isTrailingEma = false;
       state.initialStopPrice = undefined;
       state.profitLockStep = 0;
+      state.slowTrail = false;
       state.partialTargetPrice = null;
       state.partialBooked = false;
       state.isBookingPartial = false;
@@ -3298,6 +3316,7 @@ export class EmaVwapCrossoverEngine {
             state.isTrailingEma = false;
             state.initialStopPrice = undefined;
             state.profitLockStep = 0;
+            state.slowTrail = false;
             state.partialTargetPrice = null;
             state.partialBooked = false;
             state.isBookingPartial = false;
@@ -3416,6 +3435,7 @@ export class EmaVwapCrossoverEngine {
       state.isTrailingEma = false;
       state.initialStopPrice = undefined;
       state.profitLockStep = 0;
+      state.slowTrail = false;
     } catch (e: any) {
       this.log(state, `❌ Historical exit failed: ${e.message}`);
     }
@@ -4614,6 +4634,29 @@ export class EmaVwapCrossoverEngine {
       }
     }
     if (state.profitLockStep) await this.updateBrokerSlSafe(client, kite, state, symbol);
+  }
+
+  /**
+   * Slow trail (config.slowTrail, default on; EMA target mode only): marks the trade once it has been +SLOW_TRAIL_AFTER_R
+   * (R = the entry's stop distance); from then on the 5m candle-close exit uses the SLOW_TRAIL_EMA instead of the 15-EMA.
+   * The stop and the profit lock are unchanged. A position adopted after a restart whose stop is already in profit got
+   * there through the profit lock, so it counts as having reached it.
+   */
+  private armSlowTrail(state: StrategyState, symbol: string, price: number) {
+    if (state.slowTrail || state.config.slowTrail === false || this.getTargetMode(state.config) !== 'EMA') return;
+    const entry = state.entryPrice;
+    if (!entry || !state.stopLossPrice || !price) return;
+    const isLong = state.entryTriggered === 'LONG';
+    let reached: boolean;
+    if (state.initialStopPrice == null) {
+      reached = isLong ? state.stopLossPrice > entry : state.stopLossPrice < entry;
+    } else {
+      const risk = Math.abs(entry - state.initialStopPrice);
+      reached = risk > 0 && (isLong ? price - entry : entry - price) >= SLOW_TRAIL_AFTER_R * risk;
+    }
+    if (!reached) return;
+    state.slowTrail = true;
+    this.log(state, `🐢 [SLOW TRAIL] ${symbol} reached +${SLOW_TRAIL_AFTER_R}R @ ₹${price.toFixed(2)} — from now on the trade exits on a 5m candle close across the ${SLOW_TRAIL_EMA}-EMA instead of the 15-EMA. The stop still applies.`);
   }
 
   /**

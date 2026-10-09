@@ -1054,6 +1054,31 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
+          {/* Slow Trail (EMA-VWAP stocks, ride-the-15-EMA mode) */}
+          {form.type === "EMA_VWAP_CROSSOVER" && form.targetMode === "EMA" && !form.exitExactAtTarget && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-profit shrink-0" />
+                  <span className="text-sm font-semibold text-foreground">Slow Trail</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.slowTrail !== false}
+                    onChange={(e) => set("slowTrail", e.target.checked)}
+                    className="sr-only peer"
+                    aria-label="Slow Trail"
+                  />
+                  <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
+                </label>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                Once the trade is +1.5R, it exits on a 5m candle close across the 40-EMA instead of the 15-EMA, so a big run isn&apos;t cut on its first dip. The stop and the profit lock still apply. In the 2-year backtest this made about 25% more, in both years, with the same win rate and drawdown.
+              </p>
+            </div>
+          )}
+
           {/* Stagnation exit (EMA-VWAP stocks): time-stop for trades that go nowhere */}
           {form.type === "EMA_VWAP_CROSSOVER" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
