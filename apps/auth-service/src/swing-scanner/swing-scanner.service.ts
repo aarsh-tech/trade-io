@@ -2,13 +2,12 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { getSharedInstruments } from '../brokers/instrument-store';
 import { toKiteError, withKiteRetry } from '../brokers/kite-errors';
+import { NIFTY_500_UNIVERSE } from '../market/market.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { analyzeStock, DailyCandle } from './vcp.analyzer';
 
-// ─── Nifty 500 scan universe (liquid NSE stocks) ──────────────────────────────
-const SCAN_UNIVERSE = [
-  '3MINDIA', 'AAVAS', 'ABB', 'ABCAPITAL', 'ABFRL', 'ACC', 'ADANIGREEN', 'ADANIPORTS', 'ADANIPOWER', 'ADANITRANS', 'ADVENZYMES', 'AEGISCHEM', 'AIAENG', 'AJANTPHARM', 'AKZOINDIA', 'ALBK', 'ALKEM', 'ALLCARGO', 'AMARAJABAT', 'AMBUJACEM', 'ANDHRABANK', 'APLAPOLLO', 'APLLTD', 'APOLLOHOSP', 'APOLLOTYRE', 'ASHOKA', 'ASHOKLEY', 'ASIANPAINT', 'ASTERDM', 'ASTRAL', 'ASTRAZEN', 'ATUL', 'AUBANK', 'AUROPHARMA', 'AVANTIFEED', 'AXISBANK', 'BAJAJ-AUTO', 'BAJAJCON', 'BAJAJELEC', 'BAJAJFINSV', 'BAJAJHLDNG', 'BAJFINANCE', 'BALKRISIND', 'BALMLAWRIE', 'BALRAMCHIN', 'BANDHANBNK', 'BANKBARODA', 'BANKINDIA', 'BASF', 'BATAINDIA', 'BBTC', 'BDL', 'BEL', 'BEML', 'BERGEPAINT', 'BHARATFORG', 'BHARTIARTL', 'BHEL', 'BIOCON', 'BIRLACORPN', 'BLISSGVS', 'BLUEDART', 'BLUESTARCO', 'BOMDYEING', 'BOSCHLTD', 'BPCL', 'BRIGADE', 'BRITANNIA', 'BSE', 'CADILAHC', 'CANBK', 'CANFINHOME', 'CAPLIPOINT', 'CARBORUNIV', 'CARERATING', 'CASTROLIND', 'CCL', 'CDSL', 'CEATLTD', 'CENTRALBK', 'CENTURYPLY', 'CERA', 'CESC', 'CGPOWER', 'CHAMBLFERT', 'CHENNPETRO', 'CHOLAFIN', 'CHOLAHLDNG', 'CIPLA', 'COALINDIA', 'COCHINSHIP', 'COFFEEDAY', 'COLPAL', 'CONCOR', 'COROMANDEL', 'CORPBANK', 'COX&KINGS', 'CREDITACC', 'CRISIL', 'CROMPTON', 'CUB', 'CUMMINSIND', 'CYIENT', 'DABUR', 'DBCORP', 'DBL', 'DCAL', 'DCBBANK', 'DCMSHRIRAM', 'DEEPAKFERT', 'DEEPAKNTR', 'DELTACORP', 'DHFL', 'DISHTV', 'DIVISLAB', 'DIXON', 'DLF', 'DMART', 'DRREDDY', 'ECLERX', 'EDELWEISS', 'EICHERMOT', 'EIDPARRY', 'EIHOTEL', 'ELGIEQUIP', 'EMAMILTD', 'ENDURANCE', 'ENGINERSIN', 'EQUITAS', 'ERIS', 'ESCORTS', 'ESSELPACK', 'EXIDEIND', 'FCONSUMER', 'FDC', 'FEDERALBNK', 'FINCABLES', 'FINEORG', 'FINPIPE', 'FLFL', 'FORTIS', 'FRETAIL', 'FSL', 'GAIL', 'GALAXYSURF', 'GAYAPROJ', 'GDL', 'GEPIL', 'GESHIP', 'GET&D', 'GHCL', 'GICRE', 'GILLETTE', 'GLAXO', 'GLENMARK', 'GMDCLTD', 'GMRINFRA', 'GNFC', 'GODFRYPHLP', 'GODREJAGRO', 'GODREJCP', 'GODREJIND', 'GODREJPROP', 'GPPL', 'GRANULES', 'GRAPHITE', 'GRASIM', 'GREAVESCOT', 'GRINDWELL', 'GRUH', 'GSFC', 'GSKCONS', 'GSPL', 'GUJALKALI', 'GUJFLUORO', 'GUJGASLTD', 'GULFOILLUB', 'HAL', 'HATHWAY', 'HATSUN', 'HAVELLS', 'HCLTECH', 'HDFC', 'HDFCAMC', 'HDFCBANK', 'HDFCLIFE', 'HEG', 'HEIDELBERG', 'HERITGFOOD', 'HEROMOTOCO', 'HEXAWARE', 'HFCL', 'HIMATSEIDE', 'HINDALCO', 'HINDCOPPER', 'HINDPETRO', 'HINDUNILVR', 'HINDZINC', 'HONAUT', 'HSCL', 'HUDCO', 'IBREALEST', 'IBULHSGFIN', 'IBULISL', 'IBVENTURES', 'ICICIBANK', 'ICICIGI', 'ICICIPRULI', 'ICRA', 'IDBI', 'IDEA', 'IDFC', 'IDFCFIRSTB', 'IEX', 'IFBIND', 'IFCI', 'IGL', 'INDHOTEL', 'INDIACEM', 'INDIANB', 'INDIGO', 'INDOCO', 'INDOSTAR', 'INDUSINDBK', 'INFIBEAM', 'INFRATEL', 'INFY', 'INOXLEISUR', 'INOXWIND', 'INTELLECT', 'IOB', 'IOC', 'IPCALAB', 'IRB', 'IRCON', 'ISEC', 'ITC', 'ITDC', 'ITDCEM', 'ITI', 'J&KBANK', 'JAGRAN', 'JAICORPLTD', 'JAMNAAUTO', 'JBCHEPHARM', 'JETAIRWAYS', 'JINDALSAW', 'JINDALSTEL', 'JISLJALEQS', 'JKCEMENT', 'JKLAKSHMI', 'JKPAPER', 'JKTYRE', 'JMFINANCIL', 'JPASSOCIAT', 'JSL', 'JSLHISAR', 'JSWENERGY', 'JSWSTEEL', 'JUBILANT', 'JUBLFOOD', 'JUSTDIAL', 'JYOTHYLAB', 'KAJARIACER', 'KALPATPOWR', 'KANSAINER', 'KARURVYSYA', 'KEC', 'KEI', 'KIOCL', 'KIRLOSENG', 'KNRCON', 'KOLTEPATIL', 'KOTAKBANK', 'KPRMILL', 'KRBL', 'KSCL', 'KTKBANK', 'L&TFH', 'LAKSHVILAS', 'LALPATHLAB', 'LAURUSLABS', 'LAXMIMACH', 'LEMONTREE', 'LICHSGFIN', 'LINDEINDIA', 'LT', 'LTI', 'LTTS', 'LUPIN', 'LUXIND', 'M&M', 'M&MFIN', 'MAGMA', 'MAHABANK', 'MAHINDCIE', 'MAHLOG', 'MAHSCOOTER', 'MAHSEAMLES', 'MANAPPURAM', 'MARICO', 'MARUTI', 'MASFIN', 'MAXINDIA', 'MCDOWELL-N', 'MFSL', 'MGL', 'MHRIL', 'MINDACORP', 'MINDAIND', 'MINDTREE', 'MMTC', 'MOIL', 'MONSANTO', 'MOTHERSUMI', 'MOTILALOFS', 'MPHASIS', 'MRF', 'MRPL', 'MUTHOOTFIN', 'NATCOPHARM', 'NATIONALUM', 'NAUKRI', 'NAVINFLUOR', 'NBCC', 'NBVENTURES', 'NCC', 'NESCO', 'NETWORK18', 'NFL', 'NH', 'NHPC', 'NIACL', 'NIITTECH', 'NILKAMAL', 'NLCINDIA', 'NMDC', 'NTPC', 'OBEROIRLTY', 'OFSS', 'OIL', 'OMAXE', 'ONGC', 'ORIENTBANK', 'ORIENTCEM', 'ORIENTELEC', 'PAGEIND', 'PARAGMILK', 'PCJEWELLER', 'PEL', 'PERSISTENT', 'PETRONET', 'PFC', 'PFIZER', 'PGHH', 'PGHL', 'PHILIPCARB', 'PHOENIXLTD', 'PIDILITIND', 'PIIND', 'PNB', 'PNBHOUSING', 'PNCINFRA', 'POWERGRID', 'PRAJIND', 'PRESTIGE', 'PRSMJOHNSN', 'PTC', 'PVR', 'QUESS', 'RADICO', 'RAIN', 'RAJESHEXPO', 'RALLIS', 'RAMCOCEM', 'RAYMOND', 'RBLBANK', 'RCF', 'RCOM', 'RECLTD', 'REDINGTON', 'RELAXO', 'RELCAPITAL', 'RELIANCE', 'RELINFRA', 'RENUKA', 'REPCOHOME', 'RHFL', 'RITES', 'RKFORGE', 'RNAM', 'RPOWER', 'RUPA', 'SADBHAV', 'SAIL', 'SANOFI', 'SBILIFE', 'SBIN', 'SCHAEFFLER', 'SCI', 'SFL', 'SHANKARA', 'SHARDACROP', 'SHILPAMED', 'SHK', 'SHOPERSTOP', 'SHREECEM', 'SHRIRAMCIT', 'SIEMENS', 'SIS', 'SJVN', 'SKFINDIA', 'SOBHA', 'SOLARINDS', 'SONATSOFTW', 'SOUTHBANK', 'SPARC', 'SPTL', 'SREINFRA', 'SRF', 'SRTRANSFIN', 'STAR', 'STARCEMENT', 'STRTECH', 'SUDARSCHEM', 'SUNCLAYLTD', 'SUNDARMFIN', 'SUNDRMFAST', 'SUNPHARMA', 'SUNTECK', 'SUNTV', 'SUPRAJIT', 'SUPREMEIND', 'SUVEN', 'SUZLON', 'SWANENERGY', 'SYMPHONY', 'SYNDIBANK', 'SYNGENE', 'TAKE', 'TATACHEM', 'TATACOFFEE', 'TATAELXSI', 'TATAGLOBAL', 'TATAINVEST', 'TATAMOTORS', 'TATAMTRDVR', 'TATAPOWER', 'TATASTEEL', 'TCNSBRANDS', 'TCS', 'TEAMLEASE', 'TECHM', 'THERMAX', 'THOMASCOOK', 'THYROCARE', 'TIINDIA', 'TIMETECHNO', 'TIMKEN', 'TITAN', 'TNPL', 'TORNTPHARM', 'TORNTPOWER', 'TRENT', 'TRIDENT', 'TRITURBINE', 'TTKPRESTIG', 'TV18BRDCST', 'TVSMOTOR', 'TVTODAY', 'UBL', 'UCOBANK', 'UFLEX', 'UJJIVAN', 'ULTRACEMCO', 'UNIONBANK', 'UPL', 'VAKRANGEE', 'VARROC', 'VBL', 'VEDL', 'VENKEYS', 'VGUARD', 'VINATIORGA', 'VIPIND', 'VMART', 'VOLTAS', 'VRLLOG', 'VSTIND', 'VTL', 'WABAG', 'WABCOINDIA', 'WELCORP', 'WELSPUNIND', 'WHIRLPOOL', 'WIPRO', 'WOCKPHARMA', 'YESBANK', 'ZEEL', 'ZENSARTECH', 'ZYDUSWELL'
-];
+// Nifty 500 + F&O stocks still listed on NSE, kept only if they trade at least this much a day.
+const MIN_AVG_TURNOVER_CR = 5;
 
 export interface ScanResult {
   rank: number;
@@ -111,8 +110,6 @@ export class SwingScannerService {
     const client = this.factory.createClient(account);
     const kite   = client['kite'];
 
-    this.logger.log(`Starting swing scan for user ${userId} — ${SCAN_UNIVERSE.length} stocks`);
-
     // NSE instruments for token resolution (shared daily master)
     let instruments: any[];
     try {
@@ -138,36 +135,22 @@ export class SwingScannerService {
       }
     });
 
-    // ── Build dynamic universe from NSE instruments ─────────────────────────────
+    // ── Universe: NIFTY 500 + F&O underlyings that are still listed on NSE ─────────
+    // (The raw NSE "EQ" list has 10k+ entries incl. govt bonds and SME series in no useful
+    // order, so slicing it missed most large/mid caps.)
     const tokenMap = new Map<string, number>();
-    const instrumentToSymbol = new Map<number, string>();
-    const dynamicUniverse: string[] = [];
-
-    // Helper: skip non-tradeable index/ETF instruments
-    const isNonTradeableIndex = (sym: string, name: string): boolean => {
-      // Indices have spaces in their trading symbols (e.g. "NIFTY 500", "INDIA VIX")
-      if (sym.includes(' ')) return true;
-      // Known index-tracking ETF patterns that can't be intraday traded
-      const indexPrefixes = ['NIFTY', 'SENSEX', 'INDIA VIX', 'MIDCAP', 'SMLCAP', 'GROWSECT'];
-      const upperName = (name || '').toUpperCase();
-      // If the *name* field matches broad index names, skip
-      if (indexPrefixes.some(p => upperName.startsWith(p) && sym.includes(p))) return true;
-      return false;
-    };
-
     instruments.forEach((i: any) => {
-      if (i.instrument_type === 'EQ' && i.exchange === 'NSE') {
-        // Skip non-tradeable index instruments
-        if (isNonTradeableIndex(i.tradingsymbol, i.name)) return;
-        tokenMap.set(i.tradingsymbol, i.instrument_token);
-        instrumentToSymbol.set(i.instrument_token, i.tradingsymbol);
-        dynamicUniverse.push(i.tradingsymbol);
-      }
+      if (i.instrument_type === 'EQ' && i.exchange === 'NSE' && i.segment === 'NSE') tokenMap.set(i.tradingsymbol, i.instrument_token);
     });
+    const universe = new Set<string>(NIFTY_500_UNIVERSE.filter((s) => tokenMap.has(s)));
+    for (const sym of fnoLotSizes.keys()) if (tokenMap.has(sym)) universe.add(sym);
+    const scanList = Array.from(universe);
+    this.activeScans.set(userId, { status: 'running', startedAt: new Date().toISOString(), scanned: 0, total: scanList.length });
+    this.logger.log(`Starting swing scan for user ${userId} — ${scanList.length} stocks (NIFTY 500 + F&O)`);
 
     // ── Get Live Quotes (LTP) for the entire universe ────────────────────────
     // kiteconnect builds the request as GET /quote/ltp?i=NSE:SYM&i=NSE:SYM2&... — sending
-    // all 1000 symbols in one call produced a real "URI Too Long" (414), so 200/chunk keeps
+    // ~1000 symbols in one call produced a real "URI Too Long" (414), so 200/chunk keeps
     // the query string short. Which chunk trips a raw, non-Kite-JSON 403 has moved around
     // (3rd of 3, then 5th of 5) as the chunking changed, which means it isn't tied to a
     // specific chunk's size or position — it's a short-lived condition on Kite's side (this
@@ -175,7 +158,7 @@ export class SwingScannerService {
     // toKiteError already classifies it as retryable (NetworkException); the fix that
     // actually applies here is giving that retry enough time to outlast the blip rather
     // than continuing to reshuffle chunk boundaries.
-    const ltpBatch = dynamicUniverse.slice(0, 1000).map(s => `NSE:${s}`);
+    const ltpBatch = scanList.map(s => `NSE:${s}`);
     let liveQuotes: Record<string, { last_price: number }> = {};
     const LTP_CHUNK_SIZE = 200;
     for (let i = 0; i < ltpBatch.length; i += LTP_CHUNK_SIZE) {
@@ -199,7 +182,6 @@ export class SwingScannerService {
     let scanned = 0;
     let candleFetchFailures = 0;
 
-    const scanList = dynamicUniverse.slice(0, 1000);
     for (let i = 0; i < scanList.length; i += 5) {
       const batch = scanList.slice(i, i + 5);
       await Promise.allSettled(
@@ -212,6 +194,11 @@ export class SwingScannerService {
             // INTRADAY_MOMENTUM needs only 50 candles; VCP needs ~200.
             // Accept any stock with at least 50 candles so intraday picks aren't dropped.
             if (!candles || candles.length < 50) return;
+
+            // Skip thinly traded names: 20-session average traded value (before today).
+            const prior = candles.slice(-21, -1);
+            const avgTurnoverCr = prior.reduce((sum, c) => sum + c.close * c.volume, 0) / Math.max(1, prior.length) / 1e7;
+            if (avgTurnoverCr < MIN_AVG_TURNOVER_CR) return;
 
             // ── Update with Live Data ────────────────────────────────────────
             const liveLtp = liveQuotes[`NSE:${symbol}`]?.last_price;
@@ -272,6 +259,8 @@ export class SwingScannerService {
           }
         }),
       );
+      const progress = this.activeScans.get(userId);
+      if (progress) progress.scanned = Math.min(scanList.length, i + 5);
       // Small delay between batches to respect rate limits
       await new Promise(r => setTimeout(r, 350));
     }
@@ -368,7 +357,7 @@ export class SwingScannerService {
     return {
       id: `scan_${new Date(scanDate).getTime()}`,
       scannedAt: scanDate.toISOString(),
-      totalScanned: 500, // Approximate total stocks checked
+      totalScanned: this.cache.get(userId)?.totalScanned ?? 0,
       totalResults: totalCount,
       page,
       pageSize,

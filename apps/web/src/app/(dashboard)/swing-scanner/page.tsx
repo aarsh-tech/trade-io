@@ -92,6 +92,7 @@ const PATTERN_META: Record<string, { label: string; color: string }> = {
   DAILY_INSIDE: { label: "1D Inside", color: "text-loss" },
   WEEKLY_INSIDE: { label: "Weekly Inside", color: "text-accent-foreground" },
   MONTHLY_INSIDE: { label: "Monthly Inside", color: "text-signal" },
+  EMA_PULLBACK: { label: "20/50 EMA Pullback", color: "text-muted-foreground" },
 };
 
 function fmt(n: number) {
@@ -329,7 +330,7 @@ export default function SwingScannerPage() {
   const [scanMeta, setScanMeta] = useState<Omit<ScanRun, "results"> | null>(null);
   const [loading, setLoading] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
-  const [filter, setFilter] = useState<"ALL" | "VCP" | "ROCKET_BASE" | "TIGHT_AREA" | "DAILY_INSIDE" | "WEEKLY_INSIDE" | "MONTHLY_INSIDE" | "INTRADAY_MOMENTUM">("ALL");
+  const [filter, setFilter] = useState<"ALL" | "VCP" | "ROCKET_BASE" | "TIGHT_AREA" | "DAILY_INSIDE" | "WEEKLY_INSIDE" | "MONTHLY_INSIDE" | "INTRADAY_MOMENTUM" | "EMA_PULLBACK">("ALL");
 
   const [sortBy, setSortBy] = useState<"score" | "riskPct" | "riskReward">("score");
   const [page, setPage] = useState(1);
@@ -460,7 +461,7 @@ export default function SwingScannerPage() {
             Momentum Swing Scanner
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            VCP · Rocket Base · Multi-Timeframe Inside Candles — High probability swing setups
+            VCP · Rocket Base · Inside Candles · 20/50 EMA Pullback — NIFTY 500 + F&O stocks
           </p>
         </div>
 
@@ -480,6 +481,16 @@ export default function SwingScannerPage() {
             {loading || isScanning ? "Scanning Universe..." : "Run Swing Scan"}
           </Button>
         </div>
+      </div>
+
+      {/* ── Disclaimer ── */}
+      <div className="border border-border rounded bg-muted/40 px-3 py-2.5 flex items-start gap-2.5">
+        <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+        <p className="text-[11px] sm:text-xs text-muted-foreground leading-relaxed">
+          <span className="font-semibold text-foreground">Do your own analysis before taking any trade.</span>{" "}
+          These are pattern matches, not buy recommendations — check the chart, news, results dates and overall market
+          trend yourself, and size every position so its stop-loss is a loss you can accept.
+        </p>
       </div>
 
       {/* ── Active Background Scan Banner ── */}
@@ -536,7 +547,7 @@ export default function SwingScannerPage() {
 
               {/* Pattern Pills */}
               <div className="flex gap-1 p-1 rounded-lg bg-muted/50 border border-border/80 overflow-x-auto scrollbar-hide">
-                {(["ALL", "VCP", "ROCKET_BASE", "TIGHT_AREA", "DAILY_INSIDE", "WEEKLY_INSIDE", "MONTHLY_INSIDE", "INTRADAY_MOMENTUM"] as const).map(
+                {(["ALL", "VCP", "ROCKET_BASE", "TIGHT_AREA", "DAILY_INSIDE", "WEEKLY_INSIDE", "MONTHLY_INSIDE", "INTRADAY_MOMENTUM", "EMA_PULLBACK"] as const).map(
                   (f) => (
                     <button
                       key={f}
@@ -562,6 +573,8 @@ export default function SwingScannerPage() {
                         ? `Weekly Inside`
                         : f === "MONTHLY_INSIDE"
                         ? `Monthly Inside`
+                        : f === "EMA_PULLBACK"
+                        ? `EMA Pullback`
                         : `Momentum`}
                     </button>
                   )

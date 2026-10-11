@@ -18,7 +18,8 @@ export type PatternType =
   | 'INTRADAY_MOMENTUM'
   | 'DAILY_INSIDE'
   | 'WEEKLY_INSIDE'
-  | 'MONTHLY_INSIDE';
+  | 'MONTHLY_INSIDE'
+  | 'EMA_PULLBACK';
 
 export interface PatternResult {
   pattern: PatternType;
@@ -53,6 +54,13 @@ export function sma(candles: DailyCandle[], period: number): number[] {
     result.push(slice.reduce((s, c) => s + c.close, 0) / period);
   }
   return result;
+}
+
+export function ema(values: number[], period: number): number[] {
+  const k = 2 / (period + 1);
+  const out: number[] = [];
+  values.forEach((v, i) => out.push(i === 0 ? v : v * k + out[i - 1] * (1 - k)));
+  return out;
 }
 
 export function avgVolume(candles: DailyCandle[], period: number, endIdx: number): number {
@@ -727,6 +735,70 @@ export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResu
   };
 }
 
+// ─── 6. 20/50 EMA Pullback (Watchlist) ─────────────────────────────────────────
+// Uptrend (20 EMA > rising 50 EMA), a dip to the 20 EMA in the last 4 sessions, then a green
+// bounce day that closes above the prior high on 1.5x volume. Buy next open, stop under the
+// signal day low (max 5%), target +6%, exit after 6 sessions.
+// Backtest (523 NSE stocks, Aug 2024–Sep 2026, 0.25% costs): 3,092 trades, 40% win, −0.37% avg —
+// no better than buying a random uptrending stock. Kept as a LOW-confidence watchlist pattern.
+
+export function detectEmaPullback(candles: DailyCandle[]): PatternResult | null {
+  if (candles.length < 60) return null;
+  const n = candles.length - 1;
+  const closes = candles.map((c) => c.close);
+  const e20 = ema(closes, 20);
+  const e50 = ema(closes, 50);
+  const curr = candles[n];
+  const prev = candles[n - 1];
+
+  if (!(e20[n] > e50[n] && e50[n] > e50[n - 10] && curr.close > e20[n])) return null;
+  let touched = false;
+  for (let j = n - 3; j <= n; j++) if (candles[j].low <= e20[j] * 1.01) touched = true;
+  if (!touched) return null;
+
+  const volRatio = (curr.volume || 0) / Math.max(1, avgVolume(candles, 20, n));
+  if (!(curr.close > curr.open && curr.close > prev.high && volRatio >= 1.5)) return null;
+
+  const entryPrice = parseFloat(curr.close.toFixed(2));
+  const stopLoss = parseFloat(Math.max(curr.low * 0.995, entryPrice * 0.95).toFixed(2));
+  const riskPts = Math.max(0.01, entryPrice - stopLoss);
+  const riskPct = parseFloat(((riskPts / entryPrice) * 100).toFixed(2));
+  const target1 = parseFloat((entryPrice * 1.06).toFixed(2));
+  const target2 = parseFloat((entryPrice * 1.08).toFixed(2));
+  const target3 = parseFloat((entryPrice * 1.10).toFixed(2));
+
+  const roc60 = curr.close / candles[n - 60].close - 1;
+  const spread = e20[n] / e50[n] - 1;
+  const { strength: trendStrength } = trendTemplateScore(candles);
+  // Capped well below the breakout patterns: this setup showed no edge in testing.
+  const score = Math.min(55, Math.round(35 + (roc60 >= 0.2 ? 10 : 0) + (spread >= 0.03 ? 5 : 0) + (volRatio >= 2 ? 5 : 0)));
+
+  return {
+    pattern: 'EMA_PULLBACK',
+    score,
+    confidence: 'LOW',
+    currentPrice: curr.close,
+    pivotPrice: parseFloat(e20[n].toFixed(2)),
+    entryPrice,
+    stopLoss,
+    target1,
+    target2,
+    target3,
+    riskReward: parseFloat((6 / Math.max(0.01, riskPct)).toFixed(2)),
+    riskPct,
+    trendStrength,
+    volumeSignal: 'EXPANDING',
+    contractions: 0,
+    direction: 'LONG',
+    notes: [
+      `20 EMA ₹${e20[n].toFixed(2)} > 50 EMA ₹${e50[n].toFixed(2)} (rising); bounced off the 20 EMA`,
+      `Volume ${volRatio.toFixed(1)}x 20-day avg · 60-day move ${(roc60 * 100).toFixed(1)}%`,
+      `Buy next open, SL ₹${stopLoss.toFixed(2)} (${riskPct}%), target +6% ₹${target1.toFixed(2)}, exit after 6 sessions`,
+      `⚠ Watchlist only — backtest 2024-26: 40% win, −0.37%/trade after costs`,
+    ],
+  };
+}
+
 // ─── Master Analyzer ─────────────────────────────────────────────────────────
 
 export function analyzeStock(_symbol: string, candles: DailyCandle[]): PatternResult[] {
@@ -766,6 +838,10 @@ export function analyzeStock(_symbol: string, candles: DailyCandle[]): PatternRe
   const monthlyCandles = aggregateMonthlyCandles(candles);
   const monthlyInside = detectInsideCandle(monthlyCandles, 'MONTHLY');
   results.push(...monthlyInside);
+
+  // 8. 20/50 EMA Pullback (watchlist)
+  const emaPullback = detectEmaPullback(candles);
+  if (emaPullback) results.push(emaPullback);
 
   return results;
 }
