@@ -342,7 +342,7 @@ export default function SwingScannerPage() {
   const loadLast = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     try {
-      const res = await swingApi.last({ pageSize: 1000 });
+      const res = await swingApi.last({ pageSize: 4000 });
       if (res.data?.data) {
         const { results, isScanning: serverScanning, ...meta } = res.data.data as any;
         setAllResults(results ?? []);

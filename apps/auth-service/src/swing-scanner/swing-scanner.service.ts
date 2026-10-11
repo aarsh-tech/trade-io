@@ -8,6 +8,9 @@ import { analyzeStock, DailyCandle } from './vcp.analyzer';
 
 // Nifty 500 + F&O stocks still listed on NSE, kept only if they trade at least this much a day.
 const MIN_AVG_TURNOVER_CR = 5;
+// Best setups kept per pattern. A single overall cap let the high-scoring daily inside /
+// momentum setups crowd out every weekly inside, monthly inside and EMA pullback result.
+const MAX_PER_PATTERN = 500;
 
 export interface ScanResult {
   rank: number;
@@ -271,13 +274,19 @@ export class SwingScannerService {
 
     // Sort by score desc, assign rank
     results.sort((a, b) => b.score - a.score);
-    results.forEach((r, i) => (r.rank = i + 1));
+    const perPattern = new Map<string, number>();
+    const kept = results.filter((r) => {
+      const count = (perPattern.get(r.pattern) ?? 0) + 1;
+      perPattern.set(r.pattern, count);
+      return count <= MAX_PER_PATTERN;
+    });
+    kept.forEach((r, i) => (r.rank = i + 1));
 
     const run: ScanRun = {
       id: `scan_${Date.now()}`,
       scannedAt: new Date().toISOString(),
       totalScanned: scanned,
-      results: results.slice(0, 500),
+      results: kept,
     };
 
 
@@ -295,7 +304,7 @@ export class SwingScannerService {
       total: scanned,
     });
 
-    this.logger.log(`Scan complete — ${results.length} setups found from ${scanned} stocks`);
+    this.logger.log(`Scan complete — ${results.length} setups found from ${scanned} stocks, ${kept.length} kept (max ${MAX_PER_PATTERN} per pattern)`);
     return run;
   }
 
