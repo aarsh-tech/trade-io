@@ -25,6 +25,22 @@ const PENDING_STATUSES = new Set(['OPEN', 'TRIGGER PENDING', 'PENDING', 'PUT ORD
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Net MIS quantity of a symbol from today's order book (filled buys minus filled sells).
+ * Kite updates the order book before the positions book, so a position that was just closed
+ * (e.g. by the strategy's own 15:05 exit) can still show its old quantity in positions for a
+ * second or two; flattening on that stale number sells twice and leaves a reverse position.
+ */
+function orderBookNet(orders: { symbol: string; product?: string; side: string; filledQty: number }[], symbol: string): number {
+  let net = 0;
+  for (const o of orders) {
+    if (o.symbol !== symbol || String(o.product || 'MIS').toUpperCase() !== 'MIS') continue;
+    const filled = Number(o.filledQty) || 0;
+    net += o.side === 'BUY' ? filled : -filled;
+  }
+  return net;
+}
+
+/**
  * Emergency flatten used by the EOD square-off and the kill switch. All exit orders go
  * through OrderGateway (intent EXIT, MARKET with market_protection -1), are idempotent
  * across repeated runs, retried, and raise an alert if a position is still open afterwards.
@@ -82,15 +98,22 @@ export class PositionFlattener {
 
     // 2. Flatten open algo MIS positions.
     const positions = await client.getPositions();
+    // Read the order book after the positions book: any fill the positions book shows is already in it.
+    const freshOrders = await client.getOrders();
     for (const pos of positions) {
       if (!pos.qty || String(pos.product).toUpperCase() !== 'MIS') continue;
       if (!algoSymbols.has(pos.symbol)) {
         this.logger.log(`🛡 [${reason}] Skipping ${pos.symbol}: no algo trade today (manual position preserved).`);
         continue;
       }
+      if (orderBookNet(freshOrders, pos.symbol) === 0) {
+        this.logger.log(`🛡 [${reason}] Skipping ${pos.symbol}: order book is already flat (positions book still catching up).`);
+        result.skipped.push(pos.symbol);
+        continue;
+      }
 
       const key = `${account.id}:${pos.symbol}`;
-      const inFlight = orders.some((o) => o.tag === FLATTEN_TAG && o.symbol === pos.symbol && PENDING_STATUSES.has(o.status));
+      const inFlight = freshOrders.some((o) => o.tag === FLATTEN_TAG && o.symbol === pos.symbol && PENDING_STATUSES.has(o.status));
       if (inFlight || Date.now() - (this.lastAttempt.get(key) || 0) < COOLDOWN_MS) {
         result.skipped.push(pos.symbol);
         continue;
@@ -114,16 +137,28 @@ export class PositionFlattener {
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
-        const net = (await client.getPositions()).find((p) => p.symbol === symbol && String(p.product).toUpperCase() === 'MIS');
-        const remaining = Math.abs(net?.qty || 0);
-        if (remaining === 0) return true;
+        // Close only what both books agree is open: the positions book lags fills, and the order
+        // book still counts a position converted to CNC. Read orders second so they include every
+        // fill the positions book shows.
+        const posQty = (await client.getPositions()).find((p) => p.symbol === symbol && String(p.product).toUpperCase() === 'MIS')?.qty || 0;
+        const orders = await client.getOrders();
+        const bookQty = orderBookNet(orders, symbol);
+        const netQty = Math.sign(posQty) === Math.sign(bookQty) ? Math.sign(bookQty) * Math.min(Math.abs(posQty), Math.abs(bookQty)) : 0;
+        const remaining = Math.abs(netQty);
+        if (remaining === 0) {
+          if (posQty === 0 && bookQty === 0) return true;
+          // The two books disagree; give the positions book time to catch up, then look again.
+          this.logger.warn(`⏳ [${reason}] ${symbol}: positions book ${posQty} vs order book ${bookQty}; waiting before flattening`);
+          await sleep(SETTLE_DELAYS_MS[attempt]);
+          continue;
+        }
 
         // A previous attempt's order may still be working at the exchange; wait, don't double up.
-        const working = (await client.getOrders()).some(
+        const working = orders.some(
           (o) => o.tag === FLATTEN_TAG && o.symbol === symbol && PENDING_STATUSES.has(o.status),
         );
         if (!working) {
-          const side = net.qty > 0 ? 'SELL' : 'BUY';
+          const side = netQty > 0 ? 'SELL' : 'BUY';
           this.logger.warn(`🚨 [${reason}] Flattening ${exchange}:${symbol} ${side} ${remaining} (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
           const chunk = getFreezeLimit(symbol);
           for (let left = remaining; left > 0; left -= chunk) {
