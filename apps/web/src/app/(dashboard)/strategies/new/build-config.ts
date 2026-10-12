@@ -108,7 +108,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       enableStagnancyExit: true,
       moneyness: "ITM",
       enableAutoHybrid: form.symbol.toUpperCase().includes("HYBRID"),
-      enableDynamicSizing: form.dsEnableDynamicSizing !== false,
+      enableDynamicSizing: form.dsEnableDynamicSizing === true,
       maxCapital: form.dsMaxCapital ? Number(form.dsMaxCapital) : undefined,
       maxLots: form.dsMaxLots ? Number(form.dsMaxLots) : 25,
       enableTrapSniper: form.dsEnableTrapSniper === true,

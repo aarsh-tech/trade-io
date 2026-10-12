@@ -6,7 +6,8 @@ import { MAX_ENGINE_LOGS, loadResumableLogs, pushEngineLog } from '../common/uti
 import { TickerService } from '../market/ticker.service';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
+import { resolveIndex } from '../brokers/instrument-store';
+import { confirmEntryFill, getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
 import { NiftyOptionsScalperConfig } from './dto/strategy.dto';
 import { computeAtmPcr, optionUnderlying } from './option-chain-sentiment';
 import { findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
@@ -244,7 +245,7 @@ export class NiftyOptionsScalperEngine {
       minRejectionWickPct: parsedConfig.minRejectionWickPct !== undefined ? parsedConfig.minRejectionWickPct : 0.0,
       timeframe: parsedConfig.timeframe || '5minute',
       enableAutoHybrid: isAutoHybrid,
-      enableDynamicSizing: parsedConfig.enableDynamicSizing !== undefined ? parsedConfig.enableDynamicSizing : true,
+      enableDynamicSizing: parsedConfig.enableDynamicSizing === true,
       maxCapital: parsedConfig.maxCapital,
       maxLots: parsedConfig.maxLots || 25,
       enableTrapSniper: parsedConfig.enableTrapSniper === true,
@@ -523,9 +524,10 @@ export class NiftyOptionsScalperEngine {
 
     let exitPrice = state.currentLtp || state.entryPrice || 0;
     if (client && !state.isPaperTrade) {
+      const key = `${state.futureExchange === 'BFO' ? 'BFO' : 'NFO'}:${state.optionSymbol}`;
       try {
-        const ltpData = await client['kite'].getLTP([`NFO:${state.optionSymbol}`]);
-        exitPrice = ltpData[`NFO:${state.optionSymbol}`]?.last_price || exitPrice;
+        const ltpData = await client['kite'].getLTP([key]);
+        exitPrice = ltpData[key]?.last_price || exitPrice;
       } catch { }
     }
 
@@ -1291,6 +1293,7 @@ export class NiftyOptionsScalperEngine {
       return;
     }
     state.isPlacingTrade = true;
+    let positionOpen = false;
 
     try {
       const kite = client['kite'];
@@ -1309,13 +1312,18 @@ export class NiftyOptionsScalperEngine {
       if (histPrice !== null) optionEntryPrice = histPrice;
     } else {
       const q = await kite.getLTP([`${exch}:${optSym}`]);
-      if (q[`${exch}:${optSym}`]?.last_price) optionEntryPrice = q[`${exch}:${optSym}`].last_price;
+      const ltp = q[`${exch}:${optSym}`]?.last_price;
+      if (!ltp) {
+        this.log(state, `⚠ No live price for ${exch}:${optSym}. Skipping ${type} signal.`);
+        return;
+      }
+      optionEntryPrice = ltp;
     }
 
     const params = this.getIndexScalpParams(config.symbol, config, triggerTime);
-    const entry = this.roundTick(optionEntryPrice);
-    const sl = this.roundTick(entry - (params.stopLossPoints));
-    const tgt = this.roundTick(entry + (params.targetPoints));
+    let entry = this.roundTick(optionEntryPrice);
+    let sl = this.roundTick(entry - (params.stopLossPoints));
+    let tgt = this.roundTick(entry + (params.targetPoints));
 
     // Dynamic Capital Sizing & Lot Auto-Calculation
     const isHistorical = !!triggerTime;
@@ -1323,7 +1331,7 @@ export class NiftyOptionsScalperEngine {
     const maxLots = (config as any).maxLots || 25;
     let dynamicLots: number;
 
-    if (config.enableDynamicSizing === false) {
+    if (config.enableDynamicSizing !== true) {
       // Fixed sizing: the user explicitly turned dynamic sizing OFF, so trade exactly
       // config.lots. Previously this only kicked in when config.lots > 1, so the common
       // case (lots left at the default of 1) silently fell through to the capital-derived
@@ -1378,6 +1386,7 @@ export class NiftyOptionsScalperEngine {
 
     this.log(state, `📋 Placed Option Trade: ${exch}:${optSym} — Entry: ₹${entry.toFixed(2)} | Target (+${params.targetPoints} pts): ₹${tgt.toFixed(2)} | Initial SL (-${params.stopLossPoints} pts): ₹${sl.toFixed(2)} | Qty: ${tradeQty} (${dynamicLots} lots, ₹${(tradeQty * entry).toLocaleString('en-IN')} deployed)`);
 
+    let filledQty = tradeQty;
     const tStart = performance.now();
     const orderId = (state.isPaperTrade || isHistorical)
         ? `PAPER_${Math.random().toString(36).substring(7).toUpperCase()}`
@@ -1386,8 +1395,34 @@ export class NiftyOptionsScalperEngine {
       const elapsed = (performance.now() - tStart).toFixed(2);
       this.log(state, `⚡ Order punched in ${elapsed} ms [${state.isPaperTrade ? 'Paper Trade' : 'Live Broker Execution'}] (Order ID: ${orderId})`);
 
+      // A MARKET entry can still be rejected (RMS, margin) or fill partly, away from the quoted LTP: manage only what
+      // actually filled, with SL and target kept at their planned distance from the real average price.
+      if (!state.isPaperTrade && !isHistorical) {
+        const fill = await confirmEntryFill(client, kite, orderId, optSym, (m) => this.log(state, m), this.logger);
+        if (!fill) {
+          this.clearPosition(state);
+          this.log(state, `⚠ Entry not filled — no position taken; waiting for the next signal.`);
+          return;
+        }
+        filledQty = fill.filledQty;
+        if (fill.avgPrice > 0) {
+          const slip = this.roundTick(fill.avgPrice) - entry;
+          entry = this.roundTick(fill.avgPrice);
+          sl = this.roundTick(sl + slip);
+          tgt = this.roundTick(tgt + slip);
+        }
+        state.entryPrice = entry;
+        state.stopLossPrice = sl;
+        state.initialSlPrice = sl;
+        state.targetPrice = tgt;
+        state.executedQty = filledQty;
+        state.config.qty = filledQty;
+        this.log(state, `🛒 Entry FILLED: ${filledQty}/${tradeQty} qty @ avg ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}`);
+      }
+      positionOpen = true;
+
       // Track order in DB asynchronously (non-blocking for ultra-fast tick startup)
-      this.trackOrderInDB(state, 'BUY', optSym, exch, tradeQty, entry, orderId, triggerTime).catch(() => { });
+      this.trackOrderInDB(state, 'BUY', optSym, exch, filledQty, entry, orderId, triggerTime).catch(() => { });
 
       // Live Broker SL Order Placement at Zerodha Server
       if (!state.isPaperTrade && !isHistorical) {
@@ -1397,7 +1432,7 @@ export class NiftyOptionsScalperEngine {
           symbol: optSym,
           exchange: exch,
           product: config.product ?? 'MIS',
-          qty: tradeQty,
+          qty: filledQty,
           side: 'SELL',
           orderType: 'SL',
           price: slLimitPrice,
@@ -1409,7 +1444,7 @@ export class NiftyOptionsScalperEngine {
           try {
             state.slOrderId = await armSl();
             slArmed = true;
-            this.log(state, `🛡 Armed Zerodha Server SL Order (${state.slOrderId}) for ${tradeQty} shares @ Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)}`);
+            this.log(state, `🛡 Armed Zerodha Server SL Order (${state.slOrderId}) for ${filledQty} shares @ Trigger ₹${slTriggerPrice.toFixed(2)}, Limit ₹${slLimitPrice.toFixed(2)}`);
           } catch (slErr: any) {
             this.log(state, `⚠ Failed to arm broker SL order (attempt ${attempt}/2): ${slErr.message}`);
           }
@@ -1431,15 +1466,38 @@ export class NiftyOptionsScalperEngine {
       }
     } catch (e: any) {
       this.log(state, `❌ Trade placement failed: ${e.message}`);
+      // Nothing reached the broker (or it was refused): drop the provisional position so it is not "managed" as open.
+      if (!positionOpen) this.clearPosition(state);
     } finally {
       state.isPlacingTrade = false;
     }
+  }
+
+  /** Clears every per-position field after an entry that never became a position. */
+  private clearPosition(state: ScalperStrategyState) {
+    state.entryTriggered = null;
+    state.optionSymbol = null;
+    state.entryPrice = null;
+    state.stopLossPrice = null;
+    state.initialSlPrice = null;
+    state.targetPrice = null;
+    state.slOrderId = null;
+    state.isCostSlTrailed = false;
+    state.isProfitLockTrailed = false;
+    state.isDynamicTrailingActive = false;
+    state.isPartialBooked = false;
+    state.executedQty = undefined;
+    state.setupType = undefined;
+    state.indexInvalidationPrice = null;
   }
 
   private async startRealtimeMonitor(state: ScalperStrategyState, client: any) {
     if (!state.optionSymbol || !state.entryTriggered) return;
 
     const symbol = state.optionSymbol;
+    // Prices held from an earlier contract must never be read as this one's: the poll re-fetches until a tick arrives.
+    state.currentLtp = undefined;
+    state.lastTickTime = undefined;
     try {
       await this.tickerService.subscribeSymbol(state.brokerAccountId, symbol);
       this.log(state, `📡 Real-time WebSocket active for ${symbol}`);
@@ -1457,6 +1515,8 @@ export class NiftyOptionsScalperEngine {
 
       const now = Date.now();
       state.lastTickTime = now;
+      // The 3s poll monitor reads this price while the feed is fresh; without it the poll trails and exits on a stale LTP.
+      state.currentLtp = currentPrice;
       const currentQty = state.executedQty || state.config.qty;
       const pnlPoints = currentPrice - state.entryPrice!;
       const pnlRs = pnlPoints * currentQty;
@@ -2419,7 +2479,10 @@ export class NiftyOptionsScalperEngine {
     const filteredOptions = options.filter((i: any) => getExpiryStr(i.expiry) === nearestExpiry);
 
     const step = (underlying === 'NIFTY' || underlying === 'FINNIFTY') ? 50 : (underlying === 'MIDCPNIFTY' ? 25 : 100);
-    const atm = Math.round(futurePrice / step) * step;
+    // Weekly options price off the spot index (their own expiry's forward is within a few points of it). The monthly
+    // future trades ~0.3–0.5% higher, which put the "ATM" one to three strikes away from the real ATM.
+    const refPrice = (await this.getSpotPrice(client, underlying, triggerTime)) ?? futurePrice;
+    const atm = Math.round(refPrice / step) * step;
 
     // 1. Premium range search (if minPremium and maxPremium specified)
     if (config.minPremium && config.maxPremium) {
@@ -2458,10 +2521,28 @@ export class NiftyOptionsScalperEngine {
 
     let closest: any = null, closestD = Infinity;
     for (const opt of filteredOptions) {
-      const d = Math.abs(Number(opt.strike) - futurePrice);
+      const d = Math.abs(Number(opt.strike) - refPrice);
       if (d < closestD) { closestD = d; closest = opt; }
     }
     return closest ? closest.tradingsymbol : null;
+  }
+
+  /** Spot index price now (live) or at a historical 5m candle (catch-up); null when it cannot be read. */
+  private async getSpotPrice(client: any, underlying: string, at?: Date): Promise<number | null> {
+    const index = resolveIndex(underlying);
+    if (!index) return null;
+    try {
+      if (at) {
+        const data = await client.getHistoricalData(index.tradingsymbol, index.exchange, '5minute', new Date(at.getTime() - 10 * 60 * 1000), new Date(at.getTime() + 10 * 60 * 1000));
+        const match = (data || []).find((c: any) => new Date(c.date).getTime() === at.getTime());
+        return match ? Number(match.close) : null;
+      }
+      const key = `${index.exchange}:${index.tradingsymbol}`;
+      const q = await (client['kite'] || client).getLTP([key]);
+      return Number(q[key]?.last_price) || null;
+    } catch {
+      return null;
+    }
   }
 
   private parseHhmm(hhmmStr: string): number {

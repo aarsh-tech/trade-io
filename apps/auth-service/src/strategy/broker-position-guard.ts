@@ -269,3 +269,62 @@ export async function getCompletedBrokerExitDetails(
   };
 }
 
+
+/**
+ * Waits for a live entry order to reach a final state and returns what actually filled, or null when
+ * nothing did. An order still open after the wait is cancelled first, so it can never fill later as a
+ * position nobody is managing. When the order state stays unknown, the broker position decides.
+ */
+export async function confirmEntryFill(
+  client: any,
+  kite: any,
+  orderId: string,
+  symbol: string,
+  log: (msg: string) => void,
+  logger?: Logger,
+): Promise<{ filledQty: number; avgPrice: number } | null> {
+  type OrderSnap = { status: string; filledQty: number; avgPrice: number; message?: string };
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const isFinal = (s: string) => s === 'COMPLETE' || s === 'CANCELLED' || s === 'REJECTED';
+  const readOrder = async (): Promise<OrderSnap | null> => {
+    try {
+      const o = await client.getOrder(orderId);
+      return {
+        status: String(o?.status || '').toUpperCase(),
+        filledQty: Number(o?.filledQty) || 0,
+        avgPrice: Number(o?.avgPrice) || 0,
+        message: o?.statusMessage,
+      };
+    } catch {
+      return null;
+    }
+  };
+  const toFill = (o: OrderSnap) => {
+    if (o.status === 'REJECTED') log(`❌ Entry order ${orderId} REJECTED by broker: ${o.message || 'no reason given'}`);
+    return o.filledQty > 0 ? { filledQty: o.filledQty, avgPrice: o.avgPrice } : null;
+  };
+
+  let last: OrderSnap | null = null;
+  for (let i = 0; i < 6; i++) {
+    await sleep(1000);
+    last = (await readOrder()) ?? last;
+    if (last && isFinal(last.status)) return toFill(last);
+  }
+
+  log(`⏱ Entry ${orderId} not filled within 6s (status: ${last?.status || 'unknown'}) — cancelling.`);
+  await client.cancelOrder(orderId).catch(() => { });
+  // It may have filled (fully or partly) before the cancel landed.
+  for (let i = 0; i < 5; i++) {
+    await sleep(1000);
+    last = (await readOrder()) ?? last;
+    if (last && isFinal(last.status)) return toFill(last);
+  }
+
+  const pos = await getLiveBrokerPosition(kite, symbol, logger);
+  if (pos.netQty > 0) {
+    log(`⚠ Entry order state unclear, but broker shows ${pos.netQty} Qty open in ${symbol}. Managing it as the entry.`);
+    return { filledQty: pos.netQty, avgPrice: last?.avgPrice || 0 };
+  }
+  log(`🚨 Could not confirm entry order ${orderId} (last status: ${last?.status || 'unknown'}). Check Kite order book for ${symbol}.`);
+  return null;
+}

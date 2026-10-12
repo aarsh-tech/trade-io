@@ -252,7 +252,7 @@ export interface NiftyOptionsScalperConfig {
   minRejectionWickPct?: number;    // Minimum 15-EMA rejection wick ratio (default: 0.0)
   timeframe?: '3minute' | '5minute'; // Scalping candle timeframe (default: '5minute')
   enableAutoHybrid?: boolean;      // Auto-Hybrid Engine: Trades NIFTY 50 Mon-Thu, auto-switches to BSE SENSEX on Friday Expiry (default: false)
-  enableDynamicSizing?: boolean;   // Dynamic Compounding Lot Sizing: Deploys 85% tradeable margin from live Zerodha balance (default: true)
+  enableDynamicSizing?: boolean;   // Dynamic Compounding Lot Sizing: Deploys 85% tradeable margin from live Zerodha balance (default: false — trades the configured lots)
   maxCapital?: number;             // Optional capital cap for position sizing (default: undefined -> uses live Kite margin)
   maxLots?: number;                // Maximum safety lot cap to prevent oversized orders (default: 25)
 

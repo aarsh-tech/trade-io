@@ -8,10 +8,15 @@ import { strategyEvents } from '../common/events';
 import { loadResumableLogs, pushEngineLog } from '../common/utils/engine-log';
 import { TickerService } from '../market/ticker.service';
 import { findOpenPosition, RecoveredPosition, protectionNotice, PositionUnknownError, recoverTodaysTrades } from './position-recovery';
-import { getCompletedBrokerExitDetails, getLiveBrokerPosition, safeCancelPendingOrders } from './broker-position-guard';
+import { confirmEntryFill, getCompletedBrokerExitDetails, getLiveBrokerPosition, safeCancelPendingOrders } from './broker-position-guard';
 
 /** Zerodha caps modifications per order; stay under it so the SL order itself is never locked out. */
 const MAX_BROKER_SL_MODIFICATIONS = 20;
+
+const THREE_MIN_MS = 3 * 60 * 1000;
+
+/** No new entry this long after a trade closes (and only on a candle that opened after the exit). */
+const REENTRY_COOLDOWN_MS = 10 * 60 * 1000;
 
 interface Candle {
   date: Date;
@@ -126,6 +131,8 @@ interface GammaStrategyState {
   lastStatusLogTime?: number;
   globalTickerUnsubscribe?: () => void;
   lastQuotesCache?: { quotes: any; timestamp: number };
+  /** When the last trade closed (ms); gates re-entry. */
+  lastExitAt?: number;
 }
 
 @Injectable()
@@ -351,15 +358,12 @@ export class GammaBlastExpiryEngine {
       positionRecovered = await this.adoptOpenPosition(state, openPos, strategy.brokerAccount);
     }
 
-    await this.persistLogs(state);
-
+    // No catch-up replay of the morning: the old replay simulated a different strategy (deep-OTM range break, 50% SL,
+    // 5x target) than the live engine trades and added its P&L to the day, which could lock a paper day on fake trades.
     if (!positionRecovered) {
-      this.initialCatchup(strategyId).then(() => {
-        this.logger.log(`Initial catchup completed for Gamma Blast strategy ${strategyId}`);
-      }).catch(err => {
-        this.logger.error(`Initial catchup failed: ${err?.message || err}`);
-      });
+      this.log(state, `👀 Watching for live signals from now (no replay of earlier candles).`);
     }
+    await this.persistLogs(state);
 
     const timer = setInterval(() => this.tick(strategyId).catch(e => this.logger.error(e)), 5_000);
     this.timers.set(strategyId, timer);
@@ -533,311 +537,6 @@ export class GammaBlastExpiryEngine {
     await this.exitPosition(state, client, exitPrice, 'MANUAL_CLOSE');
     await this.persistLogs(state);
     return { success: true, message: `Position squared off at ₹${exitPrice.toFixed(2)}` };
-  }
-
-  // ── Catch-Up Historical Session Replay ──────────────────────────────────
-
-  private async initialCatchup(strategyId: string) {
-    const state = this.running.get(strategyId);
-    if (!state) return;
-    const now = new Date();
-
-    // The replay simulates this morning's trades. For a live strategy they never happened, so their P&L
-    // must not reach the real day P&L / daily locks. Once today already has trades (a restart), replaying
-    // again would record the same simulated trades a second time.
-    if (!state.isPaperTrade) {
-      this.log(state, `ℹ Catch-up replay skipped in LIVE mode (simulated trades must not affect real P&L). Watching for live signals.`);
-      await this.persistLogs(state);
-      return;
-    }
-    if (state.tradesPlacedToday > 0) {
-      this.log(state, `ℹ Catch-up replay skipped: today's trades were already restored. Watching for live signals.`);
-      await this.persistLogs(state);
-      return;
-    }
-
-    this.log(state, `🔍 Running catch-up for Daily Index Scalper (SENSEX & NIFTY)...`);
-    const account = await this.prisma.brokerAccount.findUnique({ where: { id: state.brokerAccountId } });
-    if (!account || !account.accessToken) {
-      this.log(state, `⚠️ Catch-up skipped: No active broker account or access token found. Please authenticate your broker in Broker Settings.`);
-      await this.persistLogs(state);
-      return;
-    }
-
-    const client = this.factory.createClient(account);
-    const kite = client['kite'] || client;
-
-    try {
-      const underlying = state.activeUnderlying;
-      const exchange = state.activeExchange;
-
-      // 1. Resolve Current Month Future Contract
-      if (!state.futureSymbol) {
-        const res = await this.findFutureSymbol(client, underlying);
-        state.futureSymbol = res.symbol;
-        state.futureExchange = res.exchange as any;
-      }
-
-      const futureKey = `${state.futureExchange}:${state.futureSymbol}`;
-      this.log(state, `🎯 Active Tracking Contract: ${futureKey} (Current Month Future)`);
-
-      // 2. Fetch 3-min Future Candles (Past 5 days to cover weekend/aftermarket)
-      const candles = await this.fetchFutureCandles(client, state.futureSymbol!, state.futureExchange || exchange, now);
-      if (!candles || candles.length < 10) {
-        this.log(state, `⚠️ Catch-up: Insufficient historical candles fetched for ${futureKey} (got ${candles?.length || 0}). Standing by.`);
-        await this.persistLogs(state);
-        return;
-      }
-
-      // Determine target session date: strictly evaluate TODAY's candles to prevent simulating yesterday's expired session
-      const todayStr = this.getIstDateStr(now);
-      const todayCandlesCheck = candles.filter(c => this.getIstDateStr(c.date) === todayStr);
-
-      if (todayCandlesCheck.length < 5) {
-        this.log(state, `ℹ Catch-up: ${todayCandlesCheck.length} candles today (${todayStr}). Standing by for live market execution from ${state.config.startTime || '09:20'} AM.`);
-        await this.persistLogs(state);
-        return;
-      }
-
-      const targetSessionDateStr = todayStr;
-      const sessionCandles = todayCandlesCheck;
-
-      this.log(state, `📊 Catch-up analyzing Future session ${targetSessionDateStr} (${sessionCandles.length} 3m candles)...`);
-
-      // 3. Fetch Instruments & Filter Weekly Option Chain
-      const instruments = await client.getInstruments(exchange).catch(() => []);
-      const segment = exchange === 'BFO' ? 'BFO-OPT' : 'NFO-OPT';
-      const optInstruments = (instruments || []).filter((i: any) =>
-        i.name === underlying &&
-        i.segment === segment
-      );
-
-      const expiries = Array.from(new Set(optInstruments.map((i: any) => this.getIstDateStr(new Date(i.expiry))))).sort();
-      const targetExpiry = expiries.find(e => e >= targetSessionDateStr) || expiries[0];
-      const weeklyOptions = optInstruments.filter((i: any) => this.getIstDateStr(new Date(i.expiry)) === targetExpiry);
-
-      if (weeklyOptions.length > 0 && weeklyOptions[0]?.lot_size) {
-        state.lotSize = weeklyOptions[0].lot_size;
-        state.targetQty = state.lots * state.lotSize;
-      }
-
-      const [startH, startM] = (state.config.startTime || '09:20').split(':').map(Number);
-      const startHhmm = startH * 60 + startM;
-      const endHhmm = 15 * 60 + 29; // Hold and trail positions through 15:25–15:30 closing candle
-      const strikeStep = underlying === 'NIFTY' ? 50 : 100;
-      const minPrem = underlying === 'NIFTY' ? 8 : 15;
-      const maxPrem = underlying === 'NIFTY' ? 18 : 30;
-
-      const optHistoryCache = new Map<string, any[]>();
-      let catchupTradePlaced = 0;
-      let catchupPnl = 0;
-      let inCatchupPosition = false;
-      let catchupOptSymbol: string | null = null;
-      let catchupEntryPrice = 0;
-      let catchupSlPrice = 0;
-      let catchupPeakPrice = 0;
-      let catchupOptCandles: Candle[] = [];
-      let catchupOptEmas: (number | null)[] = [];
-      let isCostLocked = false;
-      let is2x = false;
-      let is3x = false;
-
-      for (let i = 4; i < sessionCandles.length; i++) {
-        const c = sessionCandles[i];
-        const candleHhmm = this.getIstHhmm(c.date);
-
-        // Manage active catchup position with REAL option candles
-        if (inCatchupPosition && catchupOptSymbol) {
-          const optCandleIdx = catchupOptCandles.findIndex((oc: Candle) => oc.date.getTime() === c.date.getTime());
-          const currentOptCandle = optCandleIdx !== -1 ? catchupOptCandles[optCandleIdx] : null;
-          const candleHigh = currentOptCandle ? currentOptCandle.high : catchupEntryPrice;
-          const candleLow = currentOptCandle ? currentOptCandle.low : catchupEntryPrice;
-          const candleClose = currentOptCandle ? currentOptCandle.close : catchupEntryPrice;
-
-          if (candleHigh > catchupPeakPrice) {
-            catchupPeakPrice = candleHigh;
-          }
-
-          // 1. Check EOD Cutoff (Default 03:05 PM)
-          if (candleHhmm >= endHhmm) {
-            const exitPrice = candleClose;
-            const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
-            catchupPnl += pnl;
-            this.log(state, `⏰ (Catch-up) ${state.config.endTime || '15:05'} Hard Cutoff Reached! Auto-squared off ${catchupOptSymbol} @ ₹${exitPrice.toFixed(2)} on ${this.formatTime(c.date)} | P&L: ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`);
-            await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
-            inCatchupPosition = false;
-            catchupOptSymbol = null;
-            continue;
-          }
-
-          // 2. Ratchet Multiplier Profit Trailing
-          // 1.4x Gain -> Trail SL to COST + ₹0.50 (Risk-Free Early!)
-          const costMultiple = state.config.costLockMultiple || 1.4;
-          if (candleHigh >= catchupEntryPrice * costMultiple && !isCostLocked) {
-            isCostLocked = true;
-            const costSl = this.roundTick(catchupEntryPrice + 0.50);
-            if (costSl > catchupSlPrice) {
-              catchupSlPrice = costSl;
-            }
-            this.log(state, `🚀 (Catch-up) ${costMultiple}X GAIN HIT on ${this.formatTime(c.date)}! Option hit ₹${candleHigh.toFixed(2)} (${(candleHigh / catchupEntryPrice).toFixed(1)}x). SL Trailed to COST (₹${catchupSlPrice.toFixed(2)}) — ZERO RISK!`);
-          }
-
-          // 2.0x Multiplier -> Lock +50% Profit (1.5x of entry)
-          const profit2xMultiple = state.config.profitLock2xMultiple || 2.0;
-          if (candleHigh >= catchupEntryPrice * profit2xMultiple && !is2x) {
-            is2x = true;
-            const lock50 = this.roundTick(catchupEntryPrice * 1.50);
-            if (lock50 > catchupSlPrice) {
-              catchupSlPrice = lock50;
-            }
-            this.log(state, `🎯 (Catch-up) 2X MULTIPLIER HIT on ${this.formatTime(c.date)}! Option hit ₹${candleHigh.toFixed(2)} (${(candleHigh / catchupEntryPrice).toFixed(1)}x). SL LOCKED at +50% Profit (₹${catchupSlPrice.toFixed(2)})!`);
-          }
-
-          // 3. Continuous High-Water Mark Dynamic Peak Trailing
-          if (state.config.enablePeakTrailing !== false) {
-            if (catchupPeakPrice >= catchupEntryPrice * 2.0 && catchupPeakPrice < catchupEntryPrice * 3.0) {
-              const peakTrail = this.roundTick(catchupPeakPrice * 0.75); // 25% max pullback buffer from peak
-              if (peakTrail > catchupSlPrice) {
-                catchupSlPrice = peakTrail;
-              }
-            } else if (catchupPeakPrice >= catchupEntryPrice * 3.0 && catchupPeakPrice < catchupEntryPrice * 4.0) {
-              const peakTrail = this.roundTick(catchupPeakPrice * 0.80); // 20% max pullback buffer from peak
-              if (peakTrail > catchupSlPrice) {
-                catchupSlPrice = peakTrail;
-              }
-            } else if (catchupPeakPrice >= catchupEntryPrice * 4.0) {
-              const peakTrail = this.roundTick(catchupPeakPrice * 0.85); // 15% max pullback buffer from peak
-              if (peakTrail > catchupSlPrice) {
-                catchupSlPrice = peakTrail;
-              }
-            }
-          }
-
-          // 4. 15 EMA Option Trend Exhaustion Exit Check
-          if (state.config.enableEmaExit !== false && optCandleIdx !== -1 && catchupOptEmas[optCandleIdx] !== null) {
-            const optEma = catchupOptEmas[optCandleIdx];
-            if (optEma && catchupPeakPrice >= catchupEntryPrice * 1.3 && candleClose < optEma) {
-              const exitPrice = candleClose;
-              const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
-              catchupPnl += pnl;
-              this.log(state, `📉 (Catch-up) 15 EMA Option Exit Triggered on ${this.formatTime(c.date)}! Candle Closed @ ₹${exitPrice.toFixed(2)} below 15 EMA (₹${optEma.toFixed(2)}) | Peak was ₹${catchupPeakPrice.toFixed(2)} | Trade Profit: ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`);
-              await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
-              inCatchupPosition = false;
-              catchupOptSymbol = null;
-              continue;
-            }
-          }
-
-          // 5. 5x Jackpot Target Hit -> Take Profit
-          if (candleHigh >= catchupEntryPrice * 5.0) {
-            const exitPrice = this.roundTick(catchupEntryPrice * 5.0);
-            const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
-            catchupPnl += pnl;
-            this.log(state, `🎯 (Catch-up) 5X JACKPOT TARGET ACHIEVED on ${this.formatTime(c.date)} @ ₹${exitPrice.toFixed(2)} (High: ₹${candleHigh.toFixed(2)})! Trade Profit: +₹${pnl.toFixed(2)}`);
-            await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
-            inCatchupPosition = false;
-            catchupOptSymbol = null;
-            continue;
-          }
-
-          // 6. Stop Loss Hit Check
-          if (candleLow <= catchupSlPrice) {
-            const exitPrice = catchupSlPrice;
-            const pnl = (exitPrice - catchupEntryPrice) * state.targetQty;
-            catchupPnl += pnl;
-            this.log(state, `🛑 (Catch-up) Stop Loss Hit on ${this.formatTime(c.date)} @ ₹${exitPrice.toFixed(2)} (Floor: ₹${catchupSlPrice.toFixed(2)}, Peak: ₹${catchupPeakPrice.toFixed(2)}) | Trade Result: ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`);
-            await this.trackOrderInDB(state, 'SELL', catchupOptSymbol, exchange, state.targetQty, exitPrice, `PAPER_EXIT_${Math.random().toString(36).substring(7).toUpperCase()}`, c.date, 'MARKET');
-            inCatchupPosition = false;
-            catchupOptSymbol = null;
-            continue;
-          }
-
-          continue;
-        }
-
-        // Only scan within configured time window
-        if (candleHhmm < startHhmm || candleHhmm > endHhmm) continue;
-        if (catchupTradePlaced >= (state.config.maxTradesPerDay || 2)) break;
-
-        // Calculate compression range on Future candles up to current candle
-        const candlesUpToNow = sessionCandles.slice(0, i + 1);
-        const rangeData = this.calculateCompressionRange(candlesUpToNow, c.date, state.config.startTime || '13:00');
-        if (!rangeData) continue;
-
-        const currentFuture = c.close;
-        const currentFutureHigh = c.high;
-        const currentFutureLow = c.low;
-
-        const atmStrike = Math.round(currentFuture / strikeStep) * strikeStep;
-        let signalType: 'CALL_BLAST' | 'PUT_BLAST' | null = null;
-        let selectedOptType: 'CE' | 'PE' = 'CE';
-
-        if (currentFutureHigh >= rangeData.high && currentFuture >= rangeData.vwap) {
-          signalType = 'CALL_BLAST';
-          selectedOptType = 'CE';
-        } else if (currentFutureLow <= rangeData.low && currentFuture <= rangeData.vwap) {
-          signalType = 'PUT_BLAST';
-          selectedOptType = 'PE';
-        }
-
-        if (signalType) {
-          // Dynamic OTM strike selection matching the target premium range
-          const otmOffset = underlying === 'SENSEX' ? 7 : 3;
-          const preferredStrike = selectedOptType === 'CE' ? (atmStrike + (strikeStep * otmOffset)) : (atmStrike - (strikeStep * otmOffset));
-          const matchingOpt = weeklyOptions.find((o: any) => Number(o.strike) === preferredStrike && o.instrument_type === selectedOptType)
-            || weeklyOptions.find((o: any) => o.instrument_type === selectedOptType)
-            || weeklyOptions[0];
-          const optSymbol = matchingOpt?.tradingsymbol || `${underlying}${targetSessionDateStr.replace(/-/g, '').slice(2)}${preferredStrike}${selectedOptType}`;
-
-          // Fetch REAL historical option candles from Kite for the entire session (cached)
-          let rawOptData = optHistoryCache.get(optSymbol);
-          if (!rawOptData) {
-            const sessionFrom = new Date(`${targetSessionDateStr}T09:15:00.000+05:30`);
-            const sessionTo = new Date(`${targetSessionDateStr}T15:30:00.000+05:30`);
-            rawOptData = await client.getHistoricalData(optSymbol, exchange, '3minute', sessionFrom, sessionTo).catch(() => []);
-            optHistoryCache.set(optSymbol, rawOptData || []);
-          }
-
-          const entryOptCandle = (rawOptData || []).find((oc: any) => new Date(oc.date).getTime() === c.date.getTime()) || rawOptData[0];
-          const actualEntryPrice = entryOptCandle ? Number(entryOptCandle.open || entryOptCandle.close) : ((minPrem + maxPrem) / 2);
-          const initialSl = this.roundTick(actualEntryPrice * (1 - (state.config.initialSlPct || 50) / 100));
-
-          this.log(state, `🚀 (Catch-up) [GAMMA BLAST SIGNAL - ${signalType === 'CALL_BLAST' ? 'CALL' : 'PUT'}] on ${this.formatTime(c.date)}! Future: ₹${currentFuture.toFixed(2)} broke Range ${signalType === 'CALL_BLAST' ? 'High' : 'Low'} (₹${(signalType === 'CALL_BLAST' ? rangeData.high : rangeData.low).toFixed(2)})`);
-          this.log(state, `🎯 (Catch-up) Triggered 1-Lot Entry: ${exchange}:${optSymbol} @ Real Mkt ₹${actualEntryPrice.toFixed(2)} | Qty: ${state.targetQty} | Initial SL: ₹${initialSl.toFixed(2)} (Max Risk: ₹${((actualEntryPrice - initialSl) * state.targetQty).toFixed(2)})`);
-
-          const orderId = `PAPER_GAMMA_${Math.random().toString(36).substring(7).toUpperCase()}`;
-          await this.trackOrderInDB(state, 'BUY', optSymbol, exchange, state.targetQty, actualEntryPrice, orderId, c.date, 'LIMIT');
-
-          const optCandleObjs: Candle[] = (rawOptData || []).map((oc: any) => ({
-            date: new Date(oc.date),
-            open: Number(oc.open),
-            high: Number(oc.high),
-            low: Number(oc.low),
-            close: Number(oc.close),
-            volume: Number(oc.volume || 1),
-          }));
-
-          inCatchupPosition = true;
-          catchupOptSymbol = optSymbol;
-          catchupEntryPrice = actualEntryPrice;
-          catchupSlPrice = initialSl;
-          catchupPeakPrice = actualEntryPrice;
-          catchupOptCandles = optCandleObjs;
-          catchupOptEmas = this.calculateEMA(optCandleObjs, state.config.emaPeriod || 15);
-          catchupTradePlaced++;
-          isCostLocked = false;
-          is2x = false;
-          is3x = false;
-        }
-      }
-
-      state.dailyRealizedPnlRs = (state.dailyRealizedPnlRs || 0) + catchupPnl;
-      this.log(state, `✅ Catch-up complete for Gamma Blast. Evaluated ${sessionCandles.length} candles for session (${targetSessionDateStr}). Realized P&L: ₹${state.dailyRealizedPnlRs.toFixed(2)}`);
-      await this.persistLogs(state);
-    } catch (err: any) {
-      this.log(state, `⚠️ Catch-up notice: ${err?.message || err}`);
-      await this.persistLogs(state);
-    }
   }
 
   // ── Core Periodic Evaluation Loop ──────────────────────────────────────────
@@ -1064,9 +763,11 @@ export class GammaBlastExpiryEngine {
     }
 
     // 2. Fetch Future 3m candles for Range Compression calculation (Cached/throttled to save API calls)
+    // Also refetched once the cached forming candle has closed, so a closed candle is always the broker's own candle.
     let candles = state.candlesCache;
     const lastFetch = state.lastCandleFetchTime || 0;
-    if (!candles || candles.length < 10 || (Date.now() - lastFetch > 60000)) {
+    const cachedCandleClosed = !!candles?.length && Date.now() - candles[candles.length - 1].date.getTime() >= THREE_MIN_MS;
+    if (!candles || candles.length < 10 || (Date.now() - lastFetch > 60000) || (cachedCandleClosed && Date.now() - lastFetch > 10_000)) {
       candles = await this.fetchFutureCandles(client, state.futureSymbol!, state.futureExchange || exchange, now);
       if (candles && candles.length >= 10) {
         state.candlesCache = candles;
@@ -1075,17 +776,29 @@ export class GammaBlastExpiryEngine {
     }
     if (!candles || candles.length < 10) return;
 
-    // Blend live WebSocket tick into latest candle for zero-latency breakout detection
+    // Blend the live WebSocket tick into a copy of the still-forming candle only. Writing it into the cache (or into a
+    // candle whose 3 minutes are over) gave a "closed" candle a close from a later candle's prices.
+    candles = candles.slice();
     const liveFut = state.liveFuturePrice;
-    if (liveFut && candles.length > 0) {
-      const lastCandle = candles[candles.length - 1];
-      lastCandle.close = liveFut;
-      if (liveFut > lastCandle.high) lastCandle.high = liveFut;
-      if (liveFut < lastCandle.low) lastCandle.low = liveFut;
+    const formingCandle = candles[candles.length - 1];
+    if (liveFut && Date.now() - formingCandle.date.getTime() < THREE_MIN_MS) {
+      candles[candles.length - 1] = {
+        ...formingCandle,
+        close: liveFut,
+        high: Math.max(formingCandle.high, liveFut),
+        low: Math.min(formingCandle.low, liveFut),
+      };
     }
 
+    // The candle the setups read: the newest closed one.
+    const lastIdx = candles.length - 1;
+    const isLastClosed = (Date.now() - candles[lastIdx].date.getTime()) >= THREE_MIN_MS;
+    const evalIdx = isLastClosed ? lastIdx : Math.max(0, lastIdx - 1);
+    const evalCandle = candles[evalIdx];
+    const liveCandle = candles[lastIdx];
+
     // Calculate compression range on Future based on configured window
-    const rangeData = this.calculateCompressionRange(candles, now, state.config.startTime || '09:30');
+    const rangeData = this.calculateCompressionRange(candles, now, evalCandle.date.getTime());
     if (!rangeData) return;
 
     state.rangeHigh = rangeData.high;
@@ -1125,10 +838,18 @@ export class GammaBlastExpiryEngine {
       state.targetQty = state.lots * state.lotSize;
     }
 
-    // 4. Resolve ATM Strike directly from Running FUTURE Price (matches tradable Futures breakout levels)
+    // 4. Resolve the ATM strike from the SPOT index. Weekly options price off spot (their own expiry's forward is within a
+    // few points of it); the monthly future trades ~0.3–0.5% higher, one to three strikes above the real ATM.
     const runningFuturePrice = state.liveFuturePrice || currentFuture;
+    let spotPrice = state.liveSpotPrice;
+    if (!spotPrice || Date.now() - (state.lastFeedTickAt || 0) > 30_000) {
+      try {
+        const q = await kite.getLTP([state.spotSymbol]);
+        spotPrice = q[state.spotSymbol!]?.last_price || spotPrice;
+      } catch { }
+    }
     const strikeStep = underlying === 'NIFTY' ? 50 : 100;
-    const atmStrike = Math.round(runningFuturePrice / strikeStep) * strikeStep;
+    const atmStrike = Math.round((spotPrice || runningFuturePrice) / strikeStep) * strikeStep;
 
     // Dynamic OTM candidate strikes: scan up to 15 strikes OTM for SENSEX, 10 strikes for NIFTY
     const maxOtmStrikes = underlying === 'SENSEX' ? 15 : 10;
@@ -1244,12 +965,9 @@ export class GammaBlastExpiryEngine {
       ? (state.config.stopLossRs / effectiveQty)
       : state.config.stopLossPoints;
 
-    // Completed Candle vs Active Tick Candle
-    const lastIdx = candles.length - 1;
-    const isLastClosed = (Date.now() - candles[lastIdx].date.getTime()) >= 3 * 60 * 1000;
-    const evalIdx = isLastClosed ? lastIdx : Math.max(0, lastIdx - 1);
-    const evalCandle = candles[evalIdx];
-    const liveCandle = candles[lastIdx];
+    // After an exit, wait out the cooldown and then for a candle that opened after the exit: the trend setups are
+    // states (price above ORH in an uptrend), so without this the same idea re-entered seconds after a stop-out.
+    if (state.lastExitAt && (Date.now() - state.lastExitAt < REENTRY_COOLDOWN_MS || evalCandle.date.getTime() < state.lastExitAt)) return;
 
     // Candle Anatomy Metrics on evalCandle
     const evalRange = Math.max(0.1, evalCandle.high - evalCandle.low);
@@ -1542,7 +1260,7 @@ export class GammaBlastExpiryEngine {
       let filledQty = qty;
       let fillPrice = entryPrice;
       if (!state.isPaperTrade) {
-        const fill = await this.confirmEntryFill(state, client, kite, entryId, symbol);
+        const fill = await confirmEntryFill(client, kite, entryId, symbol, (m) => this.log(state, m), this.logger);
         if (!fill) {
           state.entryOrderId = null;
           state.targetPrice = null;
@@ -1564,6 +1282,8 @@ export class GammaBlastExpiryEngine {
       state.initialSlPrice = initialSl;
       state.stopLossPrice = initialSl;
       state.peakPrice = fillPrice;
+      // The previous contract's last price must never be read as this one's; the monitor re-fetches until a tick arrives.
+      state.currentLtp = undefined;
       state.executedQty = filledQty;
       state.setupType = setupType;
       state.indexInvalidationPrice = indexInvalidationPrice;
@@ -1605,63 +1325,6 @@ export class GammaBlastExpiryEngine {
     }
   }
 
-  /**
-   * Waits for a live entry order to reach a final state and returns what actually filled, or null when
-   * nothing did. An order still open after the wait is cancelled first, so it can never fill later.
-   */
-  private async confirmEntryFill(
-    state: GammaStrategyState,
-    client: any,
-    kite: any,
-    orderId: string,
-    symbol: string,
-  ): Promise<{ filledQty: number; avgPrice: number } | null> {
-    type OrderSnap = { status: string; filledQty: number; avgPrice: number; message?: string };
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    const isFinal = (s: string) => s === 'COMPLETE' || s === 'CANCELLED' || s === 'REJECTED';
-    const readOrder = async (): Promise<OrderSnap | null> => {
-      try {
-        const o = await client.getOrder(orderId);
-        return {
-          status: String(o?.status || '').toUpperCase(),
-          filledQty: Number(o?.filledQty) || 0,
-          avgPrice: Number(o?.avgPrice) || 0,
-          message: o?.statusMessage,
-        };
-      } catch {
-        return null;
-      }
-    };
-    const toFill = (o: OrderSnap) => {
-      if (o.status === 'REJECTED') this.log(state, `❌ Entry order ${orderId} REJECTED by broker: ${o.message || 'no reason given'}`);
-      return o.filledQty > 0 ? { filledQty: o.filledQty, avgPrice: o.avgPrice } : null;
-    };
-
-    let last: OrderSnap | null = null;
-    for (let i = 0; i < 6; i++) {
-      await sleep(1000);
-      last = (await readOrder()) ?? last;
-      if (last && isFinal(last.status)) return toFill(last);
-    }
-
-    this.log(state, `⏱ Entry ${orderId} not filled within 6s (status: ${last?.status || 'unknown'}) — cancelling.`);
-    await client.cancelOrder(orderId).catch(() => { });
-    // It may have filled (fully or partly) before the cancel landed.
-    for (let i = 0; i < 5; i++) {
-      await sleep(1000);
-      last = (await readOrder()) ?? last;
-      if (last && isFinal(last.status)) return toFill(last);
-    }
-
-    // Order state still unknown: trust the broker position so a real fill is never left unmanaged.
-    const pos = await getLiveBrokerPosition(kite, symbol, this.logger);
-    if (pos.netQty > 0) {
-      this.log(state, `⚠ Entry order state unclear, but broker shows ${pos.netQty} Qty open in ${symbol}. Managing it as the entry.`);
-      return { filledQty: pos.netQty, avgPrice: last?.avgPrice || 0 };
-    }
-    this.log(state, `🚨 Could not confirm entry order ${orderId} (last status: ${last?.status || 'unknown'}). Check Kite order book for ${symbol}.`);
-    return null;
-  }
 
   // ── Zero-Latency Sub-Second Ratchet Trailing ───────────────────────────────
 
@@ -2201,6 +1864,7 @@ export class GammaBlastExpiryEngine {
   /** Books a fully closed trade (P&L, trade count, daily locks) and clears the position from state. */
   private bookClosedTrade(state: GammaStrategyState, exitPrice: number, qty: number, reason: string) {
     state.tradesPlacedToday++;
+    state.lastExitAt = Date.now();
 
     const entry = state.entryPrice || exitPrice;
     const tradePnl = (exitPrice - entry) * qty;
@@ -2326,7 +1990,8 @@ export class GammaBlastExpiryEngine {
     }
   }
 
-  private calculateCompressionRange(candles: Candle[], now: Date, startTimeStr: string = '09:30'): RangeAnalysis | null {
+  /** `evalTime` is the start of the closed candle the setups read; the channel and RVOL baseline use only candles before it. */
+  private calculateCompressionRange(candles: Candle[], now: Date, evalTime: number): RangeAnalysis | null {
     if (candles.length === 0) return null;
 
     const todayStr = this.getIstDateStr(now);
@@ -2362,14 +2027,21 @@ export class GammaBlastExpiryEngine {
       if (c.low < orl) orl = c.low;
     }
 
-    // 3. Rolling compression channel (last 8-10 completed 3m candles = ~25 to 30 mins)
-    const completedCandles = todayCandles.length >= 2 ? todayCandles.slice(0, -1) : todayCandles;
-    const rollingCandles = completedCandles.length >= 8 ? completedCandles.slice(-10) : completedCandles;
+    // 3. Rolling compression channel (last 10 completed 3m candles before the evaluated one = ~30 mins). The evaluated
+    // candle must not be part of its own channel: a candle can never close above its own high, so breakouts never fired.
+    const priorCandles = todayCandles.filter(c => c.date.getTime() < evalTime);
+    const rollingCandles = priorCandles.slice(-10);
+    const evalCandle = todayCandles.find(c => c.date.getTime() === evalTime);
     let high = -Infinity;
     let low = Infinity;
     for (const c of rollingCandles) {
       if (c.high > high) high = c.high;
       if (c.low < low) low = c.low;
+    }
+    // No earlier candle today: the channel is the evaluated candle itself, so nothing can break it yet.
+    if (rollingCandles.length === 0 && evalCandle) {
+      high = evalCandle.high;
+      low = evalCandle.low;
     }
 
     // 4. Cumulative Session VWAP across all today's candles
@@ -2382,8 +2054,8 @@ export class GammaBlastExpiryEngine {
     }
     const vwap = sumV > 0 ? (sumPv / sumV) : evalCandles[evalCandles.length - 1].close;
 
-    // 5. 10-period Average Volume for RVOL calculation
-    const volCandles = completedCandles.slice(-10);
+    // 5. 10-period Average Volume for RVOL calculation (the evaluated candle is compared against the ones before it)
+    const volCandles = rollingCandles;
     const avgVolume = volCandles.length > 0
       ? (volCandles.reduce((acc, c) => acc + (c.volume || 1), 0) / volCandles.length)
       : 1000;

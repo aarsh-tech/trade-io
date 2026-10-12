@@ -236,7 +236,7 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     dsEnableTrendBiasFilter: bool(c.enableTrendBiasFilter, true),
     dsEnableMacroDayBias: bool(c.enableMacroDayBias, true),
     dsTimeframe: c.timeframe === "3minute" ? "3minute" : "5minute",
-    dsEnableDynamicSizing: bool(c.enableDynamicSizing, true),
+    dsEnableDynamicSizing: bool(c.enableDynamicSizing, false),
     dsMaxCapital: has(c.maxCapital) ? String(c.maxCapital) : "",
     dsMaxLots: has(c.maxLots) ? String(c.maxLots) : "25",
     dsEnableTrapSniper: bool(c.enableTrapSniper, false),

@@ -310,7 +310,7 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
     case "NIFTY_OPTIONS_SCALPER": {
       const perTrade = n(form.dsStopLossPoints) * qty;
       const cap = Math.max(0, Math.floor(n(form.dsMaxLossesPerDay) || 1));
-      const dyn = form.dsEnableDynamicSizing !== false;
+      const dyn = form.dsEnableDynamicSizing === true;
       return {
         perTrade: perTrade || null,
         perDay: perTrade ? perTrade * Math.min(trades, cap) : null,
