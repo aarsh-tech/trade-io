@@ -3087,12 +3087,34 @@ export class EmaVwapCrossoverEngine {
           await this.cancelBrokerOrderSafe(client, state.slOrderId);
           await this.cancelBrokerOrderSafe(client, state.targetOrderId);
 
-          const remainingQtyToExit = Math.max(1, qty - brokerFilledQty);
+          // The stop or target can fill while it is being cancelled (the cancel then fails quietly). Zerodha's positions
+          // book lags behind such a fill, so an exit sized from it alone sells the same shares twice: count what those
+          // orders really filled in the order book first.
+          if (kite && (state.slOrderId || state.targetOrderId)) {
+            const book: any[] | null = await kite.getOrders().catch(() => null);
+            const filledOf = (id: string | null, type: 'SL' | 'LIMIT') => {
+              const o = id && book ? book.find((x: any) => x.order_id === id) : null;
+              return { id, type, qty: Number(o?.filled_quantity) || 0, avg: Number(o?.average_price) || 0 };
+            };
+            const slFill = filledOf(state.slOrderId, 'SL');
+            const tgtFill = filledOf(state.targetOrderId, 'LIMIT');
+            const protectiveFilled = slFill.qty + tgtFill.qty;
+            if (protectiveFilled > brokerFilledQty) {
+              const by = slFill.qty >= tgtFill.qty ? slFill : tgtFill;
+              brokerFilledQty = protectiveFilled;
+              if (by.avg > 0) actualExitPrice = by.avg;
+              exitOrderId = by.id!;
+              exitOrderType = by.type;
+              this.log(state, `ℹ ${by.type === 'SL' ? 'Stop-loss' : 'Target'} order ${by.id} filled ${Math.min(protectiveFilled, qty)}/${qty} shares @ ₹${actualExitPrice.toFixed(2)} while the exit was being sent${protectiveFilled >= qty ? ' — position already closed, no market exit needed.' : ' — exiting only the rest at market.'}`);
+            }
+          }
+
+          const remainingQtyToExit = qty - brokerFilledQty;
 
           // Capital Wipeout Guard: Check if position is already closed or if exit order would reverse position
-          let isManuallyClosed = false;
+          let isManuallyClosed = remainingQtyToExit <= 0;
           let marketExitQty = remainingQtyToExit;
-          try {
+          if (!isManuallyClosed) try {
             let exitSafety = await isSafeToExit(kite, symbol, exitSide, this.logger, this.brokerMatch(state));
             for (let attempt = 0; attempt < 3 && exitSafety.unknown; attempt++) {
               await new Promise(r => setTimeout(r, 700));
@@ -3139,8 +3161,9 @@ export class EmaVwapCrossoverEngine {
           try {
             await new Promise(r => setTimeout(r, 600)); // Allow exchange match to settle
             const finalPos = await getLiveBrokerPosition(kite, symbol, this.logger, this.brokerMatch(state));
-            // A filled exit can take a moment to reach the positions book; a second exit then would reverse the position.
-            const exitFilled = finalPos.isOpen && finalPos.netQty !== 0 && exitOrderType === 'MARKET' && !!exitOrderId
+            // A filled exit (market, stop-loss or target order) can take a moment to reach the positions book; a second
+            // exit then would reverse the position.
+            const exitFilled = finalPos.isOpen && finalPos.netQty !== 0 && !!exitOrderId
               && ((await kite.getOrders().catch(() => [])) as any[]).some((o: any) => o.order_id === exitOrderId && o.status === 'COMPLETE');
             if (exitFilled) {
               this.log(state, `ℹ Exit order ${exitOrderId} is COMPLETE; the positions book has not caught up yet — no second exit sent.`);
