@@ -11,10 +11,14 @@ export interface Fill {
   qty: number;
   price: number;
   at: Date;
-  /** Brokerage for one unit of this fill's order (order brokerage / order qty). */
+  /** Brokerage for one unit of this fill's order (order brokerage / order qty). Used only to estimate charges. */
   brokeragePerUnit: number;
+  /** Zerodha's own charges for one unit of this fill's order (contract note total / filled qty), when fetched. */
+  chargesPerUnit?: number;
   /** True when the fill belongs to an order placed by a strategy engine. */
   algo: boolean;
+  /** Who placed the order: `S:<strategyId>` for an engine, `MANUAL` otherwise. Exits close their owner's lots first. */
+  owner: string;
   strategyName?: string;
 }
 
@@ -35,6 +39,8 @@ export interface ClosedTrade {
   /** Points P&L before charges. */
   grossPnl: number;
   charges: number;
+  /** True when both legs' charges are Zerodha's own (virtual contract note), false when either is our estimate. */
+  chargesExact: boolean;
   /** Net of charges; this is the headline number everywhere in the ledger. */
   realizedPnl: number;
   pnlPct: number;
@@ -58,10 +64,22 @@ interface Lot {
   remaining: number;
 }
 
+/** Charges for `qty` units of one leg: Zerodha's figure when we have it, otherwise the estimate. */
+function legCost(fill: Fill, qty: number): { amount: number; exact: boolean } {
+  if (fill.chargesPerUnit !== undefined) return { amount: fill.chargesPerUnit * qty, exact: true };
+  const segment = segmentOf(fill.exchange, fill.symbol, fill.product);
+  return {
+    amount: legCharges(segment, fill.side, qty, fill.price, fill.brokeragePerUnit * qty, istDate(fill.at), fill.exchange),
+    exact: false,
+  };
+}
+
 /**
  * FIFO-matches fills into closed round trips (long or short), per broker account + symbol + product.
  * MIS positions are squared off by the broker each day, so they never carry across IST days; CNC/NRML do.
- * Unmatched quantity (an open position) simply stays open and is not a closed trade.
+ * An exit closes its own owner's open lots first (an engine's exit closes that engine's entry even when a manual
+ * position in the same symbol is older), then anyone's, so the EOD flattener or a broker square-off still closes
+ * an engine's position. Unmatched quantity (an open position) simply stays open and is not a closed trade.
  */
 export function matchFills(fills: Fill[]): ClosedTrade[] {
   const sorted = [...fills].sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -74,20 +92,21 @@ export function matchFills(fills: Fill[]): ClosedTrade[] {
     let lots = books.get(key);
     if (!lots) books.set(key, (lots = []));
 
+    // A book only ever holds lots of one side: an opposite fill consumes them before anything is added.
     let remaining = fill.qty;
     while (remaining > 0 && lots.length > 0 && lots[0].fill.side !== fill.side) {
-      const lot = lots[0];
+      const own = lots.findIndex((l) => l.fill.owner === fill.owner);
+      const index = own >= 0 ? own : 0;
+      const lot = lots[index];
       const matched = Math.min(remaining, lot.remaining);
       const isLong = lot.fill.side === 'BUY';
       const buy = isLong ? lot.fill : fill;
       const sell = isLong ? fill : lot.fill;
-      const date = istDate(fill.at);
-      const segment = segmentOf(fill.exchange, fill.symbol, fill.product);
 
       const gross = (sell.price - buy.price) * matched;
-      const charges =
-        legCharges(segment, 'BUY', matched, buy.price, buy.brokeragePerUnit * matched, istDate(buy.at)) +
-        legCharges(segment, 'SELL', matched, sell.price, sell.brokeragePerUnit * matched, date);
+      const buyCost = legCost(buy, matched);
+      const sellCost = legCost(sell, matched);
+      const charges = buyCost.amount + sellCost.amount;
       const net = gross - charges;
       const entry = lot.fill;
 
@@ -102,10 +121,11 @@ export function matchFills(fills: Fill[]): ClosedTrade[] {
         exitPrice: round2(fill.price),
         entryTime: entry.at.toISOString(),
         exitTime: fill.at.toISOString(),
-        date,
+        date: istDate(fill.at),
         holdingDuration: holding(entry.at, fill.at),
         grossPnl: round2(gross),
         charges: round2(charges),
+        chargesExact: buyCost.exact && sellCost.exact,
         realizedPnl: round2(net),
         pnlPct: round2(((isLong ? fill.price - entry.price : entry.price - fill.price) / entry.price) * 100),
         status: tradeStatus(net),
@@ -115,7 +135,7 @@ export function matchFills(fills: Fill[]): ClosedTrade[] {
 
       lot.remaining -= matched;
       remaining -= matched;
-      if (lot.remaining <= 0) lots.shift();
+      if (lot.remaining <= 0) lots.splice(index, 1);
     }
     if (remaining > 0) lots.push({ fill, remaining });
   }

@@ -86,7 +86,7 @@ const METHOD_CLASS: Record<string, KiteEndpointClass> = {
   getTrades: 'general', getOrderTrades: 'general', getMargins: 'general', getProfile: 'general',
   getInstruments: 'general', getGTTs: 'general', getGTT: 'general', placeGTT: 'general',
   modifyGTT: 'general', deleteGTT: 'general', generateSession: 'general', renewAccessToken: 'general',
-  invalidateAccessToken: 'general',
+  invalidateAccessToken: 'general', getvirtualContractNote: 'general',
   getQuote: 'quote', getLTP: 'quote', getOHLC: 'quote',
   getHistoricalData: 'historical',
   placeOrder: 'orders', modifyOrder: 'orders', cancelOrder: 'orders', exitOrder: 'orders',

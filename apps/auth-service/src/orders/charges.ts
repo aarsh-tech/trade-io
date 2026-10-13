@@ -4,7 +4,9 @@
  * VERIFY these against Zerodha's brokerage calculator / the current exchange and SEBI circulars before relying on
  * them for tax or performance decisions. Statutory rates change; the STT on F&O in particular was revised in the
  * Union Budget 2026 (effective 1 Apr 2026). Override without a deploy via env: STT_FUT_SELL_PCT, STT_OPT_SELL_PCT.
- * Exchange transaction charges use NSE rates for BSE/BFO too, which slightly under/over-states BSE trades.
+ *
+ * The ledger prefers Zerodha's own per-order charges (virtual contract note, fetched on sync); this estimate is only
+ * the fallback for orders whose charges could not be fetched.
  */
 
 export type Segment = 'EQ_INTRADAY' | 'EQ_DELIVERY' | 'FUT' | 'OPT';
@@ -14,6 +16,11 @@ const BROKERAGE_PCT = 0.0003; // 0.03% (intraday equity and futures)
 const GST_PCT = 0.18; // on brokerage + exchange transaction + SEBI charges
 const SEBI_PCT = 0.000001; // ₹10 per crore
 const STT_REVISION_DATE = '2026-04-01';
+/**
+ * Zerodha's charge calculator prices an order at today's rates, so orders from before the last rate revision keep
+ * the estimate (which knows the old rates) instead.
+ */
+export const BROKER_CHARGES_FROM = STT_REVISION_DATE;
 
 const pct = (envKey: string, fallback: number) => {
   const v = Number(process.env[envKey]);
@@ -43,17 +50,18 @@ interface Rates {
   stampBuy: number;
 }
 
-function ratesFor(segment: Segment, onDate: string): Rates {
+function ratesFor(segment: Segment, onDate: string, exchange: string): Rates {
   const revised = onDate >= STT_REVISION_DATE;
+  const bse = ['BSE', 'BFO'].includes(exchange.toUpperCase());
   switch (segment) {
     case 'EQ_INTRADAY':
-      return { sttBuy: 0, sttSell: 0.00025, txn: 0.0000297, stampBuy: 0.00003 };
+      return { sttBuy: 0, sttSell: 0.00025, txn: bse ? 0.0000375 : 0.0000297, stampBuy: 0.00003 };
     case 'EQ_DELIVERY':
-      return { sttBuy: 0.001, sttSell: 0.001, txn: 0.0000297, stampBuy: 0.00015 };
+      return { sttBuy: 0.001, sttSell: 0.001, txn: bse ? 0.0000375 : 0.0000297, stampBuy: 0.00015 };
     case 'FUT':
-      return { sttBuy: 0, sttSell: pct('STT_FUT_SELL_PCT', revised ? 0.0005 : 0.0002), txn: 0.0000173, stampBuy: 0.00002 };
+      return { sttBuy: 0, sttSell: pct('STT_FUT_SELL_PCT', revised ? 0.0005 : 0.0002), txn: bse ? 0 : 0.0000173, stampBuy: 0.00002 };
     case 'OPT':
-      return { sttBuy: 0, sttSell: pct('STT_OPT_SELL_PCT', revised ? 0.0015 : 0.001), txn: 0.0003503, stampBuy: 0.00003 };
+      return { sttBuy: 0, sttSell: pct('STT_OPT_SELL_PCT', revised ? 0.0015 : 0.001), txn: bse ? 0.000325 : 0.0003503, stampBuy: 0.00003 };
   }
 }
 
@@ -68,10 +76,11 @@ export function legCharges(
   price: number,
   brokerage: number,
   onDate: string,
+  exchange = 'NSE',
 ): number {
   const value = qty * price;
   if (value <= 0) return brokerage;
-  const r = ratesFor(segment, onDate);
+  const r = ratesFor(segment, onDate, exchange);
   const stt = value * (side === 'BUY' ? r.sttBuy : r.sttSell);
   const txn = value * r.txn;
   const sebi = value * SEBI_PCT;

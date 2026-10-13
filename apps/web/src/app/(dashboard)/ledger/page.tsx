@@ -19,6 +19,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Info,
   Download,
   Flame,
   Loader2,
@@ -47,6 +48,8 @@ interface ClosedTrade {
   holdingDuration: string;
   grossPnl: number;
   charges: number;
+  /** Zerodha's own charges when true, our estimate when false. */
+  chargesExact: boolean;
   /** Net of charges. */
   realizedPnl: number;
   pnlPct: number;
@@ -63,8 +66,6 @@ interface DailyLedgerItem {
   pnl: number;
   grossPnl: number;
   charges: number;
-  algoPnl: number;
-  manualPnl: number;
   wins: number;
   losses: number;
   winRate: number;
@@ -80,8 +81,7 @@ interface MonthlyLedgerData {
     totalRealizedPnl: number;
     totalGrossPnl: number;
     totalCharges: number;
-    algo: { pnl: number; trades: number; wins: number };
-    manual: { pnl: number; trades: number; wins: number };
+    estimatedChargeTrades: number;
     totalTrades: number;
     winningTrades: number;
     losingTrades: number;
@@ -223,8 +223,7 @@ export default function MonthlyLedgerPage() {
     totalRealizedPnl: 0,
     totalGrossPnl: 0,
     totalCharges: 0,
-    algo: { pnl: 0, trades: 0, wins: 0 },
-    manual: { pnl: 0, trades: 0, wins: 0 },
+    estimatedChargeTrades: 0,
     totalTrades: 0,
     winningTrades: 0,
     losingTrades: 0,
@@ -345,7 +344,7 @@ export default function MonthlyLedgerPage() {
       return;
     }
 
-    const headers = ["Date", "Time", "Symbol", "Exchange", "Product", "Side", "Qty", "Entry Price", "Exit Price", "Duration", "Gross PnL (INR)", "Charges (INR)", "Net PnL (INR)", "PnL %", "Status", "Source", "Strategy"];
+    const headers = ["Date", "Time", "Symbol", "Exchange", "Product", "Side", "Qty", "Entry Price", "Exit Price", "Duration", "Gross PnL (INR)", "Charges (INR)", "Charges From", "Net PnL (INR)", "PnL %", "Status", "Strategy"];
     const rows = exportTrades.map((t) => [
       t.date,
       new Date(t.exitTime).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }),
@@ -359,10 +358,10 @@ export default function MonthlyLedgerPage() {
       t.holdingDuration,
       t.grossPnl,
       t.charges,
+      t.chargesExact ? "Zerodha" : "Estimate",
       t.realizedPnl,
       t.pnlPct,
       t.status,
-      t.source,
       `"${t.strategyName || "Intraday Algo"}"`
     ]);
 
@@ -370,7 +369,7 @@ export default function MonthlyLedgerPage() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `PnL_Ledger_${MONTH_NAMES[selectedMonth - 1]}_${selectedYear}.csv`);
+    link.setAttribute("download", `Algo_PnL_Ledger_${MONTH_NAMES[selectedMonth - 1]}_${selectedYear}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -385,14 +384,14 @@ export default function MonthlyLedgerPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-foreground flex items-center gap-2">
               <BookOpen className="h-5 w-5 sm:h-6 sm:w-6 text-profit shrink-0" />
-              <span>Monthly P&L Ledger & Journal</span>
+              <span>Algo P&L Ledger</span>
             </h1>
             <Badge variant="outline" className="text-[10px] sm:text-xs bg-profit/10 text-profit border-profit/20 font-medium">
-              Verified Executions
+              Algo Trades Only
             </Badge>
           </div>
           <p className="text-[11px] sm:text-xs text-muted-foreground mt-0.5">
-            Round-trip trade analytics, calendar heat-matrix, and FIFO realized P&L journal
+            Trades placed by your strategies, from Zerodha&apos;s fills, net of Zerodha&apos;s charges. Manual trades are not included.
           </p>
         </div>
 
@@ -499,6 +498,16 @@ export default function MonthlyLedgerPage() {
         </div>
       </div>
 
+      {summary.estimatedChargeTrades > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2.5 text-[11px] sm:text-xs text-foreground">
+          <Info className="h-4 w-4 text-warn shrink-0 mt-px" />
+          <span>
+            Charges for {summary.estimatedChargeTrades} {summary.estimatedChargeTrades === 1 ? "trade are" : "trades are"} estimated, so the totals may differ
+            slightly from Zerodha. Press <strong>Sync</strong> while your broker is logged in to fetch Zerodha&apos;s exact charges.
+          </span>
+        </div>
+      )}
+
       {/* ── 2. Top Summary Metric Cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Card 1: Net Realized P&L */}
@@ -530,13 +539,9 @@ export default function MonthlyLedgerPage() {
               <span>Loss: <span className="text-loss font-mono font-semibold">-₹{summary.totalGrossLoss.toFixed(0)}</span></span>
             </div>
             <div className="flex items-center gap-2 mt-1 text-[11px] sm:text-xs text-muted-foreground flex-wrap">
-              <span>Gross: <span className="font-mono font-semibold">₹{summary.totalGrossPnl.toFixed(0)}</span></span>
+              <span>Gross: <span className="font-mono font-semibold">{formatINR(summary.totalGrossPnl)}</span></span>
               <span>•</span>
-              <span>Charges: <span className="text-warn font-mono font-semibold">-₹{summary.totalCharges.toFixed(0)}</span></span>
-              <span>•</span>
-              <span>Algo: <span className="font-mono font-semibold">₹{summary.algo.pnl.toFixed(0)}</span> ({summary.algo.trades})</span>
-              <span>•</span>
-              <span>Manual: <span className="font-mono font-semibold">₹{summary.manual.pnl.toFixed(0)}</span> ({summary.manual.trades})</span>
+              <span>Charges: <span className="text-warn font-mono font-semibold">-{formatINR(summary.totalCharges)}</span></span>
             </div>
           </CardContent>
         </Card>
@@ -910,7 +915,7 @@ export default function MonthlyLedgerPage() {
               <p className="text-xs sm:text-sm text-muted-foreground max-w-sm mx-auto mt-1 mb-4">
                 {searchSymbol || tradeFilter !== "ALL" || segmentFilter !== "ALL" || selectedDateFilter
                   ? "No closed trades match your filter criteria."
-                  : `No completed trades recorded for ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}.`}
+                  : `No completed algo trades recorded for ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}.`}
               </p>
               <Button
                 size="sm"
@@ -1016,6 +1021,9 @@ export default function MonthlyLedgerPage() {
                           )}>
                             ({isWin ? "+" : ""}{t.pnlPct.toFixed(2)}%)
                           </span>
+                          <div className="text-[10px] font-mono text-muted-foreground">
+                            Charges {formatINR(t.charges)}{t.chargesExact ? "" : " (est.)"}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1035,7 +1043,9 @@ export default function MonthlyLedgerPage() {
                       <th className="py-3 px-4 text-right">Qty</th>
                       <th className="py-3 px-4 text-right">Entry → Exit Price</th>
                       <th className="py-3 px-4 text-right">Duration</th>
-                      <th className="py-3 px-4 text-right">Realized P&L</th>
+                      <th className="py-3 px-4 text-right">Gross</th>
+                      <th className="py-3 px-4 text-right">Charges</th>
+                      <th className="py-3 px-4 text-right">Net P&L</th>
                       <th className="py-3 px-4 text-center">Status</th>
                     </tr>
                   </thead>
@@ -1109,6 +1119,13 @@ export default function MonthlyLedgerPage() {
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono text-xs text-muted-foreground">
                             {t.holdingDuration}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-xs text-foreground whitespace-nowrap">
+                            {formatINR(t.grossPnl)}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-xs text-warn whitespace-nowrap" title={t.chargesExact ? "Zerodha's charges" : "Estimated: Zerodha's charges not fetched yet"}>
+                            {formatINR(t.charges)}
+                            {!t.chargesExact && <span className="ml-1 text-[9px] text-muted-foreground">est.</span>}
                           </td>
                           <td className="py-3.5 px-4 text-right whitespace-nowrap">
                             <div className={cn(
@@ -1228,6 +1245,11 @@ export default function MonthlyLedgerPage() {
                         </span>
                       </div>
 
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>Gross: <span className="font-mono text-foreground">{formatINR(d.grossPnl)}</span></span>
+                        <span>Charges: <span className="font-mono text-warn">{formatINR(d.charges)}</span></span>
+                      </div>
+
                       <div className="flex items-center justify-between text-xs pt-0.5">
                         <div className="text-[11px] text-muted-foreground">
                           Cumul: <span className={cn("font-mono font-semibold", isCumulProfit ? "text-profit" : "text-loss")}>
@@ -1256,7 +1278,9 @@ export default function MonthlyLedgerPage() {
                       <th className="py-3 px-4">Day</th>
                       <th className="py-3 px-4 text-center">Trades (Wins / Losses)</th>
                       <th className="py-3 px-4 text-right">Win Rate</th>
-                      <th className="py-3 px-4 text-right">Daily P&L</th>
+                      <th className="py-3 px-4 text-right">Gross</th>
+                      <th className="py-3 px-4 text-right">Charges</th>
+                      <th className="py-3 px-4 text-right">Net P&L</th>
                       <th className="py-3 px-4 text-right">Cumulative Month P&L</th>
                       <th className="py-3 px-4 text-center">Day Status</th>
                     </tr>
@@ -1290,6 +1314,12 @@ export default function MonthlyLedgerPage() {
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono text-xs font-semibold text-foreground">
                             {d.winRate}%
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-xs text-foreground whitespace-nowrap">
+                            {formatINR(d.grossPnl)}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-xs text-warn whitespace-nowrap">
+                            {formatINR(d.charges)}
                           </td>
                           <td className="py-3.5 px-4 text-right whitespace-nowrap">
                             <span className={cn(

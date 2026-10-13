@@ -51,6 +51,21 @@ export interface Trade {
   filledAt: string;
 }
 
+/** One executed order to price with the broker's own charge calculator (Kite virtual contract note). */
+export interface OrderChargeParams {
+  orderId: string;
+  symbol: string;
+  exchange: string;
+  side: 'BUY' | 'SELL';
+  product: string;
+  orderType: string;
+  variety: string;
+  /** Filled quantity. */
+  qty: number;
+  /** Average fill price; must be > 0. */
+  avgPrice: number;
+}
+
 /**
  * Why an order is being placed. Only ENTRY orders are subject to the kill switch,
  * per-order user limits, rate limiting and dedup; exits and protective (SL/target)
@@ -83,6 +98,8 @@ export interface IBrokerClient {
   getPositions(): Promise<Position[]>;
   getOrders(): Promise<Order[]>;
   getTrades(): Promise<Trade[]>;
+  /** Total charges (brokerage, taxes, GST, stamp) per order, in the same order as `orders`. */
+  getOrderCharges?(orders: OrderChargeParams[]): Promise<number[]>;
   placeOrder(params: OrderParams): Promise<string>;
   getLTP(symbols: string[]): Promise<Record<string, number>>;
   /** Quotes with previous close, volume and exchange time, keyed by `EXCH:SYMBOL`. */

@@ -1,17 +1,22 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { OrderSide, OrderStatus, OrderType, ProductType } from '@prisma/client';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
-import { Trade as ITrade } from '../brokers/interfaces/broker-client.interface';
+import { IBrokerClient, Trade as ITrade } from '../brokers/interfaces/broker-client.interface';
 import { isTradingDay, istParts } from '../market/market-calendar';
 import { OrderUpdateEvent } from '../market/market-tick';
 import { TickerService } from '../market/ticker.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { isFnoSymbol, orderBrokerage, segmentOf } from './charges';
+import { BROKER_CHARGES_FROM, isFnoSymbol, orderBrokerage, segmentOf } from './charges';
 import { parseKiteTime } from './kite-time';
 import { ClosedTrade, Fill, istDate, matchFills, tradeStatus } from './ledger';
 
 const EOD_SYNC_MINUTE = 15 * 60 + 40;
 const EOD_CHECK_INTERVAL_MS = 60_000;
+/** Orders priced per virtual contract note request, and at most per account per sync (bounds the first backfill). */
+const CHARGES_CHUNK = 50;
+const CHARGES_PER_SYNC = 500;
+/** The OrderGateway's default Kite tag for engine orders (`buildOrderTag`): attribution when the DB row lost it. */
+const ENGINE_TAG = /^S[A-Za-z0-9]{1,8}[EXS]$/;
 export type { ClosedTrade };
 
 export interface DailyLedgerItem {
@@ -22,8 +27,6 @@ export interface DailyLedgerItem {
   pnl: number; // net of charges
   grossPnl: number;
   charges: number;
-  algoPnl: number;
-  manualPnl: number;
   wins: number;
   losses: number;
   winRate: number;
@@ -41,12 +44,6 @@ export interface LedgerQuery {
   /** IST day, YYYY-MM-DD. */
   date?: string;
   q?: string;
-}
-
-interface SourceSummary {
-  pnl: number;
-  trades: number;
-  wins: number;
 }
 
 export interface MonthlyLedgerResponse {
@@ -77,8 +74,8 @@ export interface MonthlyLedgerResponse {
     avgLoss: number;
     bestTrade: ClosedTrade | null;
     worstTrade: ClosedTrade | null;
-    algo: SourceSummary;
-    manual: SourceSummary;
+    /** Trades whose charges are still our estimate because Zerodha's could not be fetched yet. */
+    estimatedChargeTrades: number;
   };
   chartSeries: Array<{ date: string; dailyPnl: number; cumulativePnl: number }>;
   dailyLedger: DailyLedgerItem[];
@@ -150,6 +147,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private guessExchange(symbol: string, exchange?: string | null): string {
     return exchange || (/(CE|PE|FUT)$/.test(symbol) ? 'NFO' : 'NSE');
   }
+
+  private chargesFailed = new Set<string>();
+  private chargesRunning = new Set<string>();
 
   private positive(n: unknown): number | null {
     const v = Number(n);
@@ -281,6 +281,78 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Stores Zerodha's own charges (virtual contract note) on executed orders that don't have them yet, so the ledger
+   * shows what the broker actually debits instead of our estimate. Only finished orders are priced, since their fill
+   * quantity can no longer change. An order Zerodha refuses to price is skipped until the next restart.
+   */
+  private async syncAccountCharges(accountId: string, client: IBrokerClient): Promise<number> {
+    if (!client.getOrderCharges || this.chargesRunning.has(accountId)) return 0;
+    this.chargesRunning.add(accountId);
+    try {
+      const pending = (
+        await this.prisma.order.findMany({
+          where: {
+            brokerAccountId: accountId,
+            isPaperTrade: false,
+            charges: null,
+            filledQty: { gt: 0 },
+            avgPrice: { gt: 0 },
+            status: { in: [OrderStatus.COMPLETE, OrderStatus.CANCELLED] },
+            createdAt: { gte: new Date(`${BROKER_CHARGES_FROM}T00:00:00+05:30`) },
+            brokerOrderId: { not: null },
+            NOT: { brokerOrderId: { startsWith: 'PAPER_' } },
+          },
+          select: { id: true, brokerOrderId: true, symbol: true, exchange: true, side: true, productType: true, orderType: true, variety: true, filledQty: true, avgPrice: true },
+          orderBy: { createdAt: 'desc' },
+          take: CHARGES_PER_SYNC + this.chargesFailed.size,
+        })
+      )
+        .filter((o) => !this.chargesFailed.has(o.id))
+        .slice(0, CHARGES_PER_SYNC);
+
+      const params = (o: (typeof pending)[number]) => ({
+        orderId: o.brokerOrderId!,
+        symbol: o.symbol,
+        exchange: o.exchange,
+        side: o.side,
+        product: o.productType,
+        orderType: o.orderType === OrderType.SL_M ? 'SL-M' : o.orderType,
+        variety: o.variety || 'regular',
+        qty: o.filledQty,
+        avgPrice: o.avgPrice!,
+      });
+      const save = (o: (typeof pending)[number], charges: number) =>
+        this.prisma.order.update({ where: { id: o.id }, data: { charges, chargesQty: o.filledQty } });
+
+      let priced = 0;
+      for (let i = 0; i < pending.length; i += CHARGES_CHUNK) {
+        const chunk = pending.slice(i, i + CHARGES_CHUNK);
+        try {
+          const totals = await client.getOrderCharges(chunk.map(params));
+          await this.prisma.$transaction(chunk.map((o, j) => save(o, totals[j])));
+          priced += chunk.length;
+        } catch (err: any) {
+          // One bad order (e.g. an instrument Kite no longer knows) fails the whole request: price them one by one.
+          this.logger.warn(`Charges for ${chunk.length} orders on account ${accountId} failed (${err?.message || err}); retrying one by one`);
+          for (const o of chunk) {
+            try {
+              const [total] = await client.getOrderCharges([params(o)]);
+              await save(o, total);
+              priced++;
+            } catch (e: any) {
+              this.chargesFailed.add(o.id);
+              this.logger.warn(`Charges for order ${o.brokerOrderId} (${o.symbol}) unavailable, keeping the estimate: ${e?.message || e}`);
+            }
+          }
+        }
+      }
+      return priced;
+    } finally {
+      this.chargesRunning.delete(accountId);
+    }
+  }
+
+  /**
    * Syncs orders and fills from all active broker accounts into the local DB. A failure on one account (or on
    * one of orders/trades) is logged and does not stop the others.
    */
@@ -315,6 +387,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         tradesSynced += await this.syncAccountTrades(userId, account.id, client);
       } catch (err: any) {
         this.logger.warn(`Error syncing trades for account ${account.id}: ${err?.message || err}`);
+      }
+
+      try {
+        await this.syncAccountCharges(account.id, client);
+      } catch (err: any) {
+        this.logger.warn(`Error syncing charges for account ${account.id}: ${err?.message || err}`);
       }
     }
 
@@ -430,6 +508,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           filledQty: true,
           avgPrice: true,
           price: true,
+          tag: true,
+          charges: true,
+          chargesQty: true,
           strategyId: true,
           executionId: true,
           createdAt: true,
@@ -439,11 +520,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     ]);
 
     const keyOf = (accountId: string | null, orderId: string | null) => `${accountId ?? '-'}|${orderId}`;
-    const attribution = new Map<string, { algo: boolean; strategyName?: string }>();
+    const attribution = new Map<string, { algo: boolean; owner: string; strategyName?: string; chargesPerUnit?: number }>();
     for (const o of orders) {
+      const algo = !!(o.strategyId || o.executionId) || ENGINE_TAG.test(o.tag || '');
       attribution.set(keyOf(o.brokerAccountId, o.brokerOrderId), {
-        algo: !!(o.strategyId || o.executionId),
+        algo,
+        owner: algo ? `S:${o.strategyId || o.executionId || o.tag}` : 'MANUAL',
         strategyName: o.execution?.strategy?.name,
+        // Zerodha's charges are for the whole filled quantity; spread them evenly over its units.
+        chargesPerUnit: o.charges != null && o.chargesQty === o.filledQty ? o.charges / o.filledQty : undefined,
       });
     }
 
@@ -472,7 +557,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         price: t.price,
         at: t.filledAt,
         brokeragePerUnit: total.qty > 0 ? orderBrokerage(segment, total.value) / total.qty : 0,
+        chargesPerUnit: attr?.chargesPerUnit,
         algo: attr?.algo ?? false,
+        owner: attr?.owner ?? 'MANUAL',
         strategyName: attr?.strategyName,
       });
     }
@@ -494,7 +581,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         price,
         at: o.createdAt,
         brokeragePerUnit: o.filledQty > 0 ? orderBrokerage(segment, o.filledQty * price) / o.filledQty : 0,
+        chargesPerUnit: attr?.chargesPerUnit,
         algo: attr?.algo ?? false,
+        owner: attr?.owner ?? 'MANUAL',
         strategyName: attr?.strategyName,
       });
     }
@@ -534,9 +623,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Monthly realized P&L from real fills: FIFO round trips, net of charges, bucketed by IST day/month, split into
-   * algo vs manual, with a paginated/filterable trade journal. Reads only the DB (no broker call); the DB is kept
-   * current by order_update events, the manual sync and the 15:40 IST job.
+   * Monthly realized P&L of the user's algo trades from real fills: FIFO round trips, net of Zerodha's own charges
+   * (estimated where not fetched yet), bucketed by IST day/month, with a paginated/filterable trade journal. Manual
+   * trades are left out. Reads only the DB (no broker call); the DB is kept current by order_update events, the
+   * manual sync and the 15:40 IST job.
    */
   async getMonthlyLedger(userId: string, query: LedgerQuery = {}): Promise<MonthlyLedgerResponse> {
     const nowIst = istDate(new Date());
@@ -550,7 +640,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     );
 
     const [fills, monthKeys] = await Promise.all([this.loadFills(userId, nextMonthStartIst), this.fillMonths(userId)]);
-    const monthTrades = matchFills(fills).filter((t) => t.date.startsWith(monthKey));
+    const monthTrades = matchFills(fills).filter((t) => t.source === 'ALGO' && t.date.startsWith(monthKey));
 
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const labelled = new Set([...monthKeys, `${currentYear}-${String(currentMonth).padStart(2, '0')}`, monthKey]);
@@ -600,8 +690,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         pnl,
         grossPnl: round2(trades.reduce((a, t) => a + t.grossPnl, 0)),
         charges: round2(trades.reduce((a, t) => a + t.charges, 0)),
-        algoPnl: sumPnl(trades.filter((t) => t.source === 'ALGO')),
-        manualPnl: sumPnl(trades.filter((t) => t.source === 'MANUAL')),
         wins,
         losses,
         winRate: trades.length > 0 ? Number(((wins / trades.length) * 100).toFixed(1)) : 0,
@@ -617,10 +705,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const totalRealizedPnl = sumPnl(monthTrades);
     const totalTrades = monthTrades.length;
     const tradingDaysCount = byDay.size;
-    const bucket = (source: ClosedTrade['source']) => {
-      const list = monthTrades.filter((t) => t.source === source);
-      return { pnl: sumPnl(list), trades: list.length, wins: list.filter((t) => t.status === 'PROFIT').length };
-    };
     let bestTrade: ClosedTrade | null = null;
     let worstTrade: ClosedTrade | null = null;
     for (const t of monthTrades) {
@@ -682,8 +766,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         avgLoss: losers.length > 0 ? round2(grossLoss / losers.length) : 0,
         bestTrade,
         worstTrade,
-        algo: bucket('ALGO'),
-        manual: bucket('MANUAL'),
+        estimatedChargeTrades: monthTrades.filter((t) => !t.chargesExact).length,
       },
       chartSeries,
       dailyLedger: dailyAsc.reverse(),

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BrokerType, BrokerAccount } from '@prisma/client';
-import { IBrokerClient, OrderParams, Holding, Position, Order as IOrder, Trade as ITrade } from './interfaces/broker-client.interface';
+import { IBrokerClient, OrderParams, OrderChargeParams, Holding, Position, Order as IOrder, Trade as ITrade } from './interfaces/broker-client.interface';
 import { decrypt } from '../common/utils/crypto';
 import * as https from 'https';
 import * as http from 'http';
@@ -191,6 +191,40 @@ class ZerodhaClient implements IBrokerClient {
     } catch (err) {
       const kerr = toKiteError(err);
       console.error(`Zerodha Trades Error (${kerr.name}):`, kerr.message);
+      throw kerr;
+    }
+  }
+
+  async getOrderCharges(orders: OrderChargeParams[]): Promise<number[]> {
+    if (orders.length === 0) return [];
+    try {
+      const notes: any[] = await this.kite.getvirtualContractNote(
+        orders.map((o) => ({
+          order_id: o.orderId,
+          exchange: o.exchange,
+          tradingsymbol: o.symbol,
+          transaction_type: o.side,
+          variety: o.variety || 'regular',
+          product: o.product,
+          order_type: o.orderType,
+          quantity: o.qty,
+          average_price: o.avgPrice,
+        })),
+      );
+      // The response carries no order id, only the request's order: refuse anything that doesn't line up.
+      if (!Array.isArray(notes) || notes.length !== orders.length) {
+        throw new Error(`virtual contract note returned ${Array.isArray(notes) ? notes.length : 'no'} rows for ${orders.length} orders`);
+      }
+      return notes.map((n, i) => {
+        const total = Number(n?.charges?.total);
+        if (n?.tradingsymbol !== orders[i].symbol || Number(n?.quantity) !== orders[i].qty || !Number.isFinite(total) || total < 0) {
+          throw new Error(`virtual contract note row ${i} does not match order ${orders[i].orderId} (${orders[i].symbol})`);
+        }
+        return total;
+      });
+    } catch (err) {
+      const kerr = toKiteError(err);
+      console.error(`Zerodha Charges Error (${kerr.name}):`, kerr.message);
       throw kerr;
     }
   }
