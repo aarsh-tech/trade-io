@@ -143,6 +143,13 @@ const PROFIT_LOCK_STEPS: ReadonlyArray<readonly [number, number]> = [[1.5, 0.5],
  */
 const SLOW_TRAIL_AFTER_R = 1.5;
 const SLOW_TRAIL_EMA = 40;
+/**
+ * Day-move filter (config.minDayMovePct, default 1.5, 0 = off): skip an entry while the stock is less than this % past the
+ * previous close in the trade's direction (a LONG needs LTP >= PDC x 1.015). 2-year 5m backtest (₹30k, 1 trade/day, 1.2% stop,
+ * profit lock, slow trail): +₹54.7k vs +₹44.4k, better in both years, drawdown ₹7.4k vs ₹7.6k, 19/24 green months vs 16;
+ * every setting from 0.5% to 2.5% beat no filter (14 Oct 2026).
+ */
+const DEFAULT_MIN_DAY_MOVE_PCT = 1.5;
 /** Sessions in the daily ATR (from the volume-history download). */
 const ATR_SESSIONS = 10;
 /** Fibonacci ratios marked on the opening 5m candle (0 = its far end, 1 = the end in the trade's direction). */
@@ -1617,6 +1624,24 @@ export class EmaVwapCrossoverEngine {
 
       const symbol = state.activeSymbol || config.symbol, exchange = config.exchange, finalSide: 'BUY' | 'SELL' = side;
       const product = (config as any).product ?? 'MIS';
+
+      // Day-move filter: the stock must already be minDayMovePct past the previous close in the trade's direction.
+      // An unreadable previous close lets the trade through (the filter only ever removes trades).
+      const minDayMovePct = this.getMinDayMovePct(config);
+      if (minDayMovePct > 0) {
+        const key = `${exchange}:${symbol}`;
+        const quote = await withKiteRetry(() => kite.getQuote([key]), 2).catch(() => null);
+        const pdc = Number((quote as any)?.[key]?.ohlc?.close);
+        if (pdc > 0) {
+          const movePct = ((side === 'BUY' ? triggerPrice - pdc : pdc - triggerPrice) / pdc) * 100;
+          if (movePct < minDayMovePct) {
+            this.log(state, `⏭ [DAY MOVE] ${symbol}: skipping ${side} — only ${movePct.toFixed(2)}% ${side === 'BUY' ? 'above' : 'below'} the previous close ₹${pdc.toFixed(2)} (needs ${minDayMovePct}%).`);
+            return;
+          }
+        } else {
+          this.log(state, `⚠ [DAY MOVE] ${symbol}: previous close unreadable — day-move filter skipped for this entry.`);
+        }
+      }
       this.log(state, `📈 Equity mode — trading ${exchange}:${symbol} directly`);
       await this.ensureTickSize(client, symbol, exchange);
       const symTickSize = getInstrumentTickSize(symbol, triggerPrice);
@@ -4476,6 +4501,13 @@ export class EmaVwapCrossoverEngine {
   private getMaxStopPct(config: EmaVwapCrossoverConfig): number {
     const v = Number(config.maxStopPct);
     return Number.isFinite(v) && v > 0 ? Math.max(MIN_STOP_PCT, Math.min(5, v)) : DEFAULT_MAX_STOP_PCT;
+  }
+
+  /** Minimum move past the previous close for an entry, % (config.minDayMovePct, default 1.5, 0 = off, kept within 0-5). */
+  private getMinDayMovePct(config: EmaVwapCrossoverConfig): number {
+    if (config.minDayMovePct === undefined || config.minDayMovePct === null) return DEFAULT_MIN_DAY_MOVE_PCT;
+    const v = Number(config.minDayMovePct);
+    return Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : DEFAULT_MIN_DAY_MOVE_PCT;
   }
 
   /** Which exit-target mode applies. FIXED_RS = the ₹ target/SL mode. */

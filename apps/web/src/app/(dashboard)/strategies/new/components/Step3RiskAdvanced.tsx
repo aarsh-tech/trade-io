@@ -1114,6 +1114,41 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
+          {/* Min day move (EMA-VWAP stocks): skip entries in stocks that have barely moved from the previous close */}
+          {form.type === "EMA_VWAP_CROSSOVER" && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-sm font-semibold text-foreground">Min Day Move</span>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                Skips a setup unless the stock is already this far past yesterday&apos;s close in the trade&apos;s direction (a buy needs the price above the previous close by this much). Stocks that have barely moved lost money in the backtest. In the 2-year backtest 1.5% made about 23% more, in both years, with the same win rate and drawdown.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Min day move">
+                {([
+                  { value: "0", title: "Off" },
+                  { value: "1", title: "1%" },
+                  { value: "1.5", title: "1.5%" },
+                  { value: "2", title: "2%" },
+                ] as const).map((opt) => {
+                  const selected = Number(form.minDayMovePct ?? "1.5") === Number(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => set("minDayMovePct", opt.value)}
+                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
+                    >
+                      {opt.title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Max stop distance (EMA-VWAP stocks): caps how far the structural stop may sit from the entry */}
           {form.type === "EMA_VWAP_CROSSOVER" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
