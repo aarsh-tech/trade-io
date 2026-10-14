@@ -27,10 +27,11 @@ module.exports = {
       max_restarts: 50,
       exp_backoff_restart_delay: 200,
       // Sized for the 1GB server: OS + Postgres + PM2 take ~300MB, leaving ~600MB before swapping.
-      // V8 heap 384MB (engines + instrument/candle caches + socket server); PM2 restarts above 600MB RSS.
+      // One live user peaks ~300MB RSS (heap ~130MB); raised for a 2nd user. RSS runs ~170MB above the heap,
+      // so a 512MB heap keeps a heap crash from firing before the 750MB restart. Above ~600MB the box uses swap.
       // These only apply when PM2 starts from this file: a plain `pm2 restart algo-backend` keeps the old values.
-      node_args: '--max-old-space-size=384',
-      max_memory_restart: '600M',
+      node_args: '--max-old-space-size=512',
+      max_memory_restart: '750M',
       // Give in-flight requests/orders time to finish on SIGINT before PM2 sends SIGKILL
       kill_timeout: 10000,
       watch: false,
