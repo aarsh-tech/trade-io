@@ -32,8 +32,8 @@ export function useOrderTicket(ctx: OrderTicketContext) {
   const { symbol, exchange, brokerId, enabled } = ctx;
 
   const limitsQuery = useQuery({
-    queryKey: ["risk", "order-limits", symbol],
-    queryFn: async () => (await riskApi.orderLimits(symbol)).data?.data as OrderLimits,
+    queryKey: ["risk", "order-limits", symbol, exchange],
+    queryFn: async () => (await riskApi.orderLimits(symbol, exchange)).data?.data as OrderLimits,
     enabled,
     staleTime: 15_000,
     refetchOnWindowFocus: true,

@@ -5,6 +5,7 @@ import { IBrokerClient, OrderIntent, OrderParams } from '../brokers/interfaces/b
 import { withKiteRetry } from '../brokers/kite-errors';
 import {
   DEFAULT_MAX_ORDER_QTY,
+  appliesQtyLimits,
   buildOrderTag,
   getFreezeLimit,
   mapOrderTypeToDb,
@@ -147,11 +148,13 @@ export class OrderGateway {
     const qty = Number(params.qty) || 0;
     if (qty <= 0) throw this.reject(`🛑 [RMS SAFETY] Invalid order quantity: ${qty}`);
 
-    // 2. User limits (entries only: an exit can never exceed what an entry was allowed to open)
+    // 2. User limits (entries only: an exit can never exceed what an entry was allowed to open).
+    //    The qty ceiling and the freeze clamp are F&O-only; NSE/BSE stock orders skip them.
     const client = this.factory.createClient(account);
+    const qtyLimits = appliesQtyLimits(params.exchange);
     if (intent === 'ENTRY') {
       const maxQty = user.maxOrderQty || DEFAULT_MAX_ORDER_QTY;
-      if (qty > maxQty) {
+      if (qtyLimits && qty > maxQty) {
         throw this.reject(
           `🛑 [RMS USER LIMIT] Order quantity ${qty} exceeds your maximum of ${maxQty} per order for ${params.symbol}.`,
         );
@@ -161,7 +164,7 @@ export class OrderGateway {
 
     // 3. Exchange freeze quantity (all intents; the exchange rejects these regardless)
     const freezeLimit = getFreezeLimit(params.symbol);
-    if (qty > freezeLimit) {
+    if (qtyLimits && qty > freezeLimit) {
       throw this.reject(
         `🛑 [RMS FREEZE CLAMP] Order quantity ${qty} exceeds the exchange freeze limit of ${freezeLimit} for ${params.symbol}.`,
       );

@@ -19,7 +19,7 @@ import { GammaBlastExpiryEngine } from '../strategy/gamma-blast-expiry.engine';
 import { UpdateRiskSettingsDto } from './dto/risk.dto';
 import { OrderStatus } from '@prisma/client';
 import { isKiteAuthError } from '../common/utils/kite-errors';
-import { DEFAULT_MAX_ORDER_QTY, getFreezeLimit } from '../order-gateway/order-rules';
+import { DEFAULT_MAX_ORDER_QTY, appliesQtyLimits, getFreezeLimit } from '../order-gateway/order-rules';
 
 @Injectable()
 export class RiskService {
@@ -49,18 +49,20 @@ export class RiskService {
    * The limits OrderGateway enforces on a manual entry, for the order ticket's pre-submit preview.
    * DB-only (no broker calls), so the ticket can read it every time it opens.
    * `maxOrderValue` is null when the user has not set one (the gateway then skips that check).
+   * `maxOrderQty` and `freezeLimit` are null for NSE/BSE stock orders, which the gateway does not clamp.
    */
-  async getOrderLimits(userId: string, symbol?: string) {
+  async getOrderLimits(userId: string, symbol?: string, exchange?: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { maxOrderValue: true, maxOrderQty: true, killSwitchActive: true },
     });
     if (!user) throw new BadRequestException('User not found');
+    const qtyLimits = appliesQtyLimits(exchange);
     return {
       killSwitchActive: user.killSwitchActive,
-      maxOrderQty: user.maxOrderQty || DEFAULT_MAX_ORDER_QTY,
+      maxOrderQty: qtyLimits ? user.maxOrderQty || DEFAULT_MAX_ORDER_QTY : null,
       maxOrderValue: user.maxOrderValue || null,
-      freezeLimit: getFreezeLimit(symbol ?? ''),
+      freezeLimit: qtyLimits ? getFreezeLimit(symbol ?? '') : null,
     };
   }
 

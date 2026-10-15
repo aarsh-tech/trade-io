@@ -8,10 +8,11 @@ export type TicketOrderType = "MARKET" | "LIMIT" | "SL" | "SL-M";
 
 export interface OrderLimits {
   killSwitchActive: boolean;
-  maxOrderQty: number;
+  /** null for NSE/BSE stock orders: the qty ceiling and freeze clamp are F&O-only. */
+  maxOrderQty: number | null;
   /** null when the user has not set one; the backend then skips the value check. */
   maxOrderValue: number | null;
-  freezeLimit: number;
+  freezeLimit: number | null;
 }
 
 export interface TicketInput {
@@ -77,8 +78,8 @@ export function validateTicket(t: TicketInput): TicketIssue[] {
       err("qty", `Quantity must be a multiple of the lot size (${t.lotSize})`);
     }
     if (t.limits) {
-      if (t.qty > t.limits.maxOrderQty) err("qty", `Exceeds your max order quantity of ${t.limits.maxOrderQty}`);
-      else if (t.qty > t.limits.freezeLimit) err("qty", `Exceeds the exchange freeze limit of ${t.limits.freezeLimit}`);
+      if (t.limits.maxOrderQty != null && t.qty > t.limits.maxOrderQty) err("qty", `Exceeds your max order quantity of ${t.limits.maxOrderQty}`);
+      else if (t.limits.freezeLimit != null && t.qty > t.limits.freezeLimit) err("qty", `Exceeds the exchange freeze limit of ${t.limits.freezeLimit}`);
     }
   }
 

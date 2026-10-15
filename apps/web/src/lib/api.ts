@@ -289,7 +289,7 @@ export const riskApi = {
   updateSettings: (dto: { maxDailyLoss?: number; maxOrderValue?: number; maxOrderQty?: number }) =>
     api.patch("/risk/settings", dto),
   checkBrokerHealth: () => api.get("/risk/broker-health"),
-  orderLimits: (symbol?: string) => api.get("/risk/order-limits", { params: { symbol } }),
+  orderLimits: (symbol?: string, exchange?: string) => api.get("/risk/order-limits", { params: { symbol, exchange } }),
 };
 
 

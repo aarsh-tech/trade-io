@@ -16,6 +16,16 @@ export const EXCHANGE_FREEZE_LIMITS: Record<string, number> = {
 export const DEFAULT_FREEZE_LIMIT = 1800;
 export const DEFAULT_MAX_ORDER_QTY = 1800;
 
+/**
+ * True when the user's max-qty-per-order and the exchange freeze clamp apply: F&O (and any
+ * unknown exchange). Cash equity on NSE/BSE has no freeze quantity, and stock strategies size
+ * by their max loss, so a share-count ceiling there only blocks cheap stocks.
+ */
+export function appliesQtyLimits(exchange?: string): boolean {
+  const ex = (exchange || '').toUpperCase().trim();
+  return ex !== 'NSE' && ex !== 'BSE';
+}
+
 /** Kite rejects tags that are not alphanumeric or longer than 20 characters. */
 export const MAX_TAG_LENGTH = 20;
 

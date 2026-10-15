@@ -534,7 +534,7 @@ export function RmsSafetyCard({ compact = false, className, onStatusChange }: Rm
                       Max Quantity per Order
                     </label>
                     <span className="text-[11px] text-muted-foreground block">
-                      Enforces exchange freeze clamps to prevent broker order rejections
+                      F&amp;O orders only. Stock orders are sized by each strategy&apos;s max loss
                     </span>
                   </div>
                 </div>

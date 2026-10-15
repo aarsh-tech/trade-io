@@ -29,8 +29,8 @@ export class RiskController {
 
   @Get('order-limits')
   @ApiOperation({ summary: 'Limits the order gateway enforces on a manual entry (qty, value, freeze, kill switch)' })
-  async getOrderLimits(@Request() req, @Query('symbol') symbol?: string) {
-    const data = await this.riskService.getOrderLimits(req.user.id, symbol?.slice(0, 40));
+  async getOrderLimits(@Request() req, @Query('symbol') symbol?: string, @Query('exchange') exchange?: string) {
+    const data = await this.riskService.getOrderLimits(req.user.id, symbol?.slice(0, 40), exchange?.slice(0, 10));
     return { success: true, data };
   }
 

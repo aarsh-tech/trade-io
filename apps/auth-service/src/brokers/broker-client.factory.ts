@@ -9,6 +9,7 @@ import axios from 'axios';
 import { KiteRateLimiter } from './kite-rate-limiter';
 import { toKiteError } from './kite-errors';
 import { getSharedInstruments, InstrumentStore, resolveIndex } from './instrument-store';
+import { appliesQtyLimits } from '../order-gateway/order-rules';
 
 // Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
 export const keepAliveHttpsAgent = new https.Agent({
@@ -272,7 +273,7 @@ class ZerodhaClient implements IBrokerClient {
       if (requestedQty <= 0) {
         throw new Error(`🛑 [SAFETY GUARD] Invalid order quantity: ${requestedQty}`);
       }
-      if (requestedQty > freezeLimit) {
+      if (appliesQtyLimits(params.exchange) && requestedQty > freezeLimit) {
         throw new Error(`🛑 [SAFETY GUARD] Order quantity ${requestedQty} exceeds exchange freeze limit of ${freezeLimit} for ${params.symbol}. Order blocked.`);
       }
 
