@@ -22,7 +22,10 @@ function CallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { brokers, isLoading: isBrokersLoading } = useBrokers();
-  const zerodhaAccount = brokers.find((b: any) => b.broker === "ZERODHA");
+  // FYERS redirects back with `auth_code` (and `s=ok`); Kite with `request_token`.
+  const isFyers = !!searchParams.get("auth_code");
+  const zerodhaAccount = brokers.find((b: any) => b.broker === (isFyers ? "FYERS" : "ZERODHA"));
+  const brokerName = isFyers ? "FYERS" : "Zerodha";
 
   const { renewSession, isRenewing } = usePortfolio(zerodhaAccount?.id);
 
@@ -32,7 +35,7 @@ function CallbackContent() {
 
   // Auto-detect and process token from URL
   useEffect(() => {
-    const rawToken = searchParams.get("request_token") || searchParams.get("requestToken");
+    const rawToken = searchParams.get("request_token") || searchParams.get("requestToken") || searchParams.get("auth_code");
     if (!rawToken || !zerodhaAccount?.id) return;
 
     let token = rawToken.trim();
@@ -46,7 +49,7 @@ function CallbackContent() {
     // Kite echoes the signed state from our login URL; a redirect without it (or with a failed
     // login status) is never auto-submitted. The user can still paste a token below.
     const state = searchParams.get("state");
-    const loginStatus = searchParams.get("status");
+    const loginStatus = searchParams.get("status") || (isFyers ? (searchParams.get("s") === "ok" ? "success" : searchParams.get("s")) : null);
     if (!state || (loginStatus && loginStatus !== "success")) {
       setStatus("error");
       setErrorMessage("This login link is missing its verification state. Start the login from the dashboard again, or paste the request token below.");
@@ -57,7 +60,7 @@ function CallbackContent() {
     renewSession({ token, state })
       .then(() => {
         setStatus("success");
-        toast.success("Zerodha session connected successfully!");
+        toast.success(`${brokerName} session connected successfully!`);
         setTimeout(() => {
           router.replace("/dashboard");
         }, 2200);
@@ -65,9 +68,9 @@ function CallbackContent() {
       .catch((err: any) => {
         setStatus("error");
         setErrorMessage(err?.response?.data?.message || err?.message || "Token exchange failed");
-        toast.error("Failed to authenticate Zerodha session");
+        toast.error(`Failed to authenticate ${brokerName} session`);
       });
-  }, [searchParams, zerodhaAccount?.id, renewSession, router]);
+  }, [searchParams, zerodhaAccount?.id, renewSession, router, isFyers, brokerName]);
 
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +83,9 @@ function CallbackContent() {
     if (token.includes("request_token=")) {
       const match = token.match(/request_token=([a-zA-Z0-9]+)/);
       if (match && match[1]) token = match[1];
+    } else if (token.includes("auth_code=")) {
+      const match = token.match(/auth_code=([^&\s]+)/);
+      if (match && match[1]) token = decodeURIComponent(match[1]);
     }
 
     setStatus("processing");

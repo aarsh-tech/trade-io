@@ -7,7 +7,9 @@
     "build": "nest build",
     "start": "node dist/main",
     "lint": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "test:fyers": "node -r ts-node/register/transpile-only --test test/fyers-adapter.test.ts",
+    "fyers:dry-run": "node -r ts-node/register/transpile-only scripts/fyers-dry-run.ts"
   },
   "dependencies": {
     "@nestjs/common": "11.0.0",

@@ -155,6 +155,11 @@ export function slimInstruments(raw: any[]): Instrument[] {
  * `kite.getInstruments` directly re-downloads and re-parses the full dump (~120 MB of heap for
  * NFO) on every cold start, next to the copy already held here.
  */
-export function getSharedInstruments(kite: { getInstruments(exchange: string): Promise<any[]> }, exchange: string): Promise<Instrument[]> {
-  return InstrumentStore.get(exchange, async () => slimInstruments(await kite.getInstruments(exchange)));
+export function getSharedInstruments(
+  kite: { getInstruments(exchange: string): Promise<any[]>; instrumentNamespace?: string },
+  exchange: string,
+): Promise<Instrument[]> {
+  // Another broker's master (FYERS) is cached under its own key so it never replaces the Kite rows other accounts read.
+  const key = kite?.instrumentNamespace ? `${kite.instrumentNamespace}:${exchange}` : exchange;
+  return InstrumentStore.get(key, async () => slimInstruments(await kite.getInstruments(exchange)));
 }

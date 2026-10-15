@@ -12,11 +12,29 @@ import { toast } from "sonner";
 import Link from "next/link";
 
 import { useBrokers } from "@/hooks/useBrokers";
+import { brokerApi } from "@/lib/api";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 const BROKERS_CONFIG = [
   { key: "ZERODHA", name: "Zerodha", logo: "Z", color: "hsl(var(--primary))", desc: "Kite Connect API" },
+  { key: "FYERS", name: "FYERS", logo: "F", color: "hsl(var(--primary))", desc: "FYERS API v3 (paper trading first)" },
 ];
+
+/** FYERS sends the user back here with `auth_code`; it must match the Redirect URL saved in the FYERS app. */
+function fyersRedirectUrl() {
+  return typeof window !== "undefined" ? `${window.location.origin}/brokers/callback` : "https://tradeio.site/brokers/callback";
+}
+
+async function openFyersLogin(accountId: string) {
+  try {
+    const res = await brokerApi.loginUrl(accountId);
+    const url = (res as any)?.data?.url || (res as any)?.data?.data?.url;
+    if (!url) throw new Error("No login URL returned");
+    window.location.href = url;
+  } catch (e: any) {
+    toast.error(e?.response?.data?.message || e?.message || "Could not open the FYERS login page");
+  }
+}
 
 export default function BrokersPage() {
   const { brokers, isLoading, connect, isConnecting, disconnect } = useBrokers();
@@ -125,6 +143,17 @@ export default function BrokersPage() {
                       )}
                     </div>
                     <div className="flex gap-2 items-center">
+                      {acc.broker === "FYERS" ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 h-9 gap-2 text-foreground/75 bg-card border-border hover:bg-muted/50 hover:border-primary/30 transition-all rounded-lg"
+                          onClick={() => openFyersLogin(acc.id)}
+                        >
+                          <RefreshCcw className="h-3.5 w-3.5 text-accent-foreground" />
+                          <span className="font-semibold text-xs">Log in to FYERS</span>
+                        </Button>
+                      ) : (
                       <Button
                         variant="outline"
                         size="sm"
@@ -136,6 +165,7 @@ export default function BrokersPage() {
                           <span className="font-semibold text-xs">Renew Token</span>
                         </Link>
                       </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon" aria-label="Disconnect broker account"
@@ -331,6 +361,47 @@ export default function BrokersPage() {
                           Zerodha requires each developer app to have a unique IP. Enter your designated / assigned <strong>Static IP</strong> in your Kite Connect App settings.
                         </p>
                       </div>
+                    </div>
+                  )}
+
+                  {selectedBroker.key === 'FYERS' && (
+                    <div className="p-3.5 rounded-lg bg-brand-subtle/70 border border-primary/80 text-xs space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-accent-foreground">FYERS API App Settings:</span>
+                        <a
+                          href="https://myapi.fyers.in/dashboard"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] font-semibold text-accent-foreground hover:underline inline-flex items-center gap-1"
+                        >
+                          <span>Open Dashboard</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                      <p className="text-[11.5px] leading-relaxed text-accent-foreground/85">
+                        Client ID is your FYERS login ID. API Key is the App ID (e.g. <span className="font-mono">AB12CD34EF-100</span>), API Secret is the App's Secret ID.
+                      </p>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-foreground/75 font-medium">
+                          <span>Redirect URL:</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(fyersRedirectUrl());
+                              toast.success("Copied Redirect URL!");
+                            }}
+                            className="text-accent-foreground hover:underline font-semibold text-[11px] cursor-pointer"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p className="font-mono text-[11px] bg-card p-2 rounded-lg border border-border truncate select-all text-foreground">
+                          {fyersRedirectUrl()}
+                        </p>
+                      </div>
+                      <p className="text-[11.5px] leading-relaxed text-accent-foreground/85">
+                        Live FYERS orders stay blocked until the server sets <span className="font-mono">FYERS_LIVE_ORDERS=true</span>; run strategies in Paper mode.
+                      </p>
                     </div>
                   )}
 

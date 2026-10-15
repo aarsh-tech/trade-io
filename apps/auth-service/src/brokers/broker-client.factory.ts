@@ -10,6 +10,7 @@ import { KiteRateLimiter } from './kite-rate-limiter';
 import { toKiteError } from './kite-errors';
 import { getSharedInstruments, InstrumentStore, resolveIndex } from './instrument-store';
 import { appliesQtyLimits } from '../order-gateway/order-rules';
+import { FyersKiteCompat } from './fyers/fyers-kite-compat';
 
 // Persistent HTTP/HTTPS connection agents to reuse open sockets and eliminate TCP/TLS latency
 export const keepAliveHttpsAgent = new https.Agent({
@@ -56,6 +57,9 @@ export class BrokerClientFactory {
       case BrokerType.ZERODHA:
         client = new ZerodhaClient(apiKey, accessToken);
         break;
+      case BrokerType.FYERS:
+        client = new FyersClient(apiKey, accessToken);
+        break;
       default:
         throw new Error('Broker not supported yet');
     }
@@ -74,18 +78,26 @@ export class BrokerClientFactory {
   }
 }
 
-class ZerodhaClient implements IBrokerClient {
+export class ZerodhaClient implements IBrokerClient {
   private static recentOrderDedup = new Map<string, number>();
   private static orderRateMap = new Map<string, number[]>();
 
-  private kite: any;
-  private apiKey: string;
-  private accessToken: string | null;
+  protected kite: any;
+  protected apiKey: string;
+  protected accessToken: string | null;
   private limiter: KiteRateLimiter;
 
-  constructor(apiKey: string, accessToken: string | null) {
+  /**
+   * `kiteLike`: a kiteconnect-compatible client for another broker (FyersClient). It brings its own transport and rate
+   * limits, so nothing below is applied to it; without it this is the plain Kite client, exactly as before.
+   */
+  constructor(apiKey: string, accessToken: string | null, kiteLike?: any) {
     this.apiKey = apiKey;
     this.accessToken = accessToken;
+    if (kiteLike) {
+      this.kite = kiteLike;
+      return;
+    }
     this.limiter = KiteRateLimiter.forKey(apiKey);
     const { KiteConnect } = require('kiteconnect');
     this.kite = new KiteConnect({ api_key: apiKey, timeout: 15000 });
@@ -695,5 +707,25 @@ class ZerodhaClient implements IBrokerClient {
   }
 }
 
+/**
+ * FYERS API v3 account. Everything above ZerodhaClient's `kite` slot is reused as is: the same response mapping and the same
+ * order safety guards (freeze-limit clamp, fat-finger cap, dedup, entry rate limit). The slot holds FyersKiteCompat, which
+ * answers in Kite's shapes, so engines that reach `client['kite']` directly run unchanged. Live order placement is
+ * additionally blocked unless FYERS_LIVE_ORDERS=true (see FyersKiteCompat).
+ */
+export class FyersClient extends ZerodhaClient {
+  constructor(appId: string, accessToken: string | null) {
+    super(appId, accessToken, new FyersKiteCompat(appId, accessToken));
+    // FYERS has no Kite-style virtual contract note; with this unset the ledger skips broker-priced charges.
+    (this as any).getOrderCharges = undefined;
+  }
 
+  /** No FYERS websocket feed yet: engines fall back to REST polling (LTP every poll when no tick is fresh). */
+  createTicker(): any {
+    return null;
+  }
 
+  async placeGtt(): Promise<string> {
+    throw new Error('GTT orders are not supported for FYERS accounts yet');
+  }
+}

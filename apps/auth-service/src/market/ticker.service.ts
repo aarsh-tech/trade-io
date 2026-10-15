@@ -370,8 +370,9 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
       const stale = exchanges.filter((e) => !InstrumentStore.isFresh(e));
       if (stale.length === 0 || !tradingDay || minute < 8 * 60 + 45 || minute > 15 * 60 + 35) return;
 
+      // The store warmed here is the shared Kite master, so only a Zerodha session can fill it (FYERS keeps its own).
       const account = await this.prisma.brokerAccount.findFirst({
-        where: { isActive: true, accessToken: { not: null }, tokenHealth: { not: 'EXPIRED' } },
+        where: { broker: BrokerType.ZERODHA, isActive: true, accessToken: { not: null }, tokenHealth: { not: 'EXPIRED' } },
       });
       if (!account) return;
       const client = this.brokerFactory.createClient(account);

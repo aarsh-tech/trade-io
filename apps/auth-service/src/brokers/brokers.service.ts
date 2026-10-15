@@ -11,6 +11,22 @@ import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { nextKiteTokenExpiry } from '../market/market-calendar';
 import { resolveJwtSecret } from '../auth/jwt-secret';
 import { IdempotencyStore } from './idempotency.store';
+import { fyersLoginUrl, fyersValidateAuthCode } from './fyers/fyers-http';
+
+/** Where FYERS sends the user back after login; must equal the Redirect URL saved in the FYERS app (myapi.fyers.in). */
+export function fyersRedirectUri(): string {
+  if (process.env.FYERS_REDIRECT_URI) return process.env.FYERS_REDIRECT_URI;
+  const frontendBase = (process.env.FRONTEND_URL?.split(',')[0] || 'http://localhost:3000').replace(/\/$/, '');
+  return `${frontendBase}/brokers/callback`;
+}
+
+/** FYERS access tokens last until the end of the trading day: treat them as expired at the next IST midnight. */
+export function nextFyersTokenExpiry(now: Date = new Date()): Date {
+  const IST_OFFSET_MS = 5.5 * 3600_000;
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const nextMidnightIst = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1, 0, 0, 0, 0);
+  return new Date(nextMidnightIst - IST_OFFSET_MS);
+}
 
 
 @Injectable()
@@ -167,6 +183,9 @@ export class BrokersService {
         const state = this.signLoginState(userId, accountId);
         const redirectParams = encodeURIComponent(`state=${state}`);
         return { url: `https://kite.zerodha.com/connect/login?v=3&api_key=${encodeURIComponent(apiKey)}&redirect_params=${redirectParams}` };
+      case BrokerType.FYERS:
+        // FYERS passes `state` straight back next to `auth_code`, so the same signed state guards the callback.
+        return { url: fyersLoginUrl(apiKey, fyersRedirectUri(), this.signLoginState(userId, accountId)) };
       default:
         throw new BadRequestException('Login URL not available for this broker');
     }
@@ -248,28 +267,40 @@ export class BrokersService {
     });
     if (!acc || acc.userId !== userId) throw new NotFoundException('Account not found');
 
-    if (acc.broker !== BrokerType.ZERODHA) {
+    if (acc.broker !== BrokerType.ZERODHA && acc.broker !== BrokerType.FYERS) {
       throw new BadRequestException('Session refresh logic not implemented for this broker');
     }
 
-    // Kite echoes redirect_params on the redirect back; a supplied state must be ours and fresh.
+    // Kite echoes redirect_params on the redirect back (FYERS returns `state` itself); a supplied state must be ours and fresh.
     if (state !== undefined && state !== null && state !== '' && !this.verifyLoginState(userId, accountId, state)) {
       throw new BadRequestException('Broker login state is invalid or expired. Please start the login again.');
     }
 
-    const { KiteConnect } = require('kiteconnect');
     const apiKey = decrypt(acc.apiKeyEnc);
     const apiSecret = decrypt(acc.apiSecretEnc);
 
-    const kite = new KiteConnect({ api_key: apiKey });
-    const session = await KiteRateLimiter.forKey(apiKey).run<any>('general', () => kite.generateSession(requestToken, apiSecret));
-
-    const expiry = nextKiteTokenExpiry();
+    let accessToken: string;
+    let expiry: Date;
+    if (acc.broker === BrokerType.FYERS) {
+      // `requestToken` carries FYERS's auth_code. The refresh token needs the user's PIN to use and is not kept.
+      try {
+        accessToken = (await fyersValidateAuthCode(apiKey, apiSecret, requestToken)).access_token;
+      } catch (err: any) {
+        throw new BadRequestException(`FYERS login failed: ${err?.message || err}`);
+      }
+      expiry = nextFyersTokenExpiry();
+    } else {
+      const { KiteConnect } = require('kiteconnect');
+      const kite = new KiteConnect({ api_key: apiKey });
+      const session = await KiteRateLimiter.forKey(apiKey).run<any>('general', () => kite.generateSession(requestToken, apiSecret));
+      accessToken = session.access_token;
+      expiry = nextKiteTokenExpiry();
+    }
 
     const updatedAcc = await this.prisma.brokerAccount.update({
       where: { id: accountId },
       data: {
-        accessToken: encrypt(session.access_token),
+        accessToken: encrypt(accessToken),
         tokenExpiry: expiry,
         isActive: true,
         tokenHealth: 'HEALTHY',
