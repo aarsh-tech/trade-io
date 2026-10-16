@@ -15,9 +15,12 @@ import { logSignal } from './signal-logger';
 import { calculateEMA, calculateVWAP, Candle, filterClosedCandles, findLatestEmaVwapCrossToday, getIstDateStr, getIstHhmm, isInsideCandle } from './emavwap-signals';
 import { getInstrumentTickSize, getTopCandidateStocks, globalTickSizeMap, roundToInstrumentTick } from './smart-stock-picker';
 
+type StockSetupType = 'DIRECT' | 'INSIDE_CANDLE' | 'OPEN_LOW_DRIVE' | 'OPEN_HIGH_DRIVE' | 'TREND_BREAKDOWN' | 'TREND_BREAKOUT' | 'PULLBACK_REJECTION'
+  | 'PATIENT_BREAKOUT' | 'PATIENT_PULLBACK';
+
 interface StockSetup {
   trend: 'LONG' | 'SHORT';
-  setupType: 'DIRECT' | 'INSIDE_CANDLE' | 'OPEN_LOW_DRIVE' | 'OPEN_HIGH_DRIVE' | 'TREND_BREAKDOWN' | 'TREND_BREAKOUT' | 'PULLBACK_REJECTION';
+  setupType: StockSetupType;
   triggerHigh: number | null;
   triggerLow: number | null;
   slPrice: number;
@@ -43,7 +46,7 @@ interface StrategyState {
   confirmationLow: number | null;
   invalidationPrice: number | null;
   setupTimestamp: number | null;
-  setupType?: 'DIRECT' | 'INSIDE_CANDLE' | 'OPEN_LOW_DRIVE' | 'OPEN_HIGH_DRIVE' | 'TREND_BREAKDOWN' | 'TREND_BREAKOUT' | 'PULLBACK_REJECTION';
+  setupType?: StockSetupType;
   cooldownSymbols?: Map<string, number>;
   invalidatedCrossoverTime?: number | null;
   entryPrice: number | null;
@@ -150,6 +153,19 @@ const SLOW_TRAIL_EMA = 40;
  * every setting from 0.5% to 2.5% beat no filter (14 Oct 2026).
  */
 const DEFAULT_MIN_DAY_MOVE_PCT = 1.5;
+/**
+ * Patient-trend entries (config.entryStyle 'PATIENT'; default 'CLASSIC' = the opening-drive / crossover / pullback setups).
+ * Built on 16 Oct 2026 at the user's request after HBLENGINE (+17%, flat until ~10:20) and TECHM (+7.9%) trended all day
+ * above VWAP, the 15-EMA and the 40-EMA. Rules: nothing before the 09:40-09:45 candle closes; the candle must close past
+ * VWAP, the 15-EMA and the 40-EMA with the 15-EMA past the 40-EMA; then either a close at a new day high/low
+ * (PATIENT_BREAKOUT) or a touch of the 15-EMA in the last 4 candles and a close back in the trend direction
+ * (PATIENT_PULLBACK). Trigger = that candle's high/low, stop = structure (last 3 candles) capped at maxStopPct.
+ * Volume never blocks an entry (no 10-session own-history gate, no fixed multiple: it can build slowly); building volume
+ * today, a break of the 10-session daily high/low, or of PDH/PDL only raise the score. The 2-year 5m backtest of these rules (scratchpad patience.js, 524 stocks) lost money in every
+ * variant, so this runs on paper first.
+ */
+const PATIENT_FIRST_CANDLE_HHMM = 9 * 60 + 40;
+const PATIENT_SLOW_EMA = 40;
 /** Sessions in the daily ATR (from the volume-history download). */
 const ATR_SESSIONS = 10;
 /** Fibonacci ratios marked on the opening 5m candle (0 = its far end, 1 = the end in the trade's direction). */
@@ -187,6 +203,8 @@ export class EmaVwapCrossoverEngine {
   private readonly volumeBaselines = new Map<string, { dateStr: string; slots: Map<number, number[]>; retryAfter?: number }>();
   /** Per-stock daily ATR% over the previous ATR_SESSIONS sessions, built from the same download as the volume history. */
   private readonly dailyAtrBySymbol = new Map<string, { dateStr: string; atrPct: number; sessions: number }>();
+  /** High / low of the previous 10 sessions (from the same download), for the patient-trend daily breakout score. */
+  private readonly sessionRangeBySymbol = new Map<string, { dateStr: string; high: number; low: number }>();
   /** Symbols the instrument master had no tick size for, so ensureTickSize doesn't rescan the master every tick. */
   private readonly tickSizeMisses = new Set<string>();
 
@@ -1211,6 +1229,9 @@ export class EmaVwapCrossoverEngine {
           state.hasLoggedOpeningWindow = true;
           const startsAt = entryTf.minutes === 1 ? '09:16' : '09:20';
           this.log(state, `⏳ [09:15 - ${startsAt} AM OBSERVATION WINDOW] Opening ${entryTf.minutes}m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ ${startsAt} AM sharp.`);
+          if (this.getEntryStyle(config) === 'PATIENT') {
+            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No entries before the 09:40-09:45 candle closes; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low or a 15-EMA pullback.`);
+          }
           await this.persistLogs(state);
         }
         // Auto mode: the first scan of the day loads volume history for ~40 stocks (15-40s at Kite's 3 req/s), plus each
@@ -3861,7 +3882,8 @@ export class EmaVwapCrossoverEngine {
   ): StockSetup | null {
     const setup = this.evaluateStockSetupRaw(candles, emas, vwaps, now, config, symbol, tf.slCandles);
     if (!setup) return null;
-    if (config.enableRvolVolumeFilter === false) return setup;
+    // Patient-trend setups check volume against today's candles only (no 10-session history gate).
+    if (config.enableRvolVolumeFilter === false || this.getEntryStyle(config) === 'PATIENT') return setup;
     const symKey = this.volumeBaselineKey(symbol ?? config.symbol, tf.interval ?? '5minute');
     const opts = {
       dynamic: config.enableDynamicVolume !== false,
@@ -3930,6 +3952,10 @@ export class EmaVwapCrossoverEngine {
       if (ranges.length >= 3) {
         const atrPct = Math.max(1.2, Math.min(10.0, ranges.reduce((a, b) => a + b, 0) / ranges.length));
         this.dailyAtrBySymbol.set(symbol, { dateStr: todayStr, atrPct, sessions: ranges.length });
+      }
+      const lastSessions = Array.from(dayRange.keys()).sort().slice(-10).map(dStr => dayRange.get(dStr)!);
+      if (lastSessions.length >= 3) {
+        this.sessionRangeBySymbol.set(symbol, { dateStr: todayStr, high: Math.max(...lastSessions.map(r => r.high)), low: Math.min(...lastSessions.map(r => r.low)) });
       }
     } catch (err: any) {
       this.logger.debug?.(`Volume baseline unavailable for ${symbol} (${interval}): ${err?.message}. Using 3-session fallback.`);
@@ -4030,6 +4056,61 @@ export class EmaVwapCrossoverEngine {
         return this.roundTick(currCandle.close + slDistance, targetSym);
       }
     };
+
+    // ── Patient-trend mode (config.entryStyle 'PATIENT') replaces every pattern below; see PATIENT_FIRST_CANDLE_HHMM ──
+    if (this.getEntryStyle(config) === 'PATIENT') {
+      if (getIstHhmm(currCandle.date) < PATIENT_FIRST_CANDLE_HHMM || todayCandles.length < 3) return null;
+      const slowEma = calculateEMA(candles, PATIENT_SLOW_EMA)[lastIdx];
+      if (slowEma === null) return null;
+      const close = currCandle.close;
+      const trend: 'LONG' | 'SHORT' | null =
+        close > currVwap && close > currEma && close > slowEma && currEma > slowEma ? 'LONG'
+          : close < currVwap && close < currEma && close < slowEma && currEma < slowEma ? 'SHORT' : null;
+      if (!trend) return null;
+      const isLong = trend === 'LONG';
+      // Too stretched from the 15-EMA: same limit as the classic setups.
+      if ((Math.abs(close - currEma) / close) * 100 > Math.max(4.0, dynamicMaxEmaDistPct * 2.0)) return null;
+
+      const prior = todayCandles.slice(0, -1).map(tc => tc.candle);
+      const newExtreme = isLong ? close > Math.max(...prior.map(c => c.high)) : close < Math.min(...prior.map(c => c.low));
+      // Volume never blocks a patient entry (it can build slowly as the trend gets going). Building volume, i.e. the last
+      // 3 candles averaging more than today's earlier candles, only raises the score.
+      const todayVols = todayCandles.map(tc => tc.candle.volume || 0);
+      const recentVols = todayVols.slice(-3), earlierVols = todayVols.slice(0, -3);
+      const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / Math.max(1, a.length);
+      const volBuilding = earlierVols.length > 0 && avg(recentVols) > avg(earlierVols);
+      const trendBody = isLong ? close > currCandle.open : close < currCandle.open;
+      const firstRecent = Math.max(0, lastIdx - 3);
+      let touchedEma = false;
+      for (let j = firstRecent; j <= lastIdx; j++) {
+        const e = emas[j];
+        if (e !== null && (isLong ? candles[j].low <= e * 1.002 : candles[j].high >= e * 0.998)) touchedEma = true;
+      }
+      const setupType: StockSetupType | null = newExtreme ? 'PATIENT_BREAKOUT'
+        : touchedEma && trendBody && !newExtreme ? 'PATIENT_PULLBACK' : null;
+      if (!setupType) return null;
+
+      const structure = candles.slice(Math.max(0, lastIdx - 2), lastIdx + 1);
+      const slPrice = getSwingShelfSl(trend, isLong ? Math.min(...structure.map(c => c.low)) : Math.max(...structure.map(c => c.high)));
+      const range = this.sessionRangeBySymbol.get(targetSym);
+      const dailyBreak = !!range && range.dateStr === todayStr && (isLong ? close > range.high : close < range.low);
+      const pdBreak = isLong ? !!pdh && close > pdh : !!pdl && close < pdl;
+      const side = isLong ? 'above' : 'below';
+      const tags = `${dailyBreak ? ` [10-day ${isLong ? 'high' : 'low'} ₹${(isLong ? range!.high : range!.low).toFixed(2)} broken]` : ''}${pdBreak ? ` [${isLong ? 'Above PDH' : 'Below PDL'}]` : ''}${volBuilding ? ' [Vol building]' : ''}`;
+      return {
+        trend,
+        setupType,
+        triggerHigh: isLong ? currCandle.high : null,
+        triggerLow: isLong ? null : currCandle.low,
+        slPrice,
+        invalidationPrice: slPrice,
+        slNote: 'Patient Trend Structure SL (last 3 candles)',
+        candleTime: currCandle.date,
+        candleIdx: lastIdx,
+        scoreBoost: 420 + (dailyBreak ? 150 : 0) + (pdBreak ? 80 : 0) + (volBuilding ? 60 : 0),
+        description: `Patient Trend ${setupType === 'PATIENT_BREAKOUT' ? `Breakout to a new day ${isLong ? 'high' : 'low'}` : '15-EMA Pullback'} (${trend}) — close ${side} VWAP ₹${currVwap.toFixed(2)}, 15-EMA ₹${currEma.toFixed(2)} and 40-EMA ₹${slowEma.toFixed(2)}${tags}`,
+      };
+    }
 
     // ── 1. Pattern 1 (TOP PRIORITY): Fresh 5m EMA-VWAP Crossover (The IFCI Trade Setup) ──
     // Enters when price/15-EMA cleanly crosses and confirms across VWAP with tight structural SL
@@ -4508,6 +4589,11 @@ export class EmaVwapCrossoverEngine {
     if (config.minDayMovePct === undefined || config.minDayMovePct === null) return DEFAULT_MIN_DAY_MOVE_PCT;
     const v = Number(config.minDayMovePct);
     return Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : DEFAULT_MIN_DAY_MOVE_PCT;
+  }
+
+  /** Entry style (config.entryStyle): CLASSIC = the opening-drive / crossover / pullback setups, PATIENT = see PATIENT_FIRST_CANDLE_HHMM. */
+  private getEntryStyle(config: EmaVwapCrossoverConfig): 'CLASSIC' | 'PATIENT' {
+    return config.entryStyle === 'PATIENT' ? 'PATIENT' : 'CLASSIC';
   }
 
   /** Which exit-target mode applies. FIXED_RS = the ₹ target/SL mode. */

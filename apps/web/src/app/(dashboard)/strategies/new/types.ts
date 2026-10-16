@@ -18,6 +18,8 @@ export interface StrategyFormState {
   maxStopPct?: string;
   /** EMA-VWAP stocks: skip entries less than this % past the previous close in the trade's direction ("0" = off, default 1.5). */
   minDayMovePct?: string;
+  /** EMA-VWAP stocks: CLASSIC = opening-drive / crossover / pullback setups (default); PATIENT = from 09:45, trend past VWAP + 15/40-EMA only. */
+  entryStyle?: "CLASSIC" | "PATIENT";
   /** EMA-VWAP stocks, EMA target mode: at +1.5R move the stop to +0.5R, at +3R to +2R (default on). */
   profitLock?: boolean;
   /** EMA-VWAP stocks, EMA target mode: once the trade is +1.5R, exit on a 5m close across the 40-EMA instead of the 15-EMA (default on). */

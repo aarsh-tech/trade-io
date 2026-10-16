@@ -158,6 +158,7 @@ export interface EmaVwapCrossoverConfig {
   maxStopPct?: number;                // Widest structural stop-loss, % of entry (default 2.2). Tighter = bigger qty for the same ₹ risk
   profitLock?: boolean;               // EMA target mode: at +1.5R move the stop to +0.5R, at +3R to +2R (default true)
   minDayMovePct?: number;             // Skip entries less than this % past the previous close in the trade's direction (default 1.5, 0 = off)
+  entryStyle?: 'CLASSIC' | 'PATIENT'; // CLASSIC (default) = opening-drive / crossover / pullback setups; PATIENT = from 09:45, trend past VWAP + 15/40-EMA only
   slowTrail?: boolean;                // EMA target mode: once +1.5R, exit on a 5m close across the 40-EMA instead of the 15-EMA (default true)
   partialMoveSlToBreakeven?: boolean; // PARTIAL/QUICK: move the runner's stop to break-even after booking (default true)
   enableTickTrailExit?: boolean;      // Intra-candle EMA/VWAP trailing exits (default: OFF). OFF = exit only on a 5m candle CLOSE across the 15-EMA + structural SL

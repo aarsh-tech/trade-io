@@ -107,6 +107,9 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
   if (type === 'EMA_VWAP_CROSSOVER' && isSet(config.entryTimeframe) && !['1min', '5min'].includes(String(config.entryTimeframe))) {
     errors.push('Entry timeframe must be 1min or 5min');
   }
+  if (type === 'EMA_VWAP_CROSSOVER' && isSet(config.entryStyle) && !['CLASSIC', 'PATIENT'].includes(String(config.entryStyle))) {
+    errors.push('Entry style must be CLASSIC or PATIENT');
+  }
   if (isSet(config.symbol) && String(config.symbol).trim() === '') errors.push('Symbol must not be blank');
   if (type === 'EMA_VWAP_OPTIONS' && isSet(config.symbol) && !['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(String(config.symbol))) {
     errors.push('Symbol must be NIFTY, BANKNIFTY or SENSEX');
