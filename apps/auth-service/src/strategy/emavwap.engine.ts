@@ -156,15 +156,14 @@ const DEFAULT_MIN_DAY_MOVE_PCT = 1.5;
 /**
  * Patient-trend entries (config.entryStyle 'PATIENT'; default 'CLASSIC' = the opening-drive / crossover / pullback setups).
  * Built on 16 Oct 2026 at the user's request after HBLENGINE (+17%, flat until ~10:20) and TECHM (+7.9%) trended all day
- * above VWAP, the 15-EMA and the 40-EMA. Rules: nothing before the 09:40-09:45 candle closes; the candle must close past
- * VWAP, the 15-EMA and the 40-EMA with the 15-EMA past the 40-EMA; then either a close at a new day high/low
+ * above VWAP, the 15-EMA and the 40-EMA. Rules: no fixed start time (any candle from the second of the day); the candle
+ * must close past VWAP, the 15-EMA and the 40-EMA with the 15-EMA past the 40-EMA; then either a close at a new day high/low
  * (PATIENT_BREAKOUT) or a touch of the 15-EMA in the last 4 candles and a close back in the trend direction
  * (PATIENT_PULLBACK). Trigger = that candle's high/low, stop = structure (last 3 candles) capped at maxStopPct.
  * Volume never blocks an entry (no 10-session own-history gate, no fixed multiple: it can build slowly); building volume
- * today, a break of the 10-session daily high/low, or of PDH/PDL only raise the score. The 2-year 5m backtest of these rules (scratchpad patience.js, 524 stocks) lost money in every
- * variant, so this runs on paper first.
+ * today, a break of the 10-session daily high/low, or of PDH/PDL only raise the score. The 2-year 5m backtest of similar rules (scratchpad patience.js, 524 stocks, entries from
+ * 09:50) lost money in every variant.
  */
-const PATIENT_FIRST_CANDLE_HHMM = 9 * 60 + 40;
 const PATIENT_SLOW_EMA = 40;
 /** Sessions in the daily ATR (from the volume-history download). */
 const ATR_SESSIONS = 10;
@@ -1230,7 +1229,7 @@ export class EmaVwapCrossoverEngine {
           const startsAt = entryTf.minutes === 1 ? '09:16' : '09:20';
           this.log(state, `⏳ [09:15 - ${startsAt} AM OBSERVATION WINDOW] Opening ${entryTf.minutes}m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ ${startsAt} AM sharp.`);
           if (this.getEntryStyle(config) === 'PATIENT') {
-            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No entries before the 09:40-09:45 candle closes; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low or a 15-EMA pullback.`);
+            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No fixed start time; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low or a 15-EMA pullback.`);
           }
           await this.persistLogs(state);
         }
@@ -4057,9 +4056,10 @@ export class EmaVwapCrossoverEngine {
       }
     };
 
-    // ── Patient-trend mode (config.entryStyle 'PATIENT') replaces every pattern below; see PATIENT_FIRST_CANDLE_HHMM ──
+    // ── Patient-trend mode (config.entryStyle 'PATIENT') replaces every pattern below; rules at PATIENT_SLOW_EMA ──
     if (this.getEntryStyle(config) === 'PATIENT') {
-      if (getIstHhmm(currCandle.date) < PATIENT_FIRST_CANDLE_HHMM || todayCandles.length < 3) return null;
+      // No fixed start time: any candle from the second of the day (a new day high/low needs an earlier candle to beat).
+      if (todayCandles.length < 2) return null;
       const slowEma = calculateEMA(candles, PATIENT_SLOW_EMA)[lastIdx];
       if (slowEma === null) return null;
       const close = currCandle.close;
@@ -4591,7 +4591,7 @@ export class EmaVwapCrossoverEngine {
     return Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : DEFAULT_MIN_DAY_MOVE_PCT;
   }
 
-  /** Entry style (config.entryStyle): CLASSIC = the opening-drive / crossover / pullback setups, PATIENT = see PATIENT_FIRST_CANDLE_HHMM. */
+  /** Entry style (config.entryStyle): CLASSIC = the opening-drive / crossover / pullback setups, PATIENT = see PATIENT_SLOW_EMA. */
   private getEntryStyle(config: EmaVwapCrossoverConfig): 'CLASSIC' | 'PATIENT' {
     return config.entryStyle === 'PATIENT' ? 'PATIENT' : 'CLASSIC';
   }

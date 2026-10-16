@@ -1114,7 +1114,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
-          {/* Entry style (EMA-VWAP stocks): classic opening setups or patient trend entries from 09:45 */}
+          {/* Entry style (EMA-VWAP stocks): classic opening setups or patient trend entries (no fixed start time) */}
           {form.type === "EMA_VWAP_CROSSOVER" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
               <div className="flex items-center gap-2">
@@ -1122,12 +1122,12 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 <span className="text-sm font-semibold text-foreground">Entry Style</span>
               </div>
               <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Classic trades the opening-drive, crossover and pullback setups from 09:20. Patient waits until 09:45 and only enters a stock whose 5m candle closes above VWAP, the 15-EMA and the 40-EMA (below all three for a short, with the 15-EMA past the 40-EMA), on a new day high/low or a pullback to the 15-EMA. Patient is new and lost money in the 2-year backtest, so try it in paper mode first.
+                Classic trades the opening-drive, crossover and pullback setups from 09:20. Patient has no fixed start time: it waits as long as it takes and only enters a stock whose 5m candle closes above VWAP, the 15-EMA and the 40-EMA (below all three for a short, with the 15-EMA past the 40-EMA), on a new day high/low or a pullback to the 15-EMA. Patient is new and lost money in the 2-year backtest, so try it in paper mode first.
               </p>
               <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Entry style">
                 {([
                   { value: "CLASSIC", title: "Classic", desc: "From 09:20" },
-                  { value: "PATIENT", title: "Patient trend", desc: "From 09:45, VWAP + 15/40-EMA" },
+                  { value: "PATIENT", title: "Patient trend", desc: "Waits for VWAP + 15/40-EMA trend" },
                 ] as const).map((opt) => {
                   const selected = (form.entryStyle ?? "CLASSIC") === opt.value;
                   return (
