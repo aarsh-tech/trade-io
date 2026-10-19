@@ -20,6 +20,10 @@ export interface StrategyFormState {
   minDayMovePct?: string;
   /** EMA-VWAP stocks: CLASSIC = opening-drive / crossover / pullback setups (default); PATIENT = trend past VWAP + 15/40-EMA only, no fixed start time. */
   entryStyle?: "CLASSIC" | "PATIENT";
+  /** EMA-VWAP stocks, Patient entry style: skip shorts more than this % below the previous close ("0" = off, default 3). */
+  maxShortDropPct?: string;
+  /** EMA-VWAP stocks, Patient + AUTO: comma-separated NSE symbols checked on every scan, first priority (max 10). */
+  watchlist?: string;
   /** EMA-VWAP stocks, EMA target mode: at +1.5R move the stop to +0.5R, at +3R to +2R (default on). */
   profitLock?: boolean;
   /** EMA-VWAP stocks, EMA target mode: once the trade is +1.5R, exit on a 5m close across the 40-EMA instead of the 15-EMA (default on). */

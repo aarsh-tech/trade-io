@@ -1122,7 +1122,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 <span className="text-sm font-semibold text-foreground">Entry Style</span>
               </div>
               <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Classic trades the opening-drive, crossover and pullback setups from 09:20. Patient has no fixed start time: it waits as long as it takes and only enters a stock whose 5m candle closes above VWAP, the 15-EMA and the 40-EMA (below all three for a short, with the 15-EMA past the 40-EMA), on a new day high/low or a pullback to the 15-EMA. Patient is new and lost money in the 2-year backtest, so try it in paper mode first.
+                Classic trades the opening-drive, crossover and pullback setups from 09:20. Patient has no fixed start time: it waits as long as it takes and only enters a stock whose 5m candle closes above VWAP, the 15-EMA and the 40-EMA (below all three for a short, with the 15-EMA past the 40-EMA), on a new day high/low after a pause of at least 3 candles (it never chases the opening drive) or a pullback that touches the 15-EMA today. Its stop sits beyond that base or pullback with no % cap, so it buys fewer shares for the same max loss; a setup whose stop would be wider than 4% is skipped. Patient is new and lost money in the 2-year backtest, so try it in paper mode first.
               </p>
               <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Entry style">
                 {([
@@ -1136,7 +1136,11 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                       type="button"
                       role="radio"
                       aria-checked={selected}
-                      onClick={() => set("entryStyle", opt.value)}
+                      onClick={() => {
+                        set("entryStyle", opt.value);
+                        // Patient's min day move default is 1% (slow grinders like PRAJIND break down early in the move).
+                        if (opt.value === "PATIENT" && (form.minDayMovePct ?? "1.5") === "1.5") set("minDayMovePct", "1");
+                      }}
                       className={`p-2.5 rounded-lg border-2 text-left transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
                     >
                       <div className="text-xs font-semibold text-foreground">{opt.title}</div>
@@ -1148,6 +1152,61 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
+          {/* Patient entry style: skip shorts in stocks that have already fallen a lot (big gap-down / opening drop) */}
+          {form.type === "EMA_VWAP_CROSSOVER" && form.entryStyle === "PATIENT" && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-sm font-semibold text-foreground">Skip Big Falls (Shorts)</span>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                Patient mode does not short a stock that is already more than this far below yesterday&apos;s close: after a big gap-down or opening drop most of the fall is done and the stock often chops back up into the stop. Longs are not affected.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Skip big falls for shorts">
+                {([
+                  { value: "0", title: "Off" },
+                  { value: "3", title: "3%" },
+                  { value: "4", title: "4%" },
+                  { value: "5", title: "5%" },
+                ] as const).map((opt) => {
+                  const selected = Number(form.maxShortDropPct ?? "3") === Number(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => set("maxShortDropPct", opt.value)}
+                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
+                    >
+                      {opt.title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Patient entry style: watchlist stocks checked on every scan, whatever their volume or scanner rank */}
+          {form.type === "EMA_VWAP_CROSSOVER" && form.entryStyle === "PATIENT" && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-sm font-semibold text-foreground">Watchlist</span>
+              </div>
+              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
+                Up to 10 NSE stocks (for example PRAJIND) that the bot checks on every 5m candle next to the scanner&apos;s top picks, even when their volume is low or they are not top gainers/losers. A setup in a watchlist stock is taken before any scanner setup. Same patient rules, stop and exits. Works with Auto stock selection; separate the symbols with commas.
+              </p>
+              <Input
+                value={form.watchlist ?? ""}
+                onChange={(e) => set("watchlist", e.target.value.toUpperCase())}
+                placeholder="PRAJIND, TCS"
+                aria-label="Watchlist symbols"
+                className="bg-background border-border text-foreground font-semibold"
+              />
+            </div>
+          )}
+
           {/* Min day move (EMA-VWAP stocks): skip entries in stocks that have barely moved from the previous close */}
           {form.type === "EMA_VWAP_CROSSOVER" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
@@ -1156,7 +1215,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 <span className="text-sm font-semibold text-foreground">Min Day Move</span>
               </div>
               <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Skips a setup unless the stock is already this far past yesterday&apos;s close in the trade&apos;s direction (a buy needs the price above the previous close by this much). Stocks that have barely moved lost money in the backtest. In the 2-year backtest 1.5% made about 23% more, in both years, with the same win rate and drawdown.
+                Skips a setup unless the stock is already this far past yesterday&apos;s close in the trade&apos;s direction (a buy needs the price above the previous close by this much). Stocks that have barely moved lost money in the backtest. In the 2-year backtest 1.5% made about 23% more, in both years, with the same win rate and drawdown.{form.entryStyle === "PATIENT" ? " Patient trend uses 1% by default, so a slow grinder's first breakdown is not skipped." : ""}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Min day move">
                 {([
@@ -1191,7 +1250,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 <span className="text-sm font-semibold text-foreground">Max Stop Distance</span>
               </div>
               <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                The stop sits beyond the day&apos;s swing low/high, but never further than this from the entry. A tighter stop buys more shares for the same max loss, so a normal move earns more. In the 2-year backtest 1.2% made about 3x what 2.2% made, with more trades stopped out.
+                The stop sits beyond the day&apos;s swing low/high, but never further than this from the entry. A tighter stop buys more shares for the same max loss, so a normal move earns more. In the 2-year backtest 1.2% made about 3x what 2.2% made, with more trades stopped out.{form.entryStyle === "PATIENT" ? " Classic entry style only: Patient entries use the structural stop with no % cap." : ""}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Max stop distance">
                 {([

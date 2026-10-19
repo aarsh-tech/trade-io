@@ -1,6 +1,16 @@
 import type { StrategyFormState } from "./types";
 import { getLotSize } from "./types";
 
+/** "prajind, TCS ,tcs" -> ["PRAJIND", "TCS"]: upper-cased, de-duplicated, at most 10 (EMA-VWAP Patient watchlist). */
+export function parseWatchlist(text: string | undefined): string[] {
+  const out: string[] = [];
+  for (const raw of (text ?? "").split(/[\s,]+/)) {
+    const s = raw.trim().toUpperCase();
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out.slice(0, 10);
+}
+
 /** Turns the wizard's string-typed form into the JSON config object the engines and the API expect. */
 export function buildStrategyConfig(form: StrategyFormState): Record<string, any> {
   const lotSize = form.lotSize || getLotSize(form.symbol, form.lotSize);
@@ -208,7 +218,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       vwapSource: form.vwapSource || 'close',
       // 1m entries are equity-only; the engine keeps 5m for option mode either way.
       entryTimeframe: !optionMode && form.entryTimeframe === "1min" ? "1min" : "5min",
-      ...(form.type === "EMA_VWAP_CROSSOVER" && { scanDepth: Number(form.scanDepth || 20), stagnationMinutes: Number(form.stagnationMinutes ?? 35), maxStopPct: Number(form.maxStopPct || 2.2), minDayMovePct: Number(form.minDayMovePct ?? 1.5), entryStyle: form.entryStyle === "PATIENT" ? "PATIENT" : "CLASSIC", profitLock: form.profitLock !== false, slowTrail: form.slowTrail !== false }),
+      ...(form.type === "EMA_VWAP_CROSSOVER" && { scanDepth: Number(form.scanDepth || 20), stagnationMinutes: Number(form.stagnationMinutes ?? 35), maxStopPct: Number(form.maxStopPct || 2.2), minDayMovePct: Number(form.minDayMovePct ?? 1.5), entryStyle: form.entryStyle === "PATIENT" ? "PATIENT" : "CLASSIC", maxShortDropPct: Number(form.maxShortDropPct ?? 3), watchlist: parseWatchlist(form.watchlist), profitLock: form.profitLock !== false, slowTrail: form.slowTrail !== false }),
       isOptionBuyingOnly: optionMode,
       qty,
       lots: Number(form.lots),
