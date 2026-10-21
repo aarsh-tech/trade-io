@@ -218,9 +218,9 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
     { label: "Profit lock", ...(isEmaVwap && !cfg.exitExactAtTarget && cfg.targetMode === "EMA" ? toggle(cfg.profitLock, "+1.5R → stop +0.5R, +3R → stop +2R") : { value: undefined }) },
     { label: "Slow trail", ...(isEmaVwap && !cfg.exitExactAtTarget && cfg.targetMode === "EMA" ? toggle(cfg.slowTrail, "after +1.5R, exit on the 40-EMA") : { value: undefined }) },
     { label: "Entry style", value: isEmaVwap ? (cfg.entryStyle === "PATIENT" ? "Patient trend (VWAP + 15/40-EMA, no fixed start time, structural stop with no % cap)" : "Classic") : undefined },
-    { label: "Skip big falls (shorts)", value: isEmaVwap && cfg.entryStyle === "PATIENT" ? (cfg.maxShortDropPct === undefined || cfg.maxShortDropPct === null ? "more than 3% below prev close" : Number(cfg.maxShortDropPct) > 0 ? `more than ${Number(cfg.maxShortDropPct)}% below prev close` : "Off") : undefined },
+    { label: "Skip big falls (shorts)", value: isEmaVwap && cfg.entryStyle === "PATIENT" ? (cfg.maxShortDropPct !== undefined && cfg.maxShortDropPct !== null && Number(cfg.maxShortDropPct) === 0 ? "Off" : "more than 1.5x its daily ATR below prev close") : undefined },
     { label: "Watchlist", value: isEmaVwap && cfg.entryStyle === "PATIENT" ? (Array.isArray(cfg.watchlist) && cfg.watchlist.length ? cfg.watchlist.join(", ") : "None") : undefined },
-    { label: "Min day move", value: isEmaVwap ? (cfg.minDayMovePct === undefined || cfg.minDayMovePct === null ? `${cfg.entryStyle === "PATIENT" ? 1 : 1.5}% past prev close` : Number(cfg.minDayMovePct) > 0 ? `${Number(cfg.minDayMovePct)}% past prev close` : "Off") : undefined },
+    { label: "Min day move", value: isEmaVwap ? (cfg.entryStyle === "PATIENT" ? "Off (Patient)" : cfg.minDayMovePct === undefined || cfg.minDayMovePct === null ? "1.5% past prev close" : Number(cfg.minDayMovePct) > 0 ? `${Number(cfg.minDayMovePct)}% past prev close` : "Off") : undefined },
     { label: "Max stop distance", value: isEmaVwap ? (cfg.entryStyle === "PATIENT" ? "Structure, no % cap (skip if over 4%)" : `${Number(cfg.maxStopPct) > 0 ? Number(cfg.maxStopPct) : 2.2}% of entry`) : undefined },
     { label: "Auto square-off", value: isEmaVwapOptions || strategy.type === "STOCKS_IN_PLAY" ? "15:05 IST" : "15:15 IST" },
   ];

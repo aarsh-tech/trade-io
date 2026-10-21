@@ -1122,7 +1122,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 <span className="text-sm font-semibold text-foreground">Entry Style</span>
               </div>
               <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Classic trades the opening-drive, crossover and pullback setups from 09:20. Patient has no fixed start time: it waits as long as it takes and only enters a stock whose 5m candle closes above VWAP, the 15-EMA and the 40-EMA (below all three for a short, with the 15-EMA past the 40-EMA), on a new day high/low after a pause of at least 3 candles (it never chases the opening drive) or a pullback that touches the 15-EMA today. Its stop sits beyond that base or pullback with no % cap, so it buys fewer shares for the same max loss; a setup whose stop would be wider than 4% is skipped. Patient is new and lost money in the 2-year backtest, so try it in paper mode first.
+                Classic trades the opening-drive, crossover and pullback setups from 09:20. Patient has no fixed start time: it waits as long as it takes and only enters a stock whose 5m candle closes above VWAP, the 15-EMA and the 40-EMA (below all three for a short, with the 15-EMA past the 40-EMA), on a new day high/low after a pause of at least 3 candles, or straight away once the stock has crossed VWAP earlier today (a new trend that reversed the open; it never chases the opening drive), or a pullback that touches the 15-EMA today. It has no minimum day move and checks the scanner's top 50 stocks. Its stop sits beyond that base or pullback with no % cap, so it buys fewer shares for the same max loss; a setup whose stop would be wider than 4% is skipped. Patient is new and lost money in the 2-year backtest, so try it in paper mode first.
               </p>
               <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Entry style">
                 {([
@@ -1136,11 +1136,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                       type="button"
                       role="radio"
                       aria-checked={selected}
-                      onClick={() => {
-                        set("entryStyle", opt.value);
-                        // Patient's min day move default is 1% (slow grinders like PRAJIND break down early in the move).
-                        if (opt.value === "PATIENT" && (form.minDayMovePct ?? "1.5") === "1.5") set("minDayMovePct", "1");
-                      }}
+                      onClick={() => set("entryStyle", opt.value)}
                       className={`p-2.5 rounded-lg border-2 text-left transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
                     >
                       <div className="text-xs font-semibold text-foreground">{opt.title}</div>
@@ -1160,16 +1156,15 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 <span className="text-sm font-semibold text-foreground">Skip Big Falls (Shorts)</span>
               </div>
               <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Patient mode does not short a stock that is already more than this far below yesterday&apos;s close: after a big gap-down or opening drop most of the fall is done and the stock often chops back up into the stop. Longs are not affected.
+Auto: Patient mode does not short a stock that is already more than 1.5x its own average daily range (10-session ATR) below yesterday&apos;s close, so the limit scales with each stock instead of a fixed %. After a big gap-down or opening drop most of the fall is done and the stock often chops back up into the stop. Longs are not affected.
               </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Skip big falls for shorts">
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Skip big falls for shorts">
                 {([
+                  { value: "3", title: "Auto (1.5x daily ATR)" },
                   { value: "0", title: "Off" },
-                  { value: "3", title: "3%" },
-                  { value: "4", title: "4%" },
-                  { value: "5", title: "5%" },
                 ] as const).map((opt) => {
-                  const selected = Number(form.maxShortDropPct ?? "3") === Number(opt.value);
+                  // Any value other than 0 is the ATR rule (older strategies saved 3, 4 or 5).
+                  const selected = (Number(form.maxShortDropPct ?? "3") !== 0) === (opt.value !== "0");
                   return (
                     <button
                       key={opt.value}
@@ -1207,15 +1202,15 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
-          {/* Min day move (EMA-VWAP stocks): skip entries in stocks that have barely moved from the previous close */}
-          {form.type === "EMA_VWAP_CROSSOVER" && (
+          {/* Min day move (EMA-VWAP stocks, Classic only): skip entries in stocks that have barely moved from the previous close */}
+          {form.type === "EMA_VWAP_CROSSOVER" && form.entryStyle !== "PATIENT" && (
             <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
               <div className="flex items-center gap-2">
                 <TrendingUp className="h-4 w-4 text-primary shrink-0" />
                 <span className="text-sm font-semibold text-foreground">Min Day Move</span>
               </div>
               <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Skips a setup unless the stock is already this far past yesterday&apos;s close in the trade&apos;s direction (a buy needs the price above the previous close by this much). Stocks that have barely moved lost money in the backtest. In the 2-year backtest 1.5% made about 23% more, in both years, with the same win rate and drawdown.{form.entryStyle === "PATIENT" ? " Patient trend uses 1% by default, so a slow grinder's first breakdown is not skipped." : ""}
+                Skips a setup unless the stock is already this far past yesterday&apos;s close in the trade&apos;s direction (a buy needs the price above the previous close by this much). Stocks that have barely moved lost money in the backtest. In the 2-year backtest 1.5% made about 23% more, in both years, with the same win rate and drawdown. Classic entry style only: Patient has no minimum day move.
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Min day move">
                 {([

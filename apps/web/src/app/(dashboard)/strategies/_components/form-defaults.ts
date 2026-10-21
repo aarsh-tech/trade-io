@@ -192,7 +192,7 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     targetMode: c.targetMode === "PARTIAL" || c.targetMode === "QUICK" || c.targetMode === "EMA" ? c.targetMode : "FULL",
     stagnationMinutes: str(c.stagnationMinutes, base.stagnationMinutes),
     maxStopPct: str(c.maxStopPct, base.maxStopPct),
-    minDayMovePct: str(c.minDayMovePct, c.entryStyle === "PATIENT" ? "1" : base.minDayMovePct),
+    minDayMovePct: str(c.minDayMovePct, base.minDayMovePct),
     entryStyle: c.entryStyle === "PATIENT" ? "PATIENT" : "CLASSIC",
     maxShortDropPct: str(c.maxShortDropPct, base.maxShortDropPct),
     watchlist: Array.isArray(c.watchlist) ? c.watchlist.join(", ") : base.watchlist,

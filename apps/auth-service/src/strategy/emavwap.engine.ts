@@ -175,14 +175,24 @@ const DEFAULT_MIN_DAY_MOVE_PCT = 1.5;
  * a patient entry waits for the next entry candle (PATIENT_CONFIRM_CANDLES = 1; waiting longer lets the move run away)
  * to CLOSE beyond the trigger with a body in the trend direction (green for a long, red for a short), and enters at
  * market on that close (no intrabar or "instant" entries); otherwise the setup expires.
+ * 21 Oct 2026 (DMART, BOSCHLTD, AXISBANK spiked above VWAP at the open, then fell 2.4-3.3% in a steady line until ~13:00;
+ * none was ever checked: the 1.5% min day move held them back until 10:20-11:40, the scanner's top 25 was full of
+ * 8-19% movers too far from their 15-EMA to set up, and the 3-candle base never forms in a waterfall), at the user's
+ * request ("no fixed % rules, all dynamic"):
+ * - no min day move in Patient mode (minDayMovePct is ignored);
+ * - "skip big falls" scales with the stock: no short more than PATIENT_MAX_DROP_ATR x its own daily ATR below the previous
+ *   close (config.maxShortDropPct 0 = off, any other value = this ATR rule);
+ * - a breakout needs no base once the stock has closed on the other side of VWAP earlier today: the move is a new trend
+ *   that reversed the open, not the opening drive;
+ * - Patient checks the scanner's top PATIENT_SCAN_POOL stocks instead of scanDepth.
  */
 const PATIENT_SLOW_EMA = 40;
 const PATIENT_BASE_CANDLES = 3;
 const PATIENT_MAX_STOP_PCT = 4;
 const PATIENT_CONFIRM_CANDLES = 1;
-const DEFAULT_MAX_SHORT_DROP_PCT = 3;
-/** Patient mode's default min day move (config missing): PRAJIND 19 Oct broke down at 11:35 only 1.13% below PDC. */
-const PATIENT_DEFAULT_MIN_DAY_MOVE_PCT = 1;
+const PATIENT_MAX_DROP_ATR = 1.5;
+/** Patient: stocks checked per scan. Closed candles are cached until the next close, so the extra history calls come once a candle. */
+const PATIENT_SCAN_POOL = 50;
 /**
  * Watchlist (config.watchlist, PATIENT + AUTO only): stocks the user picks are checked on every scan next to the scanner's
  * top scanDepth, whatever their volume or rank, and a watchlist setup beats any scanner setup. Built 19 Oct 2026: PRAJIND
@@ -655,7 +665,7 @@ export class EmaVwapCrossoverEngine {
     try {
       if (state.config.symbol === 'AUTO') {
         const excluded = this.excludedSymbols(state);
-        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, 25, excluded, (state.config as any).minStockPrice || 30);
+        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, Math.max(25, this.getScanPool(state.config)), excluded, (state.config as any).minStockPrice || 30);
         this.log(state, `🚀 Multi-Stock Momentum Scanner: Scanning top Zerodha liquid leaders for active setups...`);
 
         const activeSetups: Array<{ candidate: any; details: any }> = [];
@@ -679,7 +689,7 @@ export class EmaVwapCrossoverEngine {
 
               await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now);
               const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, state.config, candidate.symbol);
-              if (setup) {
+              if (setup && this.dayMoveShortfall(state.config, setup, (candidate as any).prevClose) === null) {
                 activeSetups.push({
                   candidate: { ...candidate, score: this.setupScore(state.config, candidate, setup.scoreBoost) },
                   details: setup,
@@ -1254,7 +1264,7 @@ export class EmaVwapCrossoverEngine {
           const startsAt = entryTf.minutes === 1 ? '09:16' : '09:20';
           this.log(state, `⏳ [09:15 - ${startsAt} AM OBSERVATION WINDOW] Opening ${entryTf.minutes}m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ ${startsAt} AM sharp.`);
           if (this.getEntryStyle(config) === 'PATIENT') {
-            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No fixed start time; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low after a ${PATIENT_BASE_CANDLES}+ candle pause (no opening-drive chase) or a pullback that touches the 15-EMA today. Stop beyond that structure with no % cap (fewer shares; skipped if wider than ${PATIENT_MAX_STOP_PCT}%).${this.getMaxShortDropPct(config) > 0 ? ` No shorts more than ${this.getMaxShortDropPct(config)}% below the previous close.` : ''}${this.getWatchlist(config).length ? ` Watchlist (checked every scan, first priority): ${this.getWatchlist(config).join(', ')}.` : ''}`);
+            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No fixed start time; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low after a ${PATIENT_BASE_CANDLES}+ candle pause, or at once if the stock crossed VWAP earlier today (no opening-drive chase), or a pullback that touches the 15-EMA today. No min day move. Checks the scanner's top ${PATIENT_SCAN_POOL}. Stop beyond that structure with no % cap (fewer shares; skipped if wider than ${PATIENT_MAX_STOP_PCT}%).${this.isShortDropSkipOn(config) ? ` No shorts more than ${PATIENT_MAX_DROP_ATR}x the stock's daily ATR below the previous close.` : ''}${this.getWatchlist(config).length ? ` Watchlist (checked every scan, first priority): ${this.getWatchlist(config).join(', ')}.` : ''}`);
           }
           await this.persistLogs(state);
         }
@@ -1264,7 +1274,7 @@ export class EmaVwapCrossoverEngine {
         if (state.isAutoMode && !state.hasWarmedOpeningScan && now.getSeconds() >= 20) {
           state.hasWarmedOpeningScan = true;
           const excluded = this.excludedSymbols(state);
-          const scanDepth = this.getScanDepth(config);
+          const scanDepth = this.getScanPool(config);
           const warm = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30)
             .catch((e: any) => { this.logger.debug?.(`Opening scan warm-up failed: ${e?.message}`); return []; });
           const shortlist = this.withWatchlist(config, warm.slice(0, scanDepth), excluded);
@@ -1290,7 +1300,7 @@ export class EmaVwapCrossoverEngine {
         if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000 || isNewEntryCandle) {
           state.lastAutoScanTime = nowMs;
           const excluded = this.excludedSymbols(state);
-          const scanDepth = this.getScanDepth(config);
+          const scanDepth = this.getScanPool(config);
           const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30);
           const activeSetups: Array<{ candidate: any; details: any }> = [];
 
@@ -1312,7 +1322,9 @@ export class EmaVwapCrossoverEngine {
                 const cVwaps = calculateVWAP(closedCCandles, config.vwapSource || 'close');
                 await this.ensureVolumeBaseline(client, candidate.symbol, candidate.exchange, now, entryTf.interval);
                 const setup = this.evaluateStockSetup(closedCCandles, cEmas, cVwaps, now, config, candidate.symbol, { interval: entryTf.interval });
-                if (setup) {
+                // A setup that would fail the day-move filter at the trigger is never armed, so it cannot take the
+                // tracking slot from a setup that can trade (21 Oct: HDFCBANK / LTM re-armed and refused at the trigger).
+                if (setup && this.dayMoveShortfall(config, setup, (candidate as any).prevClose) === null) {
                   activeSetups.push({
                     candidate: { ...candidate, score: this.setupScore(config, candidate, setup.scoreBoost) },
                     details: setup,
@@ -4130,9 +4142,9 @@ export class EmaVwapCrossoverEngine {
       const isLong = trend === 'LONG';
       // Too stretched from the 15-EMA: same limit as the classic setups.
       if ((Math.abs(close - currEma) / close) * 100 > Math.max(4.0, dynamicMaxEmaDistPct * 2.0)) return null;
-      // Big fall already done (gap-down / opening drop): no short while the stock is more than maxShortDropPct below PDC.
-      const maxShortDropPct = this.getMaxShortDropPct(config);
-      if (!isLong && maxShortDropPct > 0 && pdc && pdc > 0 && ((pdc - close) / pdc) * 100 > maxShortDropPct) return null;
+      // Big fall already done (gap-down / opening drop): no short while the stock is more than PATIENT_MAX_DROP_ATR x its
+      // own daily ATR below PDC.
+      if (!isLong && this.isShortDropSkipOn(config) && pdc && pdc > 0 && ((pdc - close) / pdc) * 100 > metrics.dailyAtrPct * PATIENT_MAX_DROP_ATR) return null;
 
       const today = todayCandles.map(tc => tc.candle);
       const cur = today.length - 1;
@@ -4158,10 +4170,16 @@ export class EmaVwapCrossoverEngine {
         const e = emas[todayCandles[k].idx];
         if (e !== null && (isLong ? today[k].low <= e * 1.002 : today[k].high >= e * 0.998)) touchedEma = true;
       }
-      // Breakout: only out of a pause of PATIENT_BASE_CANDLES since the previous extreme; a new high/low right after the
-      // last one is the opening drive itself, which patient mode does not chase.
+      // Breakout: out of a pause of PATIENT_BASE_CANDLES since the previous extreme, or straight away once an earlier
+      // candle today closed on the other side of VWAP (the trend reversed the open, e.g. DMART 21 Oct). A new high/low
+      // right after the last one with no such cross is the opening drive itself, which patient mode does not chase.
+      let reversedOpen = false;
+      for (let k = 0; k < cur; k++) {
+        const v = vwaps[todayCandles[k].idx];
+        if (v !== null && (isLong ? today[k].close < v : today[k].close > v)) reversedOpen = true;
+      }
       const setupType: StockSetupType | null = newExtreme
-        ? (baseCandles >= PATIENT_BASE_CANDLES ? 'PATIENT_BREAKOUT' : null)
+        ? (baseCandles >= PATIENT_BASE_CANDLES || reversedOpen ? 'PATIENT_BREAKOUT' : null)
         : touchedEma && trendBody ? 'PATIENT_PULLBACK' : null;
       if (!setupType) return null;
 
@@ -4190,7 +4208,7 @@ export class EmaVwapCrossoverEngine {
         candleTime: currCandle.date,
         candleIdx: lastIdx,
         scoreBoost: 420 + (dailyBreak ? 150 : 0) + (pdBreak ? 80 : 0) + (volBuilding ? 60 : 0),
-        description: `Patient Trend ${setupType === 'PATIENT_BREAKOUT' ? `Breakout to a new day ${isLong ? 'high' : 'low'} after a ${baseCandles}-candle base` : '15-EMA Pullback'} (${trend}) — close ${side} VWAP ₹${currVwap.toFixed(2)}, 15-EMA ₹${currEma.toFixed(2)} and 40-EMA ₹${slowEma.toFixed(2)}${tags}`,
+        description: `Patient Trend ${setupType === 'PATIENT_BREAKOUT' ? `Breakout to a new day ${isLong ? 'high' : 'low'} ${baseCandles >= PATIENT_BASE_CANDLES ? `after a ${baseCandles}-candle base` : `(trend reversed the open across VWAP)`}` : '15-EMA Pullback'} (${trend}) — close ${side} VWAP ₹${currVwap.toFixed(2)}, 15-EMA ₹${currEma.toFixed(2)} and 40-EMA ₹${slowEma.toFixed(2)}${tags}`,
       };
     }
 
@@ -4666,12 +4684,29 @@ export class EmaVwapCrossoverEngine {
     return Number.isFinite(v) && v > 0 ? Math.max(MIN_STOP_PCT, Math.min(5, v)) : DEFAULT_MAX_STOP_PCT;
   }
 
-  /** Minimum move past the previous close for an entry, % (config.minDayMovePct, default 1.5 / 1 in Patient mode, 0 = off, kept within 0-5). */
+  /** Minimum move past the previous close for an entry, % (config.minDayMovePct, default 1.5, 0 = off, kept within 0-5). Patient mode: always 0. */
   private getMinDayMovePct(config: EmaVwapCrossoverConfig): number {
-    const def = this.getEntryStyle(config) === 'PATIENT' ? PATIENT_DEFAULT_MIN_DAY_MOVE_PCT : DEFAULT_MIN_DAY_MOVE_PCT;
-    if (config.minDayMovePct === undefined || config.minDayMovePct === null) return def;
+    if (this.getEntryStyle(config) === 'PATIENT') return 0;
+    if (config.minDayMovePct === undefined || config.minDayMovePct === null) return DEFAULT_MIN_DAY_MOVE_PCT;
     const v = Number(config.minDayMovePct);
-    return Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : def;
+    return Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : DEFAULT_MIN_DAY_MOVE_PCT;
+  }
+
+  /**
+   * The day-move filter for a setup before it is armed: the % past the previous close at the trigger when that is short of
+   * minDayMovePct, else null (passes, filter off, or no previous close). placeTrade checks again with a fresh quote.
+   */
+  private dayMoveShortfall(config: EmaVwapCrossoverConfig, setup: { trend: 'LONG' | 'SHORT'; triggerHigh: number | null; triggerLow: number | null }, prevClose: number | undefined): number | null {
+    const min = this.getMinDayMovePct(config);
+    const trigger = setup.trend === 'LONG' ? setup.triggerHigh : setup.triggerLow;
+    if (min <= 0 || !prevClose || prevClose <= 0 || !trigger) return null;
+    const move = ((setup.trend === 'LONG' ? trigger - prevClose : prevClose - trigger) / prevClose) * 100;
+    return move < min ? move : null;
+  }
+
+  /** Stocks checked for a setup per scan: scanDepth, or PATIENT_SCAN_POOL in Patient mode. */
+  private getScanPool(config: EmaVwapCrossoverConfig): number {
+    return this.getEntryStyle(config) === 'PATIENT' ? PATIENT_SCAN_POOL : this.getScanDepth(config);
   }
 
   /** Watchlist symbols (config.watchlist): Patient + AUTO only, upper-cased, de-duplicated, at most WATCHLIST_MAX. */
@@ -4699,11 +4734,9 @@ export class EmaVwapCrossoverEngine {
     return (onList ? WATCHLIST_PRIORITY : candidate.score) + scoreBoost;
   }
 
-  /** Patient shorts: skip while the stock is more than this % below the previous close (config.maxShortDropPct, default 3, 0 = off, kept within 0-10). */
-  private getMaxShortDropPct(config: EmaVwapCrossoverConfig): number {
-    if (config.maxShortDropPct === undefined || config.maxShortDropPct === null) return DEFAULT_MAX_SHORT_DROP_PCT;
-    const v = Number(config.maxShortDropPct);
-    return Number.isFinite(v) ? Math.max(0, Math.min(10, v)) : DEFAULT_MAX_SHORT_DROP_PCT;
+  /** Patient shorts: is the big-fall skip on (config.maxShortDropPct 0 = off; missing or any other value = PATIENT_MAX_DROP_ATR x daily ATR)? */
+  private isShortDropSkipOn(config: EmaVwapCrossoverConfig): boolean {
+    return config.maxShortDropPct === undefined || config.maxShortDropPct === null || Number(config.maxShortDropPct) !== 0;
   }
 
   /** Entry style (config.entryStyle): CLASSIC = the opening-drive / crossover / pullback setups, PATIENT = see PATIENT_SLOW_EMA. */
