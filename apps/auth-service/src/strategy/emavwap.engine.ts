@@ -94,6 +94,8 @@ interface StrategyState {
   lastBrokerSlModifyTime?: number;
   lastSlArmRetryTime?: number;
   isProcessingTick?: boolean;
+  /** Bumped when the watchdog releases a hung tick: that tick sees the change and stops before acting. */
+  tickGeneration?: number;
   isPlacingTrade?: boolean;
   isExiting?: boolean;
   lastAutoScanTime?: number;
@@ -219,6 +221,13 @@ interface FibLevels {
 }
 /** Candles checked per batch: matches Kite's 3 req/s historical limit, so queued calls never sit past their timeout. */
 const SCAN_BATCH_SIZE = 3;
+/**
+ * A scan starts no new candidate batch after this long; the lowest-ranked names left over are checked on the next scan.
+ * 22 Oct 2026: the top-50 Patient scan took 60-67s at 09:15 and 09:20 and tripped the tick watchdog.
+ */
+const SCAN_BUDGET_MS = 45_000;
+/** A tick still running after this long is hung (a stuck broker call): a slow scan is bounded by SCAN_BUDGET_MS. */
+const TICK_STALL_MS = 120_000;
 /** A candle's final values are published a moment after it closes (the 1m rescan waits 2s for the same reason). */
 const CLOSED_CANDLE_SETTLE_MS = 2000;
 
@@ -990,9 +999,11 @@ export class EmaVwapCrossoverEngine {
     if (state.isProcessingTick) {
       const elapsedSinceTick = Date.now() - (state.lastTickStartTime || 0);
       // Never release the lock while an entry is being placed: a second tick would race the placement.
-      // The first auto-mode scan alone can take ~40s, so the threshold is well above that.
-      if (elapsedSinceTick > 60_000 && !state.isPlacingTrade) {
-        this.log(state, `⚠️ [WATCHDOG RECOVERY] Previous market tick stalled (>60s). Forcibly resetting execution lock to maintain continuous trading.`);
+      // Scans are bounded by SCAN_BUDGET_MS, so only a stuck broker call gets this far. The hung tick is retired, not
+      // left running next to the new one: it stops at its next isStale() check and leaves the lock alone.
+      if (elapsedSinceTick > TICK_STALL_MS && !state.isPlacingTrade) {
+        this.log(state, `⚠️ [WATCHDOG RECOVERY] Previous market tick stuck for ${Math.round(elapsedSinceTick / 1000)}s. Retiring it and resuming with a fresh tick.`);
+        state.tickGeneration = (state.tickGeneration || 0) + 1;
         state.isProcessingTick = false;
       } else {
         return;
@@ -1000,6 +1011,8 @@ export class EmaVwapCrossoverEngine {
     }
     state.isProcessingTick = true;
     state.lastTickStartTime = Date.now();
+    const generation = state.tickGeneration || 0;
+    const isStale = () => (state.tickGeneration || 0) !== generation;
 
     try {
       const now = new Date();
@@ -1157,6 +1170,7 @@ export class EmaVwapCrossoverEngine {
           const candleExchange = config.exchange;
           const testConfig = { ...config, symbol: candleSymbol, exchange: candleExchange };
           const cCandles = await this.fetchCandles(client, testConfig as any, '5minute', now);
+          if (isStale()) return;
           if (cCandles && cCandles.length >= 2) {
             const closedCCandles = filterClosedCandles(cCandles, now, 5);
             if (closedCCandles.length >= 2) {
@@ -1273,12 +1287,14 @@ export class EmaVwapCrossoverEngine {
         // entry scan only fetches the few new names and can enter at once.
         if (state.isAutoMode && !state.hasWarmedOpeningScan && now.getSeconds() >= 20) {
           state.hasWarmedOpeningScan = true;
+          const warmStart = Date.now();
           const excluded = this.excludedSymbols(state);
           const scanDepth = this.getScanPool(config);
           const warm = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30)
             .catch((e: any) => { this.logger.debug?.(`Opening scan warm-up failed: ${e?.message}`); return []; });
           const shortlist = this.withWatchlist(config, warm.slice(0, scanDepth), excluded);
-          for (let i = 0; i < shortlist.length; i += SCAN_BATCH_SIZE) {
+          // Whatever the budget leaves out is loaded by the first scans instead.
+          for (let i = 0; i < shortlist.length && !isStale() && Date.now() - warmStart < SCAN_BUDGET_MS; i += SCAN_BATCH_SIZE) {
             await Promise.allSettled(shortlist.slice(i, i + SCAN_BATCH_SIZE).map(c => this.ensureVolumeBaseline(client, c.symbol, c.exchange, now, entryTf.interval)));
           }
         }
@@ -1289,7 +1305,10 @@ export class EmaVwapCrossoverEngine {
       // Allow continuous scanning if no position is open. If waiting for confirmation on an idle setup (>= 1 entry candle without trigger), evaluate other active leaders!
       // Idle = a whole entry candle has passed since the setup was detected (its candle closed) without a trigger.
       const setupArmedAt = state.setupArmedAt ?? (state.setupTimestamp ? state.setupTimestamp + entryTf.minutes * 60 * 1000 : null);
-      const isIdleWaiting = !!(state.waitingForConfirmation && setupArmedAt && (now.getTime() - setupArmedAt >= entryTf.minutes * 60 * 1000));
+      // A Patient setup is never idle: it confirms or expires on the very next candle close, and a scan run first would
+      // hold that check back (22 Oct: HDFCBANK's 09:30 confirmation waited 40s behind a top-50 scan).
+      const isPatientSetupWaiting = state.setupType === 'PATIENT_BREAKOUT' || state.setupType === 'PATIENT_PULLBACK';
+      const isIdleWaiting = !!(state.waitingForConfirmation && !isPatientSetupWaiting && setupArmedAt && (now.getTime() - setupArmedAt >= entryTf.minutes * 60 * 1000));
       if (state.isAutoMode && !state.entryTriggered && (!state.waitingForConfirmation || isIdleWaiting) && !state.isPlacingTrade) {
         const nowMs = Date.now();
         // Throttle auto-scanning to at most once every 30 seconds to respect Zerodha 3 req/sec rate limit.
@@ -1307,9 +1326,12 @@ export class EmaVwapCrossoverEngine {
           // Check the top `scanDepth` momentum leaders (plus the Patient watchlist) for a setup; the best-scoring one
           // with a setup is traded, a watchlist setup first. Closed candles are reused until the next candle closes, so
           // after the first scan of a candle this costs no history calls. Batches of 3 match Kite's 3 req/s historical
-          // limit (the central limiter does the pacing).
+          // limit (the central limiter does the pacing). The scan stops starting batches after SCAN_BUDGET_MS: the
+          // leftover names (lowest ranked; the watchlist comes first) get checked on the next scan.
           const evaluated = this.withWatchlist(config, candidates.slice(0, scanDepth), excluded);
-          for (let i = 0; i < evaluated.length; i += SCAN_BATCH_SIZE) {
+          let checkedCount = 0;
+          for (let i = 0; i < evaluated.length && !isStale() && Date.now() - nowMs < SCAN_BUDGET_MS; i += SCAN_BATCH_SIZE) {
+            checkedCount = Math.min(evaluated.length, i + SCAN_BATCH_SIZE);
             await Promise.allSettled(evaluated.slice(i, i + SCAN_BATCH_SIZE).map(async (candidate) => {
               try {
                 const testConfig = { ...config, symbol: candidate.symbol, exchange: candidate.exchange };
@@ -1335,6 +1357,8 @@ export class EmaVwapCrossoverEngine {
               }
             }));
           }
+          // A retired tick (or one overtaken by an entry) must not switch the tracked stock under the live state.
+          if (isStale() || state.entryTriggered || state.isPlacingTrade) return;
 
           if (activeSetups.length > 0) {
             activeSetups.sort((a, b) => b.candidate.score - a.candidate.score);
@@ -1382,7 +1406,8 @@ export class EmaVwapCrossoverEngine {
             const setupDesc = candidates.length === 0
               ? '⚠ Scanner universe came back empty — Zerodha instrument/quote fetch likely failed or rate-limited; will retry next scan'
               : (activeSetups.length > 0 ? activeSetups[0].details.description : 'Monitoring 5m candles for breakout/breakdown trigger');
-            this.log(state, `📡 [SCANNER HEARTBEAT] Scanned Nifty 500 & F&O leaders | Leaders: [${topList}] | Checked top ${Math.min(scanDepth, candidates.length)}${evaluated.length > Math.min(scanDepth, candidates.length) ? ` + ${evaluated.length - Math.min(scanDepth, candidates.length)} watchlist` : ''} for setups (${activeSetups.length} active) | Tracking: [${currentLeader}] — ${setupDesc}`);
+            const budgetNote = checkedCount < evaluated.length ? `, ${checkedCount}/${evaluated.length} checked in ${Math.round((Date.now() - nowMs) / 1000)}s, rest next scan` : '';
+            this.log(state, `📡 [SCANNER HEARTBEAT] Scanned Nifty 500 & F&O leaders | Leaders: [${topList}] | Checked top ${Math.min(scanDepth, candidates.length)}${evaluated.length > Math.min(scanDepth, candidates.length) ? ` + ${evaluated.length - Math.min(scanDepth, candidates.length)} watchlist` : ''} for setups (${activeSetups.length} active${budgetNote}) | Tracking: [${currentLeader}] — ${setupDesc}`);
           }
         }
       }
@@ -1398,7 +1423,7 @@ export class EmaVwapCrossoverEngine {
       await this.ensureTickSize(client, activeSym, config.exchange);
 
       const candles = await this.fetchCandles(client, scanConfig, entryTf.interval, now);
-      if (candles.length < 2) return;
+      if (isStale() || candles.length < 2) return;
 
       // ── Filter for closed candles only ─────────────────────────────────────
       const closedCandles = filterClosedCandles(candles, now, entryTf.minutes);
@@ -1464,6 +1489,7 @@ export class EmaVwapCrossoverEngine {
         const checkSymbol = activeSym;
         const checkExchange = config.exchange;
         const ltpData = await kite.getLTP([`${checkExchange}:${checkSymbol}`]);
+        if (isStale()) return;
         const ltp = ltpData[`${checkExchange}:${checkSymbol}`]?.last_price;
 
         if (ltp) {
@@ -1566,6 +1592,7 @@ export class EmaVwapCrossoverEngine {
                 this.log(state, `[${targetSym}] ⚠ LTP unavailable for instant-entry check: ${e.message}`);
                 return null;
               });
+              if (isStale()) return;
               const ltp = ltpData?.[`${checkExchange}:${checkSymbol}`]?.last_price;
               const isPatientSetup = setup.setupType === 'PATIENT_BREAKOUT' || setup.setupType === 'PATIENT_PULLBACK';
               const waitNote = isPatientSetup ? ` Waiting for the next ${entryTf.minutes}m candle to close ${setup.trend === 'LONG' ? 'green above' : 'red below'} it...` : ' Monitoring for trigger...';
@@ -1623,7 +1650,8 @@ export class EmaVwapCrossoverEngine {
     } catch (err: any) {
       this.log(state, `❌ Tick error: ${err.message}`);
     } finally {
-      state.isProcessingTick = false;
+      // A retired tick must not release the lock that the newer tick now holds.
+      if (!isStale()) state.isProcessingTick = false;
     }
     await this.persistLogs(state);
   }
@@ -4725,7 +4753,8 @@ export class EmaVwapCrossoverEngine {
     const extra = this.getWatchlist(config)
       .filter(s => !excluded.has(s) && !candidates.some(c => c.symbol === s))
       .map(s => ({ symbol: s, exchange: 'NSE', qty: 1, score: 0, watchlist: true as const }));
-    return [...candidates, ...extra];
+    // Watchlist first: a scan that runs out of time (SCAN_BUDGET_MS) drops the tail, never the user's picks.
+    return [...extra, ...candidates];
   }
 
   /** Setup score for ranking: a watchlist stock's setup always outranks a scanner setup. */
