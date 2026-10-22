@@ -103,16 +103,13 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
     logger?.warn(`Could not fetch NFO universe: ${err.message}`);
   }
 
-  // 3. Universe = EVERY tradable NSE equity (ETFs / index funds / non-EQ series already excluded above).
-  // No fixed watch-list: the scanner ranks the whole market live and lets the liquidity + momentum filters pick leaders.
+  // 3. Universe = F&O stocks + the Nifty 500, the ~520 liquid names the backtests used. 22 Oct 2026: scanning all ~4,900
+  // NSE equities filled half the top 10 with sub-₹5 Cr small caps and untradable series (BLUEWATER-ST, JAYKAYPP-E1).
   // F&O stocks are listed first only so partial quote failures still cover the most liquid names.
   const combinedSet = new Set<string>();
   const liquidSymbols: string[] = [];
-  for (const sym of fnoSymbols) {
+  for (const sym of [...fnoSymbols, ...NIFTY_500_UNIVERSE]) {
     if (allNseSymbols.has(sym) && !combinedSet.has(sym)) { combinedSet.add(sym); liquidSymbols.push(sym); }
-  }
-  for (const sym of allNseSymbols) {
-    if (!combinedSet.has(sym)) { combinedSet.add(sym); liquidSymbols.push(sym); }
   }
 
   if (liquidSymbols.length === 0) {
@@ -122,7 +119,7 @@ export async function getDynamicLiquidStocks(kite: any, logger?: Logger): Promis
     return { symbols: [], tokenMap, tickSizeMap };
   }
 
-  logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} NSE equity stocks (entire market, ${fnoSymbols.length} with F&O)`);
+  logger?.log(`🎯 Active stock scanner universe ready: ${liquidSymbols.length} liquid NSE stocks (${fnoSymbols.length} F&O + Nifty 500)`);
   cachedDynamicStocks = { symbols: liquidSymbols, tokenMap, tickSizeMap };
   cachedDynamicStocksTime = Date.now();
   return cachedDynamicStocks;
@@ -205,12 +202,29 @@ export interface CandidateStock {
   distToPdhPct?: number;
   distToPdlPct?: number;
   rvol?: number; // true relative volume vs own 10-session average at the same clock time
+  /** In-play ranking only: day % move minus NIFTY's, the stock's daily ATR %, and the old momentum score (for comparison logs). */
+  relToNiftyPct?: number;
+  atrPct?: number;
+  momentumScore?: number;
 }
+
+/** 'IN_PLAY' ranks by move vs NIFTY in ATRs and relative volume (see applyInPlayScore); 'MOMENTUM' is the older % move + turnover score. */
+export type ScannerRanking = 'MOMENTUM' | 'IN_PLAY';
+/** In-play: stocks (by move vs NIFTY) that get the per-stock history needed for ATR, RVOL and PDH/PDL. Cached for the day. */
+const IN_PLAY_PROFILE_POOL = 100;
+/** In-play: a move counts up to this many daily ATRs; beyond it a stock is extended, not more in play. */
+const IN_PLAY_MAX_MOVE_ATR = 2;
+/** Past PDH (long) / PDL (short): worth ~0.15 ATR of move, a tie-breaker rather than a reason. */
+const IN_PLAY_LEVEL_BONUS = 150;
+/** Floor for a very calm stock's daily ATR, so a tiny range can't blow up its score. */
+const IN_PLAY_MIN_ATR_PCT = 0.8;
+const NIFTY_QUOTE_KEY = 'NSE:NIFTY 50';
 
 // ─── Whole-market quotes (cached briefly; Kite quote endpoints allow ~1 request/second) ─────────────
 let quoteCache: { at: number; data: Record<string, any> } | null = null;
 async function fetchWholeMarketQuotes(kite: any, keys: string[], logger?: Logger): Promise<Record<string, any>> {
-  if (quoteCache && Date.now() - quoteCache.at < 12_000) return quoteCache.data;
+  const needsNifty = keys.includes(NIFTY_QUOTE_KEY);
+  if (quoteCache && Date.now() - quoteCache.at < 12_000 && (!needsNifty || quoteCache.data[NIFTY_QUOTE_KEY])) return quoteCache.data;
   const out: Record<string, any> = {};
   for (let i = 0; i < keys.length; i += 500) {
     const batch = keys.slice(i, i + 500);
@@ -226,7 +240,16 @@ async function fetchWholeMarketQuotes(kite: any, keys: string[], logger?: Logger
 }
 
 // ─── True RVOL: cumulative volume today vs the stock's own recent sessions at the same clock time ────
-interface VolumeProfile { dateStr: string; sessionsCum: number[][]; sessionsBar: number[][]; }
+interface VolumeProfile {
+  dateStr: string;
+  sessionsCum: number[][];
+  sessionsBar: number[][];
+  /** Average daily range of the same sessions, % of the open (the in-play ranking's yardstick). */
+  atrPct?: number;
+  /** Previous session's high / low. */
+  pdh?: number;
+  pdl?: number;
+}
 const volumeProfileCache = new Map<string, VolumeProfile | null>();
 
 async function loadVolumeProfile(kite: any, symbol: string, token: number, istDateStr: string): Promise<VolumeProfile | null> {
@@ -241,6 +264,7 @@ async function loadVolumeProfile(kite: any, symbol: string, token: number, istDa
     ]) as any;
     if (!Array.isArray(candles) || candles.length === 0) { volumeProfileCache.set(symbol, null); return null; }
     const byDay = new Map<string, number[]>();
+    const dayRange = new Map<string, { open: number; high: number; low: number }>();
     for (const c of candles) {
       const d = new Date(c.date);
       const ist = new Date(d.getTime() + 330 * 60000 + d.getTimezoneOffset() * 60000);
@@ -250,11 +274,21 @@ async function loadVolumeProfile(kite: any, symbol: string, token: number, istDa
       if (idx < 0 || idx > 74) continue;
       if (!byDay.has(dayStr)) byDay.set(dayStr, new Array(75).fill(0));
       byDay.get(dayStr)![idx] += Number(c.volume) || 0;
+      const r = dayRange.get(dayStr);
+      if (!r) dayRange.set(dayStr, { open: Number(c.open), high: Number(c.high), low: Number(c.low) });
+      else { r.high = Math.max(r.high, Number(c.high)); r.low = Math.min(r.low, Number(c.low)); }
     }
     const days = Array.from(byDay.keys()).sort().slice(-10);
     const sessionsBar = days.map(d => byDay.get(d)!);
     const sessionsCum = sessionsBar.map(bars => { let run = 0; return bars.map(v => (run += v)); });
-    const profile: VolumeProfile = { dateStr: istDateStr, sessionsCum, sessionsBar };
+    const ranges = days.map(d => dayRange.get(d)!).filter(r => r.open > 0 && r.high >= r.low);
+    const last = ranges[ranges.length - 1];
+    const profile: VolumeProfile = {
+      dateStr: istDateStr, sessionsCum, sessionsBar,
+      atrPct: ranges.length >= 3 ? Math.max(IN_PLAY_MIN_ATR_PCT, ranges.reduce((a, r) => a + ((r.high - r.low) / r.open) * 100, 0) / ranges.length) : undefined,
+      pdh: last?.high,
+      pdl: last?.low,
+    };
     volumeProfileCache.set(symbol, sessionsCum.length >= 3 ? profile : null);
     return sessionsCum.length >= 3 ? profile : null;
   } catch {
@@ -275,7 +309,7 @@ function expectedCumVolume(profile: VolumeProfile, minutesSinceOpen: number): nu
   return (done + partial) / n;
 }
 
-async function applyTrueRvol(kite: any, shortlist: CandidateStock[], tokenMap: Map<string, number>, logger?: Logger): Promise<void> {
+async function applyTrueRvol(kite: any, shortlist: CandidateStock[], tokenMap: Map<string, number>, logger?: Logger, inPlay = false): Promise<void> {
   const now = new Date();
   const ist = new Date(now.getTime() + 330 * 60000 + now.getTimezoneOffset() * 60000);
   const istDateStr = ist.toISOString().split('T')[0];
@@ -285,10 +319,10 @@ async function applyTrueRvol(kite: any, shortlist: CandidateStock[], tokenMap: M
     const cached = volumeProfileCache.get(c.symbol);
     return tokenMap.get(c.symbol) && (cached === undefined || (cached !== null && cached.dateStr !== istDateStr));
   });
-  // Load missing profiles 3 at a time (Kite historical limit ≈ 3 req/s). Cached for the rest of the day.
+  // Load missing profiles 3 at a time (Kite historical limit ≈ 3 req/s; the client's shared limiter does the pacing).
+  // Cached for the rest of the day.
   for (let i = 0; i < todo.length; i += 3) {
     await Promise.all(todo.slice(i, i + 3).map(c => loadVolumeProfile(kite, c.symbol, tokenMap.get(c.symbol)!, istDateStr)));
-    if (i + 3 < todo.length) await new Promise(r => setTimeout(r, 1000));
   }
   for (const c of shortlist) {
     const profile = volumeProfileCache.get(c.symbol);
@@ -297,8 +331,38 @@ async function applyTrueRvol(kite: any, shortlist: CandidateStock[], tokenMap: M
     const liveVol = (c as any)._liveVolume as number | undefined;
     if (!liveVol || expected <= 0) continue;
     c.rvol = liveVol / expected;
-    c.score += Math.min(250, Math.round(c.rvol * 60));
+    if (!inPlay) c.score += Math.min(250, Math.round(c.rvol * 60));
   }
+}
+
+/**
+ * In-play score (22 Oct 2026, replaces the momentum score for the EMA-VWAP stock picker). A stock is in play when it moves
+ * more than NIFTY by a large share of its own normal daily range, on unusual volume:
+ *   relative move = (stock day % - NIFTY day %) / daily ATR %, capped at IN_PLAY_MAX_MOVE_ATR
+ *   drive        = move from today's open beyond NIFTY's, in the same direction / daily ATR % (counts half, never negative)
+ *   score        = 1000 x (relative move + drive / 2) x sqrt(RVOL), RVOL clamped to 0.25-9, + IN_PLAY_LEVEL_BONUS past PDH/PDL.
+ * Turnover gives no points (the universe is liquid already), so a heavyweight moving with NIFTY scores near zero and a
+ * 10% small-cap move counts only as many ATRs as it really is. A stock without history (no ATR) keeps a low fallback score.
+ */
+function applyInPlayScore(c: CandidateStock, niftyChgPct: number, niftyFromOpenPct: number, profile: VolumeProfile | null | undefined): void {
+  const rel = c.dayChangePct - niftyChgPct;
+  const dir = rel >= 0 ? 1 : -1;
+  c.trend = dir > 0 ? 'LONG' : 'SHORT';
+  c.relToNiftyPct = rel;
+  const atr = profile?.atrPct;
+  if (!atr) {
+    c.score = Math.round(Math.abs(rel) * 100);
+    return;
+  }
+  const relAtr = Math.min(IN_PLAY_MAX_MOVE_ATR, Math.abs(rel) / atr);
+  const driveAtr = Math.min(IN_PLAY_MAX_MOVE_ATR, Math.max(0, (dir * (c.changeFromOpenPct - niftyFromOpenPct)) / atr));
+  const rvol = Math.min(9, Math.max(0.25, c.rvol ?? 1));
+  c.atrPct = atr;
+  c.pdh = profile?.pdh;
+  c.pdl = profile?.pdl;
+  const pastLevel = dir > 0 ? (!!c.pdh && c.ltp > c.pdh) : (!!c.pdl && c.ltp < c.pdl);
+  if (dir > 0) c.isAbovePdh = pastLevel; else c.isBelowPdl = pastLevel;
+  c.score = Math.round(1000 * (relAtr + driveAtr / 2) * Math.sqrt(rvol)) + (pastLevel ? IN_PLAY_LEVEL_BONUS : 0);
 }
 
 /**
@@ -314,8 +378,10 @@ export async function getTopCandidateStocks(
   limit: number = 20,
   excludedSymbols?: Set<string>,
   minStockPrice: number = 30,
+  ranking: ScannerRanking = 'MOMENTUM',
 ): Promise<CandidateStock[]> {
   const result: CandidateStock[] = [];
+  const inPlay = ranking === 'IN_PLAY';
 
   let availableCapital = maxCapital;
   if (!availableCapital || availableCapital <= 0) {
@@ -333,8 +399,12 @@ export async function getTopCandidateStocks(
   const ltpSymbols = targetSymbols
     .filter(s => !BLACKLISTED_SLOW_STOCKS.has(s) && (!excludedSymbols || !excludedSymbols.has(s)))
     .map(s => `NSE:${s}`);
+  if (inPlay) ltpSymbols.push(NIFTY_QUOTE_KEY);
 
   const liveQuotes: Record<string, any> = await fetchWholeMarketQuotes(kite, ltpSymbols, logger);
+  const niftyQuote = liveQuotes[NIFTY_QUOTE_KEY];
+  const niftyChgPct = niftyQuote?.last_price && niftyQuote?.ohlc?.close ? ((niftyQuote.last_price - niftyQuote.ohlc.close) / niftyQuote.ohlc.close) * 100 : 0;
+  const niftyFromOpenPct = niftyQuote?.last_price && niftyQuote?.ohlc?.open ? ((niftyQuote.last_price - niftyQuote.ohlc.open) / niftyQuote.ohlc.open) * 100 : 0;
 
   // Current time in IST to adjust volume/turnover expectations for market open
   const istDate = new Date(new Date().getTime() + 330 * 60000 + new Date().getTimezoneOffset() * 60000);
@@ -464,9 +534,23 @@ export async function getTopCandidateStocks(
         isOpenLow,
         isOpenHigh,
         prevClose,
+        momentumScore: score,
         ...({ _liveVolume: liveVolume } as any),
       });
     }
+  }
+
+  if (inPlay) {
+    // History (RVOL, ATR, PDH/PDL) for the biggest movers vs NIFTY, then the in-play score for every stock.
+    result.sort((a, b) => Math.abs(b.dayChangePct - niftyChgPct) - Math.abs(a.dayChangePct - niftyChgPct));
+    await applyTrueRvol(kite, result.slice(0, IN_PLAY_PROFILE_POOL), tokenMap, logger, true);
+    const todayStr = new Date(Date.now() + 330 * 60000 + new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    for (const c of result) {
+      const profile = volumeProfileCache.get(c.symbol);
+      applyInPlayScore(c, niftyChgPct, niftyFromOpenPct, profile && profile.dateStr === todayStr ? profile : null);
+    }
+    result.sort((a, b) => b.score - a.score);
+    return result.slice(0, limit);
   }
 
   // Sort preliminary candidates descending by momentum score

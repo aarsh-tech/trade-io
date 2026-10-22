@@ -674,7 +674,7 @@ export class EmaVwapCrossoverEngine {
     try {
       if (state.config.symbol === 'AUTO') {
         const excluded = this.excludedSymbols(state);
-        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, Math.max(25, this.getScanPool(state.config)), excluded, (state.config as any).minStockPrice || 30);
+        const candidates = await getTopCandidateStocks(kite, state.config.targetRs, state.config.stopLossRs, this.logger, (state.config as any).maxCapital, Math.max(25, this.getScanPool(state.config)), excluded, (state.config as any).minStockPrice || 30, 'IN_PLAY');
         this.log(state, `🚀 Multi-Stock Momentum Scanner: Scanning top Zerodha liquid leaders for active setups...`);
 
         const activeSetups: Array<{ candidate: any; details: any }> = [];
@@ -1278,7 +1278,7 @@ export class EmaVwapCrossoverEngine {
           const startsAt = entryTf.minutes === 1 ? '09:16' : '09:20';
           this.log(state, `⏳ [09:15 - ${startsAt} AM OBSERVATION WINDOW] Opening ${entryTf.minutes}m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ ${startsAt} AM sharp.`);
           if (this.getEntryStyle(config) === 'PATIENT') {
-            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No fixed start time; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low after a ${PATIENT_BASE_CANDLES}+ candle pause, or at once if the stock crossed VWAP earlier today (no opening-drive chase), or a pullback that touches the 15-EMA today. No min day move. Checks the scanner's top ${PATIENT_SCAN_POOL}. Stop beyond that structure with no % cap (fewer shares; skipped if wider than ${PATIENT_MAX_STOP_PCT}%).${this.isShortDropSkipOn(config) ? ` No shorts more than ${PATIENT_MAX_DROP_ATR}x the stock's daily ATR below the previous close.` : ''}${this.getWatchlist(config).length ? ` Watchlist (checked every scan, first priority): ${this.getWatchlist(config).join(', ')}.` : ''}`);
+            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No fixed start time; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low after a ${PATIENT_BASE_CANDLES}+ candle pause, or at once if the stock crossed VWAP earlier today (no opening-drive chase), or a pullback that touches the 15-EMA today. No min day move. Checks the scanner's top ${PATIENT_SCAN_POOL} of the Nifty 500 + F&O stocks, ranked by move vs NIFTY in daily ATRs x relative volume. Stop beyond that structure with no % cap (fewer shares; skipped if wider than ${PATIENT_MAX_STOP_PCT}%).${this.isShortDropSkipOn(config) ? ` No shorts more than ${PATIENT_MAX_DROP_ATR}x the stock's daily ATR below the previous close.` : ''}${this.getWatchlist(config).length ? ` Watchlist (checked every scan, first priority): ${this.getWatchlist(config).join(', ')}.` : ''}`);
           }
           await this.persistLogs(state);
         }
@@ -1290,7 +1290,7 @@ export class EmaVwapCrossoverEngine {
           const warmStart = Date.now();
           const excluded = this.excludedSymbols(state);
           const scanDepth = this.getScanPool(config);
-          const warm = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30)
+          const warm = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30, 'IN_PLAY')
             .catch((e: any) => { this.logger.debug?.(`Opening scan warm-up failed: ${e?.message}`); return []; });
           const shortlist = this.withWatchlist(config, warm.slice(0, scanDepth), excluded);
           // Whatever the budget leaves out is loaded by the first scans instead.
@@ -1320,7 +1320,7 @@ export class EmaVwapCrossoverEngine {
           state.lastAutoScanTime = nowMs;
           const excluded = this.excludedSymbols(state);
           const scanDepth = this.getScanPool(config);
-          const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30);
+          const candidates = await getTopCandidateStocks(kite, config.targetRs, config.stopLossRs, this.logger, (config as any).maxCapital, Math.max(15, scanDepth), excluded, (config as any).minStockPrice || 30, 'IN_PLAY');
           const activeSetups: Array<{ candidate: any; details: any }> = [];
 
           // Check the top `scanDepth` momentum leaders (plus the Patient watchlist) for a setup; the best-scoring one
@@ -1400,8 +1400,11 @@ export class EmaVwapCrossoverEngine {
           // ── Active Scanner Heartbeat (every 60 seconds) ─────────────────────────
           if (!state.last5mHeartbeatTime || (nowMs - state.last5mHeartbeatTime >= 60_000)) {
             state.last5mHeartbeatTime = nowMs;
-            logSignal('SCAN', state.strategyId, { top: candidates.slice(0, 10).map(c => ({ s: c.symbol, score: c.score, trend: c.trend, dayChg: +c.dayChangePct.toFixed(2), fromOpen: +c.changeFromOpenPct.toFixed(2), turnoverCr: +c.turnoverCr.toFixed(1), rvol: c.rvol !== undefined ? +c.rvol.toFixed(2) : null })) });
-            const topList = candidates.slice(0, 4).map(c => `${c.symbol} (Score: ${c.score}, ${c.dayChangePct >= 0 ? '+' : ''}${c.dayChangePct.toFixed(1)}%)`).join(', ');
+            logSignal('SCAN', state.strategyId, { rank: 'IN_PLAY', top: candidates.slice(0, 10).map(c => ({ s: c.symbol, score: c.score, old: c.momentumScore, trend: c.trend, dayChg: +c.dayChangePct.toFixed(2), vsNifty: c.relToNiftyPct !== undefined ? +c.relToNiftyPct.toFixed(2) : null, atr: c.atrPct !== undefined ? +c.atrPct.toFixed(2) : null, fromOpen: +c.changeFromOpenPct.toFixed(2), turnoverCr: +c.turnoverCr.toFixed(1), rvol: c.rvol !== undefined ? +c.rvol.toFixed(2) : null })) });
+            const topList = candidates.slice(0, 4).map(c => {
+              const vsNifty = c.relToNiftyPct !== undefined ? `, ${c.relToNiftyPct >= 0 ? '+' : ''}${c.relToNiftyPct.toFixed(1)}% vs NIFTY${c.atrPct ? ` = ${(Math.abs(c.relToNiftyPct) / c.atrPct).toFixed(1)} ATR` : ''}` : '';
+              return `${c.symbol} (Score: ${c.score}, ${c.dayChangePct >= 0 ? '+' : ''}${c.dayChangePct.toFixed(1)}%${vsNifty}${c.rvol !== undefined ? `, RVOL ${c.rvol.toFixed(1)}x` : ''})`;
+            }).join(', ');
             const currentLeader = activeSetups.length > 0 ? activeSetups[0].candidate.symbol : (candidates[0]?.symbol || 'None');
             const setupDesc = candidates.length === 0
               ? '⚠ Scanner universe came back empty — Zerodha instrument/quote fetch likely failed or rate-limited; will retry next scan'
