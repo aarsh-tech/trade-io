@@ -174,9 +174,9 @@ const DEFAULT_MIN_DAY_MOVE_PCT = 1.5;
  * - a short is skipped while the stock is more than maxShortDropPct below the previous close (big gap-down / drop done).
  * 21 Oct 2026 (LTM long 11 @ 4331.80, bought 3 minutes into a candle on a tick through the pullback trigger, just under
  * the 4340 morning high; that candle and the next closed below the trigger, 15-EMA exit at 4308), at the user's request:
- * a patient entry waits for the next entry candle (PATIENT_CONFIRM_CANDLES = 1; waiting longer lets the move run away)
- * to CLOSE beyond the trigger with a body in the trend direction (green for a long, red for a short), and enters at
- * market on that close (no intrabar or "instant" entries); otherwise the setup expires.
+ * a patient entry waits for a candle CLOSE with a body in the trend direction (green for a long, red for a short), and
+ * enters at market on that close (no intrabar or "instant" entries). Until 23 Oct this was the next candle after the
+ * setup; now it is the setup candle itself (see below).
  * 21 Oct 2026 (DMART, BOSCHLTD, AXISBANK spiked above VWAP at the open, then fell 2.4-3.3% in a steady line until ~13:00;
  * none was ever checked: the 1.5% min day move held them back until 10:20-11:40, the scanner's top 25 was full of
  * 8-19% movers too far from their 15-EMA to set up, and the 3-candle base never forms in a waterfall), at the user's
@@ -187,12 +187,25 @@ const DEFAULT_MIN_DAY_MOVE_PCT = 1.5;
  * - a breakout needs no base once the stock has closed on the other side of VWAP earlier today: the move is a new trend
  *   that reversed the open, not the opening drive;
  * - Patient checks the scanner's top PATIENT_SCAN_POOL stocks instead of scanDepth.
+ * 23 Oct 2026 (SUBROS short: the 09:30 candle closed at a new day low, the bot waited for the 09:35 candle to close too
+ * and sold ₹5.60 lower at 09:40; SUNTECK's 09:30 setup expired the same way), at the user's request:
+ * - the entry is the setup candle's own close (one candle, not two): a breakout candle that closes at a new day high/low,
+ *   or a pullback candle that closes back in the trend, enters at market at once; that candle must have a body in the
+ *   trend direction. A setup found more than PATIENT_ENTRY_MAX_DELAY_MS after its close (scan backlog, restart) is skipped.
+ * - no short in a stock that has already fallen for days: PATIENT_EXHAUSTED_DOWN_DAYS lower closes in a row, or a previous
+ *   close PATIENT_EXHAUSTED_ATR daily ATRs or more below the 10-session high. 2-year 5m check (scratchpad streak.js):
+ *   shorts below VWAP/15-EMA/PDC at 09:40 held to 15:05 make +0.07% on stocks with no down day before, -0.12% after 5+
+ *   down days and -0.05% / -0.14% at 3-4 / 4+ ATRs below the 10-day high, negative in each of 2024, 2025 and 2026.
+ *   Longs showed no such effect, so they are unchanged. SUBROS was 5 down days and 3.7 ATRs below.
  */
 const PATIENT_SLOW_EMA = 40;
 const PATIENT_BASE_CANDLES = 3;
 const PATIENT_MAX_STOP_PCT = 4;
-const PATIENT_CONFIRM_CANDLES = 1;
 const PATIENT_MAX_DROP_ATR = 1.5;
+/** Patient: a setup candle is entered at most this long after it closed; later the price has moved on from it. */
+const PATIENT_ENTRY_MAX_DELAY_MS = 120_000;
+const PATIENT_EXHAUSTED_DOWN_DAYS = 5;
+const PATIENT_EXHAUSTED_ATR = 3;
 /** Patient: stocks checked per scan. Closed candles are cached until the next close, so the extra history calls come once a candle. */
 const PATIENT_SCAN_POOL = 50;
 /**
@@ -248,6 +261,8 @@ export class EmaVwapCrossoverEngine {
   private readonly dailyAtrBySymbol = new Map<string, { dateStr: string; atrPct: number; sessions: number }>();
   /** High / low of the previous 10 sessions (from the same download), for the patient-trend daily breakout score. */
   private readonly sessionRangeBySymbol = new Map<string, { dateStr: string; high: number; low: number }>();
+  /** Daily trend before today, from the same history download: lower closes in a row up to yesterday, and yesterday's close below the 10-session high in daily ATRs. */
+  private readonly dailyTrendBySymbol = new Map<string, { dateStr: string; downDays: number; belowHighAtr: number }>();
   /** Symbols the instrument master had no tick size for, so ensureTickSize doesn't rescan the master every tick. */
   private readonly tickSizeMisses = new Set<string>();
 
@@ -1278,7 +1293,7 @@ export class EmaVwapCrossoverEngine {
           const startsAt = entryTf.minutes === 1 ? '09:16' : '09:20';
           this.log(state, `⏳ [09:15 - ${startsAt} AM OBSERVATION WINDOW] Opening ${entryTf.minutes}m candle forming. Establishing Opening Range (ORH/ORL), VWAP & Institutional Volume baseline. Execution begins @ ${startsAt} AM sharp.`);
           if (this.getEntryStyle(config) === 'PATIENT') {
-            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No fixed start time; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low after a ${PATIENT_BASE_CANDLES}+ candle pause, or at once if the stock crossed VWAP earlier today (no opening-drive chase), or a pullback that touches the 15-EMA today. No min day move. Checks the scanner's top ${PATIENT_SCAN_POOL} of the Nifty 500 + F&O stocks, ranked by move vs NIFTY in daily ATRs x relative volume. Stop beyond that structure with no % cap (fewer shares; skipped if wider than ${PATIENT_MAX_STOP_PCT}%).${this.isShortDropSkipOn(config) ? ` No shorts more than ${PATIENT_MAX_DROP_ATR}x the stock's daily ATR below the previous close.` : ''}${this.getWatchlist(config).length ? ` Watchlist (checked every scan, first priority): ${this.getWatchlist(config).join(', ')}.` : ''}`);
+            this.log(state, `🧘 [PATIENT TREND] Entry style: patient. No fixed start time; only stocks trading above (or, for shorts, below) VWAP, the 15-EMA and the 40-EMA (15-EMA past the 40-EMA), on a new day high/low after a ${PATIENT_BASE_CANDLES}+ candle pause, or at once if the stock crossed VWAP earlier today (no opening-drive chase), or a pullback that touches the 15-EMA today. Enters at market on that candle's close (it must close green for a long, red for a short). No min day move. No shorts in a stock that has fallen ${PATIENT_EXHAUSTED_DOWN_DAYS}+ days in a row or sits ${PATIENT_EXHAUSTED_ATR}+ daily ATRs below its 10-day high. Checks the scanner's top ${PATIENT_SCAN_POOL} of the Nifty 500 + F&O stocks, ranked by move vs NIFTY in daily ATRs x relative volume. Stop beyond that structure with no % cap (fewer shares; skipped if wider than ${PATIENT_MAX_STOP_PCT}%).${this.isShortDropSkipOn(config) ? ` No shorts more than ${PATIENT_MAX_DROP_ATR}x the stock's daily ATR below the previous close.` : ''}${this.getWatchlist(config).length ? ` Watchlist (checked every scan, first priority): ${this.getWatchlist(config).join(', ')}.` : ''}`);
           }
           await this.persistLogs(state);
         }
@@ -1305,17 +1320,16 @@ export class EmaVwapCrossoverEngine {
       // Allow continuous scanning if no position is open. If waiting for confirmation on an idle setup (>= 1 entry candle without trigger), evaluate other active leaders!
       // Idle = a whole entry candle has passed since the setup was detected (its candle closed) without a trigger.
       const setupArmedAt = state.setupArmedAt ?? (state.setupTimestamp ? state.setupTimestamp + entryTf.minutes * 60 * 1000 : null);
-      // A Patient setup is never idle: it confirms or expires on the very next candle close, and a scan run first would
-      // hold that check back (22 Oct: HDFCBANK's 09:30 confirmation waited 40s behind a top-50 scan).
-      const isPatientSetupWaiting = state.setupType === 'PATIENT_BREAKOUT' || state.setupType === 'PATIENT_PULLBACK';
-      const isIdleWaiting = !!(state.waitingForConfirmation && !isPatientSetupWaiting && setupArmedAt && (now.getTime() - setupArmedAt >= entryTf.minutes * 60 * 1000));
+      const isIdleWaiting = !!(state.waitingForConfirmation && setupArmedAt && (now.getTime() - setupArmedAt >= entryTf.minutes * 60 * 1000));
       if (state.isAutoMode && !state.entryTriggered && (!state.waitingForConfirmation || isIdleWaiting) && !state.isPlacingTrade) {
         const nowMs = Date.now();
         // Throttle auto-scanning to at most once every 30 seconds to respect Zerodha 3 req/sec rate limit.
-        // 1m entries also rescan as soon as a new 1m candle has closed (2s grace for Kite to publish it), so a
-        // 09:16 setup is seen at ~09:16:02 instead of up to 30s later.
-        const isNewEntryCandle = entryTf.minutes === 1 && !!state.lastAutoScanTime
-          && Math.floor(state.lastAutoScanTime / 60_000) !== Math.floor(nowMs / 60_000) && now.getSeconds() >= 2;
+        // Every entry timeframe also rescans as soon as a new entry candle has closed (2s grace for Kite to publish it),
+        // so a 09:16 (1m) or 09:35 (5m) setup is seen within seconds instead of up to 30s later: Patient enters on that
+        // close.
+        const tfMs = entryTf.minutes * 60_000;
+        const isNewEntryCandle = !!state.lastAutoScanTime
+          && Math.floor(state.lastAutoScanTime / tfMs) !== Math.floor(nowMs / tfMs) && nowMs % tfMs >= 2_000;
         if (!state.lastAutoScanTime || (nowMs - state.lastAutoScanTime) >= 30_000 || isNewEntryCandle) {
           state.lastAutoScanTime = nowMs;
           const excluded = this.excludedSymbols(state);
@@ -1455,25 +1469,9 @@ export class EmaVwapCrossoverEngine {
         // candles (a crossover found one or two candles late gets its full window instead of expiring at once).
         const armedAt = state.setupArmedAt ?? (state.setupTimestamp! + timeframeMs);
         const elapsed = now.getTime() - armedAt;
-        // Patient setups trigger on a candle close beyond the trigger (see PATIENT_CONFIRM_CANDLES), counted in closed
-        // candles after the setup candle; the time limit is only a backstop for stale candle data.
-        const isPatientWait = state.setupType === 'PATIENT_BREAKOUT' || state.setupType === 'PATIENT_PULLBACK';
-        let patientClose: Candle | null = null;
-        let isExpired = elapsed > maxWaitCandles * timeframeMs;
-        if (isPatientWait) {
-          const after = state.setupTimestamp ? closedCandles.filter(c => c.date.getTime() > state.setupTimestamp!) : [];
-          const latest = after.length <= PATIENT_CONFIRM_CANDLES ? after[after.length - 1] : undefined;
-          if (latest && (state.waitingForConfirmation === 'LONG'
-            ? !!state.confirmationHigh && latest.close >= state.confirmationHigh && latest.close > latest.open
-            : !!state.confirmationLow && latest.close <= state.confirmationLow && latest.close < latest.open)) {
-            patientClose = latest;
-          }
-          isExpired = !patientClose && (after.length >= PATIENT_CONFIRM_CANDLES || elapsed > (PATIENT_CONFIRM_CANDLES + 1) * timeframeMs);
-        }
+        const isExpired = elapsed > maxWaitCandles * timeframeMs;
         if (isExpired) {
-          this.log(state, isPatientWait
-            ? `⏳ Setup on [${activeSym}] expired (the next ${entryTf.minutes}m candle did not close ${state.waitingForConfirmation === 'LONG' ? `green above ₹${state.confirmationHigh?.toFixed(2)}` : `red below ₹${state.confirmationLow?.toFixed(2)}`}). Resetting.`
-            : `⏳ Setup on [${activeSym}] expired (${maxWaitCandles} candles passed without trigger). Resetting.`);
+          this.log(state, `⏳ Setup on [${activeSym}] expired (${maxWaitCandles} candles passed without trigger). Resetting.`);
           if (state.isAutoMode && activeSym) {
             if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
             state.cooldownSymbols.set(activeSym, now.getTime() + 15 * 60 * 1000);
@@ -1497,11 +1495,9 @@ export class EmaVwapCrossoverEngine {
 
         if (ltp) {
           if (state.waitingForConfirmation === 'LONG') {
-            const isTriggered = isPatientWait ? !!patientClose : state.confirmationHigh && ltp >= state.confirmationHigh;
+            const isTriggered = state.confirmationHigh && ltp >= state.confirmationHigh;
             if (isTriggered) {
-              this.log(state, patientClose
-                ? `[${activeSym}] 🎯 LONG Entry Confirmed! ${entryTf.minutes}m candle [${this.formatCandleRange(patientClose.date, entryTf.minutes)}] closed ₹${patientClose.close.toFixed(2)} above the trigger ₹${state.confirmationHigh!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`
-                : `[${activeSym}] 🎯 LONG Entry Triggered! Breakout above ₹${state.confirmationHigh!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
+              this.log(state, `[${activeSym}] 🎯 LONG Entry Triggered! Breakout above ₹${state.confirmationHigh!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
               const invPrice = state.invalidationPrice ?? undefined;
               const confHigh = state.confirmationHigh ?? undefined;
               state.waitingForConfirmation = null;
@@ -1525,11 +1521,9 @@ export class EmaVwapCrossoverEngine {
               state.setupType = undefined;
             }
           } else if (state.waitingForConfirmation === 'SHORT') {
-            const isTriggered = isPatientWait ? !!patientClose : state.confirmationLow && ltp <= state.confirmationLow;
+            const isTriggered = state.confirmationLow && ltp <= state.confirmationLow;
             if (isTriggered) {
-              this.log(state, patientClose
-                ? `[${activeSym}] 🎯 SHORT Entry Confirmed! ${entryTf.minutes}m candle [${this.formatCandleRange(patientClose.date, entryTf.minutes)}] closed ₹${patientClose.close.toFixed(2)} below the trigger ₹${state.confirmationLow!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`
-                : `[${activeSym}] 🎯 SHORT Entry Triggered! Breakdown below ₹${state.confirmationLow!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
+              this.log(state, `[${activeSym}] 🎯 SHORT Entry Triggered! Breakdown below ₹${state.confirmationLow!.toFixed(2)} (${state.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
               const confLow = state.confirmationLow ?? undefined;
               const invPrice = state.invalidationPrice ?? undefined;
               state.waitingForConfirmation = null;
@@ -1598,9 +1592,25 @@ export class EmaVwapCrossoverEngine {
               if (isStale()) return;
               const ltp = ltpData?.[`${checkExchange}:${checkSymbol}`]?.last_price;
               const isPatientSetup = setup.setupType === 'PATIENT_BREAKOUT' || setup.setupType === 'PATIENT_PULLBACK';
-              const waitNote = isPatientSetup ? ` Waiting for the next ${entryTf.minutes}m candle to close ${setup.trend === 'LONG' ? 'green above' : 'red below'} it...` : ' Monitoring for trigger...';
 
-              if (setup.trend === 'LONG') {
+              if (isPatientSetup) {
+                // Patient: the setup candle's close IS the entry (23 Oct). Enter at market now, unless the close is
+                // old news or the price has already gone back through the stop.
+                const isLong = setup.trend === 'LONG';
+                const sinceClose = now.getTime() - (closedCandle.date.getTime() + entryTf.minutes * 60 * 1000);
+                this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! ${entryTf.minutes}m candle closed ₹${closedCandle.close.toFixed(2)} ${isLong ? 'green' : 'red'}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}.`);
+                if (sinceClose > PATIENT_ENTRY_MAX_DELAY_MS) {
+                  this.log(state, `⏭ [PATIENT ENTRY] ${targetSym}: setup candle closed ${Math.round(sinceClose / 1000)}s ago (limit ${PATIENT_ENTRY_MAX_DELAY_MS / 1000}s) — too late to enter on its close. Skipping.`);
+                } else if (!ltp) {
+                  this.log(state, `⏭ [PATIENT ENTRY] ${targetSym}: no LTP to enter on. Skipping.`);
+                } else if (isLong ? ltp <= setup.slPrice : ltp >= setup.slPrice) {
+                  this.log(state, `⏭ [PATIENT ENTRY] ${targetSym}: LTP ₹${ltp.toFixed(2)} is already through the stop ₹${setup.slPrice.toFixed(2)}. Skipping.`);
+                } else {
+                  this.log(state, `[${targetSym}] 🎯 ${isLong ? 'LONG' : 'SHORT'} Entry on the setup candle close (${setup.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
+                  if (isLong) await this.placeTrade(state, client, 'BUY', ltp, undefined, setup.slPrice, setup.triggerHigh ?? undefined);
+                  else await this.placeTrade(state, client, 'SELL', ltp, undefined, setup.triggerLow ?? undefined, setup.slPrice);
+                }
+              } else if (setup.trend === 'LONG') {
                 state.waitingForConfirmation = 'LONG';
                 state.setupType = setup.setupType;
                 state.confirmationHigh = setup.triggerHigh;
@@ -1608,10 +1618,10 @@ export class EmaVwapCrossoverEngine {
                 state.invalidationPrice = setup.slPrice;
                 state.setupTimestamp = setupTimeMs!;
                 state.setupArmedAt = closedCandle.date.getTime() + entryTf.minutes * 60 * 1000;
-                this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger High: ₹${(setup.triggerHigh || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}.${waitNote}`);
+                this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger High: ₹${(setup.triggerHigh || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}. Monitoring for trigger...`);
 
-                // Instant execution check if already at/above trigger high (patient setups wait for a candle close instead):
-                if (!isPatientSetup && ltp && setup.triggerHigh && ltp >= setup.triggerHigh) {
+                // Instant execution check if already at/above trigger high:
+                if (ltp && setup.triggerHigh && ltp >= setup.triggerHigh) {
                   this.log(state, `[${targetSym}] 🎯 Instant LONG Entry Triggered! ${setup.description} @ LTP ₹${ltp.toFixed(2)}`);
                   state.waitingForConfirmation = null;
                   state.confirmationHigh = null;
@@ -1628,10 +1638,10 @@ export class EmaVwapCrossoverEngine {
                 state.invalidationPrice = setup.slPrice;
                 state.setupTimestamp = setupTimeMs!;
                 state.setupArmedAt = closedCandle.date.getTime() + entryTf.minutes * 60 * 1000;
-                this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger Low: ₹${(setup.triggerLow || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}.${waitNote}`);
+                this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger Low: ₹${(setup.triggerLow || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}. Monitoring for trigger...`);
 
-                // Instant execution check if already at/below trigger low (patient setups wait for a candle close instead):
-                if (!isPatientSetup && ltp && setup.triggerLow && ltp <= setup.triggerLow) {
+                // Instant execution check if already at/below trigger low:
+                if (ltp && setup.triggerLow && ltp <= setup.triggerLow) {
                   this.log(state, `[${targetSym}] 🎯 Instant SHORT Entry Triggered! ${setup.description} @ LTP ₹${ltp.toFixed(2)}`);
                   state.waitingForConfirmation = null;
                   state.confirmationLow = null;
@@ -4026,14 +4036,14 @@ export class EmaVwapCrossoverEngine {
         new Promise((_, reject) => setTimeout(() => reject(new Error('volume-history timeout')), timeoutMs)),
       ]) as any[];
       const byDay = new Map<string, Map<number, number>>();
-      const dayRange = new Map<string, { open: number; high: number; low: number }>();
+      const dayRange = new Map<string, { open: number; high: number; low: number; close: number }>();
       for (const c of data || []) {
         const d = new Date(c.date);
         const dStr = getIstDateStr(d);
         if (dStr >= todayStr) continue;
         const r = dayRange.get(dStr);
-        if (!r) dayRange.set(dStr, { open: c.open, high: c.high, low: c.low });
-        else { r.high = Math.max(r.high, c.high); r.low = Math.min(r.low, c.low); }
+        if (!r) dayRange.set(dStr, { open: c.open, high: c.high, low: c.low, close: c.close });
+        else { r.high = Math.max(r.high, c.high); r.low = Math.min(r.low, c.low); r.close = c.close; }
         if (!(c.volume > 0)) continue;
         if (!byDay.has(dStr)) byDay.set(dStr, new Map());
         byDay.get(dStr)!.set(getIstHhmm(d), c.volume);
@@ -4058,6 +4068,12 @@ export class EmaVwapCrossoverEngine {
       const lastSessions = Array.from(dayRange.keys()).sort().slice(-10).map(dStr => dayRange.get(dStr)!);
       if (lastSessions.length >= 3) {
         this.sessionRangeBySymbol.set(symbol, { dateStr: todayStr, high: Math.max(...lastSessions.map(r => r.high)), low: Math.min(...lastSessions.map(r => r.low)) });
+        let downDays = 0;
+        for (let k = lastSessions.length - 1; k > 0 && lastSessions[k].close < lastSessions[k - 1].close; k--) downDays++;
+        const pdc = lastSessions[lastSessions.length - 1].close;
+        const atrPct = this.dailyAtrBySymbol.get(symbol)?.atrPct;
+        const belowHighAtr = atrPct && pdc > 0 ? ((Math.max(...lastSessions.map(r => r.high)) - pdc) / pdc) * 100 / atrPct : 0;
+        this.dailyTrendBySymbol.set(symbol, { dateStr: todayStr, downDays, belowHighAtr });
       }
     } catch (err: any) {
       this.logger.debug?.(`Volume baseline unavailable for ${symbol} (${interval}): ${err?.message}. Using 3-session fallback.`);
@@ -4176,6 +4192,8 @@ export class EmaVwapCrossoverEngine {
       // Big fall already done (gap-down / opening drop): no short while the stock is more than PATIENT_MAX_DROP_ATR x its
       // own daily ATR below PDC.
       if (!isLong && this.isShortDropSkipOn(config) && pdc && pdc > 0 && ((pdc - close) / pdc) * 100 > metrics.dailyAtrPct * PATIENT_MAX_DROP_ATR) return null;
+      // Already fallen for days (see PATIENT_EXHAUSTED_*): no short.
+      if (!isLong && this.isExhaustedShort(targetSym, todayStr)) return null;
 
       const today = todayCandles.map(tc => tc.candle);
       const cur = today.length - 1;
@@ -4209,9 +4227,11 @@ export class EmaVwapCrossoverEngine {
         const v = vwaps[todayCandles[k].idx];
         if (v !== null && (isLong ? today[k].close < v : today[k].close > v)) reversedOpen = true;
       }
+      // The setup candle is the entry candle, so both kinds need a body in the trend direction.
+      if (!trendBody) return null;
       const setupType: StockSetupType | null = newExtreme
         ? (baseCandles >= PATIENT_BASE_CANDLES || reversedOpen ? 'PATIENT_BREAKOUT' : null)
-        : touchedEma && trendBody ? 'PATIENT_PULLBACK' : null;
+        : touchedEma ? 'PATIENT_PULLBACK' : null;
       if (!setupType) return null;
 
       // Stop at structure, no % cap: beyond the swing since the previous extreme (a breakout's base, a pullback's
@@ -4764,6 +4784,13 @@ export class EmaVwapCrossoverEngine {
   private setupScore(config: EmaVwapCrossoverConfig, candidate: { symbol: string; score: number }, scoreBoost: number): number {
     const onList = this.getWatchlist(config).includes(candidate.symbol);
     return (onList ? WATCHLIST_PRIORITY : candidate.score) + scoreBoost;
+  }
+
+  /** Patient shorts: has the stock already fallen for days (PATIENT_EXHAUSTED_DOWN_DAYS lower closes, or PATIENT_EXHAUSTED_ATR below the 10-session high)? Unknown history = no. */
+  private isExhaustedShort(symbol: string, todayStr: string): boolean {
+    const t = this.dailyTrendBySymbol.get(symbol);
+    if (!t || t.dateStr !== todayStr) return false;
+    return t.downDays >= PATIENT_EXHAUSTED_DOWN_DAYS || t.belowHighAtr >= PATIENT_EXHAUSTED_ATR;
   }
 
   /** Patient shorts: is the big-fall skip on (config.maxShortDropPct 0 = off; missing or any other value = PATIENT_MAX_DROP_ATR x daily ATR)? */
