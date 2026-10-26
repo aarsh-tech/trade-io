@@ -10,27 +10,6 @@ export interface StrategyFormState {
   stopLossRs: string;
   targetRs: string;
   exitExactAtTarget?: boolean;
-  /** EMA-VWAP stock exits: FULL = one volatility target | PARTIAL = book half at the target, rest trails | QUICK = book half at ~0.5R, rest trails | EMA = no target, all of it trails */
-  targetMode?: "FULL" | "PARTIAL" | "QUICK" | "EMA";
-  /** EMA-VWAP stocks: close a trade still within 0.25% of entry after this many minutes ("0" = off, default "35"). */
-  stagnationMinutes?: string;
-  /** EMA-VWAP stocks: widest structural stop-loss, % of entry (default "2.2"). */
-  maxStopPct?: string;
-  /** EMA-VWAP stocks: skip entries less than this % past the previous close in the trade's direction ("0" = off, default 1.5). */
-  minDayMovePct?: string;
-  /** EMA-VWAP stocks: CLASSIC = opening-drive / crossover / pullback setups (default); PATIENT = trend past VWAP + 15/40-EMA only, no fixed start time. */
-  entryStyle?: "CLASSIC" | "PATIENT";
-  /** EMA-VWAP stocks, Patient entry style: skip shorts more than this % below the previous close ("0" = off, default 3). */
-  maxShortDropPct?: string;
-  /** EMA-VWAP stocks, Patient + AUTO: comma-separated NSE symbols checked on every scan, first priority (max 10). */
-  watchlist?: string;
-  /** EMA-VWAP stocks, EMA target mode: at +1.5R move the stop to +0.5R, at +3R to +2R (default on). */
-  profitLock?: boolean;
-  /** EMA-VWAP stocks, EMA target mode: once the trade is +1.5R, exit on a 5m close across the 40-EMA instead of the 15-EMA (default on). */
-  slowTrail?: boolean;
-  /** EMA-VWAP stocks: require a volume spike on the signal candle, judged against the stock's own history. */
-  volumeFilter?: boolean;
-  volumeStrictness?: "RELAXED" | "BALANCED" | "STRICT";
   maxTradesPerDay: string;
   minPremium: string;
   maxPremium: string;
@@ -39,10 +18,6 @@ export interface StrategyFormState {
   // EMA-VWAP crossover
   emaPeriod: string;
   vwapSource: "close" | "hlc3";
-  /** EMA-VWAP stocks: candles that find entries. 1min starts at 09:16; the stop-loss and trend exit stay on 5m. */
-  entryTimeframe?: "1min" | "5min";
-  /** EMA-VWAP stocks, AUTO mode: top-ranked stocks checked for a setup on every scan (1-25, default 20). */
-  scanDepth?: string;
   isOptionBuyingOnly: boolean;
   // EMA-VWAP Options (NIFTY / BANKNIFTY / SENSEX; `symbol` holds the index, `stopLossRs` the max loss per trade)
   evoMaxLots: string;

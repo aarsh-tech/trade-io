@@ -993,39 +993,9 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
       )}
 
       {form.type === "EMA_VWAP_CROSSOVER" && (
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs sm:text-sm font-semibold text-foreground mb-2 block">EMA Period</label>
-            <Input type="number" value={form.emaPeriod} onChange={(e) => set("emaPeriod", e.target.value)} className="font-semibold text-xs h-10 bg-background border-border text-foreground rounded-lg" />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Trades the stock itself (intraday). For NIFTY, BANKNIFTY or SENSEX options, use the EMA-VWAP Index Options strategy.
-          </p>
-          <div className="p-4 rounded-lg border border-border bg-card space-y-2.5">
-            <div>
-              <label htmlFor="ema-vwap-entry-tf" className="text-xs sm:text-sm font-semibold text-foreground block">Entry Timeframe</label>
-              <p className="text-xs text-foreground/75 font-medium mt-0.5">
-                Candles used to find entries. The stop-loss and the 15-EMA trend exit always use 5-minute candles.
-              </p>
-            </div>
-            <select
-              id="ema-vwap-entry-tf"
-              value={form.entryTimeframe || "5min"}
-              onChange={(e) => set("entryTimeframe", e.target.value as "1min" | "5min")}
-              className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-semibold"
-            >
-              <option value="5min">5-Minute Candles (Standard — trading starts 09:20)</option>
-              <option value="1min">1-Minute Candles (Earlier entries — trading starts 09:16, more signals)</option>
-            </select>
-          </div>
-          <NumberField
-            label="Stocks checked per scan"
-            value={form.scanDepth ?? "20"}
-            onChange={(v) => set("scanDepth", v)}
-            min={1}
-            hint="AUTO stock selection only. The top-ranked momentum stocks checked for a setup on every scan (1 to 25); the best-scoring setup is traded."
-          />
-        </div>
+        <p className="text-xs text-muted-foreground">
+          Trades the stock itself (intraday) on 5-minute candles with the 15-EMA; AUTO checks the scanner&apos;s top 20 stocks. For NIFTY, BANKNIFTY or SENSEX options, use the EMA-VWAP Index Options strategy.
+        </p>
       )}
 
       {form.type === "STOCK_OPTIONS_BUYING" && (

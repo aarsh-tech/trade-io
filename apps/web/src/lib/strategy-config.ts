@@ -56,7 +56,6 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['stagnationMinutes', 'Stagnation exit (minutes)', 0, 360, true],
   ['maxStopPct', 'Max stop-loss distance (%)', 0.85, 5, false],
   ['minDayMovePct', 'Min move from previous close (%)', 0, 5, false],
-  ['maxShortDropPct', 'Max fall below previous close for a short (%)', 0, 10, false],
   ['minVolumeMultiple', 'Crossover volume multiple', 0, 10, false],
 ];
 
@@ -107,15 +106,6 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
   }
   if (type === 'EMA_VWAP_CROSSOVER' && isSet(config.entryTimeframe) && !['1min', '5min'].includes(String(config.entryTimeframe))) {
     errors.push('Entry timeframe must be 1min or 5min');
-  }
-  if (type === 'EMA_VWAP_CROSSOVER' && isSet(config.entryStyle) && !['CLASSIC', 'PATIENT'].includes(String(config.entryStyle))) {
-    errors.push('Entry style must be CLASSIC or PATIENT');
-  }
-  if (type === 'EMA_VWAP_CROSSOVER' && isSet(config.watchlist)) {
-    const list = config.watchlist;
-    if (!Array.isArray(list)) errors.push('Watchlist must be a list of NSE symbols');
-    else if (list.length > 10) errors.push('Watchlist can hold at most 10 stocks');
-    else if (list.some((s: unknown) => typeof s !== 'string' || !/^[A-Z0-9&_-]{1,20}$/.test(s.trim().toUpperCase()))) errors.push('Watchlist symbols must be NSE trading symbols such as PRAJIND');
   }
   if (isSet(config.symbol) && String(config.symbol).trim() === '') errors.push('Symbol must not be blank');
   if (type === 'EMA_VWAP_OPTIONS' && isSet(config.symbol) && !['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(String(config.symbol))) {

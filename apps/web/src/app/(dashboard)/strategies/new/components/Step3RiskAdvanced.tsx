@@ -3,7 +3,7 @@
 import React from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Shield, Target, Zap, TrendingUp, Info, Activity, Timer } from "lucide-react";
+import { Shield, Target, Zap, TrendingUp, Info, Activity } from "lucide-react";
 import { StrategyFormState } from "../types";
 import { NumberField } from "../../_components/form-ui";
 
@@ -922,16 +922,17 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
       {(form.type === "EMA_VWAP_CROSSOVER" || form.type === "EMA_RSI_OPTIONS") && (
         <div className="space-y-4">
           {form.type === "EMA_VWAP_CROSSOVER" ? (
-            <div className="p-4 rounded-lg bg-profit-subtle border-2 border-profit/30 space-y-1.5">
+            <div className="p-4 rounded-lg bg-profit-subtle border-2 border-profit/30 space-y-2">
               <div className="flex items-center gap-2">
                 <TrendingUp className="h-4 w-4 text-profit shrink-0" />
-                <p className="text-xs font-semibold text-profit font-semibold">
-                  Strict Risk-Based Sizing &amp; 15-EMA Live Trailing Active
-                </p>
+                <p className="text-xs font-semibold text-profit">Fixed rules (the backtested set)</p>
               </div>
-              <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
-                Strict Risk-Based Sizing (Loss capped at your Stop Loss ₹, e.g. ₹500) &amp; max 25% capital deployed per trade at 5x MIS leverage. Stop Loss is placed structurally below entry with a safety buffer (capped at 1.2% max) and trailed live with 15-EMA directly on Zerodha exchange servers.
-              </p>
+              <ul className="text-xs text-foreground font-medium leading-relaxed list-disc pl-4 space-y-1">
+                <li>Entries: opening-drive, inside-candle, crossover and pullback setups on 5-minute candles from 09:20, with a volume spike against the stock&apos;s own last 10 sessions. The stock must already be 1.5% past yesterday&apos;s close in the trade&apos;s direction. AUTO checks the scanner&apos;s top 20 stocks.</li>
+                <li>Stop: beyond the setup&apos;s swing, 0.85% to 1.2% from the entry. Shares = your max loss per trade ÷ the stop distance.</li>
+                <li>Exit: no fixed target. The trade exits when a 5-minute candle closes across the 15-EMA. At +1.5R the stop moves to +0.5R and the exit switches to the 40-EMA; at +3R the stop moves to +2R. Everything is closed at 15:05.</li>
+                <li>2-year backtest at ₹500 risk, 1 trade a day, after charges: +₹35.5k, both years positive, 14 of 24 months green, worst drawdown ₹6.6k. Live results usually come in lower.</li>
+              </ul>
             </div>
           ) : (
             <div className="p-4 rounded-lg bg-secondary/40 border border-border flex gap-3">
@@ -943,356 +944,29 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             </div>
           )}
 
-          {/* Volume confirmation (EMA-VWAP stocks) */}
-          {form.type === "EMA_VWAP_CROSSOVER" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-primary shrink-0" />
-                  <span className="text-sm font-semibold text-foreground">Volume Confirmation</span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.volumeFilter !== false}
-                    onChange={(e) => set("volumeFilter", e.target.checked)}
-                    className="sr-only peer"
-                    aria-label="Require volume confirmation on every entry"
-                  />
-                  <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
-                </label>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Every long and short entry needs a volume spike on its signal candle, compared with that stock&apos;s own volume at the same time of day over the last 10 sessions. Checked on every new 5-minute candle after 09:20, so a calm stock needs a smaller spike than a noisy one.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Volume strictness">
-                {([
-                  { value: "RELAXED", title: "Relaxed", body: "More trades. Volume clearly above normal." },
-                  { value: "BALANCED", title: "Balanced", body: "Recommended. Volume well above the stock's normal." },
-                  { value: "STRICT", title: "Strict", body: "Fewest trades. Only exceptional volume spikes." },
-                ] as const).map((opt) => {
-                  const selected = (form.volumeStrictness || "BALANCED") === opt.value && form.volumeFilter !== false;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      disabled={form.volumeFilter === false}
-                      onClick={() => set("volumeStrictness", opt.value)}
-                      className={`text-left p-3 rounded-lg border-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
-                    >
-                      <p className="text-xs font-semibold text-foreground">{opt.title}</p>
-                      <p className="text-[11px] text-foreground/75 font-medium leading-relaxed mt-1">{opt.body}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Target mode (EMA-VWAP stocks): how profits are taken */}
-          {form.type === "EMA_VWAP_CROSSOVER" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center gap-2">
-                <Target className="h-4 w-4 text-profit shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Profit Target Mode</span>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Targets are sized from each stock&apos;s own daily volatility (ATR), not a fixed number. The stop-loss stays at the structural swing level in every mode.
-                {form.exitExactAtTarget && " Turned off while the Fixed Rupee Target below is on."}
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Profit target mode">
-                {([
-                  { value: "FULL", title: "Full exit", body: "One target at 0.5x the stock's daily range, whole position exits there. No trailing. Highest win rate in backtests." },
-                  { value: "PARTIAL", title: "Partial booking", body: "Book half at that target, the other half rides until a 5m candle closes across the 15-EMA. Runner stop moves to break-even." },
-                  { value: "QUICK", title: "Quick wins", body: "Book half at a small 0.5R target (hit about half the time), the rest rides the 15-EMA candle-close exit." },
-                  { value: "EMA", title: "Ride the 15-EMA", body: "No target and no half-booking. The whole position stays in until a 5m candle closes across the 15-EMA, the stop is hit, or 15:05. Best result in the 2-year backtest with the stagnation exit off." },
-                ] as const).map((opt) => {
-                  const selected = (form.targetMode || "FULL") === opt.value && !form.exitExactAtTarget;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      disabled={!!form.exitExactAtTarget}
-                      onClick={() => set("targetMode", opt.value)}
-                      className={`text-left p-3 rounded-lg border-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${selected ? "border-profit bg-profit-subtle/50" : "border-border bg-background hover:border-profit/50"}`}
-                    >
-                      <p className="text-xs font-semibold text-foreground">{opt.title}</p>
-                      <p className="text-[11px] text-foreground/75 font-medium leading-relaxed mt-1">{opt.body}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Profit lock (EMA-VWAP stocks, ride-the-15-EMA mode): steps the stop into profit */}
-          {form.type === "EMA_VWAP_CROSSOVER" && form.targetMode === "EMA" && !form.exitExactAtTarget && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-profit shrink-0" />
-                  <span className="text-sm font-semibold text-foreground">Profit Lock</span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.profitLock !== false}
-                    onChange={(e) => set("profitLock", e.target.checked)}
-                    className="sr-only peer"
-                    aria-label="Profit lock"
-                  />
-                  <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
-                </label>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                R is the entry&apos;s stop distance (your max loss). Once the trade is +1.5R the stop moves to +0.5R, and at +3R to +2R, so a big open profit can&apos;t turn into a small one. The 15-EMA candle-close exit still applies. In the 2-year backtest this made about 40% more than leaving the stop where it started, in both years.
-              </p>
-            </div>
-          )}
-
-          {/* Slow Trail (EMA-VWAP stocks, ride-the-15-EMA mode) */}
-          {form.type === "EMA_VWAP_CROSSOVER" && form.targetMode === "EMA" && !form.exitExactAtTarget && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-profit shrink-0" />
-                  <span className="text-sm font-semibold text-foreground">Slow Trail</span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.slowTrail !== false}
-                    onChange={(e) => set("slowTrail", e.target.checked)}
-                    className="sr-only peer"
-                    aria-label="Slow Trail"
-                  />
-                  <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
-                </label>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Once the trade is +1.5R, it exits on a 5m candle close across the 40-EMA instead of the 15-EMA, so a big run isn&apos;t cut on its first dip. The stop and the profit lock still apply. In the 2-year backtest this made about 25% more, in both years, with the same win rate and drawdown.
-              </p>
-            </div>
-          )}
-
-          {/* Stagnation exit (EMA-VWAP stocks): time-stop for trades that go nowhere */}
-          {form.type === "EMA_VWAP_CROSSOVER" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center gap-2">
-                <Timer className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Stagnation Exit</span>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Closes the trade if it is still within 0.25% of the entry price after this long. In the 2-year backtest a longer time (or off) did better: 35 min closed many trades near break-even before they moved.
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Stagnation exit">
-                {([
-                  { value: "0", title: "Off" },
-                  { value: "35", title: "35 min" },
-                  { value: "60", title: "60 min" },
-                  { value: "120", title: "120 min" },
-                ] as const).map((opt) => {
-                  const selected = (form.stagnationMinutes ?? "35") === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => set("stagnationMinutes", opt.value)}
-                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
-                    >
-                      {opt.title}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Entry style (EMA-VWAP stocks): classic opening setups or patient trend entries (no fixed start time) */}
-          {form.type === "EMA_VWAP_CROSSOVER" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Entry Style</span>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Classic trades the opening-drive, crossover and pullback setups from 09:20. Patient has no fixed start time: it waits as long as it takes and only enters a stock whose 5m candle closes above VWAP, the 15-EMA and the 40-EMA (below all three for a short, with the 15-EMA past the 40-EMA), on a new day high/low after a pause of at least 3 candles, or straight away once the stock has crossed VWAP earlier today (a new trend that reversed the open; it never chases the opening drive), or a pullback that touches the 15-EMA today. It enters at market as soon as that candle closes (green for a long, red for a short), with no second confirming candle. It does not short a stock that has already fallen 5 days in a row or is 3+ daily ranges below its 10-day high. It has no minimum day move and checks the scanner's top 50 stocks. Its stop sits beyond that base or pullback with no % cap, so it buys fewer shares for the same max loss; a setup whose stop would be wider than 4% is skipped. Patient is new and lost money in the 2-year backtest, so try it in paper mode first.
-              </p>
-              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Entry style">
-                {([
-                  { value: "CLASSIC", title: "Classic", desc: "From 09:20" },
-                  { value: "PATIENT", title: "Patient trend", desc: "Waits for VWAP + 15/40-EMA trend" },
-                ] as const).map((opt) => {
-                  const selected = (form.entryStyle ?? "CLASSIC") === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => set("entryStyle", opt.value)}
-                      className={`p-2.5 rounded-lg border-2 text-left transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
-                    >
-                      <div className="text-xs font-semibold text-foreground">{opt.title}</div>
-                      <div className="text-[11px] text-foreground/70 font-medium">{opt.desc}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Patient entry style: skip shorts in stocks that have already fallen a lot (big gap-down / opening drop) */}
-          {form.type === "EMA_VWAP_CROSSOVER" && form.entryStyle === "PATIENT" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Skip Big Falls (Shorts)</span>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-Auto: Patient mode does not short a stock that is already more than 1.5x its own average daily range (10-session ATR) below yesterday&apos;s close, so the limit scales with each stock instead of a fixed %. After a big gap-down or opening drop most of the fall is done and the stock often chops back up into the stop. Longs are not affected.
-              </p>
-              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Skip big falls for shorts">
-                {([
-                  { value: "3", title: "Auto (1.5x daily ATR)" },
-                  { value: "0", title: "Off" },
-                ] as const).map((opt) => {
-                  // Any value other than 0 is the ATR rule (older strategies saved 3, 4 or 5).
-                  const selected = (Number(form.maxShortDropPct ?? "3") !== 0) === (opt.value !== "0");
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => set("maxShortDropPct", opt.value)}
-                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
-                    >
-                      {opt.title}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Patient entry style: watchlist stocks checked on every scan, whatever their volume or scanner rank */}
-          {form.type === "EMA_VWAP_CROSSOVER" && form.entryStyle === "PATIENT" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Watchlist</span>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Up to 10 NSE stocks (for example PRAJIND) that the bot checks on every 5m candle next to the scanner&apos;s top picks, even when their volume is low or they are not top gainers/losers. A setup in a watchlist stock is taken before any scanner setup. Same patient rules, stop and exits. Works with Auto stock selection; separate the symbols with commas.
-              </p>
-              <Input
-                value={form.watchlist ?? ""}
-                onChange={(e) => set("watchlist", e.target.value.toUpperCase())}
-                placeholder="PRAJIND, TCS"
-                aria-label="Watchlist symbols"
-                className="bg-background border-border text-foreground font-semibold"
-              />
-            </div>
-          )}
-
-          {/* Min day move (EMA-VWAP stocks, Classic only): skip entries in stocks that have barely moved from the previous close */}
-          {form.type === "EMA_VWAP_CROSSOVER" && form.entryStyle !== "PATIENT" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Min Day Move</span>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                Skips a setup unless the stock is already this far past yesterday&apos;s close in the trade&apos;s direction (a buy needs the price above the previous close by this much). Stocks that have barely moved lost money in the backtest. In the 2-year backtest 1.5% made about 23% more, in both years, with the same win rate and drawdown. Classic entry style only: Patient has no minimum day move.
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Min day move">
-                {([
-                  { value: "0", title: "Off" },
-                  { value: "1", title: "1%" },
-                  { value: "1.5", title: "1.5%" },
-                  { value: "2", title: "2%" },
-                ] as const).map((opt) => {
-                  const selected = Number(form.minDayMovePct ?? "1.5") === Number(opt.value);
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => set("minDayMovePct", opt.value)}
-                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
-                    >
-                      {opt.title}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Max stop distance (EMA-VWAP stocks): caps how far the structural stop may sit from the entry */}
-          {form.type === "EMA_VWAP_CROSSOVER" && (
-            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-3">
-              <div className="flex items-center gap-2">
-                <Shield className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Max Stop Distance</span>
-              </div>
-              <p className="text-xs text-foreground/75 font-medium leading-relaxed">
-                The stop sits beyond the day&apos;s swing low/high, but never further than this from the entry. A tighter stop buys more shares for the same max loss, so a normal move earns more. In the 2-year backtest 1.2% made about 3x what 2.2% made, with more trades stopped out.{form.entryStyle === "PATIENT" ? " Classic entry style only: Patient entries use the structural stop with no % cap." : ""}
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Max stop distance">
-                {([
-                  { value: "1", title: "1.0%" },
-                  { value: "1.2", title: "1.2%" },
-                  { value: "1.5", title: "1.5%" },
-                  { value: "2.2", title: "2.2% (old)" },
-                ] as const).map((opt) => {
-                  const selected = Number(form.maxStopPct || "2.2") === Number(opt.value);
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => set("maxStopPct", opt.value)}
-                      className={`p-2.5 rounded-lg border-2 text-xs font-semibold text-foreground transition-colors ${selected ? "border-primary bg-secondary/40" : "border-border bg-background hover:border-primary/50"}`}
-                    >
-                      {opt.title}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Exit Exact at Target Toggle */}
-          <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Target className="h-4 w-4 text-profit shrink-0" />
-                <span className="text-sm font-semibold text-foreground">Exit Exact at Target (Fixed Profit Target)</span>
+          {form.type === "EMA_RSI_OPTIONS" && (
+            <div className="p-4 rounded-lg bg-card border-2 border-border space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-profit shrink-0" />
+                  <span className="text-sm font-semibold text-foreground">Exit Exact at Target (Fixed Profit Target)</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.exitExactAtTarget || false}
+                    onChange={(e) => set("exitExactAtTarget", e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
+                </label>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.exitExactAtTarget || false}
-                  onChange={(e) => set("exitExactAtTarget", e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-9 h-5 bg-input peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-on-profit after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-input after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-profit"></div>
-              </label>
+              <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
+                When enabled, immediately squares off the position the moment your exact target profit (e.g. <strong className="text-foreground font-semibold">₹{form.targetRs || "500"}</strong>) or stop loss (e.g. <strong className="text-foreground font-semibold">₹{form.stopLossRs || "500"}</strong>) is hit, with zero trailing or giving back gains.
+              </p>
             </div>
-            <p className="text-xs text-foreground font-medium leading-relaxed font-normal">
-              When enabled, immediately squares off the position the moment your exact target profit (e.g. <strong className="text-foreground font-semibold">₹{form.targetRs || "500"}</strong>) or stop loss (e.g. <strong className="text-foreground font-semibold">₹{form.stopLossRs || "500"}</strong>) is hit, with zero trailing or giving back gains.
-            </p>
-          </div>
+          )}
         </div>
       )}
     </div>
