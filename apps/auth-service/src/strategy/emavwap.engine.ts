@@ -29,6 +29,8 @@ interface StockSetup {
   candleIdx: number;
   scoreBoost: number;
   description: string;
+  /** The chart swing the stop is anchored to (before the buffer and the maxStopPct cap); logged at entry. */
+  structurePrice?: number | null;
 }
 
 interface StrategyState {
@@ -121,6 +123,8 @@ interface StrategyState {
   slBreachAt?: number | null;
   /** Close (ms) of the candle on which the pending setup was detected; setup validity is counted from here. */
   setupArmedAt?: number | null;
+  /** Chart swing level of the armed setup (StockSetup.structurePrice), for the entry log. */
+  setupStructure?: number | null;
   /** Symbols the broker refused for a new entry (e.g. MIS blocked), with the time (ms) until which they are skipped. */
   rejectedSymbols?: Map<string, number>;
 }
@@ -226,6 +230,8 @@ export class EmaVwapCrossoverEngine {
   private readonly dailyAtrBySymbol = new Map<string, { dateStr: string; atrPct: number; sessions: number }>();
   /** Symbols the instrument master had no tick size for, so ensureTickSize doesn't rescan the master every tick. */
   private readonly tickSizeMisses = new Set<string>();
+  /** Swing level the last getSwingShelfSl call anchored to (evaluateStockSetupRaw is synchronous, so it can't be overwritten mid-read). */
+  private lastSwingStructure: number | null = null;
 
   constructor(
     private prisma: PrismaService,
@@ -1558,6 +1564,7 @@ export class EmaVwapCrossoverEngine {
                 state.confirmationHigh = setup.triggerHigh;
                 state.confirmationLow = null;
                 state.invalidationPrice = setup.slPrice;
+                state.setupStructure = setup.structurePrice ?? null;
                 state.setupTimestamp = setupTimeMs!;
                 state.setupArmedAt = closedCandle.date.getTime() + entryTf.minutes * 60 * 1000;
                 this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger High: ₹${(setup.triggerHigh || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}. Monitoring for trigger...`);
@@ -1578,6 +1585,7 @@ export class EmaVwapCrossoverEngine {
                 state.confirmationHigh = null;
                 state.confirmationLow = setup.triggerLow;
                 state.invalidationPrice = setup.slPrice;
+                state.setupStructure = setup.structurePrice ?? null;
                 state.setupTimestamp = setupTimeMs!;
                 state.setupArmedAt = closedCandle.date.getTime() + entryTf.minutes * 60 * 1000;
                 this.log(state, `[${targetSym}] 🚀 Detected ${setup.description}! Trigger Low: ₹${(setup.triggerLow || 0).toFixed(2)}, SL (${setup.slNote}): ₹${setup.slPrice.toFixed(2)}. Monitoring for trigger...`);
@@ -1907,6 +1915,14 @@ export class EmaVwapCrossoverEngine {
         );
       }
 
+      // Where the chart structure was vs the stop actually placed (reference only; the stop rule is unchanged).
+      if (state.setupStructure && !triggerTime) {
+        const structPct = (Math.abs(entry - state.setupStructure) / entry) * 100;
+        const beyond = finalSide === 'BUY' ? state.setupStructure < entry : state.setupStructure > entry;
+        const insideIt = finalSide === 'BUY' ? sl > state.setupStructure : sl < state.setupStructure;
+        this.log(state, `🧱 [STRUCTURE] Swing ${finalSide === 'BUY' ? 'low' : 'high'} ₹${state.setupStructure.toFixed(2)} (${beyond ? `${structPct.toFixed(2)}% from entry` : 'on the wrong side of entry'}) | Stop ₹${sl.toFixed(2)} ${beyond && insideIt ? `is the ${maxStopPct}% cap, inside the structure` : 'sits beyond the structure'}`);
+      }
+      state.setupStructure = null;
       if (state.fibLevels) this.log(state, this.formatFibLog(state.fibLevels));
 
       this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}${config.exitExactAtTarget ? ' (Fixed Exact Target Mode)' : ''}`);
@@ -3920,8 +3936,10 @@ export class EmaVwapCrossoverEngine {
     symbol?: string,
     tf: { interval?: 'minute' | '5minute'; slCandles?: Candle[] } = {}
   ): StockSetup | null {
+    this.lastSwingStructure = null;
     const setup = this.evaluateStockSetupRaw(candles, emas, vwaps, now, config, symbol, tf.slCandles);
     if (!setup) return null;
+    setup.structurePrice = this.lastSwingStructure;
     if (config.enableRvolVolumeFilter === false) return setup;
     const symKey = this.volumeBaselineKey(symbol ?? config.symbol, tf.interval ?? '5minute');
     const opts = {
@@ -4078,6 +4096,7 @@ export class EmaVwapCrossoverEngine {
         const trueSwingLow = (dayLow > 0 && (currCandle.close - dayLow) <= maxBreathingDist)
           ? Math.min(dayLow, shelfLow, candleExtreme)
           : Math.min(shelfLow, candleExtreme);
+        this.lastSwingStructure = trueSwingLow;
         const rawDistance = currCandle.close - (trueSwingLow - volatilityBuffer);
         const slDistance = Math.min(maxBreathingDist, Math.max(minBreathingDist, rawDistance));
         return this.roundTick(currCandle.close - slDistance, targetSym);
@@ -4086,6 +4105,7 @@ export class EmaVwapCrossoverEngine {
         const trueSwingHigh = (dayHigh > 0 && (dayHigh - currCandle.close) <= maxBreathingDist)
           ? Math.max(dayHigh, shelfHigh, candleExtreme)
           : Math.max(shelfHigh, candleExtreme);
+        this.lastSwingStructure = trueSwingHigh;
         const rawDistance = (trueSwingHigh + volatilityBuffer) - currCandle.close;
         const slDistance = Math.min(maxBreathingDist, Math.max(minBreathingDist, rawDistance));
         return this.roundTick(currCandle.close + slDistance, targetSym);
