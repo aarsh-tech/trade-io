@@ -168,6 +168,7 @@ export interface EmaVwapCrossoverConfig {
   enableTrendReEntry?: boolean;       // Allow 1 trend continuation re-entry if price reclaims EMA with volume (default: true)
   minStockPrice?: number;             // Minimum stock price floor for auto scanner (default: ₹300)
   scanDepth?: number;                 // Auto mode: top-ranked stocks checked for a setup on every scan; the best-scoring setup is traded (default: 20, max 25)
+  maxArmedSetups?: number;            // Auto mode: setups watched at once (tracked one included); the first to trigger is entered, ties by score (default 1 = only the tracked one, max 5)
   enableHybridTrailing?: boolean;     // Hybrid mode: In Exact Target mode, trail SL to 15-EMA & VWAP with 0.30% noise buffer once Break-Even is locked (default: true)
   entryCutoffTime?: string;           // Optional user-set entry cutoff, IST (default: none; hard stop at 15:00 because of the 15:05 square-off)
   disabledSetupTypes?: string[];      // Setup types to skip (default: ['TREND_BREAKOUT'] — negative expectancy in backtest)

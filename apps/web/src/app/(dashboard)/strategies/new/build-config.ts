@@ -1,29 +1,6 @@
 import type { StrategyFormState } from "./types";
 import { getLotSize } from "./types";
 
-/**
- * Intraday Stock Picker (EMA_VWAP_CROSSOVER): the one rule set the 2-year backtest used (Classic setups, 5m, 15-EMA ride,
- * profit lock + 40-EMA slow trail, 1.2% max stop, 1.5% min day move, volume gate). The engine applies the same values on
- * start, so older saved configs run it too; only the stock, ₹ risk, daily ₹ lock and trades per day are the user's.
- */
-const STOCK_PICKER_RULES = {
-  emaPeriod: 15,
-  vwapSource: "close",
-  entryTimeframe: "5min",
-  scanDepth: 20,
-  targetMode: "EMA",
-  exitExactAtTarget: false,
-  enableProfitFloor: true,
-  profitLock: true,
-  slowTrail: true,
-  stagnationMinutes: 0,
-  maxStopPct: 1.2,
-  minDayMovePct: 1.5,
-  enableRvolVolumeFilter: true,
-  enableDynamicVolume: true,
-  minVolumeZ: 1.5,
-  minRvolFloor: 1.5,
-} as const;
 
 /** Turns the wizard's string-typed form into the JSON config object the engines and the API expect. */
 export function buildStrategyConfig(form: StrategyFormState): Record<string, any> {
@@ -230,6 +207,9 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       instrumentType: form.instrumentType,
       emaPeriod: Number(form.emaPeriod),
       vwapSource: form.vwapSource || 'close',
+      // 1m entries are equity-only; the engine keeps 5m for option mode either way.
+      entryTimeframe: !optionMode && form.entryTimeframe === "1min" ? "1min" : "5min",
+      ...(form.type === "EMA_VWAP_CROSSOVER" && { scanDepth: Number(form.scanDepth || 20), maxArmedSetups: Number(form.maxArmedSetups || 1), stagnationMinutes: Number(form.stagnationMinutes || 0), maxStopPct: Number(form.maxStopPct || 1.2), minDayMovePct: Number(form.minDayMovePct ?? 1.5), profitLock: form.profitLock !== false, slowTrail: form.slowTrail !== false }),
       isOptionBuyingOnly: optionMode,
       qty,
       lots: Number(form.lots),
@@ -239,12 +219,18 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       exitExactAtTarget: !!form.exitExactAtTarget,
       maxTradesPerDay: Number(form.maxTradesPerDay),
       enableProfitFloor: form.enableProfitFloor,
+      // Only the stock picker lets the user pick; the legacy types sharing its engine always ran FULL.
+      targetMode: form.type === "EMA_VWAP_CROSSOVER" ? form.targetMode || "EMA" : "FULL",
+      // Volume confirmation (dynamic, per stock). Strictness maps to the z-score tested in the 2-year backtest.
+      enableRvolVolumeFilter: form.volumeFilter !== false,
+      enableDynamicVolume: true,
+      minVolumeZ: form.volumeStrictness === "STRICT" ? 2 : form.volumeStrictness === "RELAXED" ? 1 : 1.5,
+      minRvolFloor: 1.5,
       profitFloorBufferRs: Number(form.profitFloorBufferRs || 100),
       ...(optionMode && {
         minPremium: Number(form.minPremium),
         maxPremium: Number(form.maxPremium),
       }),
-      ...(form.type === "EMA_VWAP_CROSSOVER" && STOCK_PICKER_RULES),
     };
   }
 

@@ -33,6 +33,23 @@ interface StockSetup {
   structurePrice?: number | null;
 }
 
+/** A scanned setup in another stock, watched next to the tracked one (config.maxArmedSetups); the first to trigger is entered. */
+interface WatchedSetup {
+  symbol: string;
+  exchange: string;
+  qty: number;
+  trend: 'LONG' | 'SHORT';
+  setupType: StockSetupType;
+  trigger: number;
+  slPrice: number;
+  structure: number | null;
+  candleTime: number;
+  /** Close (ms) of the candle the scan found it on; validity (4 candles opening drive, else 2) is counted from here. */
+  armedAt: number;
+  score: number;
+  description: string;
+}
+
 interface StrategyState {
   strategyId: string;
   executionId: string;
@@ -127,6 +144,10 @@ interface StrategyState {
   setupStructure?: number | null;
   /** Symbols the broker refused for a new entry (e.g. MIS blocked), with the time (ms) until which they are skipped. */
   rejectedSymbols?: Map<string, number>;
+  /** Auto mode: scan score of the tracked stock's setup, compared with the watched setups when several trigger together. */
+  activeScore?: number;
+  /** Auto mode: setups in other stocks watched for their trigger next to the tracked one (best score first). */
+  watchedSetups?: WatchedSetup[];
 }
 
 /** Live: price beyond the stop this long without the exchange SL filling → market exit (same as the options engine). */
@@ -135,6 +156,23 @@ const SL_BREACH_GRACE_MS = 3000;
 /** Auto mode: how many of the scanner's top-ranked stocks are checked for a setup on every scan (config `scanDepth`). */
 const DEFAULT_SCAN_DEPTH = 20;
 const MAX_SCAN_DEPTH = 25;
+/**
+ * Auto mode: setups armed at once (config `maxArmedSetups`, the tracked one included). Each scan's best setups are all
+ * watched; the first to trade through its trigger is entered (same tick: best score). The user asked for it on 27 Oct 2026
+ * (TATACONSUM broke its 09:25 trigger ~980 while ERIS was tracked; entry came at 985.75). 2-year real-engine backtest:
+ * 1 = +₹35.5k, 2 = +₹19.1k, 3 = +₹26.1k, all = +₹19.4k with the old NIFTY-relative ranking and 4% EMA stretch; with own-move
+ * ranking and ORB_MAX_EMA_STRETCH_PCT 6: 1 = +₹47.6k, 2 = +₹43.6k (DD ₹5.5k), 3 = +₹44.7k (Y1 23.8k, Y2 20.8k, DD ₹7.6k).
+ */
+/** The user picked watching 1 (27 Oct 2026): the +₹47.6k rule set. */
+const DEFAULT_MAX_ARMED_SETUPS = 1;
+/**
+ * Opening-range setups: the close may sit at most this % from the 15-EMA (was max(4%, 2x the recent candle range), in
+ * practice 4%). The 5m 15-EMA still carries yesterday's candles, so on a gap day the strongest movers sit 5%+ above it and
+ * never qualified (27 Oct 2026: SONACOMS 5.5%, MANKIND 5.0%). 2-year real-engine backtest with own-move ranking:
+ * 4% +₹41.5k, 5% +₹39.2k, 6% +₹47.6k (Y1 28.7k, Y2 18.9k, DD ₹6.8k, 18/24 green), 7% +₹49.6k, 8% +₹42.8k, no cap +₹46.5k.
+ */
+const ORB_MAX_EMA_STRETCH_PCT = 6;
+const MAX_ARMED_SETUPS = 5;
 /** Widest stop allowed, % of entry (maxStopPct). The 2-year backtest did better the tighter this was (2.2% -> 1.0%). */
 const DEFAULT_MAX_STOP_PCT = 2.2;
 const MIN_STOP_PCT = 0.85;
@@ -163,8 +201,8 @@ const DEFAULT_MIN_DAY_MOVE_PCT = 1.5;
  * (live evaluateStockSetup on the 2-year 5m cache, IN_PLAY scanner, 1m exits, costs + 0.03% slippage): +₹35.5k over two
  * years (Y1 +₹20.4k, Y2 +₹15.1k), 14/24 green months, drawdown ₹6.6k; +₹23.9k with double slippage. The Patient entry
  * style it replaces lost ₹23.7k on the same test, and every filter tried on it lost too, so it was removed. These values
- * override whatever an older saved config holds; the user still sets the stock (or AUTO), the ₹ risk, the daily ₹ lock
- * and the trades per day.
+ * are the defaults: they fill any setting a saved config leaves out, and the wizard starts from them. A setting the user
+ * saved (target mode, fixed ₹ target, max stop, min day move, stagnation exit, volume gate, entry timeframe...) is kept.
  */
 const STOCK_PICKER_RULES: Partial<EmaVwapCrossoverConfig> = {
   emaPeriod: 15,
@@ -266,9 +304,13 @@ export class EmaVwapCrossoverEngine {
     // Older configs may still carry the option-buying switch; this engine always trades the stock itself.
     const ignoredOptionSwitch = config.isOptionBuyingOnly === true;
     config.isOptionBuyingOnly = false;
-    // The stock picker always runs the backtested rule set (see STOCK_PICKER_RULES); legacy types sharing this engine keep theirs.
+    // The stock picker's unset settings take the backtested values (see STOCK_PICKER_RULES); saved ones are kept.
+    // Legacy types sharing this engine keep theirs.
     if (strategy.type === 'EMA_VWAP_CROSSOVER') {
-      Object.assign(config, STOCK_PICKER_RULES);
+      for (const [k, v] of Object.entries(STOCK_PICKER_RULES)) {
+        const cur = (config as any)[k];
+        if (cur === undefined || cur === null || cur === '') (config as any)[k] = v;
+      }
       for (const k of ['entryStyle', 'watchlist', 'maxShortDropPct']) delete (config as any)[k];
     }
     // FULL target mode = one volatility-based target with the exchange-side LIMIT order, no trailing and no EMA candle exit
@@ -1350,6 +1392,8 @@ export class EmaVwapCrossoverEngine {
             if (shouldSwitch) {
               if (state.waitingForConfirmation && state.activeSymbol !== best.candidate.symbol) {
                 this.log(state, `🔄 Pivoting from idle setup [${state.activeSymbol}] -> Active breakout leader [${best.candidate.symbol}] (Score: ${best.candidate.score})`);
+                // Multi-watch: the idle setup keeps its trigger as a watched one until it expires.
+                if (this.getMaxArmedSetups(config) > 1) this.demoteTrackedSetup(state, entryTf.minutes);
                 state.waitingForConfirmation = null;
                 state.confirmationHigh = null;
                 state.confirmationLow = null;
@@ -1361,9 +1405,11 @@ export class EmaVwapCrossoverEngine {
                 this.log(state, `🎯 Live Auto-Selected Stock with Active Setup: [${best.candidate.symbol}] (Score: ${best.candidate.score}, Qty: ${best.candidate.qty}) — ${best.details.description}`);
               }
               state.activeSymbol = best.candidate.symbol;
+              state.activeScore = best.candidate.score;
               config.exchange = best.candidate.exchange;
               config.qty = best.candidate.qty;
             }
+            if (this.getMaxArmedSetups(config) > 1) this.refreshWatchedSetups(state, activeSetups, entryTf.minutes);
           } else if (candidates.length > 0 && !state.waitingForConfirmation) {
             const fallback = candidates[0];
             const isDifferentSymbol = state.activeSymbol !== fallback.symbol;
@@ -1373,6 +1419,7 @@ export class EmaVwapCrossoverEngine {
               this.log(state, `🎯 Top Momentum Stock: [${fallback.symbol}] (Score: ${fallback.score}, Trend: ${fallback.trend}, Qty: ${fallback.qty})`);
             }
             state.activeSymbol = fallback.symbol;
+            state.activeScore = fallback.score;
             config.exchange = fallback.exchange;
             config.qty = fallback.qty;
           }
@@ -1380,19 +1427,30 @@ export class EmaVwapCrossoverEngine {
           // ── Active Scanner Heartbeat (every 60 seconds) ─────────────────────────
           if (!state.last5mHeartbeatTime || (nowMs - state.last5mHeartbeatTime >= 60_000)) {
             state.last5mHeartbeatTime = nowMs;
-            logSignal('SCAN', state.strategyId, { rank: 'IN_PLAY', top: candidates.slice(0, 10).map(c => ({ s: c.symbol, score: c.score, old: c.momentumScore, trend: c.trend, dayChg: +c.dayChangePct.toFixed(2), vsNifty: c.relToNiftyPct !== undefined ? +c.relToNiftyPct.toFixed(2) : null, atr: c.atrPct !== undefined ? +c.atrPct.toFixed(2) : null, fromOpen: +c.changeFromOpenPct.toFixed(2), turnoverCr: +c.turnoverCr.toFixed(1), rvol: c.rvol !== undefined ? +c.rvol.toFixed(2) : null })) });
+            logSignal('SCAN', state.strategyId, { rank: 'IN_PLAY', top: candidates.slice(0, 10).map(c => ({ s: c.symbol, score: c.score, old: c.momentumScore, trend: c.trend, dayChg: +c.dayChangePct.toFixed(2), atr: c.atrPct !== undefined ? +c.atrPct.toFixed(2) : null, fromOpen: +c.changeFromOpenPct.toFixed(2), turnoverCr: +c.turnoverCr.toFixed(1), rvol: c.rvol !== undefined ? +c.rvol.toFixed(2) : null })) });
             const topList = candidates.slice(0, 4).map(c => {
-              const vsNifty = c.relToNiftyPct !== undefined ? `, ${c.relToNiftyPct >= 0 ? '+' : ''}${c.relToNiftyPct.toFixed(1)}% vs NIFTY${c.atrPct ? ` = ${(Math.abs(c.relToNiftyPct) / c.atrPct).toFixed(1)} ATR` : ''}` : '';
-              return `${c.symbol} (Score: ${c.score}, ${c.dayChangePct >= 0 ? '+' : ''}${c.dayChangePct.toFixed(1)}%${vsNifty}${c.rvol !== undefined ? `, RVOL ${c.rvol.toFixed(1)}x` : ''})`;
+              const inAtr = c.atrPct ? ` = ${(Math.abs(c.dayChangePct) / c.atrPct).toFixed(1)} ATR` : '';
+              return `${c.symbol} (Score: ${c.score}, ${c.dayChangePct >= 0 ? '+' : ''}${c.dayChangePct.toFixed(1)}%${inAtr}${c.rvol !== undefined ? `, RVOL ${c.rvol.toFixed(1)}x` : ''})`;
             }).join(', ');
             const currentLeader = activeSetups.length > 0 ? activeSetups[0].candidate.symbol : (candidates[0]?.symbol || 'None');
             const setupDesc = candidates.length === 0
               ? '⚠ Scanner universe came back empty — Zerodha instrument/quote fetch likely failed or rate-limited; will retry next scan'
               : (activeSetups.length > 0 ? activeSetups[0].details.description : 'Monitoring 5m candles for breakout/breakdown trigger');
             const budgetNote = checkedCount < evaluated.length ? `, ${checkedCount}/${evaluated.length} checked in ${Math.round((Date.now() - nowMs) / 1000)}s, rest next scan` : '';
-            this.log(state, `📡 [SCANNER HEARTBEAT] Scanned Nifty 500 & F&O leaders | Leaders: [${topList}] | Checked top ${Math.min(scanDepth, candidates.length)} for setups (${activeSetups.length} active${budgetNote}) | Tracking: [${currentLeader}] — ${setupDesc}`);
+            const watchNote = state.watchedSetups?.length ? ` | Also watching: [${state.watchedSetups.map(w => `${w.symbol} ${w.trend === 'LONG' ? '>' : '<'} ₹${w.trigger.toFixed(2)}`).join(', ')}]` : '';
+            this.log(state, `📡 [SCANNER HEARTBEAT] Scanned Nifty 500 & F&O leaders | Leaders: [${topList}] | Checked top ${Math.min(scanDepth, candidates.length)} for setups (${activeSetups.length} active${budgetNote}) | Tracking: [${currentLeader}] — ${setupDesc}${watchNote}`);
           }
         }
+      }
+
+      // ── Multi-watch: every tick, check the watched setups' triggers; the first one through is entered ──
+      if (state.entryTriggered && state.watchedSetups?.length) state.watchedSetups = [];
+      if (state.isAutoMode && state.watchedSetups?.length && !state.entryTriggered && !state.isPlacingTrade) {
+        if (await this.checkWatchedSetups(state, client, kite, now, entryTf.minutes, isStale)) {
+          await this.persistLogs(state);
+          return;
+        }
+        if (isStale()) return;
       }
 
       // Auto mode has no real symbol until the scanner picks one. The first scan can take longer than a tick
@@ -4146,7 +4204,7 @@ export class EmaVwapCrossoverEngine {
         const brokeOpeningLow = currCandle.low <= orl * 1.002 || currCandle.close < orl;
         const rejectedFromHigh = dayHigh > 0 && ((dayHigh - currCandle.close) / dayHigh) >= 0.015;
         const distFromEmaPct = ((currEma - currCandle.close) / currCandle.close) * 100;
-        const notOverExtended = distFromEmaPct <= Math.max(4.0, dynamicMaxEmaDistPct * 2.0) && Math.abs(moveFromOpenPct) <= metrics.dynamicExtensionPct;
+        const notOverExtended = distFromEmaPct <= ORB_MAX_EMA_STRETCH_PCT && Math.abs(moveFromOpenPct) <= metrics.dynamicExtensionPct;
 
         if ((brokeOpeningLow || rejectedFromHigh) && notOverExtended) {
           const tightSl = getSwingShelfSl('SHORT', Math.max(currCandle.high, currVwap));
@@ -4171,7 +4229,7 @@ export class EmaVwapCrossoverEngine {
         const brokeOpeningHigh = currCandle.high >= orh * 0.998 || currCandle.close > orh;
         const bouncedFromLow = dayLow > 0 && ((currCandle.close - dayLow) / dayLow) >= 0.015;
         const distFromEmaPct = ((currCandle.close - currEma) / currCandle.close) * 100;
-        const notOverExtended = distFromEmaPct <= Math.max(4.0, dynamicMaxEmaDistPct * 2.0) && moveFromOpenPct <= metrics.dynamicExtensionPct;
+        const notOverExtended = distFromEmaPct <= ORB_MAX_EMA_STRETCH_PCT && moveFromOpenPct <= metrics.dynamicExtensionPct;
 
         if ((brokeOpeningHigh || bouncedFromLow) && notOverExtended) {
           const tightSl = getSwingShelfSl('LONG', Math.min(currCandle.low, currVwap));
@@ -4576,6 +4634,133 @@ export class EmaVwapCrossoverEngine {
   private getScanDepth(config: EmaVwapCrossoverConfig): number {
     const n = Math.floor(Number(config.scanDepth));
     return Number.isFinite(n) && n >= 1 ? Math.min(MAX_SCAN_DEPTH, n) : DEFAULT_SCAN_DEPTH;
+  }
+
+  /** Auto mode: setups armed at once, the tracked one included (config.maxArmedSetups, default 1, kept within 1-5). */
+  private getMaxArmedSetups(config: EmaVwapCrossoverConfig): number {
+    const n = Math.floor(Number(config.maxArmedSetups));
+    return Number.isFinite(n) && n >= 1 ? Math.min(MAX_ARMED_SETUPS, n) : DEFAULT_MAX_ARMED_SETUPS;
+  }
+
+  /** The tracked setup (about to be replaced by a pivot) moves to the watched list with its trigger, stop and age. */
+  private demoteTrackedSetup(state: StrategyState, tfMinutes: number) {
+    const dir = state.waitingForConfirmation, sym = state.activeSymbol;
+    const trigger = dir === 'LONG' ? state.confirmationHigh : state.confirmationLow;
+    if (!dir || !sym || !trigger || !state.invalidationPrice || !state.setupType || !state.setupTimestamp) return;
+    const watched = (state.watchedSetups ?? []).filter(w => w.symbol !== sym);
+    watched.push({
+      symbol: sym, exchange: state.config.exchange, qty: state.config.qty, trend: dir, setupType: state.setupType,
+      trigger, slPrice: state.invalidationPrice, structure: state.setupStructure ?? null, candleTime: state.setupTimestamp,
+      armedAt: state.setupArmedAt ?? state.setupTimestamp + tfMinutes * 60_000, score: state.activeScore ?? 0,
+      description: 'earlier tracked setup',
+    });
+    state.watchedSetups = watched;
+  }
+
+  /**
+   * Multi-watch: the scan's setups in stocks other than the tracked one join the watched list (a stock's newer setup replaces
+   * its older one; the same setup keeps its age). The best `maxArmedSetups - 1` by score are kept.
+   */
+  private refreshWatchedSetups(state: StrategyState, activeSetups: Array<{ candidate: any; details: StockSetup }>, tfMinutes: number) {
+    const tfMs = tfMinutes * 60_000;
+    const armedAt = Math.floor(Date.now() / tfMs) * tfMs;
+    const watched = (state.watchedSetups ?? []).filter(w => w.symbol !== state.activeSymbol);
+    const added: WatchedSetup[] = [];
+    for (const { candidate, details: s } of activeSetups) {
+      if (candidate.symbol === state.activeSymbol) continue;
+      const trigger = s.trend === 'LONG' ? s.triggerHigh : s.triggerLow;
+      if (!trigger) continue;
+      const i = watched.findIndex(w => w.symbol === candidate.symbol);
+      const candleTime = s.candleTime.getTime();
+      if (i >= 0 && watched[i].candleTime === candleTime) { watched[i].score = candidate.score; continue; }
+      const w: WatchedSetup = {
+        symbol: candidate.symbol, exchange: candidate.exchange, qty: candidate.qty, trend: s.trend, setupType: s.setupType,
+        trigger, slPrice: s.slPrice, structure: s.structurePrice ?? null, candleTime, armedAt, score: candidate.score, description: s.description,
+      };
+      if (i >= 0) watched[i] = w; else watched.push(w);
+      added.push(w);
+    }
+    watched.sort((a, b) => b.score - a.score);
+    state.watchedSetups = watched.slice(0, this.getMaxArmedSetups(state.config) - 1);
+    for (const w of added) {
+      if (!state.watchedSetups.includes(w)) continue;
+      this.log(state, `👀 Also watching [${w.symbol}] (Score: ${w.score}) — ${w.description} | ${w.trend} trigger ₹${w.trigger.toFixed(2)}, SL ₹${w.slPrice.toFixed(2)}`);
+    }
+  }
+
+  /**
+   * Multi-watch trigger check (every tick): drops expired / invalidated watched setups (15 min cooldown, as the tracked one)
+   * and enters the best-scoring watched setup whose LTP is through its trigger, unless the tracked setup triggered too with
+   * an equal or better score (its own check then enters it). Returns true when a watched setup was taken.
+   */
+  private async checkWatchedSetups(state: StrategyState, client: any, kite: any, now: Date, tfMinutes: number, isStale: () => boolean): Promise<boolean> {
+    const tfMs = tfMinutes * 60_000;
+    const cooldown = (sym: string) => {
+      if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
+      state.cooldownSymbols.set(sym, now.getTime() + 15 * 60 * 1000);
+    };
+    state.watchedSetups = (state.watchedSetups ?? []).filter(w => {
+      const maxWait = w.setupType === 'OPEN_LOW_DRIVE' || w.setupType === 'OPEN_HIGH_DRIVE' ? 4 : 2;
+      if (now.getTime() - w.armedAt <= maxWait * tfMs) return true;
+      this.log(state, `⏳ Watched setup on [${w.symbol}] expired (${maxWait} candles without trigger).`);
+      cooldown(w.symbol);
+      return false;
+    });
+    if (!state.watchedSetups.length) return false;
+
+    const primaryKey = state.waitingForConfirmation && state.activeSymbol ? `${state.config.exchange}:${state.activeSymbol}` : null;
+    const keys = state.watchedSetups.map(w => `${w.exchange}:${w.symbol}`);
+    if (primaryKey && !keys.includes(primaryKey)) keys.push(primaryKey);
+    const ltpData = await withKiteRetry(() => kite.getLTP(keys), 2).catch(() => null);
+    if (!ltpData || isStale() || state.entryTriggered || state.isPlacingTrade) return false;
+
+    const hits: { w: WatchedSetup; ltp: number }[] = [];
+    state.watchedSetups = state.watchedSetups.filter(w => {
+      const ltp = Number((ltpData as any)[`${w.exchange}:${w.symbol}`]?.last_price);
+      if (!(ltp > 0)) return true;
+      const long = w.trend === 'LONG';
+      if (long ? ltp < w.slPrice : ltp > w.slPrice) {
+        this.log(state, `[${w.symbol}] ❌ Watched setup invalidated! LTP ₹${ltp.toFixed(2)} broke ${long ? 'below' : 'above'} SL level ₹${w.slPrice.toFixed(2)}`);
+        cooldown(w.symbol);
+        return false;
+      }
+      if (long ? ltp >= w.trigger : ltp <= w.trigger) hits.push({ w, ltp });
+      return true;
+    });
+    if (!hits.length) return false;
+    hits.sort((a, b) => b.w.score - a.w.score);
+    const { w, ltp } = hits[0];
+
+    if (primaryKey) {
+      const pLtp = Number((ltpData as any)[primaryKey]?.last_price);
+      const pTrig = state.waitingForConfirmation === 'LONG' ? state.confirmationHigh : state.confirmationLow;
+      const pHit = pLtp > 0 && !!pTrig && (state.waitingForConfirmation === 'LONG' ? pLtp >= pTrig : pLtp <= pTrig);
+      if (pHit && (state.activeScore ?? 0) >= w.score) return false;
+    }
+
+    const others = hits.length > 1 ? ` (also through: ${hits.slice(1).map(h => h.w.symbol).join(', ')})` : '';
+    this.log(state, `🔀 Watched setup [${w.symbol}] triggered first${state.activeSymbol && state.activeSymbol !== w.symbol ? ` (tracked [${state.activeSymbol}] has not)` : ''}${others} — switching to it. ${w.description}`);
+    state.activeSymbol = w.symbol;
+    state.activeScore = w.score;
+    state.config.exchange = w.exchange;
+    state.config.qty = w.qty;
+    state.waitingForConfirmation = null;
+    state.confirmationHigh = null;
+    state.confirmationLow = null;
+    state.invalidationPrice = null;
+    state.setupTimestamp = null;
+    state.setupType = undefined;
+    state.setupStructure = w.structure;
+    state.watchedSetups = [];
+    await this.ensureTickSize(client, w.symbol, w.exchange);
+    if (w.trend === 'LONG') {
+      this.log(state, `[${w.symbol}] 🎯 LONG Entry Triggered! Breakout above ₹${w.trigger.toFixed(2)} (${w.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
+      await this.placeTrade(state, client, 'BUY', ltp, undefined, w.slPrice, w.trigger);
+    } else {
+      this.log(state, `[${w.symbol}] 🎯 SHORT Entry Triggered! Breakdown below ₹${w.trigger.toFixed(2)} (${w.setupType}) @ LTP ₹${ltp.toFixed(2)}`);
+      await this.placeTrade(state, client, 'SELL', ltp, undefined, w.trigger, w.slPrice);
+    }
+    return true;
   }
 
   /** Widest structural stop, % of entry (config.maxStopPct, default 2.2, kept within 0.85-5). */

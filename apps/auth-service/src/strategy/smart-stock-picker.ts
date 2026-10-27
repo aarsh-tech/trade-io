@@ -202,15 +202,14 @@ export interface CandidateStock {
   distToPdhPct?: number;
   distToPdlPct?: number;
   rvol?: number; // true relative volume vs own 10-session average at the same clock time
-  /** In-play ranking only: day % move minus NIFTY's, the stock's daily ATR %, and the old momentum score (for comparison logs). */
-  relToNiftyPct?: number;
+  /** In-play ranking only: the stock's daily ATR % and the old momentum score (for comparison logs). */
   atrPct?: number;
   momentumScore?: number;
 }
 
-/** 'IN_PLAY' ranks by move vs NIFTY in ATRs and relative volume (see applyInPlayScore); 'MOMENTUM' is the older % move + turnover score. */
+/** 'IN_PLAY' ranks by the stock's own move in ATRs and relative volume (see applyInPlayScore); 'MOMENTUM' is the older % move + turnover score. */
 export type ScannerRanking = 'MOMENTUM' | 'IN_PLAY';
-/** In-play: stocks (by move vs NIFTY) that get the per-stock history needed for ATR, RVOL and PDH/PDL. Cached for the day. */
+/** In-play: stocks (by their own day move) that get the per-stock history needed for ATR, RVOL and PDH/PDL. Cached for the day. */
 const IN_PLAY_PROFILE_POOL = 100;
 /** In-play: a move counts up to this many daily ATRs; beyond it a stock is extended, not more in play. */
 const IN_PLAY_MAX_MOVE_ATR = 2;
@@ -337,25 +336,26 @@ async function applyTrueRvol(kite: any, shortlist: CandidateStock[], tokenMap: M
 
 /**
  * In-play score (22 Oct 2026, replaces the momentum score for the EMA-VWAP stock picker). A stock is in play when it moves
- * more than NIFTY by a large share of its own normal daily range, on unusual volume:
- *   relative move = (stock day % - NIFTY day %) / daily ATR %, capped at IN_PLAY_MAX_MOVE_ATR
- *   drive        = move from today's open beyond NIFTY's, in the same direction / daily ATR % (counts half, never negative)
- *   score        = 1000 x (relative move + drive / 2) x sqrt(RVOL), RVOL clamped to 0.25-9, + IN_PLAY_LEVEL_BONUS past PDH/PDL.
- * Turnover gives no points (the universe is liquid already), so a heavyweight moving with NIFTY scores near zero and a
- * 10% small-cap move counts only as many ATRs as it really is. A stock without history (no ATR) keeps a low fallback score.
+ * by a large share of its own normal daily range, on unusual volume:
+ *   move   = stock day % / daily ATR %, capped at IN_PLAY_MAX_MOVE_ATR
+ *   drive  = move from today's open in the same direction / daily ATR % (counts half, never negative)
+ *   score  = 1000 x (move + drive / 2) x sqrt(RVOL), RVOL clamped to 0.25-9, + IN_PLAY_LEVEL_BONUS past PDH/PDL.
+ * Turnover gives no points (the universe is liquid already), and a 10% small-cap move counts only as many ATRs as it really
+ * is. A stock without history (no ATR) keeps a low fallback score.
+ * 27 Oct 2026: the stock's own move, not its move minus NIFTY's (the user: stocks move on their own). 2-year real-engine
+ * backtest: +₹41.5k (Y1 24.8k, Y2 16.7k) vs +₹35.5k (Y1 20.4k, Y2 15.1k) for the NIFTY-relative score.
  */
-function applyInPlayScore(c: CandidateStock, niftyChgPct: number, niftyFromOpenPct: number, profile: VolumeProfile | null | undefined): void {
-  const rel = c.dayChangePct - niftyChgPct;
-  const dir = rel >= 0 ? 1 : -1;
+function applyInPlayScore(c: CandidateStock, profile: VolumeProfile | null | undefined): void {
+  const move = c.dayChangePct;
+  const dir = move >= 0 ? 1 : -1;
   c.trend = dir > 0 ? 'LONG' : 'SHORT';
-  c.relToNiftyPct = rel;
   const atr = profile?.atrPct;
   if (!atr) {
-    c.score = Math.round(Math.abs(rel) * 100);
+    c.score = Math.round(Math.abs(move) * 100);
     return;
   }
-  const relAtr = Math.min(IN_PLAY_MAX_MOVE_ATR, Math.abs(rel) / atr);
-  const driveAtr = Math.min(IN_PLAY_MAX_MOVE_ATR, Math.max(0, (dir * (c.changeFromOpenPct - niftyFromOpenPct)) / atr));
+  const relAtr = Math.min(IN_PLAY_MAX_MOVE_ATR, Math.abs(move) / atr);
+  const driveAtr = Math.min(IN_PLAY_MAX_MOVE_ATR, Math.max(0, (dir * c.changeFromOpenPct) / atr));
   const rvol = Math.min(9, Math.max(0.25, c.rvol ?? 1));
   c.atrPct = atr;
   c.pdh = profile?.pdh;
@@ -399,12 +399,8 @@ export async function getTopCandidateStocks(
   const ltpSymbols = targetSymbols
     .filter(s => !BLACKLISTED_SLOW_STOCKS.has(s) && (!excludedSymbols || !excludedSymbols.has(s)))
     .map(s => `NSE:${s}`);
-  if (inPlay) ltpSymbols.push(NIFTY_QUOTE_KEY);
 
   const liveQuotes: Record<string, any> = await fetchWholeMarketQuotes(kite, ltpSymbols, logger);
-  const niftyQuote = liveQuotes[NIFTY_QUOTE_KEY];
-  const niftyChgPct = niftyQuote?.last_price && niftyQuote?.ohlc?.close ? ((niftyQuote.last_price - niftyQuote.ohlc.close) / niftyQuote.ohlc.close) * 100 : 0;
-  const niftyFromOpenPct = niftyQuote?.last_price && niftyQuote?.ohlc?.open ? ((niftyQuote.last_price - niftyQuote.ohlc.open) / niftyQuote.ohlc.open) * 100 : 0;
 
   // Current time in IST to adjust volume/turnover expectations for market open
   const istDate = new Date(new Date().getTime() + 330 * 60000 + new Date().getTimezoneOffset() * 60000);
@@ -541,13 +537,13 @@ export async function getTopCandidateStocks(
   }
 
   if (inPlay) {
-    // History (RVOL, ATR, PDH/PDL) for the biggest movers vs NIFTY, then the in-play score for every stock.
-    result.sort((a, b) => Math.abs(b.dayChangePct - niftyChgPct) - Math.abs(a.dayChangePct - niftyChgPct));
+    // History (RVOL, ATR, PDH/PDL) for the biggest movers, then the in-play score for every stock.
+    result.sort((a, b) => Math.abs(b.dayChangePct) - Math.abs(a.dayChangePct));
     await applyTrueRvol(kite, result.slice(0, IN_PLAY_PROFILE_POOL), tokenMap, logger, true);
     const todayStr = new Date(Date.now() + 330 * 60000 + new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
     for (const c of result) {
       const profile = volumeProfileCache.get(c.symbol);
-      applyInPlayScore(c, niftyChgPct, niftyFromOpenPct, profile && profile.dateStr === todayStr ? profile : null);
+      applyInPlayScore(c, profile && profile.dateStr === todayStr ? profile : null);
     }
     result.sort((a, b) => b.score - a.score);
     return result.slice(0, limit);

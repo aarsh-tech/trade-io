@@ -53,6 +53,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['minPrice', 'Min stock price (₹)', 1, 1_000_000, false],
   ['leverage', 'Leverage', 1, 5, false],
   ['scanDepth', 'Stocks checked per scan', 1, 25, true],
+  ['maxArmedSetups', 'Setups watched at once', 1, 5, true],
   ['stagnationMinutes', 'Stagnation exit (minutes)', 0, 360, true],
   ['maxStopPct', 'Max stop-loss distance (%)', 0.85, 5, false],
   ['minDayMovePct', 'Min move from previous close (%)', 0, 5, false],

@@ -50,25 +50,31 @@ function stopLoss(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast } = ctx;
   if (ctx.isEmaVwapOptions) return `${cfg.slBufferPct ?? 2}% below the setup low (min ₹${cfg.minSlBufferRs ?? 1}), on the exchange`;
   if (ctx.strategy.type === "STOCKS_IN_PLAY") return `${cfg.stopAtrFraction ?? 0.2} x 14-day ATR from the fill, on the exchange`;
-  if (isEmaVwap) return "Beyond the setup's swing, 0.85% to 1.2% from entry (broker-side)";
   if (cfg.exitExactAtTarget) return isGammaBlast && cfg.stopLossPoints ? `-${cfg.stopLossPoints} pts (${rs(cfg.stopLossRs ?? 500)})` : `Fixed ${rs(cfg.stopLossRs ?? 500)}`;
   if (isGammaBlast) return cfg.stopLossPoints ? `-${cfg.stopLossPoints} pts (${rs(cfg.stopLossRs ?? 500)})` : `${cfg.initialSlPct || 50}% of premium`;
   if (isNiftyScalper) return `-${cfg.stopLossPoints ?? 7} pts (server SL)`;
   if (isStockOptions) return "Mother-candle low, breakeven at T1";
   if (is15Min) return "Candle SL";
+  if (isEmaVwap) return `Beyond the setup's swing, 0.85% to ${Number(cfg.maxStopPct) > 0 ? Number(cfg.maxStopPct) : 1.2}% from entry (broker-side)`;
   return rs(cfg.stopLossRs ?? cfg.dailyMaxLossRs ?? 500) ?? "Dynamic";
+}
+
+/** EMA-VWAP stocks stagnation time-stop: unset = off (the engine fills the backtested 0), 0 = off. */
+function stagnationText(v: unknown): string {
+  const min = v === undefined || v === null || v === "" ? 0 : Number(v);
+  return min === 0 ? "Off" : `Closes if within 0.25% of entry after ${Number.isFinite(min) && min > 0 ? min : 35} min`;
 }
 
 function targetText(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast } = ctx;
   if (ctx.isEmaVwapOptions) return cfg.targetMode === "PARTIAL" ? `Half at ${cfg.partialTargetR ?? 2}R, rest on a 5m close below the 15-EMA` : "None: whole position exits on a 5m close below the 15-EMA";
   if (ctx.strategy.type === "STOCKS_IN_PLAY") return "None: held until the stop or 15:05";
-  if (isEmaVwap) return "None: exits on a 5m close across the 15-EMA (40-EMA after +1.5R)";
   if (cfg.exitExactAtTarget) return isGammaBlast && cfg.targetPoints ? `+${cfg.targetPoints} pts (${rs(cfg.targetRs ?? 1000)})` : `Fixed ${rs(cfg.targetRs ?? 500)}`;
   if (isGammaBlast) return cfg.targetPoints ? `+${cfg.targetPoints} pts (${rs(cfg.targetRs ?? 1000)})` : (rs(cfg.targetRs ?? 1500) as string);
   if (isNiftyScalper) return `+${cfg.targetPoints ?? 10} pts, then trail`;
   if (isStockOptions) return `1:${cfg.target1RR ?? 1.5} and 1:${cfg.target2RR ?? 3} RR`;
   if (is15Min) return `1:${Number(cfg.riskRewardRatio ?? 2).toFixed(1)} RR, then trail`;
+  if (isEmaVwap) return cfg.targetMode === "PARTIAL" ? "Half at 0.5x daily ATR, rest trails 15-EMA candle close" : cfg.targetMode === "QUICK" ? "Half at 0.5R, rest trails 15-EMA candle close" : cfg.targetMode === "FULL" ? "One target at 0.5x daily ATR (no trailing)" : "None: whole position trails 15-EMA candle close";
   return rs(cfg.targetRs ?? cfg.dailyTargetRs ?? 500) ?? "Dynamic";
 }
 
@@ -94,9 +100,9 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
   ];
 
   const entry: Row[] = [];
-  if (isStockOptions) entry.push({ label: "EMA period", value: String(cfg.emaPeriod ?? 15) });
-  if (isEmaVwap) {
-    entry.push({ label: "EMA period", value: "15" }, { label: "Entry timeframe", value: "5-minute (from 09:20)" });
+  if (isEmaVwap || isStockOptions) entry.push({ label: "EMA period", value: String(cfg.emaPeriod ?? 15) });
+  if (isEmaVwap && !cfg.isOptionBuyingOnly) {
+    entry.push({ label: "Entry timeframe", value: cfg.entryTimeframe === "1min" ? "1-minute (from 09:16), SL & exit on 5m" : "5-minute (from 09:20)" });
   }
   if (is15Min) {
     entry.push(
@@ -150,8 +156,9 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
   if (isEmaVwap) {
     entry.push(
       { label: "Entry signal", value: "Opening drive, inside candle, 15-EMA/VWAP crossover or pullback" },
-      { label: "Stocks checked per scan", value: cfg.symbol === "AUTO" ? "Top 20, best setup traded" : undefined },
-      { label: "Volume confirmation", value: "z >= 1.5 vs the stock's own 10-session history" },
+      { label: "Stocks checked per scan", value: cfg.symbol === "AUTO" ? `Top ${cfg.scanDepth ?? 20}, best setup traded` : undefined },
+      { label: "Setups watched at once", value: cfg.symbol === "AUTO" ? (Number(cfg.maxArmedSetups ?? 1) > 1 ? `${Number(cfg.maxArmedSetups)}, first to trigger is entered` : "1 (top-scored only)") : undefined },
+      { label: "Volume confirmation", ...toggle(cfg.enableRvolVolumeFilter !== false, cfg.enableDynamicVolume === false ? `>= ${cfg.minRvol ?? 2.5}x average` : `z >= ${cfg.minVolumeZ ?? 1.5} vs the stock's own 10-session history`) },
     );
   }
 
@@ -200,16 +207,19 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
           ? toggle(cfg.enablePartialProfitBooking, "50% at 2x, runner trails")
           : isEmaVwapOptions
             ? { value: cfg.targetMode === "PARTIAL" ? `Half the lots at ${cfg.partialTargetR ?? 2}R, then SL to cost (1 lot: SL to cost only)` : "Off" }
-            : { value: undefined }),
+            : isEmaVwap && !cfg.exitExactAtTarget && (cfg.targetMode === "PARTIAL" || cfg.targetMode === "QUICK")
+              ? { value: "Half at the first target, runner exits on a 15-EMA candle close" }
+              : { value: undefined }),
     },
     { label: "Breakeven lock", value: is15Min ? `At +${cfg.breakevenTriggerR ?? 0.7}R` : isNiftyScalper ? `At +${cfg.trailCostAtPoints ?? 6} pts` : undefined },
     { label: "Ratchet trailing", ...(isGammaBlast ? toggle(cfg.enableRatchetTrailing, "1.5x, 2x, 3x locks") : { value: undefined }) },
     { label: "Structural candle SL", ...(is15Min ? toggle(cfg.useStructuralCandleSl, "tight 45 to 80 pt risk") : { value: undefined }) },
     { label: "Theta stagnancy cutoff", value: isStockOptions ? `${cfg.maxStagnantTimeMin ?? 25} min` : undefined },
-    { label: "Profit lock", value: isEmaVwap ? "+1.5R → stop +0.5R, +3R → stop +2R" : undefined },
-    { label: "Slow trail", value: isEmaVwap ? "After +1.5R, exit on the 40-EMA" : undefined },
-    { label: "Min day move", value: isEmaVwap ? "1.5% past prev close" : undefined },
-    { label: "Max stop distance", value: isEmaVwap ? "1.2% of entry" : undefined },
+    { label: "Stagnation exit", value: isEmaVwap ? stagnationText(cfg.stagnationMinutes) : undefined },
+    { label: "Profit lock", ...(isEmaVwap && !cfg.exitExactAtTarget && (cfg.targetMode ?? "EMA") === "EMA" ? toggle(cfg.profitLock, "+1.5R → stop +0.5R, +3R → stop +2R") : { value: undefined }) },
+    { label: "Slow trail", ...(isEmaVwap && !cfg.exitExactAtTarget && (cfg.targetMode ?? "EMA") === "EMA" ? toggle(cfg.slowTrail, "after +1.5R, exit on the 40-EMA") : { value: undefined }) },
+    { label: "Min day move", value: isEmaVwap ? (cfg.minDayMovePct === undefined || cfg.minDayMovePct === null ? "1.5% past prev close" : Number(cfg.minDayMovePct) > 0 ? `${Number(cfg.minDayMovePct)}% past prev close` : "Off") : undefined },
+    { label: "Max stop distance", value: isEmaVwap ? `${Number(cfg.maxStopPct) > 0 ? Number(cfg.maxStopPct) : 1.2}% of entry` : undefined },
     { label: "Auto square-off", value: isEmaVwap || isEmaVwapOptions || strategy.type === "STOCKS_IN_PLAY" ? "15:05 IST" : "15:15 IST" },
   ];
 
