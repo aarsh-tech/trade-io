@@ -377,7 +377,7 @@ function LiveSummary({ form }: { form: StrategyFormState }) {
             : form.type === "EMA_VWAP_OPTIONS"
               ? `Risk-based, max ${form.evoMaxLots || 10} lots`
               : form.type === "STOCKS_IN_PLAY"
-                ? `Risk and capital based, up to ${form.maxTradesPerDay || 2} positions`
+                ? `${form.sipSetup === "FADE" ? "In-play Fade: " : ""}Risk and capital based, up to ${form.maxTradesPerDay || 2} position${form.maxTradesPerDay === "1" ? "" : "s"}`
                 : `${form.lots || 0} lot${auto ? "" : ` (${(Number(form.lots) || 0) * lotSize} qty)`}`}
         </SummaryRow>
         <SummaryRow label="Max loss / trade"><span className="text-loss">{inr(risk.perTrade)}</span></SummaryRow>

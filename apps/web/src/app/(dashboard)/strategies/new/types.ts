@@ -53,7 +53,13 @@ export interface StrategyFormState {
   evoMinVolumeMultiple: string;
   evoUseSameDayExpiry: boolean;
   evoEntryCutoffTime: string;
-  // Stocks-in-Play ORB (`stopLossRs` = max loss per trade, `maxTradesPerDay` = max positions)
+  // Stocks-in-Play (`stopLossRs` = max loss per trade, `maxTradesPerDay` = max positions)
+  /** FADE = short the overbought rollover of a gap-up stock in play (09:20-09:45); ORB = break of the first candle. */
+  sipSetup: "FADE" | "ORB";
+  /** FADE: stop as % of the fill, target in multiples of the stop, stop to entry at this multiple ("0" = off). */
+  sipStopPct: string;
+  sipTargetR: string;
+  sipBreakevenAtR: string;
   sipMinRvol: string;
   sipStopAtr: string;
   sipMinAvgValueCr: string;

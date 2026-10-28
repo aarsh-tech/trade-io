@@ -58,20 +58,29 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       entryCutoffTime: form.evoEntryCutoffTime || "15:00",
     };
   } else if (form.type === "STOCKS_IN_PLAY") {
+    const fade = form.sipSetup === "FADE";
+    // "0" is a real choice (no target / no breakeven); only a blank field takes the backtested default.
+    const orZero = (v: string, d: number) => (v === "" || !(Number(v) >= 0) ? d : Number(v));
     config = {
       symbol: "AUTO",
       exchange: "NSE",
       instrumentType: "STOCK",
       product: "MIS",
+      setup: fade ? "FADE" : "ORB",
+      ...(fade && {
+        stopPct: Number(form.sipStopPct || 1.2),
+        targetR: orZero(form.sipTargetR, 3),
+        breakevenAtR: orZero(form.sipBreakevenAtR, 1),
+      }),
       stopLossRs: Number(form.stopLossRs),
-      maxPositions: Number(form.maxTradesPerDay || 2),
-      maxTradesPerDay: Number(form.maxTradesPerDay || 2),
+      maxPositions: Number(form.maxTradesPerDay || (fade ? 1 : 2)),
+      maxTradesPerDay: Number(form.maxTradesPerDay || (fade ? 1 : 2)),
       minRvol: Number(form.sipMinRvol || 10),
       stopAtrFraction: Number(form.sipStopAtr || 0.2),
-      minAvgValueCr: Number(form.sipMinAvgValueCr || 25),
+      minAvgValueCr: Number(form.sipMinAvgValueCr || (fade ? 10 : 25)),
       minPrice: 50,
       allowShorts: true,
-      allowLongs: form.sipAllowLongs === true,
+      allowLongs: !fade && form.sipAllowLongs === true,
       leverage: Number(form.sipLeverage || 4),
       ...(Number(form.sipMaxCapital) > 0 && { maxCapital: Number(form.sipMaxCapital) }),
       entryCutoffTime: form.sipEntryCutoffTime || "15:00",

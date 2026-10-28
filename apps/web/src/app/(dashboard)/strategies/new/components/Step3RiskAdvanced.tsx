@@ -780,7 +780,71 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
       )}
 
       {/* ── STOCKS-IN-PLAY BREAKOUT: STOP, LIQUIDITY AND LEVERAGE ── */}
-      {form.type === "STOCKS_IN_PLAY" && (
+      {form.type === "STOCKS_IN_PLAY" && form.sipSetup === "FADE" && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-1.5">
+            <p className="text-xs font-semibold text-foreground">How a trade is managed</p>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              <li>Entry is a market SHORT right after the 5-minute close that gave the signal.</li>
+              <li>The stop-loss is placed on the exchange at once, the stop distance below above the fill.</li>
+              <li>The target is watched by the strategy; when price reaches it the short is covered at market.</li>
+              <li>Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.</li>
+              <li>Otherwise the position is squared off at 15:05.</li>
+              <li>Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1.2% / 3R / breakeven at 1R): about 4 in 10 trades win, the average loss is about ₹340, runs of 8 losing days happened, and 5 of 25 months were red.</li>
+            </ul>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <NumberField
+              label="Stop distance"
+              suffix="% of entry"
+              decimal
+              min={0.3}
+              value={form.sipStopPct}
+              onChange={(v) => set("sipStopPct", v)}
+              hint="1.2% was backtested. 0.8% to 1.6% were also positive."
+            />
+            <NumberField
+              label="Target"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipTargetR}
+              onChange={(v) => set("sipTargetR", v)}
+              hint={`3 = ${((Number(form.sipStopPct) || 1.2) * 3).toFixed(1)}% below the entry. 2 and 1.5 hit more often and earned less. 0 = no target.`}
+            />
+            <NumberField
+              label="Stop to entry at"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipBreakevenAtR}
+              onChange={(v) => set("sipBreakevenAtR", v)}
+              hint="1 = once the trade is up by the stop distance. Cut the average loss from ₹513 to ₹341 for ₹2k less over 2 years. 0 = off."
+            />
+            <NumberField
+              label="Min avg daily value"
+              prefix={"₹"}
+              suffix="Cr"
+              decimal
+              min={0}
+              value={form.sipMinAvgValueCr}
+              onChange={(v) => set("sipMinAvgValueCr", v)}
+              hint="Skips thinly traded stocks. Backtested at ₹10 Cr; ₹25 Cr earned less."
+            />
+            <NumberField
+              label="Leverage"
+              suffix="x"
+              decimal
+              min={1}
+              value={form.sipLeverage}
+              onChange={(v) => set("sipLeverage", v)}
+              hint="Used for sizing. Zerodha gives up to 5x MIS on most liquid stocks."
+            />
+          </div>
+        </div>
+      )}
+
+      {form.type === "STOCKS_IN_PLAY" && form.sipSetup !== "FADE" && (
         <div className="space-y-4">
           <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-1.5">
             <p className="text-xs font-semibold text-foreground">How a trade is managed</p>

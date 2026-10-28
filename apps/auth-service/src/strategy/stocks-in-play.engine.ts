@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit } from './broker-position-guard';
 import { StocksInPlayConfig } from './dto/strategy.dto';
 import { getIstDateStr, getIstHhmm } from './emavwap-signals';
+import { FADE_MIN_HISTORY, FadeCandle, fadeReadings, fadeShortTrigger, FadeTrigger, toCompletedCandles } from './inplay-fade-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
 import { logSignal } from './signal-logger';
 
@@ -32,10 +33,23 @@ import { logSignal } from './signal-logger';
  *
  * Backtest (2024-09 .. 2026-09, Zerodha costs + slippage): shorts only, RVOL >= 10, stop 0.2 ATR, 2 positions:
  * positive in both years and 8/8 quarters; about 1 in 3 trades wins and the best 5% of trades carry the result.
+ *
+ * Setup FADE (In-play Fade, config setup: 'FADE') uses the same 09:20 RVOL scan but trades the rollover instead:
+ * - Candidates: first 5m candle volume >= minRvol x usual AND the stock opened above the previous close (gap up).
+ *   Any candle colour. Skipped when the upper circuit is within 2.5% (a short squeezed into the circuit cannot exit).
+ * - Signal: on each 5m candle closing 09:20..09:45, MFI/Stochastic/Bollinger/CMF turning down from overbought
+ *   (inplay-fade-signals.ts). The earliest candle wins; several on one candle -> highest RVOL first.
+ * - Entry: SHORT at market right after that candle closes (skipped if more than 2 minutes late).
+ * - Exits: stop stopPct above the fill (exchange SL order), target targetR x the stop below it (engine-watched,
+ *   market exit), stop moved to the entry once the trade is breakevenAtR x the stop in profit, else 15:05.
+ * - Backtest (2024-09 .. 2026-09, 1m bars, Zerodha costs + slippage, 1 trade/day, ₹500 risk, 1.2% / 3R / BE at 1R,
+ *   avg value >= ₹10 Cr, price >= ₹50): +₹70.4k, year 1 +₹30.1k, year 2 +₹40.4k, 39% wins, avg loss ₹341,
+ *   max drawdown ₹4.9k, 20/25 green months. Entering 1 minute late cut it to +₹46k, so entries must be prompt.
  */
 
 type Side = 'LONG' | 'SHORT';
-type ExitReason = 'SL' | 'SQUARE_OFF' | 'MANUAL' | 'BROKER_SL' | 'BROKER_SYNC' | 'NO_PROTECTION';
+type ExitReason = 'SL' | 'TARGET' | 'SQUARE_OFF' | 'MANUAL' | 'BROKER_SL' | 'BROKER_SYNC' | 'NO_PROTECTION';
+type Setup = 'ORB' | 'FADE';
 
 const SQUARE_OFF_HHMM = 15 * 60 + 5;
 const FIRST_CANDLE_CLOSE_HHMM = 9 * 60 + 20;
@@ -48,7 +62,32 @@ const BASELINE_SESSIONS = 10;
 const ATR_SESSIONS = 14;
 const MAX_CANDIDATES = 10;
 
+const FIVE_MIN_MS = 5 * 60_000;
+/** FADE: signals on the candles starting 09:15..09:40 (closing 09:20..09:45). */
+const FADE_FIRST_CANDLE_HHMM = 9 * 60 + 15;
+const FADE_LAST_CANDLE_HHMM = 9 * 60 + 40;
+const FADE_MAX_CANDIDATES = 25;
+/** Calendar days of 5m history loaded per candidate for the indicator warm-up (needs the previous session). */
+const FADE_HISTORY_DAYS = 10;
+/** Wait this long after a candle closes before reading it, so Kite has the final candle. */
+const FADE_SETTLE_MS = 2000;
+/** A candle Kite has not published this long after its close is given up for that stock. */
+const FADE_CANDLE_WAIT_MS = 45_000;
+/** No entry on a signal older than this: the backtest edge fell from ₹70k to ₹46k with a 1-minute delay. */
+const FADE_MAX_ENTRY_DELAY_MS = 120_000;
+/** Skip a fade candidate whose upper circuit is this close (short squeezed into the circuit cannot be covered). */
+const FADE_MIN_CIRCUIT_ROOM = 0.025;
+/** Retry a failed breakeven SL modification after this long. */
+const BREAKEVEN_RETRY_MS = 10_000;
+
 interface ResolvedConfig {
+  setup: Setup;
+  /** FADE: stop distance as % of the fill. */
+  stopPct: number;
+  /** FADE: target at this multiple of the stop distance (0 = no target). */
+  targetR: number;
+  /** FADE: move the stop to the entry once the trade is this multiple of the stop in profit (0 = off). */
+  breakevenAtR: number;
   stopLossRs: number;
   maxPositions: number;
   minRvol: number;
@@ -84,6 +123,11 @@ interface Candidate {
   ltp: number | null;
   ltpAt: number;
   done: boolean;
+  /** FADE: completed 5m candles (history + today) and the start of the last candle checked for a signal. */
+  candles: FadeCandle[] | null;
+  /** When candles was read from Kite (epoch ms). */
+  candlesAt: number;
+  checkedThrough: number;
 }
 
 interface OpenPosition {
@@ -92,6 +136,13 @@ interface OpenPosition {
   entryPrice: number;
   qty: number;
   sl: number;
+  /** Engine-watched target (FADE); null = none. */
+  target: number | null;
+  /** The original stop distance in ₹ (1R), for the target and the breakeven trigger. */
+  stopDist: number;
+  /** Stop already at the entry (or breakeven not used). */
+  beDone: boolean;
+  lastBeAttempt: number;
   tick: number;
   rvol: number | null;
   slOrderId: string | null;
@@ -227,6 +278,9 @@ export class StocksInPlayEngine {
     const sides = [config.allowShorts ? 'shorts' : null, config.allowLongs ? 'longs' : null].filter(Boolean).join(' + ');
     if (resumedLogs.length > 0) {
       this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${mode})`);
+    } else if (config.setup === 'FADE') {
+      this.log(state, `▶ In-play Fade (short) started | ${mode}`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to entry at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
     } else {
       this.log(state, `▶ Stocks-in-Play ORB started | ${mode}`);
       this.log(state, `⚙ At 09:20: stocks whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Trading ${sides} on the break of that candle | Stop ${config.stopAtrFraction} x 14-day ATR | Max loss/trade ₹${config.stopLossRs} | Up to ${config.maxPositions} positions (= trades/day), ${config.leverage}x | Entries until ${config.entryCutoffTime}, square-off 15:05`);
@@ -269,15 +323,24 @@ export class StocksInPlayEngine {
     const stopLossRs = Number(raw.stopLossRs);
     if (!(stopLossRs > 0)) throw new Error('Stocks-in-Play needs a max loss per trade (stopLossRs) above ₹0 to size positions.');
     const num = (v: any, d: number) => (Number(v) > 0 ? Number(v) : d);
-    const allowShorts = raw.allowShorts !== false;
-    const allowLongs = raw.allowLongs === true;
+    // 0 is a real setting (off) for the target and the breakeven step; only a missing/invalid value takes the default.
+    const numOrZero = (v: any, d: number) => (v === undefined || v === null || v === '' || !(Number(v) >= 0) ? d : Number(v));
+    const setup: Setup = raw.setup === 'FADE' ? 'FADE' : 'ORB';
+    const fade = setup === 'FADE';
+    // The fade is a short-only setup (its long mirror lost money in the backtest).
+    const allowShorts = fade ? true : raw.allowShorts !== false;
+    const allowLongs = fade ? false : raw.allowLongs === true;
     if (!allowShorts && !allowLongs) throw new Error('Stocks-in-Play: enable shorts, longs or both.');
     return {
+      setup,
+      stopPct: Math.min(5, Math.max(0.3, num(raw.stopPct, 1.2))),
+      targetR: Math.min(20, numOrZero(raw.targetR, 3)),
+      breakevenAtR: Math.min(20, numOrZero(raw.breakevenAtR, 1)),
       stopLossRs,
-      maxPositions: Math.min(5, Math.floor(num(raw.maxPositions, 2))),
+      maxPositions: Math.min(5, Math.floor(num(raw.maxPositions, fade ? 1 : 2))),
       minRvol: num(raw.minRvol, 10),
       stopAtrFraction: num(raw.stopAtrFraction, 0.2),
-      minAvgValueCr: num(raw.minAvgValueCr, 25),
+      minAvgValueCr: num(raw.minAvgValueCr, fade ? 10 : 25),
       minPrice: num(raw.minPrice, 50),
       allowLongs,
       allowShorts,
@@ -316,12 +379,18 @@ export class StocksInPlayEngine {
       const sign = pos.side === 'LONG' ? -1 : 1;
       // Without a saved SL, cap the loss at the configured max loss for the quantity held.
       const sl = pos.slPrice && pos.slPrice > 0 ? pos.slPrice : roundTo(pos.avgPrice + sign * state.config.stopLossRs / pos.qty, tick, pos.side === 'LONG' ? 'down' : 'up');
+      // FADE: the target and breakeven come from the fixed % stop, so they are rebuilt from the fill alone.
+      const fade = state.config.setup === 'FADE';
+      const stopDist = fade ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
+      // `sign` points at the stop side, so the target is the other way.
+      const target = fade && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
+      const beDone = !fade || state.config.breakevenAtR <= 0 || (pos.side === 'SHORT' ? sl <= pos.avgPrice : sl >= pos.avgPrice);
       state.positions.push({
-        symbol: pos.symbol, side: pos.side, entryPrice: pos.avgPrice, qty: pos.qty, sl, tick, rvol: null,
+        symbol: pos.symbol, side: pos.side, entryPrice: pos.avgPrice, qty: pos.qty, sl, target, stopDist, beDone, lastBeAttempt: 0, tick, rvol: null,
         slOrderId: pos.slOrderId, openedAt: Date.now(), ltp: null, ltpAt: 0, slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
       });
       state.tradedSymbols.add(pos.symbol);
-      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'LIVE'} RECOVERY] Re-adopted ${pos.side} ${pos.symbol}: ${pos.qty} qty @ ₹${pos.avgPrice.toFixed(2)} | SL ₹${sl.toFixed(2)}${pos.slPrice ? '' : ' (no saved SL — set from the max loss)'}${pos.slOrderId ? ` [Order ${pos.slOrderId}]` : ''}`);
+      this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'LIVE'} RECOVERY] Re-adopted ${pos.side} ${pos.symbol}: ${pos.qty} qty @ ₹${pos.avgPrice.toFixed(2)} | SL ₹${sl.toFixed(2)}${pos.slPrice ? '' : ' (no saved SL — set from the max loss)'}${target !== null ? ` | Target ₹${target.toFixed(2)}` : ''}${pos.slOrderId ? ` [Order ${pos.slOrderId}]` : ''}`);
       const notice = protectionNotice(pos);
       if (notice) this.log(state, notice);
       const p = state.positions[state.positions.length - 1];
@@ -394,7 +463,7 @@ export class StocksInPlayEngine {
   private snapshot(s: EngineState) {
     const pnlOf = (p: OpenPosition) => ((p.ltp ?? p.entryPrice) - p.entryPrice) * p.qty * (p.side === 'LONG' ? 1 : -1);
     const positions = s.positions.map((p) => ({
-      symbol: p.symbol, side: p.side, entryPrice: p.entryPrice, qty: p.qty, stopLossPrice: p.sl, currentLtp: p.ltp, pnlRs: pnlOf(p), rvol: p.rvol,
+      symbol: p.symbol, side: p.side, entryPrice: p.entryPrice, qty: p.qty, stopLossPrice: p.sl, targetPrice: p.target, currentLtp: p.ltp, pnlRs: pnlOf(p), rvol: p.rvol,
     }));
     const first = s.positions[0];
     return {
@@ -404,7 +473,7 @@ export class StocksInPlayEngine {
       entryPrice: first?.entryPrice ?? null,
       currentLtp: first?.ltp ?? null,
       stopLossPrice: first?.sl ?? null,
-      targetPrice: null,
+      targetPrice: first?.target ?? null,
       qty: first?.qty ?? 0,
       pnlRs: s.positions.reduce((a, p) => a + pnlOf(p), 0),
       positions,
@@ -465,16 +534,27 @@ export class StocksInPlayEngine {
       await this.refreshPrices(state, client, now);
       if (state.positions.length > 0) await this.managePositions(state, client, now);
 
-      if (hhmm >= SQUARE_OFF_HHMM) {
+      // No early `return` below: the completion check after the try block must still run.
+      const fade = state.config.setup === 'FADE';
+      const sessionOver = hhmm >= SQUARE_OFF_HHMM;
+      // FADE only signals on the 09:20..09:45 closes; started (or still without candidates) after that, nothing is left today.
+      const fadeOver = fade && !state.candidates && hhmm >= FADE_LAST_CANDLE_HHMM + 7;
+      if (sessionOver) {
         if (state.positions.length === 0) state.completeReason = `🏁 Session over (15:05). Strategy completed for today.`;
-        return;
+      } else if (fadeOver) {
+        if (state.positions.length === 0 && !state.completeReason) state.completeReason = `🏁 The fade window (09:20–09:45 closes) is over for today. Strategy completed.`;
+      } else if (state.baselines) {
+        // FADE reads the 09:15 candle's history at once, so give Kite a moment to finalise it.
+        const firstCandleReady = !fade || getIstHhmm(now) > FIRST_CANDLE_CLOSE_HHMM || now.getTime() % 60_000 >= FADE_SETTLE_MS;
+        if (!state.candidates && hhmm >= FIRST_CANDLE_CLOSE_HHMM && firstCandleReady && now.getTime() - state.candidatesTriedAt >= 5000) {
+          state.candidatesTriedAt = now.getTime();
+          await this.buildCandidates(state, client, now);
+        }
+        if (state.candidates) {
+          if (fade) await this.checkFadeSignals(state, client, new Date());
+          else await this.checkEntries(state, client, now);
+        }
       }
-      if (!state.baselines) return;
-      if (!state.candidates && hhmm >= FIRST_CANDLE_CLOSE_HHMM && now.getTime() - state.candidatesTriedAt >= 5000) {
-        state.candidatesTriedAt = now.getTime();
-        await this.buildCandidates(state, client, now);
-      }
-      if (state.candidates) await this.checkEntries(state, client, now);
     } catch (err: any) {
       this.log(state, `❌ Tick error: ${err?.message || err}`);
     } finally {
@@ -508,7 +588,8 @@ export class StocksInPlayEngine {
     const now = new Date();
     (async () => {
       if (state.positions.length > 0) await this.managePositions(state, state.client, now);
-      if (state.candidates && getIstHhmm(now) < SQUARE_OFF_HHMM) await this.checkEntries(state, state.client, now);
+      // FADE enters only on 5m closes (tick loop); its stop/target/breakeven still react to every tick above.
+      if (state.candidates && state.config.setup !== 'FADE' && getIstHhmm(now) < SQUARE_OFF_HHMM) await this.checkEntries(state, state.client, now);
     })()
       .catch((e) => this.log(state, `❌ Realtime check error: ${e?.message || e}`))
       .finally(() => { state.busy = false; });
@@ -538,7 +619,8 @@ export class StocksInPlayEngine {
     }
     state.baselineLoading = true;
     if (!this.baselinePromise) {
-      this.baselinePromise = this.fetchBaselines(state, client, day).finally(() => { this.baselinePromise = null; });
+      this.baselinePromise = this.fetchBaselines(client, day, { log: (m) => this.log(state, m), alive: () => this.running.has(state.strategyId) })
+        .finally(() => { this.baselinePromise = null; });
     }
     this.baselinePromise
       .then((data) => {
@@ -554,13 +636,48 @@ export class StocksInPlayEngine {
       .finally(() => { state.baselineLoading = false; });
   }
 
-  private async fetchBaselines(state: EngineState, client: any, day: string): Promise<Map<string, Baseline>> {
+  /**
+   * Pre-market warm-up, called by the market scheduler from 08:30. The ~600 history calls take 3+ minutes at
+   * Kite's shared 3/s rate, and half of the FADE backtest's trades come from the 09:20 close, so the baselines
+   * must be ready before the 09:15 auto-start. Needs today's Kite session: without one it returns false and the
+   * scheduler retries. A load with many failed stocks is not kept (also retried).
+   */
+  async prewarmBaselines(brokerAccount: any): Promise<boolean> {
+    const day = getIstDateStr(new Date());
+    if (this.sharedBaselines?.day === day) return true;
+    if (this.baselinePromise || !brokerAccount?.accessToken) return false;
+    const client = this.factory.createClient(brokerAccount);
+    const kite = client['kite'] || client;
+    try {
+      await (kite.getProfile ? kite.getProfile() : client.getMargins());
+    } catch {
+      return false; // no valid session yet (not logged in today)
+    }
+    const stats = { failed: 0, total: 0 };
+    const p = this.fetchBaselines(client, day, { log: (m) => this.logger.log(`[Baseline prewarm] ${m}`), alive: () => true, stats })
+      .finally(() => { this.baselinePromise = null; });
+    this.baselinePromise = p;
+    const data = await p;
+    if (data.size === 0 || stats.failed > stats.total * 0.1) {
+      this.logger.warn(`[Baseline prewarm] Incomplete (${data.size} loaded, ${stats.failed}/${stats.total} failed) — will retry.`);
+      return false;
+    }
+    this.sharedBaselines = { day, data };
+    this.logger.log(`[Baseline prewarm] Volume baselines ready for ${data.size} stocks before the open.`);
+    return true;
+  }
+
+  private async fetchBaselines(
+    client: any,
+    day: string,
+    ctx: { log: (msg: string) => void; alive: () => boolean; stats?: { failed: number; total: number } },
+  ): Promise<Map<string, Baseline>> {
     const file = this.baselineFile(day);
     try {
       const cached = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, Baseline>;
       const map = new Map(Object.entries(cached));
       if (map.size > 0) {
-        this.log(state, `📦 Loaded today's volume baselines from cache (${map.size} stocks).`);
+        ctx.log(`📦 Loaded today's volume baselines from cache (${map.size} stocks).`);
         // A cache written before 09:20 has no first candle; it is read from quotes at 09:20.
         return map;
       }
@@ -574,7 +691,7 @@ export class StocksInPlayEngine {
     const universe = new Set<string>(NIFTY_500_UNIVERSE.filter((s) => eq.has(s)));
     for (const i of nfo) { const n = String((i as any).name || '').toUpperCase(); if (eq.has(n)) universe.add(n); }
     const symbols = Array.from(universe);
-    this.log(state, `⏳ Loading volume baselines for ${symbols.length} stocks (NIFTY 500 + F&O, ~${Math.ceil(symbols.length / 3 / 60)} min at Kite's history rate)...`);
+    ctx.log(`⏳ Loading volume baselines for ${symbols.length} stocks (NIFTY 500 + F&O, ~${Math.ceil(symbols.length / 3 / 60)} min at Kite's history rate)...`);
 
     const to = new Date();
     const from = new Date(`${day}T09:15:00.000+05:30`);
@@ -582,7 +699,7 @@ export class StocksInPlayEngine {
     const out = new Map<string, Baseline>();
     let failed = 0;
     for (let i = 0; i < symbols.length; i += 3) {
-      if (!this.running.has(state.strategyId)) break;
+      if (!ctx.alive()) break;
       await Promise.all(symbols.slice(i, i + 3).map(async (sym) => {
         try {
           const raw: any[] = await client.getHistoricalData(sym, 'NSE', '5minute', from, to);
@@ -593,8 +710,10 @@ export class StocksInPlayEngine {
         }
       }));
     }
-    if (failed > 0) this.log(state, `⚠ History unavailable for ${failed} stock(s); they are skipped today.`);
-    if (out.size > 0) {
+    if (failed > 0) ctx.log(`⚠ History unavailable for ${failed} stock(s); they are skipped today.`);
+    if (ctx.stats) { ctx.stats.failed = failed; ctx.stats.total = symbols.length; }
+    // A load with many failures (expired session, rate limits) is not cached, so the next load starts clean.
+    if (out.size > 0 && failed <= symbols.length * 0.1) {
       try {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         const plain: Record<string, Baseline> = {};
@@ -655,6 +774,9 @@ export class StocksInPlayEngine {
     const firsts = new Map<string, { o: number; h: number; l: number; c: number; v: number }>();
     for (const [sym, b] of eligible) if (b.first) firsts.set(sym, b.first);
     const circuits = new Map<string, { lower: number; upper: number }>();
+    const fade = cfg.setup === 'FADE';
+    // FADE keeps the shortlist's history (previous sessions included) as the indicators' warm-up.
+    const histories = new Map<string, { candles: FadeCandle[]; at: number }>();
     const missing = eligible.filter(([sym]) => !firsts.has(sym)).map(([sym]) => sym);
     if (missing.length > 0) {
       const shortlist: string[] = [];
@@ -670,12 +792,14 @@ export class StocksInPlayEngine {
         }
       }
       const from = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`);
+      if (fade) from.setDate(from.getDate() - FADE_HISTORY_DAYS);
       for (let i = 0; i < shortlist.length; i += 3) {
         await Promise.all(shortlist.slice(i, i + 3).map(async (sym) => {
           try {
-            const raw: any[] = await client.getHistoricalData(sym, 'NSE', '5minute', from, now);
+            const raw: any[] = await client.getHistoricalData(sym, 'NSE', '5minute', from, new Date());
             const k = (raw || []).find((r: any) => getIstHhmm(new Date(r.date)) === 9 * 60 + 15 && getIstDateStr(new Date(r.date)) === getIstDateStr(now));
             if (k) firsts.set(sym, { o: Number(k.open), h: Number(k.high), l: Number(k.low), c: Number(k.close), v: Number(k.volume) || 0 });
+            if (fade) histories.set(sym, { candles: toCompletedCandles(raw, Date.now()), at: Date.now() });
           } catch { /* retried below */ }
         }));
       }
@@ -690,26 +814,175 @@ export class StocksInPlayEngine {
       if (!f || !(f.v > 0)) continue;
       const rvol = f.v / b.avgFirstVol;
       if (rvol < cfg.minRvol) continue;
+      if (fade) {
+        // Gap up only (the backtest edge was all there); any first-candle colour.
+        if (!(f.o > b.prevClose) || state.tradedSymbols.has(sym)) continue;
+        list.push({ symbol: sym, side: 'SHORT', level: f.c, stopDist: 0, rvol, tick: b.tick || 0.05, first: f, ltp: null, ltpAt: 0, done: false, candles: histories.get(sym)?.candles ?? null, candlesAt: histories.get(sym)?.at ?? 0, checkedThrough: 0 });
+        continue;
+      }
       const side: Side | null = f.c < f.o ? 'SHORT' : f.c > f.o ? 'LONG' : null;
       if (!side || (side === 'SHORT' && !cfg.allowShorts) || (side === 'LONG' && !cfg.allowLongs)) continue;
       if (state.tradedSymbols.has(sym)) continue;
       const cir = circuits.get(sym);
       if (cir && ((side === 'SHORT' && cir.lower > 0 && (f.c - cir.lower) / f.c < 0.01) || (side === 'LONG' && cir.upper > 0 && (cir.upper - f.c) / f.c < 0.01))) continue;
       const tick = b.tick || 0.05;
-      list.push({ symbol: sym, side, level: side === 'SHORT' ? f.l : f.h, stopDist: Math.max(tick * 4, cfg.stopAtrFraction * b.atr), rvol, tick, first: f, ltp: null, ltpAt: 0, done: false });
+      list.push({ symbol: sym, side, level: side === 'SHORT' ? f.l : f.h, stopDist: Math.max(tick * 4, cfg.stopAtrFraction * b.atr), rvol, tick, first: f, ltp: null, ltpAt: 0, done: false, candles: null, candlesAt: 0, checkedThrough: 0 });
     }
     list.sort((a, b) => b.rvol - a.rvol);
-    state.candidates = list.slice(0, MAX_CANDIDATES);
+    state.candidates = list.slice(0, fade ? FADE_MAX_CANDIDATES : MAX_CANDIDATES);
+    if (fade && state.candidates.length > 0) state.candidates = await this.dropNearUpperCircuit(state, kite, state.candidates);
 
     if (state.candidates.length === 0) {
-      this.log(state, `📭 No stock in play today (no first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks${cfg.allowLongs ? '' : ' with a red candle'}).`);
+      this.log(state, fade
+        ? `📭 No fade candidate today (no stock opened above yesterday's close with a first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks).`
+        : `📭 No stock in play today (no first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks${cfg.allowLongs ? '' : ' with a red candle'}).`);
       if (state.positions.length === 0) state.completeReason = `🏁 Nothing to trade today. Strategy completed.`;
       return;
     }
     for (const c of state.candidates) {
-      this.log(state, `🎯 In play: ${c.symbol} — first candle O ₹${c.first.o} H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | ${c.side === 'SHORT' ? `Short below ₹${c.level.toFixed(2)}` : `Buy above ₹${c.level.toFixed(2)}`}, stop ₹${c.stopDist.toFixed(2)} from the fill`);
-      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', symbol: c.symbol, side: c.side, level: c.level, stopDist: c.stopDist, rvol: c.rvol, first: c.first, isPaper: state.isPaperTrade });
+      if (fade) {
+        const b = base.get(c.symbol)!;
+        this.log(state, `🎯 In play: ${c.symbol} — opened ₹${c.first.o} (${(((c.first.o / b.prevClose) - 1) * 100).toFixed(1)}% above yesterday's ₹${b.prevClose}), first candle H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | Watching for an overbought rollover until the 09:45 close`);
+      } else {
+        this.log(state, `🎯 In play: ${c.symbol} — first candle O ₹${c.first.o} H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | ${c.side === 'SHORT' ? `Short below ₹${c.level.toFixed(2)}` : `Buy above ₹${c.level.toFixed(2)}`}, stop ₹${c.stopDist.toFixed(2)} from the fill`);
+      }
+      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, stopDist: c.stopDist, rvol: c.rvol, first: c.first, isPaper: state.isPaperTrade });
       try { await this.tickerService.subscribeSymbol(state.brokerAccountId, c.symbol); state.subscribed.add(c.symbol); } catch { /* REST prices cover it */ }
+    }
+  }
+
+  /** FADE: drops candidates within FADE_MIN_CIRCUIT_ROOM of the upper circuit (a squeezed short cannot be covered there). */
+  private async dropNearUpperCircuit(state: EngineState, kite: any, list: Candidate[]): Promise<Candidate[]> {
+    let q: Record<string, any>;
+    try {
+      q = await kite.getQuote(list.map((c) => `NSE:${c.symbol}`));
+    } catch (e: any) {
+      this.log(state, `⚠ Could not read circuit limits (${e?.message || e}) — keeping all ${list.length} candidates.`);
+      return list;
+    }
+    return list.filter((c) => {
+      const x = q[`NSE:${c.symbol}`];
+      const upper = Number(x?.upper_circuit_limit) || 0, last = Number(x?.last_price) || 0;
+      if (last > 0) { c.ltp = last; c.ltpAt = Date.now(); }
+      if (upper > 0 && last > 0 && (upper - last) / last < FADE_MIN_CIRCUIT_ROOM) {
+        this.log(state, `⏭ ${c.symbol} skipped: ₹${last} is within ${(FADE_MIN_CIRCUIT_ROOM * 100).toFixed(1)}% of its upper circuit ₹${upper} (a short there may not be coverable).`);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // ── FADE signals (5m closes 09:20..09:45) ──────────────────────────────────
+
+  private async checkFadeSignals(state: EngineState, client: any, now: Date) {
+    if (state.stopping || !state.candidates) return;
+    const cfg = state.config;
+    const nowMs = now.getTime();
+    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+    const lastStart = dayOpenMs + (FADE_LAST_CANDLE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
+    const live = state.candidates.filter((c) => !c.done);
+
+    if (state.tradesToday >= cfg.maxPositions || nowMs > lastStart + FIVE_MIN_MS + FADE_CANDLE_WAIT_MS) {
+      for (const c of live) c.done = true;
+      if (state.positions.length === 0 && !state.completeReason) {
+        state.completeReason = state.tradesToday >= cfg.maxPositions
+          ? `⛔ Max ${cfg.maxPositions} trade(s) done for today. Strategy completed.`
+          : `🏁 No overbought rollover in the candidates by the 09:45 close — no fade trade today. Strategy completed.`;
+      }
+      return;
+    }
+    if (live.length === 0) {
+      if (state.positions.length === 0 && !state.completeReason) state.completeReason = `🏁 Every fade candidate has been traded or dropped. Strategy completed.`;
+      return;
+    }
+
+    // Start of the latest candle that closed at least FADE_SETTLE_MS ago, capped at the 09:40 candle.
+    const closedStart = Math.floor((nowMs - FADE_SETTLE_MS) / FIVE_MIN_MS) * FIVE_MIN_MS - FIVE_MIN_MS;
+    if (closedStart < dayOpenMs) return;
+    const target = Math.min(closedStart, lastStart);
+    const closeMs = target + FIVE_MIN_MS;
+    const pending = live.filter((c) => c.checkedThrough < target);
+    if (pending.length === 0) return;
+    const hhmmOf = (ms: number) => { const m = getIstHhmm(new Date(ms)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+    if (nowMs - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
+      for (const c of pending) c.checkedThrough = target;
+      this.log(state, `⏭ The ${hhmmOf(closeMs)} candle closed over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min ago — too late to act on it; waiting for the next close.`);
+      return;
+    }
+
+    const signals: { c: Candidate; trigger: FadeTrigger; idx: number }[] = [];
+    for (let i = 0; i < pending.length; i += 3) {
+      await Promise.all(pending.slice(i, i + 3).map(async (c) => {
+        // The 09:20 scan already read this candle after it settled: no second history call (saves seconds at 09:20).
+        const haveFresh = !!c.candles && c.candlesAt >= closeMs + FADE_SETTLE_MS && c.candles.some((k) => k.t === target);
+        if (!haveFresh) {
+          const from = new Date(dayOpenMs);
+          if (!c.candles) from.setDate(from.getDate() - FADE_HISTORY_DAYS);
+          let fresh: FadeCandle[];
+          try {
+            fresh = toCompletedCandles(await client.getHistoricalData(c.symbol, 'NSE', '5minute', from, new Date()), Date.now());
+          } catch (e: any) {
+            this.logger.warn(`[${state.strategyId}] ${c.symbol} 5m history failed: ${e?.message || e}`);
+            return; // retried on the next tick while the candle is still fresh
+          }
+          c.candles = c.candles ? [...c.candles.filter((k) => k.t < dayOpenMs), ...fresh.filter((k) => k.t >= dayOpenMs)] : fresh;
+          c.candlesAt = Date.now();
+        }
+        const idx = c.candles.findIndex((k) => k.t === target);
+        if (idx < 0) {
+          if (nowMs - closeMs >= FADE_CANDLE_WAIT_MS) {
+            c.checkedThrough = target;
+            this.log(state, `⚠ ${c.symbol}: Kite has no ${hhmmOf(closeMs)} candle yet — skipped for that close.`);
+          }
+          return;
+        }
+        c.checkedThrough = target;
+        if (idx < FADE_MIN_HISTORY) {
+          c.done = true;
+          this.log(state, `⚠ ${c.symbol}: only ${idx} earlier 5m candles available (needs ${FADE_MIN_HISTORY}) — dropped.`);
+          return;
+        }
+        const trigger = fadeShortTrigger(c.candles, idx);
+        if (trigger) signals.push({ c, trigger, idx });
+      }));
+    }
+    if (signals.length === 0) return;
+
+    // Several on the same close: the highest opening volume first (as in the backtest).
+    signals.sort((a, b) => b.c.rvol - a.c.rvol);
+    for (const s of signals) {
+      const r = fadeReadings(s.c.candles!, s.idx)!;
+      const k = s.c.candles![s.idx];
+      const why: Record<FadeTrigger, string> = {
+        MFI: `MFI fell back to ${r.mfi.toFixed(1)} from above 80`,
+        STOCH: `Stochastic %K ${r.stochK.toFixed(1)} crossed under %D ${r.stochD.toFixed(1)} from above 80`,
+        BB: `closed ₹${k.c} back under the upper Bollinger band ₹${r.bbUpper.toFixed(2)}`,
+        CMF: `CMF fell to ${r.cmf.toFixed(3)} (below -0.1)`,
+      };
+      this.log(state, `📉 [FADE SIGNAL] ${s.c.symbol} ${hhmmOf(closeMs)} close ₹${k.c} — ${why[s.trigger]} | volume ${s.c.rvol.toFixed(1)}x`);
+      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'FADE', event: 'SIGNAL', symbol: s.c.symbol, trigger: s.trigger, candle: k, readings: r, rvol: s.c.rvol, isPaper: state.isPaperTrade });
+    }
+    for (const s of signals) {
+      s.c.done = true;
+      if (state.tradesToday >= cfg.maxPositions || state.stopping) continue;
+      if (Date.now() - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
+        this.log(state, `⏭ ${s.c.symbol} fade signal is over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min old — not entering late.`);
+        continue;
+      }
+      await this.refreshCandidateLtp(state, client, s.c);
+      await this.enterTrade(state, client, s.c, new Date());
+    }
+  }
+
+  /** Fresh price right before a FADE entry (ticks if under 3s old, else REST). */
+  private async refreshCandidateLtp(state: EngineState, client: any, c: Candidate) {
+    if (c.ltp !== null && Date.now() - c.ltpAt < 3000) return;
+    try {
+      const ltps: Record<string, number> = await client.getLTP([`NSE:${c.symbol}`]);
+      const px = ltps[`NSE:${c.symbol}`];
+      if (px && px > 0) { c.ltp = px; c.ltpAt = Date.now(); }
+    } catch (e: any) {
+      this.logger.warn(`[${state.strategyId}] LTP for ${c.symbol} failed: ${e?.message || e}`);
     }
   }
 
@@ -769,12 +1042,20 @@ export class StocksInPlayEngine {
 
   private async enterTrade(state: EngineState, client: any, c: Candidate, now: Date) {
     const cfg = state.config;
+    const fade = cfg.setup === 'FADE';
     c.done = true;
-    const ltp = c.ltp!;
+    if (c.ltp === null || !(c.ltp > 0)) {
+      this.log(state, `⏭ ${c.symbol}: no current price available — not entering blind.`);
+      return;
+    }
+    const ltp = c.ltp;
     const sign = c.side === 'LONG' ? 1 : -1;
+    // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below).
+    const stopDist = fade ? (ltp * cfg.stopPct) / 100 : c.stopDist;
 
+    // ORB enters on a level break and must not chase it; FADE enters at market on the candle close by design.
     const chase = (ltp - c.level) * sign;
-    if (chase > MAX_CHASE_OF_STOP * c.stopDist) {
+    if (!fade && chase > MAX_CHASE_OF_STOP * c.stopDist) {
       this.log(state, `⏭ ${c.symbol} broke ₹${c.level.toFixed(2)} but is already at ₹${ltp.toFixed(2)} (more than ${MAX_CHASE_OF_STOP} of the stop distance past it). Not chasing.`);
       return;
     }
@@ -807,13 +1088,15 @@ export class StocksInPlayEngine {
       if (cfg.maxCapital !== null) slotCapital = Math.min(slotCapital, cfg.maxCapital / cfg.maxPositions);
     }
     const qtyByCapital = Math.floor((slotCapital * cfg.leverage * 0.95) / ltp);
-    const qtyByRisk = Math.floor(cfg.stopLossRs / c.stopDist);
+    const qtyByRisk = Math.floor(cfg.stopLossRs / stopDist);
     const qty = Math.min(qtyByCapital, qtyByRisk);
     if (qty < 1) {
-      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / cfg.leverage).toFixed(0)} margin or risks ₹${c.stopDist.toFixed(2)} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
+      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / cfg.leverage).toFixed(0)} margin or risks ₹${stopDist.toFixed(2)} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
       return;
     }
-    this.log(state, `🚀 ${c.symbol} broke ₹${c.level.toFixed(2)} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`);
+    this.log(state, fade
+      ? `🚀 ${c.symbol} fade signal at ₹${ltp.toFixed(2)} — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
+      : `🚀 ${c.symbol} broke ₹${c.level.toFixed(2)} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`);
 
     const entrySide: 'BUY' | 'SELL' = c.side === 'LONG' ? 'BUY' : 'SELL';
     let fill: { qty: number; price: number; orderId: string } | null;
@@ -826,15 +1109,21 @@ export class StocksInPlayEngine {
     }
     state.tradedSymbols.add(c.symbol);
 
-    const sl = roundTo(fill.price - sign * c.stopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
+    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : c.stopDist;
+    const sl = roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
+    // Target rounded toward the entry, so it is never further than targetR x the stop.
+    const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
     state.tradesToday++;
     const p: OpenPosition = {
-      symbol: c.symbol, side: c.side, entryPrice: fill.price, qty: fill.qty, sl, tick: c.tick, rvol: c.rvol,
+      symbol: c.symbol, side: c.side, entryPrice: fill.price, qty: fill.qty, sl, target, stopDist: fillStopDist, beDone: !fade || cfg.breakevenAtR <= 0, lastBeAttempt: 0, tick: c.tick, rvol: c.rvol,
       slOrderId: null, openedAt: now.getTime(), ltp: ltp, ltpAt: Date.now(), slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
     };
     state.positions.push(p);
-    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | Exit at the SL or 15:05 | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}`);
-    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, qty: fill.qty, rvol: c.rvol, isPaper: state.isPaperTrade });
+    const exitPlan = fade
+      ? `Target ₹${target !== null ? target.toFixed(2) : '—'}${cfg.breakevenAtR > 0 ? ` | SL to entry at ₹${(fill.price + sign * cfg.breakevenAtR * fillStopDist).toFixed(2)}` : ''} | else 15:05`
+      : 'Exit at the SL or 15:05';
+    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}`);
+    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, isPaper: state.isPaperTrade });
 
     if (state.isPaperTrade) {
       await this.recordPaperOrder(state, c.symbol, entrySide === 'BUY' ? 'SELL' : 'BUY', p.qty, sl, `${fill.orderId}_SL`, 'SL', 'OPEN', sl);
@@ -956,6 +1245,17 @@ export class StocksInPlayEngine {
     }
     if (price === null) return;
 
+    // FADE target: watched here (not a resting order, so a filled target can never race the broker SL).
+    if (p.target !== null && (p.side === 'LONG' ? price >= p.target : price <= p.target)) {
+      this.log(state, `🎯 Target hit: ${p.symbol} ₹${price.toFixed(2)} vs target ₹${p.target.toFixed(2)} — exiting at market.`);
+      await this.exitPosition(state, client, p, 'TARGET', price);
+      return;
+    }
+    if (!p.beDone && state.config.breakevenAtR > 0 && now.getTime() - p.lastBeAttempt >= BREAKEVEN_RETRY_MS) {
+      const inProfit = (price - p.entryPrice) * (p.side === 'LONG' ? 1 : -1);
+      if (inProfit >= state.config.breakevenAtR * p.stopDist) await this.moveStopToBreakeven(state, client, p, now);
+    }
+
     const beyondSl = p.side === 'LONG' ? price <= p.sl : price >= p.sl;
     if (beyondSl) {
       if (state.isPaperTrade) {
@@ -995,6 +1295,37 @@ export class StocksInPlayEngine {
       } catch (e: any) {
         this.log(state, `⚠ Broker SL placement for ${p.symbol} failed (attempt ${attempt}/2): ${e?.message || e}`);
       }
+    }
+  }
+
+  /** Moves the stop (and the broker SL order) to the entry price. On failure the old stop stays and it is retried. */
+  private async moveStopToBreakeven(state: EngineState, client: any, p: OpenPosition, now: Date) {
+    p.lastBeAttempt = now.getTime();
+    const newSl = roundTo(p.entryPrice, p.tick, p.side === 'LONG' ? 'down' : 'up');
+    if (p.side === 'LONG' ? newSl <= p.sl : newSl >= p.sl) { p.beDone = true; return; }
+    const r = `+${state.config.breakevenAtR}R (₹${(state.config.breakevenAtR * p.stopDist * p.qty).toFixed(0)})`;
+
+    if (state.isPaperTrade) {
+      p.sl = newSl;
+      p.beDone = true;
+      if (p.slOrderId) {
+        this.prisma.order.updateMany({ where: { brokerOrderId: p.slOrderId, isPaperTrade: true, status: 'OPEN' }, data: { triggerPrice: newSl, price: newSl } }).catch(() => undefined);
+      }
+      this.log(state, `🔒 [BREAKEVEN] ${p.symbol} reached ${r} — stop moved to the entry ₹${newSl.toFixed(2)}.`);
+      return;
+    }
+    if (!p.slOrderId || !client?.modifyOrder) {
+      this.log(state, `⚠ [BREAKEVEN] ${p.symbol}: no broker SL order to move right now — keeping ₹${p.sl.toFixed(2)}, retrying shortly.`);
+      return;
+    }
+    const limit = this.slLimit(p, newSl);
+    try {
+      await client.modifyOrder(p.slOrderId, { triggerPrice: newSl, price: limit });
+      p.sl = newSl;
+      p.beDone = true;
+      this.log(state, `🔒 [BREAKEVEN] ${p.symbol} reached ${r} — broker SL ${p.slOrderId} moved to the entry: trigger ₹${newSl.toFixed(2)}, limit ₹${limit.toFixed(2)}.`);
+    } catch (e: any) {
+      this.log(state, `⚠ [BREAKEVEN] Could not move the broker SL for ${p.symbol} (${e?.message || e}). It stays at ₹${p.sl.toFixed(2)}; retrying in ${BREAKEVEN_RETRY_MS / 1000}s.`);
     }
   }
 
@@ -1096,11 +1427,11 @@ export class StocksInPlayEngine {
       this.prisma.order.updateMany({ where: { brokerOrderId: p.slOrderId, isPaperTrade: true, status: 'OPEN' }, data: { status: 'CANCELLED' } }).catch(() => undefined);
     }
     const label: Record<ExitReason, string> = {
-      SL: 'Stop Loss Hit', SQUARE_OFF: '15:05 square-off', MANUAL: 'Manual square-off', BROKER_SL: 'Broker SL filled',
+      SL: 'Stop Loss Hit', TARGET: 'Target hit', SQUARE_OFF: '15:05 square-off', MANUAL: 'Manual square-off', BROKER_SL: 'Broker SL filled',
       BROKER_SYNC: 'Closed outside the engine', NO_PROTECTION: 'Exited (no broker SL)',
     };
     this.log(state, `🏁 ${label[reason]} — ${p.symbol} exit at ₹${exitPrice.toFixed(2)} (${p.side} entry ₹${p.entryPrice.toFixed(2)}) | Realized P&L: ₹${pnl.toFixed(2)} | Today: ₹${state.realizedTodayRs.toFixed(2)} (${state.winsToday}W/${state.lossesToday}L, ${state.tradesToday}/${state.config.maxPositions} trades) [${orderId ?? 'n/a'}]`);
-    logSignal('EXIT', state.strategyId, { engine: 'STOCKS_IN_PLAY', symbol: p.symbol, side: p.side, reason, entry: p.entryPrice, exit: exitPrice, qty: p.qty, pnl, rvol: p.rvol, heldMs: Date.now() - p.openedAt, isPaper: state.isPaperTrade });
+    logSignal('EXIT', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: state.config.setup, symbol: p.symbol, side: p.side, reason, entry: p.entryPrice, exit: exitPrice, qty: p.qty, pnl, rvol: p.rvol, heldMs: Date.now() - p.openedAt, isPaper: state.isPaperTrade });
 
     state.positions = state.positions.filter((x) => x !== p);
     strategyEvents.emit('strategy.update', { strategyId: state.strategyId, logs: state.logs, state: this.snapshot(state) });

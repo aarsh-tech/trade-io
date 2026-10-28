@@ -381,9 +381,52 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
       {/* ── STOCKS-IN-PLAY BREAKOUT: STOCK SELECTION AND TIMING ── */}
       {form.type === "STOCKS_IN_PLAY" && (
         <>
+          <Section title="Setup" description="Both setups use the same 09:20 volume scan. They differ in how they enter and exit.">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {([
+                {
+                  value: "FADE",
+                  title: "In-play Fade (short)",
+                  text: "Stock gapped up on 10x opening volume, then MFI, Stochastic, Bollinger or CMF turns down from overbought by 09:45: short it. Fixed stop and target. 2-year backtest: +₹70k at ₹500 risk, both years positive.",
+                },
+                {
+                  value: "ORB",
+                  title: "Opening-range break",
+                  text: "Shorts the break of a red first candle's low. ATR stop, no target: held to 15:05. Fat-tailed: about 1 trade in 3 wins.",
+                },
+              ] as const).map((o) => (
+                <label
+                  key={o.value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted ${form.sipSetup === o.value ? "border-primary bg-muted" : "border-border bg-card"}`}
+                >
+                  <input
+                    type="radio"
+                    name="sipSetup"
+                    checked={form.sipSetup === o.value}
+                    onChange={() => {
+                      set("sipSetup", o.value);
+                      // Each setup's backtested defaults for the fields they share.
+                      set("maxTradesPerDay", o.value === "FADE" ? "1" : "2");
+                      set("sipMinAvgValueCr", o.value === "FADE" ? "10" : "25");
+                    }}
+                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer"
+                  />
+                  <span>
+                    <span className="block text-xs font-semibold text-foreground">{o.title}</span>
+                    <span className="block text-xs text-muted-foreground">{o.text}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </Section>
+
           <Section
             title="Which stocks it trades"
-            description="No symbol to pick. At 09:20 the strategy checks every NIFTY 500 and F&O stock and keeps the ones whose first 5-minute candle traded far above their usual opening volume (news, results, block deals)."
+            description={
+              form.sipSetup === "FADE"
+                ? "No symbol to pick. At 09:20 the strategy checks every NIFTY 500 and F&O stock and keeps the ones that opened above yesterday's close with a first 5-minute candle far above their usual opening volume. Stocks within 2.5% of their upper circuit are skipped."
+                : "No symbol to pick. At 09:20 the strategy checks every NIFTY 500 and F&O stock and keeps the ones whose first 5-minute candle traded far above their usual opening volume (news, results, block deals)."
+            }
           >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <NumberField
@@ -399,8 +442,13 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 value={form.maxTradesPerDay}
                 onChange={(v) => set("maxTradesPerDay", v)}
                 min={1}
-                hint="Positions can be open together; capital is split between them. 2 had the steadiest backtest."
+                hint={
+                  form.sipSetup === "FADE"
+                    ? "1 is what was backtested (the earliest signal of the day). 2 earned less per trade with a bigger drawdown."
+                    : "Positions can be open together; capital is split between them. 2 had the steadiest backtest."
+                }
               />
+              {form.sipSetup !== "FADE" && (
               <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
                 <input
                   type="checkbox"
@@ -413,11 +461,20 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                   <span className="block text-xs text-muted-foreground">Off by default: in 2 years of NSE data the long side earned about nothing after costs; the edge came from shorting red first candles.</span>
                 </span>
               </label>
+              )}
             </div>
           </Section>
 
-          <Section title="Timing" description="Entries happen the moment price breaks the first candle (shorts: its low). Every position is held until its stop or the 15:05 square-off.">
+          <Section
+            title="Timing"
+            description={
+              form.sipSetup === "FADE"
+                ? "Signals are checked on the 5-minute closes from 09:20 to 09:45, and the short is placed within seconds of that close. No new entries after the 09:45 close. A position is held until its target, its stop or the 15:05 square-off."
+                : "Entries happen the moment price breaks the first candle (shorts: its low). Every position is held until its stop or the 15:05 square-off."
+            }
+          >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {form.sipSetup !== "FADE" && (
               <Field label="No new entries from" hint="IST. Open positions are still managed until 15:05.">
                 {(a11y) => (
                   <Input
@@ -429,6 +486,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                   />
                 )}
               </Field>
+              )}
               <div className="rounded-lg border border-border bg-card p-3 text-xs text-muted-foreground">
                 <span className="block font-semibold text-foreground">Product: MIS (intraday)</span>
                 Short selling needs MIS. Stocks where Zerodha blocks MIS are skipped.

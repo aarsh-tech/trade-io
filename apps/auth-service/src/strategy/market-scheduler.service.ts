@@ -30,6 +30,9 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
    * though the detection window is 09:15 – 09:16 (two ticks).
    */
   private lastAutoStartDate: string | null = null;
+  /** Last pre-market Stocks-in-Play baseline attempt (epoch ms) and the IST day it succeeded. */
+  private lastBaselinePrewarm = 0;
+  private baselinePrewarmedDay: string | null = null;
 
   /**
    * Tracks the IST date string of the last auto-stop run.
@@ -140,6 +143,17 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    // ── Pre-market: Stocks-in-Play volume baselines (~600 history calls, 3+ min at Kite's 3/s) ──────────
+    // Must be ready for the 09:20 scan; the strategy itself only starts at 09:15. Retried every 2 minutes
+    // (e.g. until the user has logged in to Kite today).
+    if (hhmm >= 8 * 60 + 30 && hhmm < MARKET_OPEN && this.baselinePrewarmedDay !== ist.toDateString() && now.getTime() - this.lastBaselinePrewarm >= 120_000) {
+      this.lastBaselinePrewarm = now.getTime();
+      const dayKey = ist.toDateString();
+      this.prewarmStocksInPlay()
+        .then((ok) => { if (ok) this.baselinePrewarmedDay = dayKey; })
+        .catch((e) => this.logger.warn(`Stocks-in-Play baseline prewarm failed: ${e?.message || e}`));
+    }
+
     // ── Auto-start at Market Open ─────────────────────────────────────────────
     // Fires once per IST day for all strategies with autoStart=true (or still active from before a
     // restart). The session-wide window (not just 09:15-09:16) makes a late start or a restart
@@ -215,6 +229,17 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ── Auto-start all strategies marked autoStart=true ──────────────────────────
+
+  /** Loads the Stocks-in-Play baselines with the first armed strategy's broker session. True when ready. */
+  private async prewarmStocksInPlay(): Promise<boolean> {
+    const strategies = await this.prisma.strategy.findMany({
+      where: { type: 'STOCKS_IN_PLAY', autoStart: true } as any,
+      include: { brokerAccount: true },
+    });
+    const account = strategies.map((s: any) => s.brokerAccount).find((a: any) => a?.accessToken);
+    if (!account) return false; // nothing armed or no session yet: checked again in 2 minutes
+    return this.stocksInPlayEngine.prewarmBaselines(account);
+  }
 
   private async autoStartStrategies(includeActive = false) {
     try {

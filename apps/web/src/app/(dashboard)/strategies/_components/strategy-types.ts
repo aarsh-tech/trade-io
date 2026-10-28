@@ -72,23 +72,23 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
   },
   {
     type: "STOCKS_IN_PLAY",
-    label: "Stocks-in-Play Breakout",
-    tagline: "At 09:20 finds the stocks trading 10x their usual opening volume and shorts the break of their first 5-minute candle, holding until 15:05 unless stopped.",
+    label: "Stocks-in-Play",
+    tagline: "At 09:20 finds the stocks trading 10x their usual opening volume. In-play Fade (default) shorts a gap-up one when MFI, Stochastic, Bollinger or CMF turns down by 09:45, with a fixed stop and target; Opening-range break shorts the break of its first candle.",
     risk: "High",
-    riskNote: "Most trades are small stopped-out losses; a few all-day moves carry the result. Losing weeks are normal.",
+    riskNote: "Short selling with runs of losing days; about 4 in 10 fade trades win and the winners are larger. Losing weeks are normal.",
     instrument: "Stocks (intraday, MIS, short selling)",
     bestFor: "News and results days, with fixed rupee risk per trade",
-    timing: "09:20 to 15:00, square-off 15:05",
+    timing: "Fade: 09:20 to 09:45 entries; ORB: until 15:00. Square-off 15:05",
     icon: Flame,
     tile: "bg-loss-subtle text-loss border-loss/30",
-    defaultName: "Stocks-in-Play Breakout",
+    defaultName: "In-play Fade",
     defaults: {
       symbol: "AUTO",
       exchange: "NSE",
       instrumentType: "STOCK",
       product: "MIS",
-      stopLossRs: "400",
-      maxTradesPerDay: "2",
+      stopLossRs: "500",
+      maxTradesPerDay: "1",
     },
   },
   {
@@ -331,6 +331,15 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
     }
     case "STOCKS_IN_PLAY": {
       const perTrade = n(form.stopLossRs);
+      if (form.sipSetup === "FADE") {
+        const tr = n(form.sipTargetR);
+        return {
+          perTrade: perTrade || null,
+          perDay: perTrade ? perTrade * trades : null,
+          targetPerTrade: perTrade && tr > 0 ? perTrade * tr : null,
+          basis: `Shares are sized so the stop (${form.sipStopPct || 1.2}% above the entry) loses at most your max loss, and capital allows (${form.sipLeverage || 4}x). A jump through the stop can lose a little more. Target ${tr > 0 ? `${tr}x the stop` : "off"}${n(form.sipBreakevenAtR) > 0 ? `; the stop moves to the entry at +${form.sipBreakevenAtR}x` : ""}; otherwise 15:05.`,
+        };
+      }
       return {
         perTrade: perTrade || null,
         perDay: perTrade ? perTrade * trades : null,
