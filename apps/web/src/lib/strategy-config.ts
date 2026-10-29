@@ -52,6 +52,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['stopPct', 'Stop distance (%)', 0.3, 5, false],
   ['targetR', 'Target (x stop)', 0, 20, false],
   ['breakevenAtR', 'Stop to entry at (x stop)', 0, 20, false],
+  ['breakevenLockR', 'Profit locked at that step (x stop)', 0, 20, false],
   ['minAvgValueCr', 'Min avg daily value (₹ Cr)', 0, 100_000, false],
   ['minPrice', 'Min stock price (₹)', 1, 1_000_000, false],
   ['leverage', 'Leverage', 1, 5, false],

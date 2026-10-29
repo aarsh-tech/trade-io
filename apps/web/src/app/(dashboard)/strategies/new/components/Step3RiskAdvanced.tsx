@@ -794,6 +794,25 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               <li>Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1.2% / 3R / breakeven at 1R): about 4 in 10 trades win, the average loss is about ₹340, runs of 8 losing days happened, and 5 of 25 months were red.</li>
             </ul>
           </div>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {([
+              { label: "Recommended (≈62% wins)", stop: "1.2", tgt: "3", at: "1", lock: "0.2", text: "Backtest +₹77.6k / 2 years, worst month −₹3.0k" },
+              { label: "Highest win rate (≈73% wins)", stop: "1.8", tgt: "3", at: "0.5", lock: "0.2", text: "Backtest +₹39.3k / 2 years (half the profit), worst month −₹1.7k" },
+            ] as const).map((p) => {
+              const active = form.sipStopPct === p.stop && form.sipTargetR === p.tgt && form.sipBreakevenAtR === p.at && (form.sipBreakevenLockR || "0") === p.lock;
+              return (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => { set("sipStopPct", p.stop); set("sipTargetR", p.tgt); set("sipBreakevenAtR", p.at); set("sipBreakevenLockR", p.lock); set("sipProfitLock", true); }}
+                  className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors hover:bg-muted ${active ? "border-primary bg-muted" : "border-border bg-card"}`}
+                >
+                  <span className="block font-semibold text-foreground">{p.label}</span>
+                  <span className="block text-muted-foreground">{p.text}</span>
+                </button>
+              );
+            })}
+          </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <NumberField
               label="Stop distance"
@@ -821,6 +840,15 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               value={form.sipBreakevenAtR}
               onChange={(v) => set("sipBreakevenAtR", v)}
               hint="1 = once the trade is up by the stop distance. Cut the average loss from ₹513 to ₹341 for ₹2k less over 2 years. 0 = off."
+            />
+            <NumberField
+              label="Profit locked at that step"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipBreakevenLockR}
+              onChange={(v) => set("sipBreakevenLockR", v)}
+              hint="0.2 = a trade that reached the step and came back still closes in profit after charges (≈62% winning trades, same total profit as 0). 0 = the stop goes exactly to the entry."
             />
             <NumberField
               label="Min avg daily value"

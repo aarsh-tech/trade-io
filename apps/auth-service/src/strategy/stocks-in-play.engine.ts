@@ -41,7 +41,7 @@ import { logSignal } from './signal-logger';
  *   (inplay-fade-signals.ts). The earliest candle wins; several on one candle -> highest RVOL first.
  * - Entry: SHORT at market right after that candle closes (skipped if more than 2 minutes late).
  * - Exits: stop stopPct above the fill (exchange SL order), target targetR x the stop below it (engine-watched,
- *   market exit), stop moved to the entry once the trade is breakevenAtR x the stop in profit, then (profitLock)
+ *   market exit), stop moved to the entry (+breakevenLockR) once the trade is breakevenAtR x the stop in profit, then (profitLock)
  *   to +0.5R at +1.5R and +1.5R at +2.5R; else 15:05.
  * - Backtest (2024-09 .. 2026-09, 1m bars, Zerodha costs + slippage, 1 trade/day, ₹500 risk, 1.2% / 3R / BE at 1R,
  *   avg value >= ₹10 Cr, price >= ₹50): +₹70.4k, year 1 +₹30.1k, year 2 +₹40.4k, 39% wins, avg loss ₹341,
@@ -51,6 +51,12 @@ import { logSignal } from './signal-logger';
  *   maxPositions then counts per side. Backtest (scratchpad research2.js, 29 Oct 2026, ₹500 risk): the long side
  *   alone +₹11.0k (year 1 -₹1.2k, year 2 +₹12.2k), weak; book with up to 1 short + 1 long a day +₹73.6k vs +₹62.6k
  *   short only, max drawdown ₹7.6k vs ₹5.1k. Buying the turn-up without the high break lost (-₹9.0k).
+ * - breakevenLockR 0.2 (default): at +1R the stop goes to +0.2R, not the bare entry, so a trade that reached +1R and
+ *   came back is a small win instead of a small loss after charges. Backtest both sides (scratchpad grid3.js,
+ *   29 Oct 2026): 62% wins, +₹77.6k vs 49% wins, +₹76.7k with the stop at the entry; +0.1R..+0.3R all 62-64%.
+ * - High win-rate exits (scratchpad grid2.js, 29 Oct 2026, both sides): stopPct 1.8, breakevenAtR 0.5,
+ *   breakevenLockR 0.2, targetR 3 + profit lock -> 73% wins, +₹39.3k, max drawdown ₹2.9k, worst month -₹1.7k,
+ *   vs the default 1.2% / BE at 1R: 49% wins, +₹76.7k. The neighbours (1.8-2.1%, +0.4..0.5R, +0.1..0.2R) were all 71-76%.
  */
 
 type Side = 'LONG' | 'SHORT';
@@ -99,6 +105,8 @@ interface ResolvedConfig {
   targetR: number;
   /** FADE: move the stop to the entry once the trade is this multiple of the stop in profit (0 = off). */
   breakevenAtR: number;
+  /** FADE: profit that first stop move locks, in R (0 = exactly the entry; default 0.2). Always below breakevenAtR. */
+  breakevenLockR: number;
   /** FADE: after breakeven, lock +0.5R at +1.5R and +1.5R at +2.5R (FADE_PROFIT_LOCK_STEPS). */
   profitLock: boolean;
   stopLossRs: number;
@@ -306,7 +314,7 @@ export class StocksInPlayEngine {
       this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${mode})`);
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to entry at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.perSideTrades} long + ${config.perSideTrades} short a day`);
     } else {
       this.log(state, `▶ Stocks-in-Play ORB started | ${mode}`);
@@ -364,11 +372,13 @@ export class StocksInPlayEngine {
     const allowLongs = fade ? raw.fadeLongs === true : raw.allowLongs === true;
     if (!allowShorts && !allowLongs) throw new Error('Stocks-in-Play: enable shorts, longs or both.');
     const perSideTrades = Math.min(5, Math.floor(num(raw.maxPositions, fade ? 1 : 2)));
+    const breakevenAtR = Math.min(20, numOrZero(raw.breakevenAtR, 1));
     return {
       setup,
       stopPct: Math.min(5, Math.max(0.3, num(raw.stopPct, 1.2))),
       targetR: Math.min(20, numOrZero(raw.targetR, 3)),
-      breakevenAtR: Math.min(20, numOrZero(raw.breakevenAtR, 1)),
+      breakevenAtR,
+      breakevenLockR: Math.min(numOrZero(raw.breakevenLockR, 0.2), breakevenAtR * 0.8),
       profitLock: raw.profitLock !== false,
       stopLossRs,
       maxPositions: fade && allowLongs ? perSideTrades * 2 : perSideTrades,
@@ -1405,7 +1415,7 @@ export class StocksInPlayEngine {
   private lockSteps(cfg: ResolvedConfig): [number, number][] {
     if (cfg.setup !== 'FADE') return [];
     const steps: [number, number][] = [];
-    if (cfg.breakevenAtR > 0) steps.push([cfg.breakevenAtR, 0]);
+    if (cfg.breakevenAtR > 0) steps.push([cfg.breakevenAtR, cfg.breakevenLockR]);
     if (cfg.profitLock) steps.push(...FADE_PROFIT_LOCK_STEPS);
     return steps.sort((a, b) => a[0] - b[0]);
   }

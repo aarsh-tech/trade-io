@@ -202,6 +202,7 @@ export interface StocksInPlayConfig {
   stopPct?: number;                    // FADE: stop distance as % of the fill (default 1.2)
   targetR?: number;                    // FADE: target at this multiple of the stop (default 3; 0 = no target, exit at the stop or 15:05)
   breakevenAtR?: number;               // FADE: stop moved to the entry at this multiple of the stop in profit (default 1; 0 = off)
+  breakevenLockR?: number;             // FADE: profit that first stop move locks in R (default 0.2; 0 = the entry)
   profitLock?: boolean;                // FADE: then lock +0.5R at +1.5R and +1.5R at +2.5R (default true)
   fadeLongs?: boolean;                 // FADE: also buy gap-down stocks on an oversold turn-up + first-candle-high break (default false; maxPositions then per side)
   stopLossRs: number;                  // Max loss per trade (₹): qty = stopLossRs / stop distance, capped by capital

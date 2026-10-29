@@ -50,7 +50,7 @@ function stopLoss(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast } = ctx;
   if (ctx.isEmaVwapOptions) return `${cfg.slBufferPct ?? 2}% below the setup low (min ₹${cfg.minSlBufferRs ?? 1}), on the exchange`;
   if (ctx.strategy.type === "STOCKS_IN_PLAY") {
-    if (cfg.setup === "FADE") return `${cfg.stopPct ?? 1.2}% ${cfg.fadeLongs === true ? "beyond" : "above"} the fill, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to the entry at +${cfg.breakevenAtR ?? 1}x the stop` : ""}${cfg.profitLock !== false ? "; locks +0.5x at +1.5x, +1.5x at +2.5x" : ""}`;
+    if (cfg.setup === "FADE") return `${cfg.stopPct ?? 1.2}% ${cfg.fadeLongs === true ? "beyond" : "above"} the fill, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to ${Number(cfg.breakevenLockR ?? 0.2) > 0 ? `entry +${cfg.breakevenLockR ?? 0.2}x` : "the entry"} at +${cfg.breakevenAtR ?? 1}x the stop` : ""}${cfg.profitLock !== false ? "; locks +0.5x at +1.5x, +1.5x at +2.5x" : ""}`;
     return `${cfg.stopAtrFraction ?? 0.2} x 14-day ATR from the fill, on the exchange`;
   }
   if (cfg.exitExactAtTarget) return isGammaBlast && cfg.stopLossPoints ? `-${cfg.stopLossPoints} pts (${rs(cfg.stopLossRs ?? 500)})` : `Fixed ${rs(cfg.stopLossRs ?? 500)}`;
