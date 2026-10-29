@@ -13,7 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit } from './broker-position-guard';
 import { StocksInPlayConfig } from './dto/strategy.dto';
 import { getIstDateStr, getIstHhmm } from './emavwap-signals';
-import { FADE_MIN_HISTORY, FadeCandle, fadeReadings, fadeShortTrigger, FadeTrigger, toCompletedCandles } from './inplay-fade-signals';
+import { FADE_MIN_HISTORY, FadeCandle, fadeLongTrigger, fadeReadings, fadeShortTrigger, FadeTrigger, toCompletedCandles } from './inplay-fade-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
 import { logSignal } from './signal-logger';
 
@@ -41,10 +41,16 @@ import { logSignal } from './signal-logger';
  *   (inplay-fade-signals.ts). The earliest candle wins; several on one candle -> highest RVOL first.
  * - Entry: SHORT at market right after that candle closes (skipped if more than 2 minutes late).
  * - Exits: stop stopPct above the fill (exchange SL order), target targetR x the stop below it (engine-watched,
- *   market exit), stop moved to the entry once the trade is breakevenAtR x the stop in profit, else 15:05.
+ *   market exit), stop moved to the entry once the trade is breakevenAtR x the stop in profit, then (profitLock)
+ *   to +0.5R at +1.5R and +1.5R at +2.5R; else 15:05.
  * - Backtest (2024-09 .. 2026-09, 1m bars, Zerodha costs + slippage, 1 trade/day, ₹500 risk, 1.2% / 3R / BE at 1R,
  *   avg value >= ₹10 Cr, price >= ₹50): +₹70.4k, year 1 +₹30.1k, year 2 +₹40.4k, 39% wins, avg loss ₹341,
  *   max drawdown ₹4.9k, 20/25 green months. Entering 1 minute late cut it to +₹46k, so entries must be prompt.
+ * - fadeLongs adds the mirror on gap-down stocks: an oversold turn-up on the same closes ARMS a long, bought only when
+ *   price then trades above the first 5m candle's high within 30 minutes (same % stop, target and stop ladder).
+ *   maxPositions then counts per side. Backtest (scratchpad research2.js, 29 Oct 2026, ₹500 risk): the long side
+ *   alone +₹11.0k (year 1 -₹1.2k, year 2 +₹12.2k), weak; book with up to 1 short + 1 long a day +₹73.6k vs +₹62.6k
+ *   short only, max drawdown ₹7.6k vs ₹5.1k. Buying the turn-up without the high break lost (-₹9.0k).
  */
 
 type Side = 'LONG' | 'SHORT';
@@ -77,8 +83,13 @@ const FADE_CANDLE_WAIT_MS = 45_000;
 const FADE_MAX_ENTRY_DELAY_MS = 120_000;
 /** Skip a fade candidate whose upper circuit is this close (short squeezed into the circuit cannot be covered). */
 const FADE_MIN_CIRCUIT_ROOM = 0.025;
+/** FADE long: after the oversold turn-up, the first-candle high must break within this long. */
+const FADE_LONG_BREAK_WINDOW_MS = 30 * 60_000;
 /** Retry a failed breakeven SL modification after this long. */
 const BREAKEVEN_RETRY_MS = 10_000;
+/** FADE profit lock after breakeven, as [profit reached in R, profit locked in R]. Backtest: same total as without
+ *  (₹76.0k vs ₹76.4k), wins 39% -> 51%, worst month -₹3.6k -> -₹2.4k (scratchpad protect.js, 28 Oct 2026). */
+const FADE_PROFIT_LOCK_STEPS: [number, number][] = [[1.5, 0.5], [2.5, 1.5]];
 
 interface ResolvedConfig {
   setup: Setup;
@@ -88,8 +99,13 @@ interface ResolvedConfig {
   targetR: number;
   /** FADE: move the stop to the entry once the trade is this multiple of the stop in profit (0 = off). */
   breakevenAtR: number;
+  /** FADE: after breakeven, lock +0.5R at +1.5R and +1.5R at +2.5R (FADE_PROFIT_LOCK_STEPS). */
+  profitLock: boolean;
   stopLossRs: number;
+  /** Daily trade cap and position slots (FADE with longs: both sides together). */
   maxPositions: number;
+  /** Trades per side per day (FADE with longs: the configured maxPositions; otherwise = maxPositions). */
+  perSideTrades: number;
   minRvol: number;
   stopAtrFraction: number;
   minAvgValueCr: number;
@@ -128,6 +144,8 @@ interface Candidate {
   /** When candles was read from Kite (epoch ms). */
   candlesAt: number;
   checkedThrough: number;
+  /** FADE long: the turn-up came; buy above `level` (first-candle high) until this time (epoch ms). 0 = not armed. */
+  armedUntil: number;
 }
 
 interface OpenPosition {
@@ -141,8 +159,13 @@ interface OpenPosition {
   /** The original stop distance in ₹ (1R), for the target and the breakeven trigger. */
   stopDist: number;
   /** Stop already at the entry (or breakeven not used). */
+  /** Every lock step (breakeven + profit locks) already applied, or none in use. */
   beDone: boolean;
   lastBeAttempt: number;
+  /** Profit (in R) the stop currently locks; null = still the original stop. */
+  lockedR: number | null;
+  /** Best profit seen, in R. */
+  bestR: number;
   tick: number;
   rvol: number | null;
   slOrderId: string | null;
@@ -170,6 +193,8 @@ interface EngineState {
   tradedSymbols: Set<string>;
   positions: OpenPosition[];
   tradesToday: number;
+  /** Entries per side today (FADE per-side cap). */
+  sideTrades: Record<Side, number>;
   winsToday: number;
   lossesToday: number;
   realizedTodayRs: number;
@@ -258,6 +283,7 @@ export class StocksInPlayEngine {
       tradedSymbols: new Set(),
       positions: [],
       tradesToday: 0,
+      sideTrades: { LONG: 0, SHORT: 0 },
       winsToday: 0,
       lossesToday: 0,
       realizedTodayRs: 0,
@@ -279,8 +305,9 @@ export class StocksInPlayEngine {
     if (resumedLogs.length > 0) {
       this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${mode})`);
     } else if (config.setup === 'FADE') {
-      this.log(state, `▶ In-play Fade (short) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to entry at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
+      this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to entry at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
+      if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.perSideTrades} long + ${config.perSideTrades} short a day`);
     } else {
       this.log(state, `▶ Stocks-in-Play ORB started | ${mode}`);
       this.log(state, `⚙ At 09:20: stocks whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Trading ${sides} on the break of that candle | Stop ${config.stopAtrFraction} x 14-day ATR | Max loss/trade ₹${config.stopLossRs} | Up to ${config.maxPositions} positions (= trades/day), ${config.leverage}x | Entries until ${config.entryCutoffTime}, square-off 15:05`);
@@ -295,12 +322,17 @@ export class StocksInPlayEngine {
     if (day.trades > 0) {
       this.log(state, `📊 [STATE RECOVERY] Today so far: ${day.trades}/${config.maxPositions} trades | ${day.wins} wins | ${day.losses} losses | Realized P&L: ₹${day.realizedPnlRs.toFixed(2)} [${day.source === 'BROKER' ? 'Zerodha order book' : 'saved orders'}]`);
     }
-    // A stock already ordered today is never entered again.
+    // A stock already ordered today is never entered again; its first order (the entry) gives the side for the per-side cap.
     const todays: any[] = await this.prisma.order.findMany({
       where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, isPaperTrade: state.isPaperTrade },
-      select: { symbol: true },
+      select: { symbol: true, side: true },
+      orderBy: { createdAt: 'asc' },
     }).catch(() => []);
-    for (const o of todays) state.tradedSymbols.add(o.symbol);
+    for (const o of todays) {
+      if (state.tradedSymbols.has(o.symbol)) continue;
+      state.tradedSymbols.add(o.symbol);
+      state.sideTrades[o.side === 'BUY' ? 'LONG' : 'SHORT']++;
+    }
 
     await this.recoverOpenPositions(state, strategy.brokerAccount);
     if (state.positions.length > state.tradesToday) state.tradesToday = state.positions.length;
@@ -327,17 +359,20 @@ export class StocksInPlayEngine {
     const numOrZero = (v: any, d: number) => (v === undefined || v === null || v === '' || !(Number(v) >= 0) ? d : Number(v));
     const setup: Setup = raw.setup === 'FADE' ? 'FADE' : 'ORB';
     const fade = setup === 'FADE';
-    // The fade is a short-only setup (its long mirror lost money in the backtest).
+    // The fade always shorts; its long mirror only with fadeLongs (and only on a break of the first-candle high).
     const allowShorts = fade ? true : raw.allowShorts !== false;
-    const allowLongs = fade ? false : raw.allowLongs === true;
+    const allowLongs = fade ? raw.fadeLongs === true : raw.allowLongs === true;
     if (!allowShorts && !allowLongs) throw new Error('Stocks-in-Play: enable shorts, longs or both.');
+    const perSideTrades = Math.min(5, Math.floor(num(raw.maxPositions, fade ? 1 : 2)));
     return {
       setup,
       stopPct: Math.min(5, Math.max(0.3, num(raw.stopPct, 1.2))),
       targetR: Math.min(20, numOrZero(raw.targetR, 3)),
       breakevenAtR: Math.min(20, numOrZero(raw.breakevenAtR, 1)),
+      profitLock: raw.profitLock !== false,
       stopLossRs,
-      maxPositions: Math.min(5, Math.floor(num(raw.maxPositions, fade ? 1 : 2))),
+      maxPositions: fade && allowLongs ? perSideTrades * 2 : perSideTrades,
+      perSideTrades,
       minRvol: num(raw.minRvol, 10),
       stopAtrFraction: num(raw.stopAtrFraction, 0.2),
       minAvgValueCr: num(raw.minAvgValueCr, fade ? 10 : 25),
@@ -384,9 +419,11 @@ export class StocksInPlayEngine {
       const stopDist = fade ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
       // `sign` points at the stop side, so the target is the other way.
       const target = fade && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
-      const beDone = !fade || state.config.breakevenAtR <= 0 || (pos.side === 'SHORT' ? sl <= pos.avgPrice : sl >= pos.avgPrice);
+      const probe = { side: pos.side, entryPrice: pos.avgPrice, stopDist } as OpenPosition;
+      const lockedR = fade ? this.lockedROf(probe, sl) : null;
+      const beDone = this.lockSteps(state.config).every(([, lk]) => lockedR !== null && lk <= lockedR + 1e-6);
       state.positions.push({
-        symbol: pos.symbol, side: pos.side, entryPrice: pos.avgPrice, qty: pos.qty, sl, target, stopDist, beDone, lastBeAttempt: 0, tick, rvol: null,
+        symbol: pos.symbol, side: pos.side, entryPrice: pos.avgPrice, qty: pos.qty, sl, target, stopDist, beDone, lastBeAttempt: 0, lockedR, bestR: lockedR ?? 0, tick, rvol: null,
         slOrderId: pos.slOrderId, openedAt: Date.now(), ltp: null, ltpAt: 0, slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
       });
       state.tradedSymbols.add(pos.symbol);
@@ -551,8 +588,10 @@ export class StocksInPlayEngine {
           await this.buildCandidates(state, client, now);
         }
         if (state.candidates) {
-          if (fade) await this.checkFadeSignals(state, client, new Date());
-          else await this.checkEntries(state, client, now);
+          if (fade) {
+            await this.checkFadeSignals(state, client, new Date());
+            if (state.config.allowLongs) await this.checkFadeLongBreaks(state, client, new Date());
+          } else await this.checkEntries(state, client, now);
         }
       }
     } catch (err: any) {
@@ -588,8 +627,11 @@ export class StocksInPlayEngine {
     const now = new Date();
     (async () => {
       if (state.positions.length > 0) await this.managePositions(state, state.client, now);
-      // FADE enters only on 5m closes (tick loop); its stop/target/breakeven still react to every tick above.
-      if (state.candidates && state.config.setup !== 'FADE' && getIstHhmm(now) < SQUARE_OFF_HHMM) await this.checkEntries(state, state.client, now);
+      // FADE shorts enter only on 5m closes (tick loop); armed FADE longs and the stop/target/breakeven react to every tick.
+      if (state.candidates && getIstHhmm(now) < SQUARE_OFF_HHMM) {
+        if (state.config.setup !== 'FADE') await this.checkEntries(state, state.client, now);
+        else if (state.config.allowLongs) await this.checkFadeLongBreaks(state, state.client, now);
+      }
     })()
       .catch((e) => this.log(state, `❌ Realtime check error: ${e?.message || e}`))
       .finally(() => { state.busy = false; });
@@ -815,9 +857,10 @@ export class StocksInPlayEngine {
       const rvol = f.v / b.avgFirstVol;
       if (rvol < cfg.minRvol) continue;
       if (fade) {
-        // Gap up only (the backtest edge was all there); any first-candle colour.
-        if (!(f.o > b.prevClose) || state.tradedSymbols.has(sym)) continue;
-        list.push({ symbol: sym, side: 'SHORT', level: f.c, stopDist: 0, rvol, tick: b.tick || 0.05, first: f, ltp: null, ltpAt: 0, done: false, candles: histories.get(sym)?.candles ?? null, candlesAt: histories.get(sym)?.at ?? 0, checkedThrough: 0 });
+        // Gap up -> short, gap down -> long (fadeLongs only); any first-candle colour.
+        const side: Side | null = f.o > b.prevClose ? 'SHORT' : f.o < b.prevClose && cfg.allowLongs ? 'LONG' : null;
+        if (!side || state.tradedSymbols.has(sym)) continue;
+        list.push({ symbol: sym, side, level: side === 'SHORT' ? f.c : f.h, stopDist: 0, rvol, tick: b.tick || 0.05, first: f, ltp: null, ltpAt: 0, done: false, candles: histories.get(sym)?.candles ?? null, candlesAt: histories.get(sym)?.at ?? 0, checkedThrough: 0, armedUntil: 0 });
         continue;
       }
       const side: Side | null = f.c < f.o ? 'SHORT' : f.c > f.o ? 'LONG' : null;
@@ -826,15 +869,15 @@ export class StocksInPlayEngine {
       const cir = circuits.get(sym);
       if (cir && ((side === 'SHORT' && cir.lower > 0 && (f.c - cir.lower) / f.c < 0.01) || (side === 'LONG' && cir.upper > 0 && (cir.upper - f.c) / f.c < 0.01))) continue;
       const tick = b.tick || 0.05;
-      list.push({ symbol: sym, side, level: side === 'SHORT' ? f.l : f.h, stopDist: Math.max(tick * 4, cfg.stopAtrFraction * b.atr), rvol, tick, first: f, ltp: null, ltpAt: 0, done: false, candles: null, candlesAt: 0, checkedThrough: 0 });
+      list.push({ symbol: sym, side, level: side === 'SHORT' ? f.l : f.h, stopDist: Math.max(tick * 4, cfg.stopAtrFraction * b.atr), rvol, tick, first: f, ltp: null, ltpAt: 0, done: false, candles: null, candlesAt: 0, checkedThrough: 0, armedUntil: 0 });
     }
     list.sort((a, b) => b.rvol - a.rvol);
     state.candidates = list.slice(0, fade ? FADE_MAX_CANDIDATES : MAX_CANDIDATES);
-    if (fade && state.candidates.length > 0) state.candidates = await this.dropNearUpperCircuit(state, kite, state.candidates);
+    if (fade && state.candidates.length > 0) state.candidates = await this.dropNearCircuit(state, kite, state.candidates);
 
     if (state.candidates.length === 0) {
       this.log(state, fade
-        ? `📭 No fade candidate today (no stock opened above yesterday's close with a first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks).`
+        ? `📭 No fade candidate today (no stock opened ${cfg.allowLongs ? 'above or below' : 'above'} yesterday's close with a first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks).`
         : `📭 No stock in play today (no first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks${cfg.allowLongs ? '' : ' with a red candle'}).`);
       if (state.positions.length === 0) state.completeReason = `🏁 Nothing to trade today. Strategy completed.`;
       return;
@@ -842,7 +885,10 @@ export class StocksInPlayEngine {
     for (const c of state.candidates) {
       if (fade) {
         const b = base.get(c.symbol)!;
-        this.log(state, `🎯 In play: ${c.symbol} — opened ₹${c.first.o} (${(((c.first.o / b.prevClose) - 1) * 100).toFixed(1)}% above yesterday's ₹${b.prevClose}), first candle H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | Watching for an overbought rollover until the 09:45 close`);
+        const gapPct = Math.abs((c.first.o / b.prevClose - 1) * 100).toFixed(1);
+        this.log(state, c.side === 'SHORT'
+          ? `🎯 In play: ${c.symbol} — opened ₹${c.first.o} (${gapPct}% above yesterday's ₹${b.prevClose}), first candle H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | Watching for an overbought rollover until the 09:45 close`
+          : `🎯 In play (long side): ${c.symbol} — opened ₹${c.first.o} (${gapPct}% below yesterday's ₹${b.prevClose}), first candle H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | Watching for an oversold turn-up until the 09:45 close, then a break above ₹${c.first.h}`);
       } else {
         this.log(state, `🎯 In play: ${c.symbol} — first candle O ₹${c.first.o} H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | ${c.side === 'SHORT' ? `Short below ₹${c.level.toFixed(2)}` : `Buy above ₹${c.level.toFixed(2)}`}, stop ₹${c.stopDist.toFixed(2)} from the fill`);
       }
@@ -851,8 +897,8 @@ export class StocksInPlayEngine {
     }
   }
 
-  /** FADE: drops candidates within FADE_MIN_CIRCUIT_ROOM of the upper circuit (a squeezed short cannot be covered there). */
-  private async dropNearUpperCircuit(state: EngineState, kite: any, list: Candidate[]): Promise<Candidate[]> {
+  /** FADE: drops shorts within FADE_MIN_CIRCUIT_ROOM of the upper circuit and longs that close to the lower one (no exit there). */
+  private async dropNearCircuit(state: EngineState, kite: any, list: Candidate[]): Promise<Candidate[]> {
     let q: Record<string, any>;
     try {
       q = await kite.getQuote(list.map((c) => `NSE:${c.symbol}`));
@@ -862,10 +908,14 @@ export class StocksInPlayEngine {
     }
     return list.filter((c) => {
       const x = q[`NSE:${c.symbol}`];
-      const upper = Number(x?.upper_circuit_limit) || 0, last = Number(x?.last_price) || 0;
+      const upper = Number(x?.upper_circuit_limit) || 0, lower = Number(x?.lower_circuit_limit) || 0, last = Number(x?.last_price) || 0;
       if (last > 0) { c.ltp = last; c.ltpAt = Date.now(); }
-      if (upper > 0 && last > 0 && (upper - last) / last < FADE_MIN_CIRCUIT_ROOM) {
+      if (c.side === 'SHORT' && upper > 0 && last > 0 && (upper - last) / last < FADE_MIN_CIRCUIT_ROOM) {
         this.log(state, `⏭ ${c.symbol} skipped: ₹${last} is within ${(FADE_MIN_CIRCUIT_ROOM * 100).toFixed(1)}% of its upper circuit ₹${upper} (a short there may not be coverable).`);
+        return false;
+      }
+      if (c.side === 'LONG' && lower > 0 && last > 0 && (last - lower) / last < FADE_MIN_CIRCUIT_ROOM) {
+        this.log(state, `⏭ ${c.symbol} skipped: ₹${last} is within ${(FADE_MIN_CIRCUIT_ROOM * 100).toFixed(1)}% of its lower circuit ₹${lower} (a long there may not be sellable).`);
         return false;
       }
       return true;
@@ -880,19 +930,22 @@ export class StocksInPlayEngine {
     const nowMs = now.getTime();
     const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
     const lastStart = dayOpenMs + (FADE_LAST_CANDLE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
-    const live = state.candidates.filter((c) => !c.done);
+    // A side that used up its trades stops watching; armed longs wait for their break in checkFadeLongBreaks.
+    for (const c of state.candidates) if (!c.done && state.sideTrades[c.side] >= cfg.perSideTrades) c.done = true;
+    const live = state.candidates.filter((c) => !c.done && !c.armedUntil);
+    const armed = state.candidates.some((c) => !c.done && c.armedUntil > 0);
 
     if (state.tradesToday >= cfg.maxPositions || nowMs > lastStart + FIVE_MIN_MS + FADE_CANDLE_WAIT_MS) {
       for (const c of live) c.done = true;
-      if (state.positions.length === 0 && !state.completeReason) {
+      if (state.positions.length === 0 && !state.completeReason && !armed) {
         state.completeReason = state.tradesToday >= cfg.maxPositions
           ? `⛔ Max ${cfg.maxPositions} trade(s) done for today. Strategy completed.`
-          : `🏁 No overbought rollover in the candidates by the 09:45 close — no fade trade today. Strategy completed.`;
+          : `🏁 No ${cfg.allowLongs ? 'fade setup' : 'overbought rollover'} in the candidates by the 09:45 close — no ${state.tradesToday > 0 ? 'more fade trades' : 'fade trade'} today. Strategy completed.`;
       }
       return;
     }
     if (live.length === 0) {
-      if (state.positions.length === 0 && !state.completeReason) state.completeReason = `🏁 Every fade candidate has been traded or dropped. Strategy completed.`;
+      if (state.positions.length === 0 && !state.completeReason && !armed) state.completeReason = `🏁 Every fade candidate has been traded or dropped. Strategy completed.`;
       return;
     }
 
@@ -942,7 +995,7 @@ export class StocksInPlayEngine {
           this.log(state, `⚠ ${c.symbol}: only ${idx} earlier 5m candles available (needs ${FADE_MIN_HISTORY}) — dropped.`);
           return;
         }
-        const trigger = fadeShortTrigger(c.candles, idx);
+        const trigger = c.side === 'SHORT' ? fadeShortTrigger(c.candles, idx) : fadeLongTrigger(c.candles, idx);
         if (trigger) signals.push({ c, trigger, idx });
       }));
     }
@@ -953,24 +1006,59 @@ export class StocksInPlayEngine {
     for (const s of signals) {
       const r = fadeReadings(s.c.candles!, s.idx)!;
       const k = s.c.candles![s.idx];
-      const why: Record<FadeTrigger, string> = {
+      const why: Record<FadeTrigger, string> = s.c.side === 'SHORT' ? {
         MFI: `MFI fell back to ${r.mfi.toFixed(1)} from above 80`,
         STOCH: `Stochastic %K ${r.stochK.toFixed(1)} crossed under %D ${r.stochD.toFixed(1)} from above 80`,
         BB: `closed ₹${k.c} back under the upper Bollinger band ₹${r.bbUpper.toFixed(2)}`,
         CMF: `CMF fell to ${r.cmf.toFixed(3)} (below -0.1)`,
+      } : {
+        MFI: `MFI rose back to ${r.mfi.toFixed(1)} from below 20`,
+        STOCH: `Stochastic %K ${r.stochK.toFixed(1)} crossed over %D ${r.stochD.toFixed(1)} from below 20`,
+        BB: `closed ₹${k.c} back over the lower Bollinger band ₹${r.bbLower.toFixed(2)}`,
+        CMF: `CMF rose to ${r.cmf.toFixed(3)} (above +0.1)`,
       };
-      this.log(state, `📉 [FADE SIGNAL] ${s.c.symbol} ${hhmmOf(closeMs)} close ₹${k.c} — ${why[s.trigger]} | volume ${s.c.rvol.toFixed(1)}x`);
-      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'FADE', event: 'SIGNAL', symbol: s.c.symbol, trigger: s.trigger, candle: k, readings: r, rvol: s.c.rvol, isPaper: state.isPaperTrade });
+      this.log(state, s.c.side === 'SHORT'
+        ? `📉 [FADE SIGNAL] ${s.c.symbol} ${hhmmOf(closeMs)} close ₹${k.c} — ${why[s.trigger]} | volume ${s.c.rvol.toFixed(1)}x`
+        : `📈 [FADE LONG SETUP] ${s.c.symbol} ${hhmmOf(closeMs)} close ₹${k.c} — ${why[s.trigger]} | volume ${s.c.rvol.toFixed(1)}x | buy only above the first-candle high ₹${s.c.level} until ${hhmmOf(closeMs + FADE_LONG_BREAK_WINDOW_MS)}`);
+      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'FADE', event: 'SIGNAL', symbol: s.c.symbol, side: s.c.side, trigger: s.trigger, candle: k, readings: r, rvol: s.c.rvol, isPaper: state.isPaperTrade });
     }
     for (const s of signals) {
+      if (s.c.side === 'LONG') {
+        s.c.armedUntil = closeMs + FADE_LONG_BREAK_WINDOW_MS;
+        continue;
+      }
       s.c.done = true;
-      if (state.tradesToday >= cfg.maxPositions || state.stopping) continue;
+      if (state.tradesToday >= cfg.maxPositions || state.sideTrades.SHORT >= cfg.perSideTrades || state.stopping) continue;
       if (Date.now() - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
         this.log(state, `⏭ ${s.c.symbol} fade signal is over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min old — not entering late.`);
         continue;
       }
       await this.refreshCandidateLtp(state, client, s.c);
       await this.enterTrade(state, client, s.c, new Date());
+    }
+    if (signals.some((s) => s.c.side === 'LONG')) {
+      for (const s of signals) if (s.c.side === 'LONG') await this.refreshCandidateLtp(state, client, s.c);
+      await this.checkFadeLongBreaks(state, client, new Date());
+    }
+  }
+
+  /** FADE long: buys an armed candidate once price trades above its first-candle high, until the window ends. */
+  private async checkFadeLongBreaks(state: EngineState, client: any, now: Date) {
+    if (state.stopping || !state.candidates) return;
+    const cfg = state.config;
+    for (const c of state.candidates) {
+      if (c.done || !c.armedUntil) continue;
+      if (state.tradesToday >= cfg.maxPositions || state.sideTrades.LONG >= cfg.perSideTrades) { c.done = true; continue; }
+      if (now.getTime() > c.armedUntil) {
+        c.done = true;
+        this.log(state, `⏭ ${c.symbol} did not break its first-candle high ₹${c.level} within ${FADE_LONG_BREAK_WINDOW_MS / 60_000} min of the turn-up — no long.`);
+        continue;
+      }
+      if (c.ltp === null || now.getTime() - c.ltpAt > 10_000 || c.ltp < c.level) continue;
+      await this.enterTrade(state, client, c, now);
+    }
+    if (state.positions.length === 0 && !state.completeReason && state.candidates.every((c) => c.done) && getIstHhmm(now) >= FADE_LAST_CANDLE_HHMM + 5) {
+      state.completeReason = `🏁 Every fade candidate has been traded or dropped. Strategy completed.`;
     }
   }
 
@@ -1053,9 +1141,9 @@ export class StocksInPlayEngine {
     // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below).
     const stopDist = fade ? (ltp * cfg.stopPct) / 100 : c.stopDist;
 
-    // ORB enters on a level break and must not chase it; FADE enters at market on the candle close by design.
+    // ORB and the FADE long enter on a level break and must not chase it; the FADE short enters at market on the candle close by design.
     const chase = (ltp - c.level) * sign;
-    if (!fade && chase > MAX_CHASE_OF_STOP * c.stopDist) {
+    if ((!fade || c.side === 'LONG') && chase > MAX_CHASE_OF_STOP * stopDist) {
       this.log(state, `⏭ ${c.symbol} broke ₹${c.level.toFixed(2)} but is already at ₹${ltp.toFixed(2)} (more than ${MAX_CHASE_OF_STOP} of the stop distance past it). Not chasing.`);
       return;
     }
@@ -1095,7 +1183,9 @@ export class StocksInPlayEngine {
       return;
     }
     this.log(state, fade
-      ? `🚀 ${c.symbol} fade signal at ₹${ltp.toFixed(2)} — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
+      ? c.side === 'SHORT'
+        ? `🚀 ${c.symbol} fade signal at ₹${ltp.toFixed(2)} — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
+        : `🚀 ${c.symbol} broke its first-candle high ₹${c.level} at ₹${ltp.toFixed(2)} after the oversold turn-up — buying ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
       : `🚀 ${c.symbol} broke ₹${c.level.toFixed(2)} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`);
 
     const entrySide: 'BUY' | 'SELL' = c.side === 'LONG' ? 'BUY' : 'SELL';
@@ -1114,13 +1204,14 @@ export class StocksInPlayEngine {
     // Target rounded toward the entry, so it is never further than targetR x the stop.
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
     state.tradesToday++;
+    state.sideTrades[c.side]++;
     const p: OpenPosition = {
-      symbol: c.symbol, side: c.side, entryPrice: fill.price, qty: fill.qty, sl, target, stopDist: fillStopDist, beDone: !fade || cfg.breakevenAtR <= 0, lastBeAttempt: 0, tick: c.tick, rvol: c.rvol,
+      symbol: c.symbol, side: c.side, entryPrice: fill.price, qty: fill.qty, sl, target, stopDist: fillStopDist, beDone: this.lockSteps(cfg).length === 0, lastBeAttempt: 0, lockedR: null, bestR: 0, tick: c.tick, rvol: c.rvol,
       slOrderId: null, openedAt: now.getTime(), ltp: ltp, ltpAt: Date.now(), slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
     };
     state.positions.push(p);
     const exitPlan = fade
-      ? `Target ₹${target !== null ? target.toFixed(2) : '—'}${cfg.breakevenAtR > 0 ? ` | SL to entry at ₹${(fill.price + sign * cfg.breakevenAtR * fillStopDist).toFixed(2)}` : ''} | else 15:05`
+      ? `Target ₹${target !== null ? target.toFixed(2) : '—'}${this.lockSteps(cfg).map(([at, lk]) => ` | at ₹${(fill.price + sign * at * fillStopDist).toFixed(2)} SL → ${lk === 0 ? 'entry' : `+${lk}R ₹${(fill.price + sign * lk * fillStopDist).toFixed(2)}`}`).join('')} | else 15:05`
       : 'Exit at the SL or 15:05';
     this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}`);
     logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, isPaper: state.isPaperTrade });
@@ -1251,9 +1342,21 @@ export class StocksInPlayEngine {
       await this.exitPosition(state, client, p, 'TARGET', price);
       return;
     }
-    if (!p.beDone && state.config.breakevenAtR > 0 && now.getTime() - p.lastBeAttempt >= BREAKEVEN_RETRY_MS) {
-      const inProfit = (price - p.entryPrice) * (p.side === 'LONG' ? 1 : -1);
-      if (inProfit >= state.config.breakevenAtR * p.stopDist) await this.moveStopToBreakeven(state, client, p, now);
+    // Stop ladder (FADE): breakeven, then profit locks, from the best price seen so far.
+    if (p.stopDist > 0) p.bestR = Math.max(p.bestR, ((price - p.entryPrice) * (p.side === 'LONG' ? 1 : -1)) / p.stopDist);
+    if (!p.beDone && now.getTime() - p.lastBeAttempt >= BREAKEVEN_RETRY_MS) {
+      const due = this.lockSteps(state.config).filter(([at, lk]) => p.bestR >= at && lk > (p.lockedR ?? -1) + 1e-9);
+      if (due.length > 0) {
+        const step = due[due.length - 1];
+        const lockPx = this.lockPrice(p, step[1]);
+        if (p.side === 'LONG' ? price <= lockPx : price >= lockPx) {
+          // Already reversed through the level to lock (a fast spike between checks): take it now at market.
+          this.log(state, `🔒 ${p.symbol} reached +${step[0]}R but is back at ₹${price.toFixed(2)}, through the +${step[1]}R lock ₹${lockPx.toFixed(2)} — exiting at market.`);
+          await this.exitPosition(state, client, p, 'SL', price);
+          return;
+        }
+        await this.moveStopToLock(state, client, p, step, now);
+      }
     }
 
     const beyondSl = p.side === 'LONG' ? price <= p.sl : price >= p.sl;
@@ -1298,34 +1401,71 @@ export class StocksInPlayEngine {
     }
   }
 
-  /** Moves the stop (and the broker SL order) to the entry price. On failure the old stop stays and it is retried. */
-  private async moveStopToBreakeven(state: EngineState, client: any, p: OpenPosition, now: Date) {
+  /** FADE stop ladder as [profit reached in R, profit locked in R]: breakeven, then the profit-lock steps. */
+  private lockSteps(cfg: ResolvedConfig): [number, number][] {
+    if (cfg.setup !== 'FADE') return [];
+    const steps: [number, number][] = [];
+    if (cfg.breakevenAtR > 0) steps.push([cfg.breakevenAtR, 0]);
+    if (cfg.profitLock) steps.push(...FADE_PROFIT_LOCK_STEPS);
+    return steps.sort((a, b) => a[0] - b[0]);
+  }
+
+  /** Stop price that locks `lockR` x the stop distance of profit (0 = the entry), rounded toward the entry. */
+  private lockPrice(p: OpenPosition, lockR: number): number {
+    return p.side === 'LONG'
+      ? roundTo(p.entryPrice + lockR * p.stopDist, p.tick, 'down')
+      : roundTo(p.entryPrice - lockR * p.stopDist, p.tick, 'up');
+  }
+
+  /** The R currently locked by a stop price (null = still behind the entry, i.e. the original stop). */
+  private lockedROf(p: OpenPosition, sl: number): number | null {
+    const locked = ((p.side === 'LONG' ? sl - p.entryPrice : p.entryPrice - sl) / p.stopDist);
+    return locked >= -1e-6 ? Math.max(0, locked) : null;
+  }
+
+  /**
+   * Moves the stop (and the broker SL order) to lock `step[1]` R once the trade reached `step[0]` R.
+   * On failure the previous stop stays on the exchange and it is retried after BREAKEVEN_RETRY_MS.
+   */
+  private async moveStopToLock(state: EngineState, client: any, p: OpenPosition, step: [number, number], now: Date) {
     p.lastBeAttempt = now.getTime();
-    const newSl = roundTo(p.entryPrice, p.tick, p.side === 'LONG' ? 'down' : 'up');
-    if (p.side === 'LONG' ? newSl <= p.sl : newSl >= p.sl) { p.beDone = true; return; }
-    const r = `+${state.config.breakevenAtR}R (₹${(state.config.breakevenAtR * p.stopDist * p.qty).toFixed(0)})`;
+    const [atR, lockR] = step;
+    const allDone = (r: number) => this.lockSteps(state.config).every(([, lk]) => lk <= r + 1e-9);
+    const newSl = this.lockPrice(p, lockR);
+    if (p.side === 'LONG' ? newSl <= p.sl : newSl >= p.sl) {
+      p.lockedR = Math.max(p.lockedR ?? 0, lockR);
+      p.beDone = allDone(p.lockedR);
+      return;
+    }
+    const tag = lockR === 0 ? '🔒 [BREAKEVEN]' : '🔒 [PROFIT LOCK]';
+    const what = lockR === 0
+      ? `stop moved to the entry ₹${newSl.toFixed(2)}`
+      : `stop moved to ₹${newSl.toFixed(2)}, locking +${lockR}R (≈ ₹${(Math.abs(p.entryPrice - newSl) * p.qty).toFixed(0)})`;
+    const reached = `+${atR}R (₹${(atR * p.stopDist * p.qty).toFixed(0)})`;
 
     if (state.isPaperTrade) {
       p.sl = newSl;
-      p.beDone = true;
+      p.lockedR = lockR;
+      p.beDone = allDone(lockR);
       if (p.slOrderId) {
         this.prisma.order.updateMany({ where: { brokerOrderId: p.slOrderId, isPaperTrade: true, status: 'OPEN' }, data: { triggerPrice: newSl, price: newSl } }).catch(() => undefined);
       }
-      this.log(state, `🔒 [BREAKEVEN] ${p.symbol} reached ${r} — stop moved to the entry ₹${newSl.toFixed(2)}.`);
+      this.log(state, `${tag} ${p.symbol} reached ${reached} — ${what}.`);
       return;
     }
     if (!p.slOrderId || !client?.modifyOrder) {
-      this.log(state, `⚠ [BREAKEVEN] ${p.symbol}: no broker SL order to move right now — keeping ₹${p.sl.toFixed(2)}, retrying shortly.`);
+      this.log(state, `⚠ ${tag} ${p.symbol}: no broker SL order to move right now — keeping ₹${p.sl.toFixed(2)}, retrying shortly.`);
       return;
     }
     const limit = this.slLimit(p, newSl);
     try {
       await client.modifyOrder(p.slOrderId, { triggerPrice: newSl, price: limit });
       p.sl = newSl;
-      p.beDone = true;
-      this.log(state, `🔒 [BREAKEVEN] ${p.symbol} reached ${r} — broker SL ${p.slOrderId} moved to the entry: trigger ₹${newSl.toFixed(2)}, limit ₹${limit.toFixed(2)}.`);
+      p.lockedR = lockR;
+      p.beDone = allDone(lockR);
+      this.log(state, `${tag} ${p.symbol} reached ${reached} — broker SL ${p.slOrderId} ${what.replace('stop moved', 'moved')} (limit ₹${limit.toFixed(2)}).`);
     } catch (e: any) {
-      this.log(state, `⚠ [BREAKEVEN] Could not move the broker SL for ${p.symbol} (${e?.message || e}). It stays at ₹${p.sl.toFixed(2)}; retrying in ${BREAKEVEN_RETRY_MS / 1000}s.`);
+      this.log(state, `⚠ ${tag} Could not move the broker SL for ${p.symbol} (${e?.message || e}). It stays at ₹${p.sl.toFixed(2)}; retrying in ${BREAKEVEN_RETRY_MS / 1000}s.`);
     }
   }
 

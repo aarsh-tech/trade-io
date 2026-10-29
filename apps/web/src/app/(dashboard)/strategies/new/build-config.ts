@@ -71,6 +71,8 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
         stopPct: Number(form.sipStopPct || 1.2),
         targetR: orZero(form.sipTargetR, 3),
         breakevenAtR: orZero(form.sipBreakevenAtR, 1),
+        profitLock: form.sipProfitLock !== false,
+        fadeLongs: form.sipFadeLongs === true,
       }),
       stopLossRs: Number(form.stopLossRs),
       maxPositions: Number(form.maxTradesPerDay || (fade ? 1 : 2)),

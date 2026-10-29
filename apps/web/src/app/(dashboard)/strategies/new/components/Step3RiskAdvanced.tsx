@@ -789,6 +789,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               <li>The stop-loss is placed on the exchange at once, the stop distance below above the fill.</li>
               <li>The target is watched by the strategy; when price reaches it the short is covered at market.</li>
               <li>Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.</li>
+              {form.sipProfitLock !== false && <li>Profit lock: at +1.5x the stop the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x.</li>}
               <li>Otherwise the position is squared off at 15:05.</li>
               <li>Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1.2% / 3R / breakeven at 1R): about 4 in 10 trades win, the average loss is about ₹340, runs of 8 losing days happened, and 5 of 25 months were red.</li>
             </ul>
@@ -831,6 +832,18 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               onChange={(v) => set("sipMinAvgValueCr", v)}
               hint="Skips thinly traded stocks. Backtested at ₹10 Cr; ₹25 Cr earned less."
             />
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={form.sipProfitLock !== false}
+                onChange={(e) => set("sipProfitLock", e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+              />
+              <span>
+                <span className="block text-xs font-semibold text-foreground">Profit lock (after breakeven)</span>
+                <span className="block text-xs text-muted-foreground">At +1.5x the stop, the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x. Backtest: same total profit, winning trades 39% → 51%, worst month −₹3.6k → −₹2.4k.</span>
+              </span>
+            </label>
             <NumberField
               label="Leverage"
               suffix="x"

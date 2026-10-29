@@ -50,7 +50,7 @@ function stopLoss(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast } = ctx;
   if (ctx.isEmaVwapOptions) return `${cfg.slBufferPct ?? 2}% below the setup low (min ₹${cfg.minSlBufferRs ?? 1}), on the exchange`;
   if (ctx.strategy.type === "STOCKS_IN_PLAY") {
-    if (cfg.setup === "FADE") return `${cfg.stopPct ?? 1.2}% above the fill, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to the entry at +${cfg.breakevenAtR ?? 1}x the stop` : ""}`;
+    if (cfg.setup === "FADE") return `${cfg.stopPct ?? 1.2}% ${cfg.fadeLongs === true ? "beyond" : "above"} the fill, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to the entry at +${cfg.breakevenAtR ?? 1}x the stop` : ""}${cfg.profitLock !== false ? "; locks +0.5x at +1.5x, +1.5x at +2.5x" : ""}`;
     return `${cfg.stopAtrFraction ?? 0.2} x 14-day ATR from the fill, on the exchange`;
   }
   if (cfg.exitExactAtTarget) return isGammaBlast && cfg.stopLossPoints ? `-${cfg.stopLossPoints} pts (${rs(cfg.stopLossRs ?? 500)})` : `Fixed ${rs(cfg.stopLossRs ?? 500)}`;
@@ -72,7 +72,7 @@ function targetText(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap, isNiftyScalper, isStockOptions, isGammaBlast } = ctx;
   if (ctx.isEmaVwapOptions) return cfg.targetMode === "PARTIAL" ? `Half at ${cfg.partialTargetR ?? 2}R, rest on a 5m close below the 15-EMA` : "None: whole position exits on a 5m close below the 15-EMA";
   if (ctx.strategy.type === "STOCKS_IN_PLAY") {
-    if (cfg.setup === "FADE" && Number(cfg.targetR ?? 3) > 0) return `${cfg.targetR ?? 3}x the stop (${(Number(cfg.stopPct ?? 1.2) * Number(cfg.targetR ?? 3)).toFixed(1)}% below the entry), covered at market`;
+    if (cfg.setup === "FADE" && Number(cfg.targetR ?? 3) > 0) return `${cfg.targetR ?? 3}x the stop (${(Number(cfg.stopPct ?? 1.2) * Number(cfg.targetR ?? 3)).toFixed(1)}% ${cfg.fadeLongs === true ? "from" : "below"} the entry), closed at market`;
     return "None: held until the stop or 15:05";
   }
   if (cfg.exitExactAtTarget) return isGammaBlast && cfg.targetPoints ? `+${cfg.targetPoints} pts (${rs(cfg.targetRs ?? 1000)})` : `Fixed ${rs(cfg.targetRs ?? 500)}`;
@@ -170,12 +170,19 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
 
   if (strategy.type === "STOCKS_IN_PLAY" && cfg.setup === "FADE") {
     entry.push(
-      { label: "Setup", value: "In-play Fade (short only)" },
+      { label: "Setup", value: cfg.fadeLongs === true ? "In-play Fade (short + long)" : "In-play Fade (short only)" },
       { label: "Stocks scanned", value: `NIFTY 500 + F&O, price >= ₹${cfg.minPrice ?? 50}, avg daily value >= ₹${cfg.minAvgValueCr ?? 10} Cr` },
-      { label: "In play when", value: `Opened above yesterday's close and the first 5m candle volume >= ${cfg.minRvol ?? 10}x its 10-day average; not within 2.5% of the upper circuit` },
-      { label: "Signal", value: "MFI back below 80, Stochastic %K under %D from above 80, close back under the upper Bollinger band, or CMF below -0.1" },
-      { label: "Entry", value: "Market short right after the 5m close with the signal; earliest signal wins, ties by volume" },
-      { label: "Entry window", value: "5m closes 09:20 to 09:45 IST" },
+      { label: "In play when", value: `Opened ${cfg.fadeLongs === true ? "above (short) or below (long)" : "above"} yesterday's close and the first 5m candle volume >= ${cfg.minRvol ?? 10}x its 10-day average; not within 2.5% of the circuit it would exit into` },
+      { label: "Short signal", value: "MFI back below 80, Stochastic %K under %D from above 80, close back under the upper Bollinger band, or CMF below -0.1" },
+      { label: "Short entry", value: "Market short right after the 5m close with the signal; earliest signal wins, ties by volume" },
+      ...(cfg.fadeLongs === true
+        ? [
+            { label: "Long signal", value: "MFI back above 20, Stochastic %K over %D from below 20, close back over the lower Bollinger band, or CMF above +0.1" },
+            { label: "Long entry", value: "Market buy only when price then breaks the first 5m candle's high, within 30 min of the signal" },
+            { label: "Trades per side", value: `${cfg.maxPositions ?? 1} short + ${cfg.maxPositions ?? 1} long a day` },
+          ]
+        : []),
+      { label: "Entry window", value: cfg.fadeLongs === true ? "Signals on 5m closes 09:20 to 09:45 IST; long breaks until 10:15" : "5m closes 09:20 to 09:45 IST" },
     );
   } else if (strategy.type === "STOCKS_IN_PLAY") {
     entry.push(

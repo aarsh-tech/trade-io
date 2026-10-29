@@ -1,5 +1,6 @@
 /**
- * In-play Fade: the overbought rollover that triggers a short on a stock in play (Stocks-in-Play engine, setup FADE).
+ * In-play Fade: the overbought rollover that triggers a short on a stock in play (Stocks-in-Play engine, setup FADE),
+ * and its mirror, the oversold turn-up that arms a long on a gap-down stock in play (fadeLongTrigger).
  *
  * Signal on a closed 5m candle i when any of these turns down (checked in this order, the first one names it):
  * - MFI(14) closes back at or below 80 after the previous candle was above 80;
@@ -60,6 +61,13 @@ function bbUpperAt(k: FadeCandle[], i: number): number {
   return mean + 2 * Math.sqrt(Math.max(0, s2 / 20 - mean * mean));
 }
 
+function bbLowerAt(k: FadeCandle[], i: number): number {
+  let s = 0, s2 = 0;
+  for (let q = i - 19; q <= i; q++) { s += k[q].c; s2 += k[q].c * k[q].c; }
+  const mean = s / 20;
+  return mean - 2 * Math.sqrt(Math.max(0, s2 / 20 - mean * mean));
+}
+
 function cmfAt(k: FadeCandle[], i: number): number {
   let flow = 0, vol = 0;
   for (let q = i - 19; q <= i; q++) {
@@ -81,10 +89,25 @@ export function fadeShortTrigger(k: FadeCandle[], i: number): FadeTrigger | null
   return null;
 }
 
-/** Indicator readings on candle i, for the log line. */
-export function fadeReadings(k: FadeCandle[], i: number): { mfi: number; stochK: number; stochD: number; bbUpper: number; cmf: number } | null {
+/**
+ * The long mirror on candle i, or null: MFI back at or above 20 from below, %K crossing over %D from below 20,
+ * a close back above the lower Bollinger band, or CMF crossing above +0.1. On its own it lost money in the backtest;
+ * the engine only buys once price then breaks the first 5m candle's high (scratchpad research2.js, 29 Oct 2026).
+ */
+export function fadeLongTrigger(k: FadeCandle[], i: number): FadeTrigger | null {
   if (i < FADE_MIN_HISTORY || i >= k.length) return null;
-  return { mfi: mfiAt(k, i), stochK: stochKAt(k, i), stochD: stochDAt(k, i), bbUpper: bbUpperAt(k, i), cmf: cmfAt(k, i) };
+  if (mfiAt(k, i - 1) < 20 && mfiAt(k, i) >= 20) return 'MFI';
+  const k1 = stochKAt(k, i - 1), d1 = stochDAt(k, i - 1), k0 = stochKAt(k, i), d0 = stochDAt(k, i);
+  if (d1 >= k1 && d0 < k0 && k1 < 20) return 'STOCH';
+  if (k[i - 1].c < bbLowerAt(k, i - 1) && k[i].c > bbLowerAt(k, i)) return 'BB';
+  if (cmfAt(k, i - 1) <= 0.1 && cmfAt(k, i) > 0.1) return 'CMF';
+  return null;
+}
+
+/** Indicator readings on candle i, for the log line. */
+export function fadeReadings(k: FadeCandle[], i: number): { mfi: number; stochK: number; stochD: number; bbUpper: number; bbLower: number; cmf: number } | null {
+  if (i < FADE_MIN_HISTORY || i >= k.length) return null;
+  return { mfi: mfiAt(k, i), stochK: stochKAt(k, i), stochD: stochDAt(k, i), bbUpper: bbUpperAt(k, i), bbLower: bbLowerAt(k, i), cmf: cmfAt(k, i) };
 }
 
 const FIVE_MIN = 5 * 60_000;

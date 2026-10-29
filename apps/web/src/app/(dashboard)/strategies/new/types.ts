@@ -60,6 +60,10 @@ export interface StrategyFormState {
   sipStopPct: string;
   sipTargetR: string;
   sipBreakevenAtR: string;
+  /** FADE: lock +0.5R at +1.5R and +1.5R at +2.5R after breakeven. */
+  sipProfitLock: boolean;
+  /** FADE: also trade the long mirror on gap-down stocks (trades per day then count per side). */
+  sipFadeLongs: boolean;
   sipMinRvol: string;
   sipStopAtr: string;
   sipMinAvgValueCr: string;
