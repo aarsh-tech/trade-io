@@ -471,53 +471,27 @@ export function detectTightArea(candles: DailyCandle[]): PatternResult | null {
 }
 
 // ─── 4. Inside Candle Setup (1D Inside, Weekly Inside, Monthly Inside) ─────────
-// Robust multi-timeframe inside candle analyzer for LONG & SHORT setups.
+// Only the latest closed candle vs the one right before it (the mother); older inside candles are ignored.
+// The trade is the break of the MOTHER candle's high (long) / low (short), stop at the other side of the mother.
 
 export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEKLY' | 'MONTHLY'): PatternResult[] {
   if (!candles || candles.length < 2) return [];
   const n = candles.length - 1;
 
-  let insideCandle: DailyCandle | null = null;
-  let motherCandle: DailyCandle | null = null;
-  let isBreakoutDay = false;
+  // DAILY: the scan runs after market hours, so today's candle is closed and is the inside candle.
+  // WEEKLY/MONTHLY: a still-forming week/month looks "inside" almost by construction (every Monday,
+  // every 1st week of a month), so the inside candle is the last CLOSED period and the forming one
+  // is only used to drop setups whose mother high/low has already been broken.
+  const forming = type !== 'DAILY' && candles[n].complete === false ? candles[n] : null;
+  const i = forming ? n - 1 : n;
+  if (i < 1) return [];
+  const insideCandle = candles[i];
+  const motherCandle = candles[i - 1];
 
-  // Case A: Today / Current period is INSIDE the previous mother period
-  // (Current High <= Previous High and Current Low >= Previous Low)
-  // For WEEKLY/MONTHLY, only valid once the current period is fully closed — a still-forming
-  // week/month has only accumulated a few days of range, so it will look "inside" the prior,
-  // fully-formed period almost by construction (e.g. every Monday, every 1st week of a month),
-  // producing false signals rather than a genuine consolidation.
-  const curr = candles[n];
-  const prev = candles[n - 1];
-  const currIsClosed = type === 'DAILY' || curr.complete !== false;
-
-  if (currIsClosed && curr.high <= prev.high * 1.002 && curr.low >= prev.low * 0.998 && curr.high > curr.low) {
-    insideCandle = curr;
-    motherCandle = prev;
-    isBreakoutDay = false;
+  // Strict inside: high not above the mother's high and low not below the mother's low.
+  if (!(insideCandle.high <= motherCandle.high && insideCandle.low >= motherCandle.low && insideCandle.high > insideCandle.low)) {
+    return [];
   }
-  // Case B: Previous period was an inside candle (testing breakout now)
-  else if (n >= 2) {
-    const prev2 = candles[n - 2];
-    if (prev.high <= prev2.high * 1.002 && prev.low >= prev2.low * 0.998 && prev.high > prev.low) {
-      insideCandle = prev;
-      motherCandle = prev2;
-      isBreakoutDay = true;
-    }
-  }
-  // Case C: 2 periods ago was an inside candle (for weekly/monthly consolidations)
-  if (!insideCandle && n >= 3 && (type === 'WEEKLY' || type === 'MONTHLY')) {
-    const prev2 = candles[n - 2];
-    const prev3 = candles[n - 3];
-    if (prev2.high <= prev3.high * 1.002 && prev2.low >= prev3.low * 0.998 && prev2.high > prev2.low) {
-      insideCandle = prev2;
-      motherCandle = prev3;
-      isBreakoutDay = true;
-    }
-  }
-
-  if (!insideCandle || !motherCandle) return [];
-
 
   const currentPrice = candles[n].close;
   const motherHigh = motherCandle.high;
@@ -539,10 +513,11 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
 
   const results: PatternResult[] = [];
   const label = type === 'DAILY' ? '1D Inside Bar' : type === 'WEEKLY' ? 'Weekly Inside Bar' : 'Monthly Inside Bar';
+  const when = type === 'DAILY' ? 'next session' : type === 'WEEKLY' ? 'this week' : 'this month';
 
-  // ── 1. LONG Setup (Breakout above Mother / Inside High) ───────────────
-  const entryPriceLong = parseFloat((insideHigh * 1.002).toFixed(2));
-  let stopLossLong = parseFloat((insideLow * 0.998).toFixed(2));
+  // ── 1. LONG Setup (Breakout above Mother High) ─────────────────────────
+  const entryPriceLong = parseFloat((motherHigh * 1.002).toFixed(2));
+  let stopLossLong = parseFloat((motherLow * 0.998).toFixed(2));
   const rawRiskLong = ((entryPriceLong - stopLossLong) / entryPriceLong) * 100;
   if (rawRiskLong > 6.5) {
     stopLossLong = parseFloat((entryPriceLong * 0.945).toFixed(2));
@@ -554,35 +529,38 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
   const target2Long = parseFloat((entryPriceLong + riskPtsLong * 2.5).toFixed(2));
   const target3Long = parseFloat((entryPriceLong + riskPtsLong * 3.5).toFixed(2));
 
-  results.push({
-    pattern: patternMap[type],
-    score: scoreBase[type],
-    confidence: 'HIGH',
-    currentPrice,
-    pivotPrice: parseFloat(motherHigh.toFixed(2)),
-    entryPrice: entryPriceLong,
-    stopLoss: stopLossLong,
-    target1: target1Long,
-    target2: target2Long,
-    target3: target3Long,
-    riskReward: 1.5,
-    riskPct: riskPctLong,
-    trendStrength: 'MODERATE',
-    volumeSignal: 'AVERAGE',
-    contractions: 0,
-    direction: 'LONG',
-    notes: [
-      `🟢 ${label} Setup (LONG)`,
-      `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
-      `Inside Range: ₹${insideLow.toFixed(2)} → ₹${insideHigh.toFixed(2)}`,
-      `Long Trigger: Buy above ₹${entryPriceLong.toFixed(2)} | SL: ₹${stopLossLong.toFixed(2)}`,
-      isBreakoutDay ? `⚡ Breakout in progress today` : `⏳ Consolidation ready for breakout`,
-    ],
-  });
+  // A forming week/month that already traded above the trigger means the breakout is gone.
+  if (!forming || forming.high < entryPriceLong) {
+    results.push({
+      pattern: patternMap[type],
+      score: scoreBase[type],
+      confidence: 'HIGH',
+      currentPrice,
+      pivotPrice: parseFloat(motherHigh.toFixed(2)),
+      entryPrice: entryPriceLong,
+      stopLoss: stopLossLong,
+      target1: target1Long,
+      target2: target2Long,
+      target3: target3Long,
+      riskReward: 1.5,
+      riskPct: riskPctLong,
+      trendStrength: 'MODERATE',
+      volumeSignal: 'AVERAGE',
+      contractions: 0,
+      direction: 'LONG',
+      notes: [
+        `🟢 ${label} Setup (LONG)`,
+        `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
+        `Inside Range: ₹${insideLow.toFixed(2)} → ₹${insideHigh.toFixed(2)}`,
+        `Long Trigger: Buy above mother high ₹${entryPriceLong.toFixed(2)} | SL: ₹${stopLossLong.toFixed(2)}`,
+        `⏳ Trigger ${when}`,
+      ],
+    });
+  }
 
-  // ── 2. SHORT Setup (Breakdown below Mother / Inside Low) ──────────────
-  const entryPriceShort = parseFloat((insideLow * 0.998).toFixed(2));
-  let stopLossShort = parseFloat((insideHigh * 1.002).toFixed(2));
+  // ── 2. SHORT Setup (Breakdown below Mother Low) ────────────────────────
+  const entryPriceShort = parseFloat((motherLow * 0.998).toFixed(2));
+  let stopLossShort = parseFloat((motherHigh * 1.002).toFixed(2));
   const rawRiskShort = ((stopLossShort - entryPriceShort) / entryPriceShort) * 100;
   if (rawRiskShort > 6.5) {
     stopLossShort = parseFloat((entryPriceShort * 1.055).toFixed(2));
@@ -594,31 +572,33 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
   const target2Short = parseFloat((entryPriceShort - riskPtsShort * 2.5).toFixed(2));
   const target3Short = parseFloat((entryPriceShort - riskPtsShort * 3.5).toFixed(2));
 
-  results.push({
-    pattern: patternMap[type],
-    score: scoreBase[type] - 2,
-    confidence: 'HIGH',
-    currentPrice,
-    pivotPrice: parseFloat(motherLow.toFixed(2)),
-    entryPrice: entryPriceShort,
-    stopLoss: stopLossShort,
-    target1: target1Short,
-    target2: target2Short,
-    target3: target3Short,
-    riskReward: 1.5,
-    riskPct: riskPctShort,
-    trendStrength: 'MODERATE',
-    volumeSignal: 'AVERAGE',
-    contractions: 0,
-    direction: 'SHORT',
-    notes: [
-      `🔴 ${label} Setup (SHORT)`,
-      `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
-      `Inside Range: ₹${insideLow.toFixed(2)} → ₹${insideHigh.toFixed(2)}`,
-      `Short Trigger: Sell below ₹${entryPriceShort.toFixed(2)} | SL: ₹${stopLossShort.toFixed(2)}`,
-      isBreakoutDay ? `⚡ Breakdown in progress today` : `⏳ Consolidation ready for breakdown`,
-    ],
-  });
+  if (!forming || forming.low > entryPriceShort) {
+    results.push({
+      pattern: patternMap[type],
+      score: scoreBase[type] - 2,
+      confidence: 'HIGH',
+      currentPrice,
+      pivotPrice: parseFloat(motherLow.toFixed(2)),
+      entryPrice: entryPriceShort,
+      stopLoss: stopLossShort,
+      target1: target1Short,
+      target2: target2Short,
+      target3: target3Short,
+      riskReward: 1.5,
+      riskPct: riskPctShort,
+      trendStrength: 'MODERATE',
+      volumeSignal: 'AVERAGE',
+      contractions: 0,
+      direction: 'SHORT',
+      notes: [
+        `🔴 ${label} Setup (SHORT)`,
+        `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
+        `Inside Range: ₹${insideLow.toFixed(2)} → ₹${insideHigh.toFixed(2)}`,
+        `Short Trigger: Sell below mother low ₹${entryPriceShort.toFixed(2)} | SL: ₹${stopLossShort.toFixed(2)}`,
+        `⏳ Trigger ${when}`,
+      ],
+    });
+  }
 
   return results;
 }
