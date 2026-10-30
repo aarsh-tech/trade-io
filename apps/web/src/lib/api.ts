@@ -228,6 +228,7 @@ export const marketApi = {
   movers: () => api.get("/market/movers"),
   getOhlStocks: (params?: { universe?: string; tolerance?: number | string; filter?: string }) =>
     api.get("/market/ohl-stocks", { params }),
+  getMoveAlerts: () => api.get("/market/move-alerts"),
   candles: (params: {
     symbol: string; exchange: string; interval: string; from: string; to: string;
   }) => api.get("/market/candles", { params }),

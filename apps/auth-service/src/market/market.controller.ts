@@ -6,6 +6,7 @@ import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { requireUserId } from './require-user';
 import { MarketService } from './market.service';
 import { OhlScannerService } from './ohl-scanner.service';
+import { MoveAlertScannerService } from './move-alert-scanner.service';
 import { getMarketSessionInfo } from './market-calendar';
 
 @ApiTags('Market')
@@ -16,6 +17,7 @@ export class MarketController {
   constructor(
     private readonly marketService: MarketService,
     private readonly ohlScannerService: OhlScannerService,
+    private readonly moveAlerts: MoveAlertScannerService,
   ) { }
 
   @Get('ohl-stocks')
@@ -31,6 +33,12 @@ export class MarketController {
     const tolNum = parseFloat(tolerance) || 0.05;
     const data = await this.ohlScannerService.scan(requireUserId(req), universe, tolNum, filter);
     return { success: true, data };
+  }
+
+  @Get('move-alerts')
+  @ApiOperation({ summary: 'Open-drive and range-break alerts for today (manual-trade ideas, no orders)' })
+  getMoveAlerts() {
+    return { success: true, data: this.moveAlerts.getAlerts() };
   }
 
   // ── Market Data ─────────────────────────────────────────────────────────────

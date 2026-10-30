@@ -1,5 +1,6 @@
 import {
   Activity,
+  BellRing,
   BookOpen,
   ClipboardList,
   LayoutDashboard,
@@ -49,6 +50,7 @@ export const NAV_GROUPS: NavGroup[] = [
     title: "Discover",
     items: [
       { href: "/live-screener", label: "OHL Screener", icon: ScanSearch, live: true },
+      { href: "/move-alerts", label: "Move Alerts", icon: BellRing, live: true },
       { href: "/swing-scanner", label: "Swing Scanner", icon: Layers },
       { href: "/intraday-picks", label: "Intraday Picks", icon: Zap },
     ],
