@@ -19,7 +19,8 @@ import { isTradingDay, istParts } from './market-calendar';
  *   or its high (BREAKOUT) while today's volume runs >= 1.5x the pace of the stock's usual daily volume.
  *
  * Needs a connected Zerodha account (quotes + daily history). One alert per stock, type and level a day.
- * Delivery: log, the alert webhook / Telegram bot if configured (common/utils/alert.ts), and GET /market/move-alerts.
+ * Delivery: log, GET /market/move-alerts, and one message per scan to the configured alert channels
+ * (webhook / Telegram, common/utils/alert.ts).
  */
 
 export type MoveAlertType = 'OPEN_DRIVE' | 'BREAKDOWN' | 'BREAKOUT';
@@ -62,6 +63,7 @@ const MIN_PRICE = 50;
 const MIN_AVG_VALUE_CR = 10;
 const MIN_VOL_PACE = 1.5;
 const MAX_ALERTS_PER_DAY = 80;
+const MAX_LINES_PER_MESSAGE = 12;
 
 @Injectable()
 export class MoveAlertScannerService implements OnModuleInit, OnModuleDestroy {
@@ -71,6 +73,8 @@ export class MoveAlertScannerService implements OnModuleInit, OnModuleDestroy {
   private day = '';
   private alerts: MoveAlert[] = [];
   private seen = new Set<string>();
+  /** Short lines for this scan's new alerts, sent together by flush(). */
+  private pending: string[] = [];
   private ranges: Map<string, RangeInfo> | null = null;
   private rangesLoading = false;
   private lastError = 0;
@@ -154,6 +158,7 @@ export class MoveAlertScannerService implements OnModuleInit, OnModuleDestroy {
         Object.assign(quotes, await kite.getQuote(symbols.slice(i, i + 500).map((s) => `NSE:${s}`)));
       }
       this.evaluate(quotes, now.minute);
+      this.flush();
       this.status = 'scanning';
       this.updatedAt = new Date().toISOString();
     } catch (e: any) {
@@ -225,7 +230,20 @@ export class MoveAlertScannerService implements OnModuleInit, OnModuleDestroy {
     this.alerts.push(alert);
     this.persist();
     this.logger.log(`[${hhmm}] ${text}`);
-    void sendAlert(`${hhmm} ${text}`);
+    const move = type === 'OPEN_DRIVE'
+      ? `${Math.abs(m.fromOpen).toFixed(1)}% below open, never back above it`
+      : `${type === 'BREAKDOWN' ? 'broke 5-day range low' : 'broke 5-day range high'}, volume ${m.volPace.toFixed(1)}x`;
+    this.pending.push(`${type === 'BREAKOUT' ? '📈' : '📉'} ${symbol} ₹${m.ltp}: ${move} (stop ref ₹${m.stopRef})`);
+  }
+
+  /** One message per scan, so a burst of alerts at 09:20 arrives as one notification, not dozens. */
+  private flush() {
+    if (this.pending.length === 0) return;
+    const lines = this.pending.splice(0);
+    const hhmm = new Date(Date.now() + 330 * 60_000).toISOString().slice(11, 16);
+    const shown = lines.slice(0, MAX_LINES_PER_MESSAGE);
+    const more = lines.length - shown.length;
+    void sendAlert([`Move Alerts ${hhmm} (manual trades only)`, ...shown, ...(more > 0 ? [`+${more} more on the Move Alerts page`] : [])].join('\n'));
   }
 
   /** Previous 5 sessions' range, 10-session average volume and traded value, from daily candles; cached per day. */
