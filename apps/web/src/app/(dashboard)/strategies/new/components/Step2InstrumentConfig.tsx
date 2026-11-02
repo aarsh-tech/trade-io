@@ -381,9 +381,14 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
       {/* ── STOCKS-IN-PLAY BREAKOUT: STOCK SELECTION AND TIMING ── */}
       {form.type === "STOCKS_IN_PLAY" && (
         <>
-          <Section title="Setup" description="Both setups use the same 09:20 volume scan. They differ in how they enter and exit.">
+          <Section title="Setup" description="All setups use the same 09:20 opening-volume scan. They differ in how they enter and exit.">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {([
+                {
+                  value: "TREND",
+                  title: "15/40 EMA trend",
+                  text: "Watches the stock with the biggest opening volume and takes its first 15/40 EMA crossover on the 5m chart (long above VWAP, short below), only in the direction of the gap. Stop at the day low/high, rides until the EMAs cross back. 2-year backtest: +₹5.0k at ₹500 risk on 94 trades, about breakeven.",
+                },
                 {
                   value: "FADE",
                   title: "In-play Fade",
@@ -406,8 +411,8 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                     onChange={() => {
                       set("sipSetup", o.value);
                       // Each setup's backtested defaults for the fields they share.
-                      set("maxTradesPerDay", o.value === "FADE" ? "1" : "2");
-                      set("sipMinAvgValueCr", o.value === "FADE" ? "10" : "25");
+                      set("maxTradesPerDay", o.value === "ORB" ? "2" : "1");
+                      set("sipMinAvgValueCr", o.value === "ORB" ? "25" : "10");
                     }}
                     className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer"
                   />
@@ -423,12 +428,24 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
           <Section
             title="Which stocks it trades"
             description={
-              form.sipSetup === "FADE"
+              form.sipSetup === "TREND"
+                ? "No symbol to pick. At 09:20 the strategy ranks every NIFTY 500 and F&O stock by its first 5-minute candle volume against its usual opening volume and watches the top one(s) for the rest of the session."
+                : form.sipSetup === "FADE"
                 ? `No symbol to pick. At 09:20 the strategy checks every NIFTY 500 and F&O stock and keeps the ones that opened above yesterday's close${form.sipFadeLongs ? " (short side) or below it (long side)" : ""} with a first 5-minute candle far above their usual opening volume. Stocks within 2.5% of the circuit they would have to exit into are skipped.`
                 : "No symbol to pick. At 09:20 the strategy checks every NIFTY 500 and F&O stock and keeps the ones whose first 5-minute candle traded far above their usual opening volume (news, results, block deals)."
             }
           >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {form.sipSetup === "TREND" && (
+                <NumberField
+                  label="Stocks watched"
+                  value={form.sipWatchCount}
+                  onChange={(v) => set("sipWatchCount", v)}
+                  min={1}
+                  hint="Highest opening volume first. Backtest: 1 stock +₹5.0k, 3 stocks +₹2.0k, 5 or more lost."
+                />
+              )}
+              {form.sipSetup !== "TREND" && (
               <NumberField
                 label="Opening volume multiple"
                 value={form.sipMinRvol}
@@ -437,17 +454,34 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 decimal
                 hint="First candle volume vs its 10-day average. The backtest edge was in stocks at 10x or more; lower values trade more and earned less."
               />
+              )}
               <NumberField
                 label={form.sipSetup === "FADE" && form.sipFadeLongs ? "Trades per day, per side" : "Max positions (= trades per day)"}
                 value={form.maxTradesPerDay}
                 onChange={(v) => set("maxTradesPerDay", v)}
                 min={1}
                 hint={
-                  form.sipSetup === "FADE"
+                  form.sipSetup === "TREND"
+                    ? "1 is what was backtested: the first crossover that passes the rules takes the day."
+                    : form.sipSetup === "FADE"
                     ? "1 is what was backtested (the earliest signal of the day). 2 earned less per trade with a bigger drawdown."
                     : "Positions can be open together; capital is split between them. 2 had the steadiest backtest."
                 }
               />
+              {form.sipSetup === "TREND" && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.sipWithGapOnly !== false}
+                  onChange={(e) => set("sipWithGapOnly", e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+                />
+                <span>
+                  <span className="block text-xs font-semibold text-foreground">Only trade with the gap</span>
+                  <span className="block text-xs text-muted-foreground">A stock that opened above yesterday&apos;s close is only bought, one that opened below it only shorted. Backtest with 1 stock watched: +₹5.0k with this on, +₹3.7k with it off.</span>
+                </span>
+              </label>
+              )}
               {form.sipSetup === "FADE" && (
               <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
                 <input
@@ -462,7 +496,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 </span>
               </label>
               )}
-              {form.sipSetup !== "FADE" && (
+              {form.sipSetup === "ORB" && (
               <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
                 <input
                   type="checkbox"
@@ -482,13 +516,15 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
           <Section
             title="Timing"
             description={
-              form.sipSetup === "FADE"
+              form.sipSetup === "TREND"
+                ? "Crossovers are checked on every 5-minute close from 09:25 to 14:30; only each side's first one of the day counts, and the order goes in within seconds of that close. The trade exits on the 5-minute close where the 15-EMA crosses back, at its stop, or at the 15:05 square-off."
+                : form.sipSetup === "FADE"
                 ? `Signals are checked on the 5-minute closes from 09:20 to 09:45, and the short is placed within seconds of that close.${form.sipFadeLongs ? " A long waits up to 30 minutes for the first-candle high to break (until 10:15 at the latest)." : " No new entries after the 09:45 close."} A position is held until its target, its stop or the 15:05 square-off.`
                 : "Entries happen the moment price breaks the first candle (shorts: its low). Every position is held until its stop or the 15:05 square-off."
             }
           >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {form.sipSetup !== "FADE" && (
+              {form.sipSetup === "ORB" && (
               <Field label="No new entries from" hint="IST. Open positions are still managed until 15:05.">
                 {(a11y) => (
                   <Input

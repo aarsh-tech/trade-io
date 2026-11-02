@@ -54,8 +54,13 @@ export interface StrategyFormState {
   evoUseSameDayExpiry: boolean;
   evoEntryCutoffTime: string;
   // Stocks-in-Play (`stopLossRs` = max loss per trade, `maxTradesPerDay` = max positions)
-  /** FADE = short the overbought rollover of a gap-up stock in play (09:20-09:45); ORB = break of the first candle. */
-  sipSetup: "FADE" | "ORB";
+  /** FADE = short the overbought rollover of a gap-up stock in play (09:20-09:45); ORB = break of the first candle;
+   *  TREND = first 15/40 EMA crossover of the top-RVOL stock(s), with the gap. */
+  sipSetup: "FADE" | "ORB" | "TREND";
+  /** TREND: stocks watched from 09:20 (highest first-candle RVOL first). */
+  sipWatchCount: string;
+  /** TREND: never short a gap-up stock or buy a gap-down one. */
+  sipWithGapOnly: boolean;
   /** FADE: stop as % of the fill, target in multiples of the stop, stop to entry at this multiple ("0" = off). */
   sipStopPct: string;
   sipTargetR: string;

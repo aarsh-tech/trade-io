@@ -10,10 +10,11 @@ import { NIFTY_500_UNIVERSE } from '../market/market.constants';
 import { TickerService } from '../market/ticker.service';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit } from './broker-position-guard';
+import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, normalizeSymbol } from './broker-position-guard';
 import { StocksInPlayConfig } from './dto/strategy.dto';
 import { getIstDateStr, getIstHhmm } from './emavwap-signals';
 import { FADE_MIN_HISTORY, FadeCandle, fadeLongTrigger, fadeReadings, fadeShortTrigger, FadeTrigger, toCompletedCandles } from './inplay-fade-signals';
+import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
 import { logSignal } from './signal-logger';
 
@@ -57,11 +58,27 @@ import { logSignal } from './signal-logger';
  * - High win-rate exits (scratchpad grid2.js, 29 Oct 2026, both sides): stopPct 1.8, breakevenAtR 0.5,
  *   breakevenLockR 0.2, targetR 3 + profit lock -> 73% wins, +₹39.3k, max drawdown ₹2.9k, worst month -₹1.7k,
  *   vs the default 1.2% / BE at 1R: 49% wins, +₹76.7k. The neighbours (1.8-2.1%, +0.4..0.5R, +0.1..0.2R) were all 71-76%.
+ *
+ * Setup TREND (15/40 EMA trend, config setup: 'TREND'), built on the user's request on 2 Nov 2026:
+ * - Watchlist at 09:20: the watchCount (default 1) liquid stocks with the highest first 5m candle volume vs usual.
+ * - Signal: each side's FIRST 15/40 EMA crossover of the day on the 5m closes 09:25..14:30 (EMAs of the 5m closes,
+ *   continuing from the previous sessions). Taken only when the close is on the VWAP side of the trade and, with
+ *   withGapOnly (default), in the direction of the gap: a gap-up stock is never shorted, a gap-down one never bought
+ *   (inplay-trend-signals.ts). Market entry right after the close; 1 trade a day.
+ * - Stop: the day low (long) / day high (short) through the signal candle, at least 0.3% away; exchange SL order.
+ * - Exit: the first 5m close where the 15-EMA has crossed back over the 40-EMA (market), the stop, or 15:05.
+ * - VWAP is the session VWAP of the 1m closes (one 1m history call when a crossover passes the gap rule), as in the
+ *   backtest; the 5m-close VWAP differs a lot after a huge first candle.
+ * - Backtest (26 Aug 2024 .. 2 Nov 2026, 1m bars, Zerodha costs + 0.03% slippage, ₹500 risk, watchlist ranked over
+ *   every liquid stock as at 09:20; scratchpad x1540.js / an9.js): top 1 with the gap +₹5.0k (year 1 +₹1.2k, year 2
+ *   +₹3.7k), only 94 trades, 47% wins. Top 1 either side +₹3.7k, top 3 with the gap +₹2.0k, top 5 -₹0.5k..-₹4.7k,
+ *   top 10 -₹12k..-₹16k, flat-open stocks only worse. About breakeven, not a proven edge: every 15/40 crossover on
+ *   every stock loses -₹55..-₹125 a trade, and only the top-RVOL watchlist keeps it near zero.
  */
 
 type Side = 'LONG' | 'SHORT';
-type ExitReason = 'SL' | 'TARGET' | 'SQUARE_OFF' | 'MANUAL' | 'BROKER_SL' | 'BROKER_SYNC' | 'NO_PROTECTION';
-type Setup = 'ORB' | 'FADE';
+type ExitReason = 'SL' | 'TARGET' | 'TREND' | 'SQUARE_OFF' | 'MANUAL' | 'BROKER_SL' | 'BROKER_SYNC' | 'NO_PROTECTION';
+type Setup = 'ORB' | 'FADE' | 'TREND';
 
 const SQUARE_OFF_HHMM = 15 * 60 + 5;
 const FIRST_CANDLE_CLOSE_HHMM = 9 * 60 + 20;
@@ -96,6 +113,11 @@ const BREAKEVEN_RETRY_MS = 10_000;
 /** FADE profit lock after breakeven, as [profit reached in R, profit locked in R]. Backtest: same total as without
  *  (₹76.0k vs ₹76.4k), wins 39% -> 51%, worst month -₹3.6k -> -₹2.4k (scratchpad protect.js, 28 Oct 2026). */
 const FADE_PROFIT_LOCK_STEPS: [number, number][] = [[1.5, 0.5], [2.5, 1.5]];
+/** TREND: crossovers on the candles starting 09:20..14:25 (closing 09:25..14:30). */
+const TREND_FIRST_CANDLE_HHMM = 9 * 60 + 20;
+const TREND_LAST_CANDLE_HHMM = 14 * 60 + 25;
+/** TREND: the day-low/high stop is at least this % from the fill. */
+const TREND_MIN_STOP_PCT = 0.3;
 
 interface ResolvedConfig {
   setup: Setup;
@@ -123,6 +145,10 @@ interface ResolvedConfig {
   leverage: number;
   maxCapital: number | null;
   entryCutoffTime: string;
+  /** TREND: stocks watched from 09:20 (highest first-candle RVOL first). */
+  watchCount: number;
+  /** TREND: trade only with the gap (no short on a gap-up stock, no long on a gap-down one). */
+  withGapOnly: boolean;
 }
 
 /** Per-stock numbers from the previous sessions, computed once a day. */
@@ -154,6 +180,10 @@ interface Candidate {
   checkedThrough: number;
   /** FADE long: the turn-up came; buy above `level` (first-candle high) until this time (epoch ms). 0 = not armed. */
   armedUntil: number;
+  /** TREND: the day low (long) / high (short) through the signal candle = the stop. 0 = no signal yet. */
+  stopLevel: number;
+  /** TREND: sides whose first crossover of the day has been seen (only that one may be traded). */
+  crossSeen: Set<Side>;
 }
 
 interface OpenPosition {
@@ -185,6 +215,10 @@ interface OpenPosition {
   lastExitAttempt: number;
   lastOrdersCheck: number;
   lastBrokerPosCheck: number;
+  /** TREND: 5m candles (history + today) for the crossback exit, and the start of the last candle checked. */
+  candles: FadeCandle[] | null;
+  trendCheckedThrough: number;
+  trendFetchAt: number;
 }
 
 interface EngineState {
@@ -316,6 +350,9 @@ export class StocksInPlayEngine {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
       this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.perSideTrades} long + ${config.perSideTrades} short a day`);
+    } else if (config.setup === 'TREND') {
+      this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
+      this.log(state, `⚙ At 09:20: watch the ${config.watchCount} stock(s) with the highest first 5m candle volume vs usual (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Each side's first 15/40 EMA crossover on the 5m closes 09:25–14:30: BUY when the 15-EMA crosses above the 40-EMA with the close above VWAP, SHORT when it crosses below with the close below VWAP${config.withGapOnly ? ' | Only with the gap: a gap-up stock is never shorted, a gap-down stock never bought' : ''} | Stop at the day low/high | Exit when the 15-EMA crosses back, else 15:05 | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x`);
     } else {
       this.log(state, `▶ Stocks-in-Play ORB started | ${mode}`);
       this.log(state, `⚙ At 09:20: stocks whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Trading ${sides} on the break of that candle | Stop ${config.stopAtrFraction} x 14-day ATR | Max loss/trade ₹${config.stopLossRs} | Up to ${config.maxPositions} positions (= trades/day), ${config.leverage}x | Entries until ${config.entryCutoffTime}, square-off 15:05`);
@@ -365,13 +402,16 @@ export class StocksInPlayEngine {
     const num = (v: any, d: number) => (Number(v) > 0 ? Number(v) : d);
     // 0 is a real setting (off) for the target and the breakeven step; only a missing/invalid value takes the default.
     const numOrZero = (v: any, d: number) => (v === undefined || v === null || v === '' || !(Number(v) >= 0) ? d : Number(v));
-    const setup: Setup = raw.setup === 'FADE' ? 'FADE' : 'ORB';
+    const setup: Setup = raw.setup === 'FADE' ? 'FADE' : raw.setup === 'TREND' ? 'TREND' : 'ORB';
     const fade = setup === 'FADE';
+    const trend = setup === 'TREND';
     // The fade always shorts; its long mirror only with fadeLongs (and only on a break of the first-candle high).
+    // TREND trades both sides unless one is switched off.
     const allowShorts = fade ? true : raw.allowShorts !== false;
-    const allowLongs = fade ? raw.fadeLongs === true : raw.allowLongs === true;
+    const allowLongs = fade ? raw.fadeLongs === true : trend ? raw.allowLongs !== false : raw.allowLongs === true;
     if (!allowShorts && !allowLongs) throw new Error('Stocks-in-Play: enable shorts, longs or both.');
-    const perSideTrades = Math.min(5, Math.floor(num(raw.maxPositions, fade ? 1 : 2)));
+    // TREND: maxPositions is the day's trade cap over both sides (each side may take all of it).
+    const perSideTrades = Math.min(5, Math.floor(num(raw.maxPositions, fade || trend ? 1 : 2)));
     const breakevenAtR = Math.min(20, numOrZero(raw.breakevenAtR, 1));
     return {
       setup,
@@ -385,13 +425,15 @@ export class StocksInPlayEngine {
       perSideTrades,
       minRvol: num(raw.minRvol, 10),
       stopAtrFraction: num(raw.stopAtrFraction, 0.2),
-      minAvgValueCr: num(raw.minAvgValueCr, fade ? 10 : 25),
+      minAvgValueCr: num(raw.minAvgValueCr, fade || trend ? 10 : 25),
       minPrice: num(raw.minPrice, 50),
       allowLongs,
       allowShorts,
       leverage: Math.min(5, num(raw.leverage, 4)),
       maxCapital: Number(raw.maxCapital) > 0 ? Number(raw.maxCapital) : null,
       entryCutoffTime: /^\d{1,2}:\d{2}$/.test(raw.entryCutoffTime || '') ? raw.entryCutoffTime : DEFAULT_ENTRY_CUTOFF,
+      watchCount: Math.min(10, Math.floor(num(raw.watchCount, 1))),
+      withGapOnly: raw.withGapOnly !== false,
     };
   }
 
@@ -435,6 +477,7 @@ export class StocksInPlayEngine {
       state.positions.push({
         symbol: pos.symbol, side: pos.side, entryPrice: pos.avgPrice, qty: pos.qty, sl, target, stopDist, beDone, lastBeAttempt: 0, lockedR, bestR: lockedR ?? 0, tick, rvol: null,
         slOrderId: pos.slOrderId, openedAt: Date.now(), ltp: null, ltpAt: 0, slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
+        candles: null, trendCheckedThrough: 0, trendFetchAt: 0,
       });
       state.tradedSymbols.add(pos.symbol);
       this.log(state, `🔄 [${pos.isPaper ? 'PAPER' : 'LIVE'} RECOVERY] Re-adopted ${pos.side} ${pos.symbol}: ${pos.qty} qty @ ₹${pos.avgPrice.toFixed(2)} | SL ₹${sl.toFixed(2)}${pos.slPrice ? '' : ' (no saved SL — set from the max loss)'}${target !== null ? ` | Target ₹${target.toFixed(2)}` : ''}${pos.slOrderId ? ` [Order ${pos.slOrderId}]` : ''}`);
@@ -581,18 +624,26 @@ export class StocksInPlayEngine {
       await this.refreshPrices(state, client, now);
       if (state.positions.length > 0) await this.managePositions(state, client, now);
 
+      // TREND exits on 5m closes (the 15-EMA crossing back), checked before any new entry.
+      if (state.config.setup === 'TREND' && state.positions.length > 0) await this.checkTrendExits(state, client, new Date());
+
       // No early `return` below: the completion check after the try block must still run.
       const fade = state.config.setup === 'FADE';
+      const trend = state.config.setup === 'TREND';
       const sessionOver = hhmm >= SQUARE_OFF_HHMM;
-      // FADE only signals on the 09:20..09:45 closes; started (or still without candidates) after that, nothing is left today.
-      const fadeOver = fade && !state.candidates && hhmm >= FADE_LAST_CANDLE_HHMM + 7;
+      // FADE only signals on the 09:20..09:45 closes, TREND on 09:25..14:30; started (or still without candidates) after that, nothing is left today.
+      const windowOver = !state.candidates && ((fade && hhmm >= FADE_LAST_CANDLE_HHMM + 7) || (trend && hhmm >= TREND_LAST_CANDLE_HHMM + 7));
       if (sessionOver) {
         if (state.positions.length === 0) state.completeReason = `🏁 Session over (15:05). Strategy completed for today.`;
-      } else if (fadeOver) {
-        if (state.positions.length === 0 && !state.completeReason) state.completeReason = `🏁 The fade window (09:20–09:45 closes) is over for today. Strategy completed.`;
+      } else if (windowOver) {
+        if (state.positions.length === 0 && !state.completeReason) {
+          state.completeReason = fade
+            ? `🏁 The fade window (09:20–09:45 closes) is over for today. Strategy completed.`
+            : `🏁 The crossover window (09:25–14:30 closes) is over for today. Strategy completed.`;
+        }
       } else if (state.baselines) {
-        // FADE reads the 09:15 candle's history at once, so give Kite a moment to finalise it.
-        const firstCandleReady = !fade || getIstHhmm(now) > FIRST_CANDLE_CLOSE_HHMM || now.getTime() % 60_000 >= FADE_SETTLE_MS;
+        // FADE and TREND read the 09:15 candle's history at once, so give Kite a moment to finalise it.
+        const firstCandleReady = !(fade || trend) || getIstHhmm(now) > FIRST_CANDLE_CLOSE_HHMM || now.getTime() % 60_000 >= FADE_SETTLE_MS;
         if (!state.candidates && hhmm >= FIRST_CANDLE_CLOSE_HHMM && firstCandleReady && now.getTime() - state.candidatesTriedAt >= 5000) {
           state.candidatesTriedAt = now.getTime();
           await this.buildCandidates(state, client, now);
@@ -601,7 +652,8 @@ export class StocksInPlayEngine {
           if (fade) {
             await this.checkFadeSignals(state, client, new Date());
             if (state.config.allowLongs) await this.checkFadeLongBreaks(state, client, new Date());
-          } else await this.checkEntries(state, client, now);
+          } else if (trend) await this.checkTrendSignals(state, client, new Date());
+          else await this.checkEntries(state, client, now);
         }
       }
     } catch (err: any) {
@@ -637,9 +689,9 @@ export class StocksInPlayEngine {
     const now = new Date();
     (async () => {
       if (state.positions.length > 0) await this.managePositions(state, state.client, now);
-      // FADE shorts enter only on 5m closes (tick loop); armed FADE longs and the stop/target/breakeven react to every tick.
+      // FADE shorts and TREND enter only on 5m closes (tick loop); armed FADE longs and the stop/target/breakeven react to every tick.
       if (state.candidates && getIstHhmm(now) < SQUARE_OFF_HHMM) {
-        if (state.config.setup !== 'FADE') await this.checkEntries(state, state.client, now);
+        if (state.config.setup === 'ORB') await this.checkEntries(state, state.client, now);
         else if (state.config.allowLongs) await this.checkFadeLongBreaks(state, state.client, now);
       }
     })()
@@ -827,11 +879,14 @@ export class StocksInPlayEngine {
     for (const [sym, b] of eligible) if (b.first) firsts.set(sym, b.first);
     const circuits = new Map<string, { lower: number; upper: number }>();
     const fade = cfg.setup === 'FADE';
-    // FADE keeps the shortlist's history (previous sessions included) as the indicators' warm-up.
+    const trend = cfg.setup === 'TREND';
+    // FADE and TREND keep the shortlist's history (previous sessions included) as the indicators' warm-up.
     const histories = new Map<string, { candles: FadeCandle[]; at: number }>();
     const missing = eligible.filter(([sym]) => !firsts.has(sym)).map(([sym]) => sym);
     if (missing.length > 0) {
-      const shortlist: string[] = [];
+      let shortlist: string[] = [];
+      // TREND has no RVOL floor: it ranks every stock, so the quote screen keeps a margin over the watch count.
+      const ranked: { sym: string; rv: number }[] = [];
       for (let i = 0; i < missing.length; i += 500) {
         const keys = missing.slice(i, i + 500).map((s) => `NSE:${s}`);
         let q: Record<string, any> = {};
@@ -840,18 +895,21 @@ export class StocksInPlayEngine {
           const x = q[`NSE:${sym}`];
           if (!x?.volume) continue;
           circuits.set(sym, { lower: Number(x.lower_circuit_limit) || 0, upper: Number(x.upper_circuit_limit) || 0 });
-          if (x.volume / base.get(sym)!.avgFirstVol >= cfg.minRvol * 0.7) shortlist.push(sym);
+          const rv = x.volume / base.get(sym)!.avgFirstVol;
+          if (trend) ranked.push({ sym, rv });
+          else if (rv >= cfg.minRvol * 0.7) shortlist.push(sym);
         }
       }
+      if (trend) shortlist = ranked.sort((a, b) => b.rv - a.rv).slice(0, Math.max(15, cfg.watchCount * 5)).map((r) => r.sym);
       const from = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`);
-      if (fade) from.setDate(from.getDate() - FADE_HISTORY_DAYS);
+      if (fade || trend) from.setDate(from.getDate() - FADE_HISTORY_DAYS);
       for (let i = 0; i < shortlist.length; i += 3) {
         await Promise.all(shortlist.slice(i, i + 3).map(async (sym) => {
           try {
             const raw: any[] = await client.getHistoricalData(sym, 'NSE', '5minute', from, new Date());
             const k = (raw || []).find((r: any) => getIstHhmm(new Date(r.date)) === 9 * 60 + 15 && getIstDateStr(new Date(r.date)) === getIstDateStr(now));
             if (k) firsts.set(sym, { o: Number(k.open), h: Number(k.high), l: Number(k.low), c: Number(k.close), v: Number(k.volume) || 0 });
-            if (fade) histories.set(sym, { candles: toCompletedCandles(raw, Date.now()), at: Date.now() });
+            if (fade || trend) histories.set(sym, { candles: toCompletedCandles(raw, Date.now()), at: Date.now() });
           } catch { /* retried below */ }
         }));
       }
@@ -865,12 +923,18 @@ export class StocksInPlayEngine {
       const f = firsts.get(sym);
       if (!f || !(f.v > 0)) continue;
       const rvol = f.v / b.avgFirstVol;
+      if (trend) {
+        // Ranked by RVOL only; the side comes from the crossover (placeholder until then).
+        if (state.tradedSymbols.has(sym)) continue;
+        list.push({ symbol: sym, side: 'LONG', level: 0, stopDist: 0, rvol, tick: b.tick || 0.05, first: f, ltp: null, ltpAt: 0, done: false, candles: histories.get(sym)?.candles ?? null, candlesAt: histories.get(sym)?.at ?? 0, checkedThrough: 0, armedUntil: 0, stopLevel: 0, crossSeen: new Set() });
+        continue;
+      }
       if (rvol < cfg.minRvol) continue;
       if (fade) {
         // Gap up -> short, gap down -> long (fadeLongs only); any first-candle colour.
         const side: Side | null = f.o > b.prevClose ? 'SHORT' : f.o < b.prevClose && cfg.allowLongs ? 'LONG' : null;
         if (!side || state.tradedSymbols.has(sym)) continue;
-        list.push({ symbol: sym, side, level: side === 'SHORT' ? f.c : f.h, stopDist: 0, rvol, tick: b.tick || 0.05, first: f, ltp: null, ltpAt: 0, done: false, candles: histories.get(sym)?.candles ?? null, candlesAt: histories.get(sym)?.at ?? 0, checkedThrough: 0, armedUntil: 0 });
+        list.push({ symbol: sym, side, level: side === 'SHORT' ? f.c : f.h, stopDist: 0, rvol, tick: b.tick || 0.05, first: f, ltp: null, ltpAt: 0, done: false, candles: histories.get(sym)?.candles ?? null, candlesAt: histories.get(sym)?.at ?? 0, checkedThrough: 0, armedUntil: 0, stopLevel: 0, crossSeen: new Set() });
         continue;
       }
       const side: Side | null = f.c < f.o ? 'SHORT' : f.c > f.o ? 'LONG' : null;
@@ -879,21 +943,30 @@ export class StocksInPlayEngine {
       const cir = circuits.get(sym);
       if (cir && ((side === 'SHORT' && cir.lower > 0 && (f.c - cir.lower) / f.c < 0.01) || (side === 'LONG' && cir.upper > 0 && (cir.upper - f.c) / f.c < 0.01))) continue;
       const tick = b.tick || 0.05;
-      list.push({ symbol: sym, side, level: side === 'SHORT' ? f.l : f.h, stopDist: Math.max(tick * 4, cfg.stopAtrFraction * b.atr), rvol, tick, first: f, ltp: null, ltpAt: 0, done: false, candles: null, candlesAt: 0, checkedThrough: 0, armedUntil: 0 });
+      list.push({ symbol: sym, side, level: side === 'SHORT' ? f.l : f.h, stopDist: Math.max(tick * 4, cfg.stopAtrFraction * b.atr), rvol, tick, first: f, ltp: null, ltpAt: 0, done: false, candles: null, candlesAt: 0, checkedThrough: 0, armedUntil: 0, stopLevel: 0, crossSeen: new Set() });
     }
     list.sort((a, b) => b.rvol - a.rvol);
-    state.candidates = list.slice(0, fade ? FADE_MAX_CANDIDATES : MAX_CANDIDATES);
+    state.candidates = list.slice(0, fade ? FADE_MAX_CANDIDATES : trend ? cfg.watchCount : MAX_CANDIDATES);
     if (fade && state.candidates.length > 0) state.candidates = await this.dropNearCircuit(state, kite, state.candidates);
 
     if (state.candidates.length === 0) {
       this.log(state, fade
         ? `📭 No fade candidate today (no stock opened ${cfg.allowLongs ? 'above or below' : 'above'} yesterday's close with a first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks).`
-        : `📭 No stock in play today (no first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks${cfg.allowLongs ? '' : ' with a red candle'}).`);
+        : trend
+          ? `📭 No first 5m candle could be read for the ${eligible.length} liquid stocks — nothing to watch today.`
+          : `📭 No stock in play today (no first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks${cfg.allowLongs ? '' : ' with a red candle'}).`);
       if (state.positions.length === 0) state.completeReason = `🏁 Nothing to trade today. Strategy completed.`;
       return;
     }
     for (const c of state.candidates) {
-      if (fade) {
+      if (trend) {
+        const b = base.get(c.symbol)!;
+        const gapPct = (c.first.o / b.prevClose - 1) * 100;
+        const sides = cfg.withGapOnly
+          ? gapPct > 0 ? (cfg.allowLongs ? 'LONG only (gap up)' : 'nothing (gap up, longs off)') : gapPct < 0 ? (cfg.allowShorts ? 'SHORT only (gap down)' : 'nothing (gap down, shorts off)') : 'both sides (flat open)'
+          : [cfg.allowLongs ? 'LONG' : null, cfg.allowShorts ? 'SHORT' : null].filter(Boolean).join(' + ');
+        this.log(state, `🎯 Watching: ${c.symbol} — opened ₹${c.first.o} (${gapPct >= 0 ? '+' : ''}${gapPct.toFixed(2)}% vs yesterday's ₹${b.prevClose}), first candle H ₹${c.first.h} L ₹${c.first.l} C ₹${c.first.c}, volume ${c.rvol.toFixed(1)}x usual | ${sides} on its first 15/40 EMA crossover (5m closes 09:25–14:30)`);
+      } else if (fade) {
         const b = base.get(c.symbol)!;
         const gapPct = Math.abs((c.first.o / b.prevClose - 1) * 100).toFixed(1);
         this.log(state, c.side === 'SHORT'
@@ -1072,6 +1145,183 @@ export class StocksInPlayEngine {
     }
   }
 
+  // ── TREND signals (5m closes 09:25..14:30) and the crossback exit ──────────
+
+  /**
+   * TREND: on each 5m close, every 15/40 EMA crossover since the last check is recorded; only each side's FIRST one
+   * of the day counts (as in the backtest), and it is traded only on the candle that just closed, on the VWAP side,
+   * with the gap (withGapOnly). Market entry right after the close.
+   */
+  private async checkTrendSignals(state: EngineState, client: any, now: Date) {
+    if (state.stopping || !state.candidates) return;
+    const cfg = state.config;
+    const nowMs = now.getTime();
+    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+    const firstStart = dayOpenMs + (TREND_FIRST_CANDLE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
+    const lastStart = dayOpenMs + (TREND_LAST_CANDLE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
+    const live = state.candidates.filter((c) => !c.done);
+
+    if (state.tradesToday >= cfg.maxPositions || nowMs > lastStart + FIVE_MIN_MS + FADE_CANDLE_WAIT_MS) {
+      for (const c of live) c.done = true;
+      if (state.positions.length === 0 && !state.completeReason) {
+        state.completeReason = state.tradesToday >= cfg.maxPositions
+          ? `⛔ Max ${cfg.maxPositions} trade(s) done for today. Strategy completed.`
+          : `🏁 No tradable 15/40 EMA crossover on the watched stock(s) by the 14:30 close — no trade today. Strategy completed.`;
+      }
+      return;
+    }
+    if (live.length === 0) {
+      if (state.positions.length === 0 && !state.completeReason) state.completeReason = `🏁 Every watched stock has used its crossovers for today. Strategy completed.`;
+      return;
+    }
+
+    const closedStart = Math.floor((nowMs - FADE_SETTLE_MS) / FIVE_MIN_MS) * FIVE_MIN_MS - FIVE_MIN_MS;
+    if (closedStart < firstStart) return;
+    const target = Math.min(closedStart, lastStart);
+    const closeMs = target + FIVE_MIN_MS;
+    const pending = live.filter((c) => c.checkedThrough < target);
+    if (pending.length === 0) return;
+    const hhmmOf = (ms: number) => { const m = getIstHhmm(new Date(ms)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+    const tooLate = nowMs - closeMs > FADE_MAX_ENTRY_DELAY_MS;
+
+    const signals: { c: Candidate; side: Side; r: NonNullable<ReturnType<typeof trendReadings>> }[] = [];
+    for (let i = 0; i < pending.length; i += 3) {
+      await Promise.all(pending.slice(i, i + 3).map(async (c) => {
+        const haveFresh = !!c.candles && c.candlesAt >= closeMs + FADE_SETTLE_MS && c.candles.some((k) => k.t === target);
+        if (!haveFresh) {
+          const got = await this.fetchCandles(state, client, c.symbol, c.candles, dayOpenMs);
+          if (!got) return; // retried on the next tick
+          c.candles = got;
+          c.candlesAt = Date.now();
+        }
+        const k = c.candles!;
+        const idx = k.findIndex((x) => x.t === target);
+        if (idx < 0) {
+          if (nowMs - closeMs >= FADE_CANDLE_WAIT_MS) {
+            c.checkedThrough = target;
+            this.log(state, `⚠ ${c.symbol}: Kite has no ${hhmmOf(closeMs)} candle yet — skipped for that close.`);
+          }
+          return;
+        }
+        if (idx < TREND_SLOW + 1) {
+          c.done = true;
+          this.log(state, `⚠ ${c.symbol}: only ${idx} earlier 5m candles available (the 40-EMA needs ${TREND_SLOW + 1}) — dropped.`);
+          return;
+        }
+        const b = state.baselines?.get(c.symbol);
+        const gap = b && b.prevClose > 0 ? c.first.o / b.prevClose - 1 : 0;
+        const tradable = (side: Side) => (side === 'LONG' ? cfg.allowLongs : cfg.allowShorts) && !(cfg.withGapOnly && (side === 'LONG' ? gap < 0 : gap > 0));
+        // Every unchecked candle up to the latest close: a crossover on a candle that was missed still uses up its side.
+        for (let j = 0; j <= idx; j++) {
+          if (k[j].t < firstStart || k[j].t <= c.checkedThrough) continue;
+          const r = trendReadings(k, j, dayOpenMs);
+          const side = r ? crossSide(r) : null;
+          if (!r || !side || c.crossSeen.has(side)) continue;
+          c.crossSeen.add(side);
+          const at = hhmmOf(k[j].t + FIVE_MIN_MS);
+          const what = `15-EMA ₹${r.fast.toFixed(2)} crossed ${side === 'LONG' ? 'above' : 'below'} the 40-EMA ₹${r.slow.toFixed(2)} at the ${at} close ₹${r.close}`;
+          if (k[j].t !== target || tooLate) this.log(state, `⏭ ${c.symbol}: ${what} — seen too late to trade; ${side} is done for today.`);
+          else if (!(side === 'LONG' ? cfg.allowLongs : cfg.allowShorts)) this.log(state, `ℹ ${c.symbol}: ${what} — ${side} trades are switched off.`);
+          else if (!tradable(side)) this.log(state, `ℹ ${c.symbol}: ${what} — not taken: against the ${gap > 0 ? 'gap up' : 'gap down'} (${(gap * 100).toFixed(2)}%).`);
+          else {
+            // VWAP of the 1m closes, as in the backtest (the 5m one differs a lot after a huge first candle).
+            const vwap1m = await this.vwapFromMinutes(state, client, c.symbol, dayOpenMs, target + FIVE_MIN_MS);
+            if (vwap1m !== null) r.vwap = vwap1m;
+            else this.log(state, `⚠ ${c.symbol}: 1m candles unavailable — using the 5m VWAP ₹${r.vwap.toFixed(2)}.`);
+            if (!vwapAgrees(side, r)) this.log(state, `ℹ ${c.symbol}: ${what} — not taken: the close is ${side === 'LONG' ? 'below' : 'above'} VWAP ₹${r.vwap.toFixed(2)}; ${side} is done for today.`);
+            else signals.push({ c, side, r });
+          }
+        }
+        c.checkedThrough = target;
+        if ((['LONG', 'SHORT'] as Side[]).every((s) => !tradable(s) || c.crossSeen.has(s))) c.done = true;
+      }));
+    }
+    if (tooLate && pending.length > 0) this.log(state, `⏭ The ${hhmmOf(closeMs)} candle closed over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min ago — too late to act on it; waiting for the next close.`);
+    if (signals.length === 0) return;
+
+    // Several on the same close: the highest opening volume first.
+    signals.sort((a, b) => b.c.rvol - a.c.rvol);
+    for (const s of signals) {
+      if (state.tradesToday >= cfg.maxPositions || state.stopping) break;
+      if (Date.now() - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
+        this.log(state, `⏭ ${s.c.symbol} crossover is over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min old — not entering late.`);
+        continue;
+      }
+      const long = s.side === 'LONG';
+      s.c.side = s.side;
+      s.c.level = s.r.close;
+      s.c.stopLevel = long ? s.r.dayLow : s.r.dayHigh;
+      this.log(state, `${long ? '📈' : '📉'} [TREND SIGNAL] ${s.c.symbol} ${hhmmOf(closeMs)} close ₹${s.r.close} — 15-EMA ₹${s.r.fast.toFixed(2)} crossed ${long ? 'above' : 'below'} the 40-EMA ₹${s.r.slow.toFixed(2)}, close ${long ? 'above' : 'below'} VWAP ₹${s.r.vwap.toFixed(2)} | stop at the day ${long ? 'low' : 'high'} ₹${s.c.stopLevel} | volume ${s.c.rvol.toFixed(1)}x`);
+      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'TREND', event: 'SIGNAL', symbol: s.c.symbol, side: s.side, readings: s.r, rvol: s.c.rvol, isPaper: state.isPaperTrade });
+      await this.refreshCandidateLtp(state, client, s.c);
+      await this.enterTrade(state, client, s.c, new Date());
+    }
+  }
+
+  /** Completed 5m candles: today's re-read, earlier sessions kept from `existing` (10 calendar days when there is none). */
+  private async fetchCandles(state: EngineState, client: any, symbol: string, existing: FadeCandle[] | null, dayOpenMs: number): Promise<FadeCandle[] | null> {
+    const from = new Date(dayOpenMs);
+    if (!existing) from.setDate(from.getDate() - FADE_HISTORY_DAYS);
+    try {
+      const fresh = toCompletedCandles(await client.getHistoricalData(symbol, 'NSE', '5minute', from, new Date()), Date.now());
+      return existing ? [...existing.filter((k) => k.t < dayOpenMs), ...fresh.filter((k) => k.t >= dayOpenMs)] : fresh;
+    } catch (e: any) {
+      this.logger.warn(`[${state.strategyId}] ${symbol} 5m history failed: ${e?.message || e}`);
+      return null;
+    }
+  }
+
+  /** Session VWAP of today's 1m closes before `untilMs`; null when Kite has none. */
+  private async vwapFromMinutes(state: EngineState, client: any, symbol: string, dayOpenMs: number, untilMs: number): Promise<number | null> {
+    try {
+      const raw: any[] = await client.getHistoricalData(symbol, 'NSE', 'minute', new Date(dayOpenMs), new Date(untilMs));
+      let pv = 0, vv = 0;
+      for (const k of raw || []) {
+        const t = new Date(k.date).getTime();
+        if (t < dayOpenMs || t >= untilMs) continue;
+        const c = Number(k.close), v = Number(k.volume) || 0;
+        if (c > 0) { pv += c * v; vv += v; }
+      }
+      return vv > 0 ? pv / vv : null;
+    } catch (e: any) {
+      this.logger.warn(`[${state.strategyId}] ${symbol} 1m history failed: ${e?.message || e}`);
+      return null;
+    }
+  }
+
+  /** TREND exit: on each 5m close from the entry candle on, exit at market once the 15-EMA has crossed back over the 40-EMA. */
+  private async checkTrendExits(state: EngineState, client: any, now: Date) {
+    const nowMs = now.getTime();
+    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+    const closedStart = Math.floor((nowMs - FADE_SETTLE_MS) / FIVE_MIN_MS) * FIVE_MIN_MS - FIVE_MIN_MS;
+    for (const p of [...state.positions]) {
+      if (!state.positions.includes(p) || p.retryExit) continue;
+      if (closedStart < Math.floor(p.openedAt / FIVE_MIN_MS) * FIVE_MIN_MS || closedStart <= p.trendCheckedThrough) continue;
+      if (!p.candles?.some((k) => k.t === closedStart)) {
+        if (nowMs - p.trendFetchAt < 5000) continue;
+        p.trendFetchAt = nowMs;
+        const got = await this.fetchCandles(state, client, p.symbol, p.candles, dayOpenMs);
+        if (got) p.candles = got;
+      }
+      const idx = p.candles ? p.candles.findIndex((k) => k.t === closedStart) : -1;
+      const closeHhmm = getIstHhmm(new Date(closedStart + FIVE_MIN_MS));
+      const at = `${Math.floor(closeHhmm / 60)}:${String(closeHhmm % 60).padStart(2, '0')}`;
+      if (idx < 0) {
+        if (nowMs - (closedStart + FIVE_MIN_MS) >= FADE_CANDLE_WAIT_MS) {
+          p.trendCheckedThrough = closedStart;
+          this.log(state, `⚠ ${p.symbol}: Kite has no ${at} candle — the crossback exit is checked again on the next close (the SL stays on the exchange).`);
+        }
+        continue;
+      }
+      p.trendCheckedThrough = closedStart;
+      const x = crossedBack(p.side, p.candles!, idx);
+      if (!x) continue;
+      const close = p.candles![idx].c;
+      this.log(state, `${p.side === 'LONG' ? '📉' : '📈'} [TREND EXIT] ${p.symbol} ${at} close ₹${close} — the 15-EMA ₹${x.fast.toFixed(2)} crossed back ${p.side === 'LONG' ? 'below' : 'above'} the 40-EMA ₹${x.slow.toFixed(2)} — exiting at market.`);
+      await this.exitPosition(state, client, p, 'TREND', p.ltp ?? close);
+    }
+  }
+
   /** Fresh price right before a FADE entry (ticks if under 3s old, else REST). */
   private async refreshCandidateLtp(state: EngineState, client: any, c: Candidate) {
     if (c.ltp !== null && Date.now() - c.ltpAt < 3000) return;
@@ -1148,12 +1398,15 @@ export class StocksInPlayEngine {
     }
     const ltp = c.ltp;
     const sign = c.side === 'LONG' ? 1 : -1;
+    const trend = cfg.setup === 'TREND';
+    // TREND: from the price to the day low/high (at least TREND_MIN_STOP_PCT), re-based on the real fill below.
+    const trendStopDist = (px: number) => Math.max((px * TREND_MIN_STOP_PCT) / 100, (px - c.stopLevel) * sign);
     // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below).
-    const stopDist = fade ? (ltp * cfg.stopPct) / 100 : c.stopDist;
+    const stopDist = fade ? (ltp * cfg.stopPct) / 100 : trend ? trendStopDist(ltp) : c.stopDist;
 
-    // ORB and the FADE long enter on a level break and must not chase it; the FADE short enters at market on the candle close by design.
+    // ORB and the FADE long enter on a level break and must not chase it; the FADE short and TREND enter at market on the candle close by design.
     const chase = (ltp - c.level) * sign;
-    if ((!fade || c.side === 'LONG') && chase > MAX_CHASE_OF_STOP * stopDist) {
+    if ((cfg.setup === 'ORB' || (fade && c.side === 'LONG')) && chase > MAX_CHASE_OF_STOP * stopDist) {
       this.log(state, `⏭ ${c.symbol} broke ₹${c.level.toFixed(2)} but is already at ₹${ltp.toFixed(2)} (more than ${MAX_CHASE_OF_STOP} of the stop distance past it). Not chasing.`);
       return;
     }
@@ -1192,7 +1445,9 @@ export class StocksInPlayEngine {
       this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / cfg.leverage).toFixed(0)} margin or risks ₹${stopDist.toFixed(2)} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
       return;
     }
-    this.log(state, fade
+    this.log(state, trend
+      ? `🚀 ${c.symbol} 15/40 EMA crossover at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
+      : fade
       ? c.side === 'SHORT'
         ? `🚀 ${c.symbol} fade signal at ₹${ltp.toFixed(2)} — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
         : `🚀 ${c.symbol} broke its first-candle high ₹${c.level} at ₹${ltp.toFixed(2)} after the oversold turn-up — buying ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
@@ -1209,7 +1464,7 @@ export class StocksInPlayEngine {
     }
     state.tradedSymbols.add(c.symbol);
 
-    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : c.stopDist;
+    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDist(fill.price) : c.stopDist;
     const sl = roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
     // Target rounded toward the entry, so it is never further than targetR x the stop.
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
@@ -1218,11 +1473,14 @@ export class StocksInPlayEngine {
     const p: OpenPosition = {
       symbol: c.symbol, side: c.side, entryPrice: fill.price, qty: fill.qty, sl, target, stopDist: fillStopDist, beDone: this.lockSteps(cfg).length === 0, lastBeAttempt: 0, lockedR: null, bestR: 0, tick: c.tick, rvol: c.rvol,
       slOrderId: null, openedAt: now.getTime(), ltp: ltp, ltpAt: Date.now(), slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
+      candles: trend ? c.candles : null, trendCheckedThrough: 0, trendFetchAt: 0,
     };
     state.positions.push(p);
     const exitPlan = fade
       ? `Target ₹${target !== null ? target.toFixed(2) : '—'}${this.lockSteps(cfg).map(([at, lk]) => ` | at ₹${(fill.price + sign * at * fillStopDist).toFixed(2)} SL → ${lk === 0 ? 'entry' : `+${lk}R ₹${(fill.price + sign * lk * fillStopDist).toFixed(2)}`}`).join('')} | else 15:05`
-      : 'Exit at the SL or 15:05';
+      : trend
+        ? `Exit on the 5m close where the 15-EMA crosses back ${c.side === 'LONG' ? 'below' : 'above'} the 40-EMA, at the SL or 15:05`
+        : 'Exit at the SL or 15:05';
     this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}`);
     logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, isPaper: state.isPaperTrade });
 
@@ -1577,7 +1835,7 @@ export class StocksInPlayEngine {
       this.prisma.order.updateMany({ where: { brokerOrderId: p.slOrderId, isPaperTrade: true, status: 'OPEN' }, data: { status: 'CANCELLED' } }).catch(() => undefined);
     }
     const label: Record<ExitReason, string> = {
-      SL: 'Stop Loss Hit', TARGET: 'Target hit', SQUARE_OFF: '15:05 square-off', MANUAL: 'Manual square-off', BROKER_SL: 'Broker SL filled',
+      SL: 'Stop Loss Hit', TARGET: 'Target hit', TREND: '15/40 EMA crossback', SQUARE_OFF: '15:05 square-off', MANUAL: 'Manual square-off', BROKER_SL: 'Broker SL filled',
       BROKER_SYNC: 'Closed outside the engine', NO_PROTECTION: 'Exited (no broker SL)',
     };
     this.log(state, `🏁 ${label[reason]} — ${p.symbol} exit at ₹${exitPrice.toFixed(2)} (${p.side} entry ₹${p.entryPrice.toFixed(2)}) | Realized P&L: ₹${pnl.toFixed(2)} | Today: ₹${state.realizedTodayRs.toFixed(2)} (${state.winsToday}W/${state.lossesToday}L, ${state.tradesToday}/${state.config.maxPositions} trades) [${orderId ?? 'n/a'}]`);

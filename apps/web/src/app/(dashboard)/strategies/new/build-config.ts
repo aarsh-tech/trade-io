@@ -59,6 +59,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
     };
   } else if (form.type === "STOCKS_IN_PLAY") {
     const fade = form.sipSetup === "FADE";
+    const trend = form.sipSetup === "TREND";
     // "0" is a real choice (no target / no breakeven); only a blank field takes the backtested default.
     const orZero = (v: string, d: number) => (v === "" || !(Number(v) >= 0) ? d : Number(v));
     config = {
@@ -66,7 +67,11 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       exchange: "NSE",
       instrumentType: "STOCK",
       product: "MIS",
-      setup: fade ? "FADE" : "ORB",
+      setup: fade ? "FADE" : trend ? "TREND" : "ORB",
+      ...(trend && {
+        watchCount: Number(form.sipWatchCount || 1),
+        withGapOnly: form.sipWithGapOnly !== false,
+      }),
       ...(fade && {
         stopPct: Number(form.sipStopPct || 1.2),
         targetR: orZero(form.sipTargetR, 3),
@@ -76,14 +81,14 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
         fadeLongs: form.sipFadeLongs === true,
       }),
       stopLossRs: Number(form.stopLossRs),
-      maxPositions: Number(form.maxTradesPerDay || (fade ? 1 : 2)),
-      maxTradesPerDay: Number(form.maxTradesPerDay || (fade ? 1 : 2)),
+      maxPositions: Number(form.maxTradesPerDay || (fade || trend ? 1 : 2)),
+      maxTradesPerDay: Number(form.maxTradesPerDay || (fade || trend ? 1 : 2)),
       minRvol: Number(form.sipMinRvol || 10),
       stopAtrFraction: Number(form.sipStopAtr || 0.2),
-      minAvgValueCr: Number(form.sipMinAvgValueCr || (fade ? 10 : 25)),
+      minAvgValueCr: Number(form.sipMinAvgValueCr || (fade || trend ? 10 : 25)),
       minPrice: 50,
       allowShorts: true,
-      allowLongs: !fade && form.sipAllowLongs === true,
+      allowLongs: trend || (!fade && form.sipAllowLongs === true),
       leverage: Number(form.sipLeverage || 4),
       ...(Number(form.sipMaxCapital) > 0 && { maxCapital: Number(form.sipMaxCapital) }),
       entryCutoffTime: form.sipEntryCutoffTime || "15:00",

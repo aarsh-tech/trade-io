@@ -44,6 +44,8 @@ export function createDefaultForm(): StrategyFormState {
     evoUseSameDayExpiry: false,
     evoEntryCutoffTime: "15:00",
     sipSetup: "FADE",
+    sipWatchCount: "1",
+    sipWithGapOnly: true,
     sipStopPct: "1.2",
     sipTargetR: "3",
     sipBreakevenAtR: "1",
@@ -231,7 +233,9 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     // Stocks-in-Play ORB (max positions live in maxPositions; the form edits them as maxTradesPerDay)
     ...(type === "STOCKS_IN_PLAY" && { maxTradesPerDay: str(c.maxPositions, base.maxTradesPerDay) }),
     // A saved Stocks-in-Play strategy without a setup is the original ORB one.
-    sipSetup: c.setup === "FADE" ? "FADE" : type === "STOCKS_IN_PLAY" ? "ORB" : base.sipSetup,
+    sipSetup: c.setup === "FADE" || c.setup === "TREND" ? c.setup : type === "STOCKS_IN_PLAY" ? "ORB" : base.sipSetup,
+    sipWatchCount: str(c.watchCount, base.sipWatchCount),
+    sipWithGapOnly: c.withGapOnly !== false,
     sipStopPct: str(c.stopPct, base.sipStopPct),
     sipTargetR: str(c.targetR, base.sipTargetR),
     sipBreakevenAtR: str(c.breakevenAtR, base.sipBreakevenAtR),
@@ -240,7 +244,7 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     sipFadeLongs: c.fadeLongs === true,
     sipMinRvol: str(c.minRvol, base.sipMinRvol),
     sipStopAtr: str(c.stopAtrFraction, base.sipStopAtr),
-    sipMinAvgValueCr: str(c.minAvgValueCr, type === "STOCKS_IN_PLAY" && c.setup !== "FADE" ? "25" : base.sipMinAvgValueCr),
+    sipMinAvgValueCr: str(c.minAvgValueCr, type === "STOCKS_IN_PLAY" && c.setup !== "FADE" && c.setup !== "TREND" ? "25" : base.sipMinAvgValueCr),
     sipAllowLongs: c.allowLongs === true,
     sipLeverage: str(c.leverage, base.sipLeverage),
     sipMaxCapital: str(c.maxCapital, base.sipMaxCapital),

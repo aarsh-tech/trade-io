@@ -885,7 +885,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
         </div>
       )}
 
-      {form.type === "STOCKS_IN_PLAY" && form.sipSetup !== "FADE" && (
+      {form.type === "STOCKS_IN_PLAY" && form.sipSetup === "ORB" && (
         <div className="space-y-4">
           <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-1.5">
             <p className="text-xs font-semibold text-foreground">How a trade is managed</p>

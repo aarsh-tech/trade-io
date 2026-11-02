@@ -198,7 +198,9 @@ export interface EmaVwapOptionsConfig {
 }
 
 export interface StocksInPlayConfig {
-  setup?: 'ORB' | 'FADE';              // ORB = break of the first candle (default); FADE = short the overbought rollover of a gap-up stock in play, 09:20-09:45
+  setup?: 'ORB' | 'FADE' | 'TREND';    // ORB = break of the first candle (default); FADE = short the overbought rollover of a gap-up stock in play, 09:20-09:45; TREND = first 15/40 EMA crossover of the top-RVOL stock(s), with the gap
+  watchCount?: number;                 // TREND: stocks watched from 09:20, highest first-candle RVOL first (default 1, max 10)
+  withGapOnly?: boolean;               // TREND: never short a gap-up stock or buy a gap-down one (default true)
   stopPct?: number;                    // FADE: stop distance as % of the fill (default 1.2)
   targetR?: number;                    // FADE: target at this multiple of the stop (default 3; 0 = no target, exit at the stop or 15:05)
   breakevenAtR?: number;               // FADE: stop moved to the entry at this multiple of the stop in profit (default 1; 0 = off)
