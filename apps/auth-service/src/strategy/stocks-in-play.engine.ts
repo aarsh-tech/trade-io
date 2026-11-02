@@ -50,9 +50,14 @@ import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from 
  *   max drawdown ₹4.9k, 20/25 green months. Entering 1 minute late cut it to +₹46k, so entries must be prompt.
  * - fadeLongs adds the mirror on gap-down stocks: an oversold turn-up on the same closes ARMS a long, bought only when
  *   price then trades above the first 5m candle's high within 30 minutes (same % stop, target and stop ladder).
- *   maxPositions then counts per side. Backtest (scratchpad research2.js, 29 Oct 2026, ₹500 risk): the long side
- *   alone +₹11.0k (year 1 -₹1.2k, year 2 +₹12.2k), weak; book with up to 1 short + 1 long a day +₹73.6k vs +₹62.6k
- *   short only, max drawdown ₹7.6k vs ₹5.1k. Buying the turn-up without the high break lost (-₹9.0k).
+ *   maxPositions is the day's cap over BOTH sides: the first entry of the day takes it; a short signal is entered
+ *   before the long breaks are checked, so in the same minute the short wins. Backtest (scratchpad onebook.js,
+ *   3 Nov 2026, 1.2% / 3R / +0.2R at +1R, ₹500 risk, ₹1L notional): 1 a day over both sides +₹77.8k (year 1 +₹30.9k,
+ *   year 2 +₹46.9k), 64% wins, max drawdown ₹4.2k, worst month -₹1.3k, vs short only +₹69.6k (DD ₹4.8k, worst month
+ *   -₹2.5k) and 1 short + 1 long a day +₹77.6k (DD ₹6.5k, worst month -₹3.0k, twice the daily risk). Picking the
+ *   highest-volume signal instead of the first did worse (+₹52.8k, even with hindsight). Engine replay Jun-Sep 2026
+ *   (scratchpad fade-replay-onebook.ts): never more than 1 trade a day, same pick as the sim on 75 of 79 days.
+ *   The long side alone +₹8.1k (year 1 +₹0.2k), weak. Buying the turn-up without the high break lost (-₹9.0k).
  * - breakevenLockR 0.2 (default): at +1R the stop goes to +0.2R, not the bare entry, so a trade that reached +1R and
  *   came back is a small win instead of a small loss after charges. Backtest both sides (scratchpad grid3.js,
  *   29 Oct 2026): 62% wins, +₹77.6k vs 49% wins, +₹76.7k with the stop at the entry; +0.1R..+0.3R all 62-64%.
@@ -133,9 +138,9 @@ interface ResolvedConfig {
   /** FADE: after breakeven, lock +0.5R at +1.5R and +1.5R at +2.5R (FADE_PROFIT_LOCK_STEPS). */
   profitLock: boolean;
   stopLossRs: number;
-  /** Daily trade cap and position slots (FADE with longs: both sides together). */
+  /** Daily trade cap and position slots (FADE with longs and TREND: both sides together). */
   maxPositions: number;
-  /** Trades per side per day (FADE with longs: the configured maxPositions; otherwise = maxPositions). */
+  /** Trades per side per day (= maxPositions: either side may take the whole day's cap). */
   perSideTrades: number;
   minRvol: number;
   stopAtrFraction: number;
@@ -357,7 +362,7 @@ export class StocksInPlayEngine {
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
       this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
-      if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.perSideTrades} long + ${config.perSideTrades} short a day`);
+      if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
       this.log(state, `⚙ At 09:20: watch the ${config.watchCount} stock(s) with the highest first 5m candle volume vs usual (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Each side's first 15/40 EMA crossover on the 5m closes 09:25–14:30: BUY when the 15-EMA crosses above the 40-EMA with the close above VWAP, SHORT when it crosses below with the close below VWAP${config.withGapOnly ? ' | Only with the gap: a gap-up stock is never shorted, a gap-down stock never bought' : ''} | Stop at the day low/high | Exit when the 15-EMA crosses back, else 15:05 | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x`);
@@ -418,7 +423,7 @@ export class StocksInPlayEngine {
     const allowShorts = fade ? true : raw.allowShorts !== false;
     const allowLongs = fade ? raw.fadeLongs === true : trend ? raw.allowLongs !== false : raw.allowLongs === true;
     if (!allowShorts && !allowLongs) throw new Error('Stocks-in-Play: enable shorts, longs or both.');
-    // TREND: maxPositions is the day's trade cap over both sides (each side may take all of it).
+    // FADE with longs and TREND: maxPositions is the day's trade cap over both sides (each side may take all of it).
     const perSideTrades = Math.min(5, Math.floor(num(raw.maxPositions, fade || trend ? 1 : 2)));
     const breakevenAtR = Math.min(20, numOrZero(raw.breakevenAtR, 1));
     return {
@@ -429,7 +434,7 @@ export class StocksInPlayEngine {
       breakevenLockR: Math.min(numOrZero(raw.breakevenLockR, 0.2), breakevenAtR * 0.8),
       profitLock: raw.profitLock !== false,
       stopLossRs,
-      maxPositions: fade && allowLongs ? perSideTrades * 2 : perSideTrades,
+      maxPositions: perSideTrades,
       perSideTrades,
       minRvol: num(raw.minRvol, 10),
       stopAtrFraction: num(raw.stopAtrFraction, 0.2),

@@ -456,7 +456,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
               />
               )}
               <NumberField
-                label={form.sipSetup === "FADE" && form.sipFadeLongs ? "Trades per day, per side" : "Max positions (= trades per day)"}
+                label={form.sipSetup === "FADE" && form.sipFadeLongs ? "Trades per day (short + long together)" : "Max positions (= trades per day)"}
                 value={form.maxTradesPerDay}
                 onChange={(v) => set("maxTradesPerDay", v)}
                 min={1}
@@ -492,7 +492,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 />
                 <span>
                   <span className="block text-xs font-semibold text-foreground">Also trade the long side (gap-down stocks)</span>
-                  <span className="block text-xs text-muted-foreground">On a gap-down stock in play, an oversold turn-up (MFI, Stochastic, Bollinger or CMF) by 09:45 arms a long, bought only if price then breaks the first 5-minute candle's high within 30 minutes. Same stop, target and stop ladder; the trades per day then apply to each side. Backtest: short + long +₹73.6k vs short only +₹62.6k, but the long side alone lost in year 1 (−₹1.2k, then +₹12.2k) and the worst drawdown grew from ₹5.1k to ₹7.6k.</span>
+                  <span className="block text-xs text-muted-foreground">On a gap-down stock in play, an oversold turn-up (MFI, Stochastic, Bollinger or CMF) by 09:45 arms a long, bought only if price then breaks the first 5-minute candle's high within 30 minutes. Same stop, target and stop ladder. The trades per day cover both sides: the first signal of the day, short or long, takes it (a short wins a tie). Backtest (1 a day, Recommended exits): +₹77.8k, 64% wins, worst month −₹1.3k vs short only +₹69.6k, worst month −₹2.5k. The long side alone is weak (+₹8.1k, about ₹0 in year 1).</span>
                 </span>
               </label>
               )}

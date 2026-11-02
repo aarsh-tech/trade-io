@@ -181,7 +181,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
         ? [
             { label: "Long signal", value: "MFI back above 20, Stochastic %K over %D from below 20, close back over the lower Bollinger band, or CMF above +0.1" },
             { label: "Long entry", value: "Market buy only when price then breaks the first 5m candle's high, within 30 min of the signal" },
-            { label: "Trades per side", value: `${cfg.maxPositions ?? 1} short + ${cfg.maxPositions ?? 1} long a day` },
+            { label: "Trades a day", value: `${cfg.maxPositions ?? 1} over both sides: the first entry, short or long, takes it` },
           ]
         : []),
       { label: "Entry window", value: cfg.fadeLongs === true ? "Signals on 5m closes 09:20 to 09:45 IST; long breaks until 10:15" : "5m closes 09:20 to 09:45 IST" },

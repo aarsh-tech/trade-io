@@ -333,11 +333,9 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
       const perTrade = n(form.stopLossRs);
       if (form.sipSetup === "FADE") {
         const tr = n(form.sipTargetR);
-        // With the long side on, the trade count applies to each side.
-        const dayTrades = form.sipFadeLongs === true ? trades * 2 : trades;
         return {
           perTrade: perTrade || null,
-          perDay: perTrade ? perTrade * dayTrades : null,
+          perDay: perTrade ? perTrade * trades : null,
           targetPerTrade: perTrade && tr > 0 ? perTrade * tr : null,
           basis: `Shares are sized so the stop (${form.sipStopPct || 1.2}% from the entry) loses at most your max loss, and capital allows (${form.sipLeverage || 4}x). A jump through the stop can lose a little more. Target ${tr > 0 ? `${tr}x the stop` : "off"}${n(form.sipBreakevenAtR) > 0 ? `; the stop moves to ${n(form.sipBreakevenLockR) > 0 ? `entry +${form.sipBreakevenLockR}x` : "the entry"} at +${form.sipBreakevenAtR}x` : ""}${form.sipProfitLock !== false ? ", then locks +0.5x at +1.5x and +1.5x at +2.5x" : ""}; otherwise 15:05.`,
         };
