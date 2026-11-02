@@ -8,10 +8,11 @@ import { loadResumableLogs, MAX_ENGINE_LOGS, pushEngineLog } from '../common/uti
 import { TickerService } from '../market/ticker.service';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, safeCancelPendingOrders } from './broker-position-guard';
+import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, normalizeSymbol, safeCancelPendingOrders } from './broker-position-guard';
 import { EmaVwapCrossoverConfig } from './dto/strategy.dto';
 import { countTodaysTradesForEntry, findOpenPosition, PositionUnknownError, protectionNotice, recoverTodaysTrades } from './position-recovery';
 import { logSignal } from './signal-logger';
+import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from './symbol-claims';
 import { calculateEMA, calculateVWAP, Candle, filterClosedCandles, findLatestEmaVwapCrossToday, getIstDateStr, getIstHhmm, isInsideCandle } from './emavwap-signals';
 import { getInstrumentTickSize, getTopCandidateStocks, globalTickSizeMap, roundToInstrumentTick } from './smart-stock-picker';
 
@@ -144,6 +145,8 @@ interface StrategyState {
   setupStructure?: number | null;
   /** Symbols the broker refused for a new entry (e.g. MIS blocked), with the time (ms) until which they are skipped. */
   rejectedSymbols?: Map<string, number>;
+  /** Stock whose entry order is being placed (seen by other engines through symbol-claims before the position exists). */
+  claimingSymbol?: string | null;
   /** Auto mode: scan score of the tracked stock's setup, compared with the watched setups when several trigger together. */
   activeScore?: number;
   /** Auto mode: setups in other stocks watched for their trigger next to the tracked one (best score first). */
@@ -413,6 +416,10 @@ export class EmaVwapCrossoverEngine {
     };
 
     this.running.set(strategyId, state);
+    if (!state.isPaperTrade) {
+      registerSymbolHolder(strategyId, state.brokerAccountId, strategy.name || 'Stock Picker', (sym) =>
+        state.claimingSymbol === sym || (!!state.entryTriggered && normalizeSymbol(state.activeSymbol || state.config.symbol) === sym));
+    }
     if (resumedLogs.length > 0) {
       this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${config.symbol}:${config.exchange}, ${strategy.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING'})`);
     } else {
@@ -581,6 +588,8 @@ export class EmaVwapCrossoverEngine {
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
+      // A position left unconfirmed keeps its stock off-limits to the other engines until the next start.
+      if (!stillOpen) unregisterSymbolHolder(strategyId);
 
       if (client && !state.isPaperTrade && !stillOpen && (state.slOrderId || state.targetOrderId)) {
         try {
@@ -1983,6 +1992,16 @@ export class EmaVwapCrossoverEngine {
       state.setupStructure = null;
       if (state.fibLevels) this.log(state, this.formatFibLog(state.fibLevels));
 
+      if (!state.isPaperTrade && !isHistorical) {
+        const holder = symbolHeldByOther(state.strategyId, state.brokerAccountId, symbol);
+        if (holder) {
+          this.log(state, `⏭ ${symbol}: "${holder}" already has a position in this stock on the same Zerodha account — skipping (the broker would net the two positions and break both strategies' exit checks). 30 min cooldown.`);
+          if (!state.cooldownSymbols) state.cooldownSymbols = new Map();
+          state.cooldownSymbols.set(symbol, Date.now() + 30 * 60 * 1000);
+          return;
+        }
+        state.claimingSymbol = normalizeSymbol(symbol);
+      }
       this.log(state, `📋 Placing: ${symbol} — Target Qty: ${state.config.qty} | Entry: ₹${entry.toFixed(2)} | SL: ₹${sl.toFixed(2)} | Target: ₹${tgt.toFixed(2)}${config.exitExactAtTarget ? ' (Fixed Exact Target Mode)' : ''}`);
       if (!this.running.has(state.strategyId)) {
         this.log(state, `🛑 Engine stopped prior to order dispatch. Aborting entry order for ${symbol}.`);
@@ -2207,6 +2226,7 @@ export class EmaVwapCrossoverEngine {
       this.log(state, `❌ Placement failed: ${err.message}`);
     } finally {
       state.isPlacingTrade = false;
+      state.claimingSymbol = null;
     }
   }
 

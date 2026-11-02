@@ -17,6 +17,7 @@ import { FADE_MIN_HISTORY, FadeCandle, fadeLongTrigger, fadeReadings, fadeShortT
 import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
 import { logSignal } from './signal-logger';
+import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from './symbol-claims';
 
 /**
  * Stocks-in-Play opening-range breakout (after Zarattini, Barbon & Aziz, "A Profitable Day Trading Strategy for the
@@ -234,6 +235,8 @@ interface EngineState {
   candidatesTriedAt: number;
   tradedSymbols: Set<string>;
   positions: OpenPosition[];
+  /** Stock whose entry order is in flight (seen by other engines through symbol-claims before the position exists). */
+  enteringSymbol: string | null;
   tradesToday: number;
   /** Entries per side today (FADE per-side cap). */
   sideTrades: Record<Side, number>;
@@ -324,6 +327,7 @@ export class StocksInPlayEngine {
       candidatesTriedAt: 0,
       tradedSymbols: new Set(),
       positions: [],
+      enteringSymbol: null,
       tradesToday: 0,
       sideTrades: { LONG: 0, SHORT: 0 },
       winsToday: 0,
@@ -341,6 +345,10 @@ export class StocksInPlayEngine {
       loggedCutoff: false,
     };
     this.running.set(strategyId, state);
+    if (!state.isPaperTrade) {
+      registerSymbolHolder(strategyId, state.brokerAccountId, strategy.name || 'Stocks in Play', (sym) =>
+        state.enteringSymbol === sym || state.positions.some((p) => normalizeSymbol(p.symbol) === sym));
+    }
 
     const mode = state.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING';
     const sides = [config.allowShorts ? 'shorts' : null, config.allowLongs ? 'longs' : null].filter(Boolean).join(' + ');
@@ -524,6 +532,8 @@ export class StocksInPlayEngine {
       clearInterval(this.timers.get(strategyId));
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
+      // A position left unconfirmed keeps its stock off-limits to the other engines until the next start.
+      if (state.positions.length === 0) unregisterSymbolHolder(strategyId);
       state.busy = false;
 
       await this.prisma.strategyExecution.update({
@@ -1459,7 +1469,18 @@ export class StocksInPlayEngine {
       fill = { qty, price: ltp, orderId: `PAPER_${Math.random().toString(36).substring(2, 10).toUpperCase()}` };
       await this.recordPaperOrder(state, c.symbol, entrySide, qty, ltp, fill.orderId, 'MARKET', 'COMPLETE');
     } else {
-      fill = await this.placeLiveEntry(state, client, c.symbol, entrySide, qty);
+      // Checked and claimed with no await in between, so two engines entering on the same 5m close cannot both pass.
+      const holder = symbolHeldByOther(state.strategyId, state.brokerAccountId, c.symbol);
+      if (holder) {
+        this.log(state, `⏭ ${c.symbol}: "${holder}" already has a position in this stock on the same Zerodha account — skipping (the broker would net the two positions and break both strategies' exit checks).`);
+        return;
+      }
+      state.enteringSymbol = normalizeSymbol(c.symbol);
+      try {
+        fill = await this.placeLiveEntry(state, client, c.symbol, entrySide, qty);
+      } finally {
+        state.enteringSymbol = null;
+      }
       if (!fill) return;
     }
     state.tradedSymbols.add(c.symbol);
