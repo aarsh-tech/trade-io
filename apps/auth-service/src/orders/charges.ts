@@ -5,8 +5,9 @@
  * them for tax or performance decisions. Statutory rates change; the STT on F&O in particular was revised in the
  * Union Budget 2026 (effective 1 Apr 2026). Override without a deploy via env: STT_FUT_SELL_PCT, STT_OPT_SELL_PCT.
  *
- * The ledger prefers Zerodha's own per-order charges (virtual contract note, fetched on sync); this estimate is only
- * the fallback for orders whose charges could not be fetched.
+ * For F&O the ledger prefers Zerodha's own per-order charges (virtual contract note, fetched on sync); this estimate is
+ * the fallback for orders whose charges could not be fetched. Equity always uses this estimate: the contract note
+ * prices a lone MIS leg at delivery rates.
  */
 
 export type Segment = 'EQ_INTRADAY' | 'EQ_DELIVERY' | 'FUT' | 'OPT';
@@ -27,8 +28,10 @@ const pct = (envKey: string, fallback: number) => {
   return Number.isFinite(v) && v >= 0 ? v / 100 : fallback;
 };
 
+export const FNO_EXCHANGES = ['NFO', 'BFO', 'MCX', 'CDS'] as const;
+
 export function isFnoSymbol(exchange: string | null | undefined, symbol: string): boolean {
-  return ['NFO', 'BFO', 'MCX', 'CDS'].includes((exchange || '').toUpperCase()) || /(CE|PE|FUT)$/.test(symbol);
+  return (FNO_EXCHANGES as readonly string[]).includes((exchange || '').toUpperCase()) || /(CE|PE|FUT)$/.test(symbol);
 }
 
 export function segmentOf(exchange: string | null | undefined, symbol: string, product: string): Segment {

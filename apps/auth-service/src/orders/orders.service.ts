@@ -6,7 +6,7 @@ import { isTradingDay, istParts } from '../market/market-calendar';
 import { OrderUpdateEvent } from '../market/market-tick';
 import { TickerService } from '../market/ticker.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { BROKER_CHARGES_FROM, isFnoSymbol, orderBrokerage, segmentOf } from './charges';
+import { BROKER_CHARGES_FROM, FNO_EXCHANGES, isFnoSymbol, orderBrokerage, segmentOf } from './charges';
 import { parseKiteTime } from './kite-time';
 import { ClosedTrade, Fill, istDate, matchFills, tradeStatus } from './ledger';
 
@@ -297,6 +297,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             charges: null,
             filledQty: { gt: 0 },
             avgPrice: { gt: 0 },
+            // F&O only: priced one order at a time, Zerodha charges an equity MIS leg at delivery rates (0.1% STT,
+            // ITI 3 Nov: ₹60 vs ₹29 on the contract note). The equity estimate is exact.
+            exchange: { in: [...FNO_EXCHANGES] },
             status: { in: [OrderStatus.COMPLETE, OrderStatus.CANCELLED] },
             createdAt: { gte: new Date(`${BROKER_CHARGES_FROM}T00:00:00+05:30`) },
             brokerOrderId: { not: null },
@@ -528,7 +531,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         owner: algo ? `S:${o.strategyId || o.executionId || o.tag}` : 'MANUAL',
         strategyName: o.execution?.strategy?.name,
         // Zerodha's charges are for the whole filled quantity; spread them evenly over its units.
-        chargesPerUnit: o.charges != null && o.chargesQty === o.filledQty ? o.charges / o.filledQty : undefined,
+        // Equity orders priced before the F&O-only sync carry delivery-rate charges: ignore them.
+        chargesPerUnit: o.charges != null && o.chargesQty === o.filledQty && isFnoSymbol(o.exchange, o.symbol) ? o.charges / o.filledQty : undefined,
       });
     }
 

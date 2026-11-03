@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStrategyDto, UpdateStrategyDto } from './dto/strategy.dto';
 import { assertValidStrategyConfig } from './strategy-config.validator';
+import { isFnoSymbol, legCharges, orderBrokerage, segmentOf } from '../orders/charges';
 
 /** One shared IST `YYYY-MM-DD` formatter. Building an Intl.DateTimeFormat per call (per candle / per instrument) costs
  *  ~1 ms and ~30 MB of native memory per 1,000 calls, enough to push the process past PM2's memory-restart limit. */
@@ -243,22 +244,29 @@ export class StrategyService {
           let entrySide = null;
 
           for (const o of list) {
-            const price = o.price || o.avgPrice || 0;
+            // avgPrice is the fill; price is only what was sent with the order (the LTP for a market order).
+            const price = o.avgPrice || o.price || 0;
             if (price === 0) continue;
+            const qty = o.filledQty || o.qty;
 
             if (position === 0) {
               entryPrice = price;
-              entryQty = o.qty;
+              entryQty = qty;
               entrySide = o.side;
             }
 
             if (o.side === 'BUY') {
-              position += o.qty;
-              cashFlow -= price * o.qty;
+              position += qty;
+              cashFlow -= price * qty;
             } else {
-              position -= o.qty;
-              cashFlow += price * o.qty;
+              position -= qty;
+              cashFlow += price * qty;
             }
+            // Net of charges, same as the dashboard and the ledger: Zerodha's own figure for F&O, the estimate for equity.
+            const segment = segmentOf(o.exchange, o.symbol, o.productType);
+            cashFlow -= isFnoSymbol(o.exchange, o.symbol) && o.charges != null && o.chargesQty === qty
+              ? o.charges
+              : legCharges(segment, o.side, qty, price, orderBrokerage(segment, qty * price), IST_DATE_FMT.format(new Date(o.createdAt)), o.exchange || 'NSE');
 
             if (position === 0) {
               const pnl = cashFlow;
