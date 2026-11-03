@@ -15,11 +15,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
+import { useLivePositions } from "@/hooks/useLivePositions";
 import { formatINR, pnlClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface Position {
   symbol: string;
+  exchange?: string;
   qty: number;
   avgPrice: number;
   ltp: number;
@@ -35,7 +37,8 @@ export function PositionsSheet({ open, onOpenChange }: { open: boolean; onOpenCh
   }, [brokers]);
 
   const { positions = [], isPositionsLoading, positionsError } = usePortfolio(activeBrokerId);
-  const openPositions = (positions as Position[]).filter((p) => p.qty !== 0);
+  const { positions: livePositions } = useLivePositions(positions as Position[]);
+  const openPositions = livePositions.filter((p) => p.qty !== 0);
   const totalPnl = openPositions.reduce((sum, p) => sum + (p.pnl || 0), 0);
 
   return (

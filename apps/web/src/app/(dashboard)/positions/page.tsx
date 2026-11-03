@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { QueryError } from "@/components/shared/query-state";
-import { useMarketData } from "@/hooks/use-market-data";
+import { useLivePositions } from "@/hooks/useLivePositions";
 import { PriceFreshness } from "@/components/shared/price-freshness";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable, DataTableColumnHeader } from "@/components/ui/data-table";
@@ -25,6 +25,7 @@ import { EMPTY, formatINR } from "@/lib/format";
 
 interface Position {
   symbol: string;
+  exchange?: string;
   qty: number;
   avgPrice: number;
   ltp: number;
@@ -56,40 +57,8 @@ export default function PositionsPage() {
   // No linked account means no data yet: show "—", not a ₹0.00 that looks like a real balance.
   const hasAccount = Boolean(activeBrokerId);
 
-  // Extract symbols for real-time WebSocket market data streaming
-  const positionSymbols = useMemo(() => {
-    return (positions as Position[]).map((p) => p.symbol).filter(Boolean);
-  }, [positions]);
-
-  const { getPrice } = useMarketData(positionSymbols);
-
-  // Calculate dynamic live positions with real-time LTP & live P&L overrides
-  const livePositions = useMemo(() => {
-    return (positions as Position[]).map((pos) => {
-      const rawLivePrice = getPrice(pos.symbol);
-      const brokerLtp = pos.ltp || pos.avgPrice;
-      // Sanity guard: discard WebSocket LTP if it deviates >50% from broker API value
-      // This prevents cross-exchange tick contamination from causing absurd P&L
-      const isSane = typeof rawLivePrice === "number" && brokerLtp > 0
-        ? Math.abs(rawLivePrice - brokerLtp) / brokerLtp < 0.5
-        : true;
-      const livePrice = (typeof rawLivePrice === "number" && isSane) ? rawLivePrice : brokerLtp;
-      const isLong = pos.qty > 0;
-      const livePnl = (pos.qty !== 0 && livePrice && pos.avgPrice)
-        ? (isLong ? (livePrice - pos.avgPrice) * pos.qty : (pos.avgPrice - livePrice) * Math.abs(pos.qty))
-        : (pos.pnl || 0);
-      const pnlPct = (pos.avgPrice > 0 && livePrice)
-        ? ((livePrice - pos.avgPrice) / pos.avgPrice) * 100 * (isLong ? 1 : -1)
-        : 0;
-
-      return {
-        ...pos,
-        ltp: livePrice || pos.ltp,
-        pnl: livePnl,
-        pnlPct,
-      };
-    });
-  }, [positions, getPrice]);
+  // Live LTP & P&L from the tick feed between the 15 s broker refreshes (same formula as Kite).
+  const { positions: livePositions } = useLivePositions(positions as Position[]);
 
   // Calculate summary metrics from live dynamic positions
   const { totalPnl, totalInvestment, profitableCount, losingCount } = useMemo(() => {
