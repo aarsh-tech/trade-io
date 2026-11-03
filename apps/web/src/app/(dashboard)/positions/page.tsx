@@ -34,6 +34,10 @@ interface Position {
   product: string;
 }
 
+/** The position's own exchange from Kite; the symbol guess is only for a row without one (BFO/BSE/stock options). */
+const exchangeOf = (p: Position) =>
+  p.exchange || (/(CE|PE|FUT)$/.test(p.symbol) ? (p.symbol.startsWith("SENSEX") || p.symbol.startsWith("BANKEX") ? "BFO" : "NFO") : "NSE");
+
 export default function PositionsPage() {
   const { brokers = [], isLoading: brokersLoading } = useBrokers();
   const [selectedBroker, setSelectedBroker] = useState<string | null>(null);
@@ -60,7 +64,9 @@ export default function PositionsPage() {
   // Live LTP & P&L from the tick feed between the 15 s broker refreshes (same formula as Kite).
   const { positions: livePositions } = useLivePositions(positions as Position[]);
 
-  // Calculate summary metrics from live dynamic positions
+  // Kite keeps a position closed today in the list with qty 0: its P&L is part of the day's total, but it is not open
+  // (no count, exposure, win ratio or Exit button).
+  const openCount = livePositions.filter((p) => p.qty !== 0).length;
   const { totalPnl, totalInvestment, profitableCount, losingCount } = useMemo(() => {
     let pnl = 0;
     let investment = 0;
@@ -69,6 +75,7 @@ export default function PositionsPage() {
 
     livePositions.forEach((p) => {
       pnl += p.pnl || 0;
+      if (p.qty === 0) return;
       investment += Math.abs(p.qty * p.avgPrice);
       if (p.pnl > 0) wins++;
       else if (p.pnl < 0) losses++;
@@ -91,7 +98,7 @@ export default function PositionsPage() {
 
       await brokerApi.placeOrder(activeBrokerId, {
         symbol: squareOffPosition.symbol,
-        exchange: squareOffPosition.symbol.includes("-") || squareOffPosition.symbol.startsWith("NIFTY") ? "NFO" : "NSE",
+        exchange: exchangeOf(squareOffPosition),
         side: exitSide,
         product: squareOffPosition.product || "MIS",
         orderType: "MARKET",
@@ -110,7 +117,7 @@ export default function PositionsPage() {
   };
 
   const handleSquareOffAll = async () => {
-    if (!activeBrokerId || positions.length === 0) return;
+    if (!activeBrokerId || openCount === 0) return;
     setIsProcessing(true);
     try {
       let successCount = 0;
@@ -121,7 +128,7 @@ export default function PositionsPage() {
 
         await brokerApi.placeOrder(activeBrokerId, {
           symbol: pos.symbol,
-          exchange: pos.symbol.includes("-") || pos.symbol.startsWith("NIFTY") ? "NFO" : "NSE",
+          exchange: exchangeOf(pos),
           side: exitSide,
           product: pos.product || "MIS",
           orderType: "MARKET",
@@ -235,15 +242,19 @@ export default function PositionsPage() {
       enableHiding: false,
       cell: ({ row }) => (
         <div className="text-center">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setSquareOffPosition(row.original)}
-            disabled={isProcessing}
-            className="h-7 text-xs px-2.5"
-          >
-            Exit
-          </Button>
+          {row.original.qty === 0 ? (
+            <span className="text-xs text-muted-foreground">Closed</span>
+          ) : (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setSquareOffPosition(row.original)}
+              disabled={isProcessing}
+              className="h-7 text-xs px-2.5"
+            >
+              Exit
+            </Button>
+          )}
         </div>
       ),
     },
@@ -290,7 +301,7 @@ export default function PositionsPage() {
             Refresh
           </Button>
 
-          {positions.length > 0 && (
+          {openCount > 0 && (
             <Button
               variant="destructive"
               size="sm"
@@ -339,7 +350,7 @@ export default function PositionsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
-              {hasAccount ? positions.length : EMPTY}
+              {hasAccount ? openCount : EMPTY}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               {profitableCount} Green / {losingCount} Red
@@ -371,7 +382,7 @@ export default function PositionsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-lg sm:text-2xl font-semibold font-mono text-foreground">
-              {positions.length > 0 ? `${((profitableCount / positions.length) * 100).toFixed(0)}%` : EMPTY}
+              {openCount > 0 ? `${((profitableCount / openCount) * 100).toFixed(0)}%` : EMPTY}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Profitable positions proportion
@@ -387,9 +398,9 @@ export default function PositionsPage() {
             <Layers className="h-4 w-4 text-accent-foreground" />
             <CardTitle className="text-base font-semibold">Open Market Positions</CardTitle>
           </div>
-          {positions.length > 0 && (
+          {openCount > 0 && (
             <Badge variant="secondary" className="font-mono text-xs font-medium">
-              {positions.length} Active
+              {openCount} Active
             </Badge>
           )}
         </CardHeader>
@@ -482,15 +493,19 @@ export default function PositionsPage() {
 
                       {/* Bottom Action */}
                       <div className="flex justify-end pt-1">
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => setSquareOffPosition(pos)}
-                          disabled={isProcessing}
-                          className="h-8 text-xs font-semibold px-4 w-full sm:w-auto"
-                        >
-                          Exit Position
-                        </Button>
+                        {pos.qty === 0 ? (
+                          <span className="text-xs text-muted-foreground">Closed today</span>
+                        ) : (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setSquareOffPosition(pos)}
+                            disabled={isProcessing}
+                            className="h-8 text-xs font-semibold px-4 w-full sm:w-auto"
+                          >
+                            Exit Position
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );
@@ -528,7 +543,7 @@ export default function PositionsPage() {
         open={showSquareOffAll}
         onOpenChange={setShowSquareOffAll}
         title="Square Off ALL Active Positions?"
-        description={`Are you sure you want to close ALL ${positions.length} open position(s)? Market orders will be punched immediately to exit all holdings and intraday positions.`}
+        description={`Are you sure you want to close ALL ${openCount} open position(s)? Market orders will be punched immediately to exit all holdings and intraday positions.`}
         confirmText={isProcessing ? "Closing All..." : "Exit All Positions Now"}
         onConfirm={handleSquareOffAll}
       />
