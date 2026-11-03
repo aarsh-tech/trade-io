@@ -31,10 +31,10 @@ export function MetricCards({ ctx }: { ctx: DetailCtx }) {
 
   const perf = strategy.performance;
 
-  // The engine's own state only exists while it runs. Once it has stopped (daily cap, manual stop, restart),
-  // fall back to today's closed trades reconstructed from the stored orders.
+  // Today's closed trades from the stored fills are net of charges, like the dashboard and the ledger, so they win.
+  // The engine's own (gross) figure only covers the gap until the next refresh after its first exit.
   const storedPnl = perf && (perf.todayTrades ?? 0) > 0 ? perf.todayPnl ?? null : null;
-  const realized = firstNumber(liveState, ["dailyRealizedPnlRs"]) ?? storedPnl;
+  const realized = storedPnl ?? firstNumber(liveState, ["dailyRealizedPnlRs"]);
   const hasPnl = realized !== null || inPosition;
   const todayPnl = (realized ?? 0) + (inPosition ? Number(displayPnlRs ?? 0) : 0);
 

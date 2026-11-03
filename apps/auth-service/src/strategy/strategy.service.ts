@@ -35,11 +35,32 @@ export class StrategyService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return strategies.map((s) => ({
-      ...s,
-      config: this.parseConfig(s.config),
-      latestExecution: s.executions[0] || null,
-    }));
+    // Today's closed trades per strategy (net of charges, same matching as the detail page) for the list cards.
+    const today = IST_DATE_FMT.format(new Date());
+    const todaysOrders = await this.prisma.order.findMany({
+      where: {
+        userId,
+        strategyId: { in: strategies.map((s) => s.id) },
+        status: 'COMPLETE',
+        createdAt: { gte: new Date(`${today}T00:00:00+05:30`) },
+      },
+    });
+    const ordersByStrategy = new Map<string, any[]>();
+    for (const o of todaysOrders) {
+      const list = ordersByStrategy.get(o.strategyId!) ?? [];
+      list.push(o);
+      ordersByStrategy.set(o.strategyId!, list);
+    }
+
+    return strategies.map((s) => {
+      const trades = this.roundTripsFromOrders(ordersByStrategy.get(s.id) ?? []);
+      return {
+        ...s,
+        config: this.parseConfig(s.config),
+        latestExecution: s.executions[0] || null,
+        ...(trades.length > 0 ? { todayPnl: trades.reduce((sum, t) => sum + t.pnl, 0) } : {}),
+      };
+    });
   }
 
   async get(userId: string, id: string) {
@@ -217,6 +238,71 @@ export class StrategyService {
     }
   }
 
+  /** Closed round trips (net of charges) from a set of COMPLETE orders: a trade closes whenever a symbol's position returns to zero. */
+  private roundTripsFromOrders(orders: any[]) {
+    const execTrades: any[] = [];
+    const symbolOrders: Record<string, any[]> = {};
+    for (const o of orders) {
+      if (!symbolOrders[o.symbol]) {
+        symbolOrders[o.symbol] = [];
+      }
+      symbolOrders[o.symbol].push(o);
+    }
+
+    for (const symbol in symbolOrders) {
+      const list = symbolOrders[symbol].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      let position = 0;
+      let cashFlow = 0;
+      let entryPrice = 0;
+      let entryQty = 0;
+      let entrySide = null;
+
+      for (const o of list) {
+        // avgPrice is the fill; price is only what was sent with the order (the LTP for a market order).
+        const price = o.avgPrice || o.price || 0;
+        if (price === 0) continue;
+        const qty = o.filledQty || o.qty;
+
+        if (position === 0) {
+          entryPrice = price;
+          entryQty = qty;
+          entrySide = o.side;
+        }
+
+        if (o.side === 'BUY') {
+          position += qty;
+          cashFlow -= price * qty;
+        } else {
+          position -= qty;
+          cashFlow += price * qty;
+        }
+        // Net of charges, same as the dashboard and the ledger: Zerodha's own figure for F&O, the estimate for equity.
+        const segment = segmentOf(o.exchange, o.symbol, o.productType);
+        cashFlow -= isFnoSymbol(o.exchange, o.symbol) && o.charges != null && o.chargesQty === qty
+          ? o.charges
+          : legCharges(segment, o.side, qty, price, orderBrokerage(segment, qty * price), IST_DATE_FMT.format(new Date(o.createdAt)), o.exchange || 'NSE');
+
+        if (position === 0) {
+          const pnl = cashFlow;
+          execTrades.push({
+            symbol,
+            entryPrice,
+            exitPrice: price,
+            qty: entryQty,
+            side: entrySide,
+            pnl,
+            isWin: pnl > 0,
+            createdAt: o.createdAt,
+            source: 'order'
+          });
+          cashFlow = 0;
+        }
+      }
+    }
+    return execTrades;
+  }
+
   private calculatePerformance(executions: any[], strategyType: string) {
     const completedTrades: any[] = [];
 
@@ -225,67 +311,7 @@ export class StrategyService {
       let execTrades: any[] = [];
 
       // Approach 1: Try to calculate trades from completed orders in DB
-      if (orders.length > 0) {
-        const symbolOrders: Record<string, any[]> = {};
-        for (const o of orders) {
-          if (!symbolOrders[o.symbol]) {
-            symbolOrders[o.symbol] = [];
-          }
-          symbolOrders[o.symbol].push(o);
-        }
-
-        for (const symbol in symbolOrders) {
-          const list = symbolOrders[symbol].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-          let position = 0;
-          let cashFlow = 0;
-          let entryPrice = 0;
-          let entryQty = 0;
-          let entrySide = null;
-
-          for (const o of list) {
-            // avgPrice is the fill; price is only what was sent with the order (the LTP for a market order).
-            const price = o.avgPrice || o.price || 0;
-            if (price === 0) continue;
-            const qty = o.filledQty || o.qty;
-
-            if (position === 0) {
-              entryPrice = price;
-              entryQty = qty;
-              entrySide = o.side;
-            }
-
-            if (o.side === 'BUY') {
-              position += qty;
-              cashFlow -= price * qty;
-            } else {
-              position -= qty;
-              cashFlow += price * qty;
-            }
-            // Net of charges, same as the dashboard and the ledger: Zerodha's own figure for F&O, the estimate for equity.
-            const segment = segmentOf(o.exchange, o.symbol, o.productType);
-            cashFlow -= isFnoSymbol(o.exchange, o.symbol) && o.charges != null && o.chargesQty === qty
-              ? o.charges
-              : legCharges(segment, o.side, qty, price, orderBrokerage(segment, qty * price), IST_DATE_FMT.format(new Date(o.createdAt)), o.exchange || 'NSE');
-
-            if (position === 0) {
-              const pnl = cashFlow;
-              execTrades.push({
-                symbol,
-                entryPrice,
-                exitPrice: price,
-                qty: entryQty,
-                side: entrySide,
-                pnl,
-                isWin: pnl > 0,
-                createdAt: o.createdAt,
-                source: 'order'
-              });
-              cashFlow = 0;
-            }
-          }
-        }
-      }
+      if (orders.length > 0) execTrades = this.roundTripsFromOrders(orders);
 
       // Approach 2: If no completed trades could be parsed from orders, fall back to parsing logs
       if (execTrades.length === 0) {

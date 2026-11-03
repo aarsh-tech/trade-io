@@ -116,7 +116,7 @@ async function findPaper(
     let entryOrderId: string | null = null;
     let entrySign = 0;
     for (const o of list) {
-      const px = o.price ?? o.avgPrice ?? 0;
+      const px = o.avgPrice || o.price || 0;
       const signed = o.side === 'BUY' ? o.qty : -o.qty;
       // SL / target / exit legs can never open a position; when a paper close flips several legs
       // to COMPLETE, the extra ones must not be read as a fresh opposite entry.
@@ -448,7 +448,7 @@ function tallyOrders(orders: any[]): DailyTally {
     let pos = 0;
     let cash = 0;
     for (const o of list) {
-      const px = o.price ?? o.avgPrice ?? 0;
+      const px = o.avgPrice || o.price || 0;
       if (pos === 0) tally.trades++;
       if (o.side === 'BUY') {
         pos += o.qty;

@@ -173,7 +173,8 @@ export function LiveTab({ ctx }: { ctx: DetailCtx }) {
                         </div>
                         <div className="text-right">
                           <p className="text-xs font-semibold text-foreground">
-                            ₹{order.price || order.triggerPrice || "Market"}
+                            {/* A filled order shows its fill; `price` is only what was sent (the LTP for a market order). */}
+                            ₹{(order.filledQty > 0 && order.avgPrice) || order.price || order.triggerPrice || "Market"}
                           </p>
                           <Badge
                             variant={order.status === "COMPLETE" ? "default" : "secondary"}

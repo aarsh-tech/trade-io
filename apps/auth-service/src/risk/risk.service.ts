@@ -21,6 +21,8 @@ import { OrderStatus } from '@prisma/client';
 import { isKiteAuthError } from '../common/utils/kite-errors';
 import { DEFAULT_MAX_ORDER_QTY, appliesQtyLimits, getFreezeLimit } from '../order-gateway/order-rules';
 
+const IST_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 @Injectable()
 export class RiskService {
   private readonly logger = new Logger(RiskService.name);
@@ -86,41 +88,39 @@ export class RiskService {
       throw new BadRequestException('User not found');
     }
 
-    // Calculate today's realized P&L from orders
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-
+    // Today's (IST) realized P&L from fills, longs and shorts alike: a short sells first and buys back, and its
+    // loss must count toward the daily limit and the kill switch.
+    const today = IST_DATE_FMT.format(new Date());
     const completedOrders = await this.prisma.order.findMany({
       where: {
         userId,
         status: OrderStatus.COMPLETE,
-        createdAt: { gte: startOfToday },
+        createdAt: { gte: new Date(`${today}T00:00:00+05:30`) },
         isPaperTrade: false,
       },
+      orderBy: { createdAt: 'asc' },
     });
 
-    // Approximate realized P&L from today's matched buys & sells
     let realizedPnl = 0;
-    const buysBySymbol = new Map<string, { qty: number; cost: number }>();
-
+    const book = new Map<string, { pos: number; avg: number }>();
     for (const ord of completedOrders) {
-      const sym = ord.symbol;
       const price = ord.avgPrice || ord.price || 0;
       const qty = ord.filledQty || ord.qty;
-
-      if (ord.side === 'BUY') {
-        const cur = buysBySymbol.get(sym) || { qty: 0, cost: 0 };
-        buysBySymbol.set(sym, { qty: cur.qty + qty, cost: cur.cost + qty * price });
-      } else if (ord.side === 'SELL') {
-        const cur = buysBySymbol.get(sym);
-        if (cur && cur.qty > 0) {
-          const matchedQty = Math.min(qty, cur.qty);
-          const avgBuyPrice = cur.cost / cur.qty;
-          realizedPnl += matchedQty * (price - avgBuyPrice);
-          cur.qty -= matchedQty;
-          cur.cost -= matchedQty * avgBuyPrice;
-        }
+      if (!(price > 0) || !(qty > 0)) continue;
+      const dir = ord.side === 'BUY' ? 1 : -1;
+      const cur = book.get(ord.symbol) ?? { pos: 0, avg: 0 };
+      if (cur.pos !== 0 && Math.sign(cur.pos) !== dir) {
+        const closed = Math.min(qty, Math.abs(cur.pos));
+        realizedPnl += closed * (price - cur.avg) * Math.sign(cur.pos);
+        cur.pos += dir * closed;
+        // An order larger than the open position flips it: the rest opens at this price.
+        if (qty > closed) cur.pos = dir * (qty - closed);
+        if (qty > closed || cur.pos === 0) cur.avg = cur.pos === 0 ? 0 : price;
+      } else {
+        cur.avg = (cur.avg * Math.abs(cur.pos) + price * qty) / (Math.abs(cur.pos) + qty);
+        cur.pos += dir * qty;
       }
+      book.set(ord.symbol, cur);
     }
 
     // Calculate live unrealized P&L from active broker accounts

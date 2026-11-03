@@ -3,7 +3,7 @@
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { useMarketData } from "@/hooks/use-market-data";
+import { useLivePositions } from "@/hooks/useLivePositions";
 import { PriceFreshness } from "@/components/shared/price-freshness";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { brokerApi, strategyApi } from "@/lib/api";
@@ -218,49 +218,9 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
     return [...brokerPos, ...uniquePaper];
   }, [positions, paperPositions]);
 
-  // Extract open position symbols for live WebSocket market data streaming
-  const positionSymbols = useMemo(() => {
-    return allPositions
-      .map((p) => p.symbol)
-      .filter(Boolean);
-  }, [allPositions]);
-
-  const { getPrice, isConnected } = useMarketData(positionSymbols);
-
-  // Compute live real-time positions with WebSocket LTP overrides
-  const livePositions = useMemo(() => {
-    return allPositions.map((pos) => {
-      const liveLtp = getPrice(pos.symbol);
-      const brokerLtp = Number(pos.ltp || pos.avgPrice);
-      // Sanity guard: discard WebSocket LTP if it deviates >50% from broker API value
-      // This prevents cross-exchange tick contamination from causing absurd P&L
-      const isSane = typeof liveLtp === "number" && brokerLtp > 0
-        ? Math.abs(liveLtp - brokerLtp) / brokerLtp < 0.5
-        : true;
-      const currentPrice = (typeof liveLtp === "number" && isSane) ? liveLtp : brokerLtp;
-      const quantity = Number(pos.qty);
-      const avgPrice = Number(pos.avgPrice);
-
-      const isLong = quantity > 0;
-      let currentPnl = Number(pos.pnl || 0);
-      let pnlPercent = 0;
-
-      if (quantity !== 0 && avgPrice > 0 && currentPrice > 0) {
-        currentPnl = isLong
-          ? (currentPrice - avgPrice) * quantity
-          : (avgPrice - currentPrice) * Math.abs(quantity);
-        pnlPercent = ((currentPrice - avgPrice) / avgPrice) * 100 * (isLong ? 1 : -1);
-      }
-
-      return {
-        ...pos,
-        ltp: currentPrice,
-        pnl: currentPnl,
-        pnlPercent,
-        hasLiveTick: typeof liveLtp === "number",
-      };
-    });
-  }, [allPositions, getPrice]);
+  // Live LTP & P&L from the tick feed between refreshes (same formula as Kite, keeps a partial exit's booked P&L).
+  const { positions: tickedPositions, isConnected } = useLivePositions(allPositions);
+  const livePositions = useMemo(() => tickedPositions.map((p) => ({ ...p, pnlPercent: p.pnlPct })), [tickedPositions]);
 
   // Open active positions (non-zero qty)
   const openPositions = useMemo(() => {

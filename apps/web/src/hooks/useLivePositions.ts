@@ -33,7 +33,7 @@ export function useLivePositions<T extends BrokerPosition>(positions: T[]) {
         const ltp = sane ? tick : pos.ltp;
         const pnl = sane && pos.ltp > 0 ? (pos.pnl || 0) + pos.qty * (tick - pos.ltp) : pos.pnl || 0;
         const pnlPct = pos.qty !== 0 && pos.avgPrice > 0 && ltp > 0 ? ((ltp - pos.avgPrice) / pos.avgPrice) * 100 * (pos.qty > 0 ? 1 : -1) : 0;
-        return { ...pos, ltp, pnl, pnlPct };
+        return { ...pos, ltp, pnl, pnlPct, hasLiveTick: sane };
       }),
     [positions, getPrice],
   );
