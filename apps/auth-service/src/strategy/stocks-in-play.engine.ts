@@ -14,6 +14,7 @@ import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, nor
 import { StocksInPlayConfig } from './dto/strategy.dto';
 import { getIstDateStr, getIstHhmm } from './emavwap-signals';
 import { FADE_MIN_HISTORY, FadeCandle, fadeLongTrigger, fadeReadings, fadeShortTrigger, FadeTrigger, toCompletedCandles } from './inplay-fade-signals';
+import { buildSrZones, describeZonesAhead, zonesAhead } from './inplay-sr-zones';
 import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
 import { logSignal } from './signal-logger';
@@ -696,7 +697,9 @@ export class StocksInPlayEngine {
     }
     for (const p of state.positions) {
       const px = ticks[`NSE:${p.symbol}`] ?? ticks[p.symbol];
-      if (px && px > 0) { p.ltp = px; p.ltpAt = Date.now(); touched = true; }
+      // The best price is recorded on every tick, even while the engine is busy, so the stop ladder never misses a
+      // brief move (4 Nov VIJAYA: a few seconds through the +1.5R level between checks, the lock never fired).
+      if (px && px > 0) { p.ltp = px; p.ltpAt = Date.now(); this.trackBest(p, px); touched = true; }
     }
     if (!touched || state.busy || state.stopping || !state.client) return;
 
@@ -1355,7 +1358,7 @@ export class StocksInPlayEngine {
   private async refreshPrices(state: EngineState, client: any, now: Date) {
     const t = now.getTime();
     const stale: { symbol: string; set: (px: number) => void }[] = [];
-    for (const p of state.positions) if (t - p.ltpAt > 4000) stale.push({ symbol: p.symbol, set: (px) => { p.ltp = px; p.ltpAt = Date.now(); } });
+    for (const p of state.positions) if (t - p.ltpAt > 4000) stale.push({ symbol: p.symbol, set: (px) => { p.ltp = px; p.ltpAt = Date.now(); this.trackBest(p, px); } });
     for (const c of state.candidates || []) if (!c.done && t - c.ltpAt > 4000) stale.push({ symbol: c.symbol, set: (px) => { c.ltp = px; c.ltpAt = Date.now(); } });
     if (stale.length === 0) return;
     try {
@@ -1507,8 +1510,22 @@ export class StocksInPlayEngine {
       : trend
         ? `Exit on the 5m close where the 15-EMA crosses back ${c.side === 'LONG' ? 'below' : 'above'} the 40-EMA, at the SL or 15:05`
         : 'Exit at the SL or 15:05';
-    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}`);
-    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, isPaper: state.isPaperTrade });
+    // FADE: support/resistance zones ahead of the trade, for the log only (no effect on the exits). Built from the
+    // 5m history already in memory, so no extra Kite call delays the stop order below.
+    let srText = '';
+    let srZones: { sessions: number; ahead: { lo: number; hi: number; touches: number; sources: string[]; distR: number }[] } | undefined;
+    if (fade) {
+      try {
+        const set = buildSrZones(c.candles, new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime());
+        const maxR = cfg.targetR > 0 ? cfg.targetR : 3;
+        srText = ` | ${describeZonesAhead(set, c.side, fill.price, fillStopDist, maxR)}`;
+        srZones = { sessions: set.sessions, ahead: zonesAhead(set, c.side, fill.price, fillStopDist, maxR).map((a) => ({ lo: a.zone.lo, hi: a.zone.hi, touches: a.zone.touches, sources: a.zone.sources, distR: Number(a.distR.toFixed(3)) })) };
+      } catch {
+        srText = '';
+      }
+    }
+    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}${srText}`);
+    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
 
     if (state.isPaperTrade) {
       await this.recordPaperOrder(state, c.symbol, entrySide === 'BUY' ? 'SELL' : 'BUY', p.qty, sl, `${fill.orderId}_SL`, 'SL', 'OPEN', sl);
@@ -1636,8 +1653,8 @@ export class StocksInPlayEngine {
       await this.exitPosition(state, client, p, 'TARGET', price);
       return;
     }
-    // Stop ladder (FADE): breakeven, then profit locks, from the best price seen so far.
-    if (p.stopDist > 0) p.bestR = Math.max(p.bestR, ((price - p.entryPrice) * (p.side === 'LONG' ? 1 : -1)) / p.stopDist);
+    // Stop ladder (FADE): breakeven, then profit locks, from the best price seen so far (every tick, see trackBest).
+    this.trackBest(p, price);
     if (!p.beDone && now.getTime() - p.lastBeAttempt >= BREAKEVEN_RETRY_MS) {
       const due = this.lockSteps(state.config).filter(([at, lk]) => p.bestR >= at && lk > (p.lockedR ?? -1) + 1e-9);
       if (due.length > 0) {
@@ -1693,6 +1710,11 @@ export class StocksInPlayEngine {
         this.log(state, `⚠ Broker SL placement for ${p.symbol} failed (attempt ${attempt}/2): ${e?.message || e}`);
       }
     }
+  }
+
+  /** Raises the best profit seen (in R) from one price. Called on every tick and every price refresh. */
+  private trackBest(p: OpenPosition, price: number) {
+    if (p.stopDist > 0 && price > 0) p.bestR = Math.max(p.bestR, ((price - p.entryPrice) * (p.side === 'LONG' ? 1 : -1)) / p.stopDist);
   }
 
   /** FADE stop ladder as [profit reached in R, profit locked in R]: breakeven, then the profit-lock steps. */
