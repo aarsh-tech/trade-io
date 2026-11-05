@@ -60,6 +60,10 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
    */
   private readonly manuallyStoppedToday = new Set<string>();
 
+  /** Pre-open auto-start of the OI short build-up strategies (08:50-09:07): last attempt and the day it last ran. */
+  private lastPreOpenStartTry = 0;
+  private preOpenDay: string | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly flattener: PositionFlattener,
@@ -154,6 +158,18 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
         .catch((e) => this.logger.warn(`Stocks-in-Play baseline prewarm failed: ${e?.message || e}`));
     }
 
+    // ── Pre-open: OI short build-up strategies send their order in the 09:00-09:07 auction ───────────
+    // Retried every minute so a Kite login just before 09:00 still makes it; running strategies are skipped.
+    if (hhmm >= 8 * 60 + 50 && hhmm < 9 * 60 + 7 && now.getTime() - this.lastPreOpenStartTry >= 60_000) {
+      this.lastPreOpenStartTry = now.getTime();
+      const todayKey = ist.toDateString();
+      if (this.preOpenDay !== todayKey) {
+        this.preOpenDay = todayKey;
+        this.manuallyStoppedToday.clear(); // yesterday's manual stops (a stop also clears autoStart in the DB)
+      }
+      await this.autoStartStrategies(false, true);
+    }
+
     // ── Auto-start at Market Open ─────────────────────────────────────────────
     // Fires once per IST day for all strategies with autoStart=true (or still active from before a
     // restart). The session-wide window (not just 09:15-09:16) makes a late start or a restart
@@ -241,15 +257,17 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
     return this.stocksInPlayEngine.prewarmBaselines(account);
   }
 
-  private async autoStartStrategies(includeActive = false) {
+  /** preOpenOnly: just the Stocks-in-Play OI setup (it must be running before the 09:00 pre-open session). */
+  private async autoStartStrategies(includeActive = false, preOpenOnly = false) {
     try {
-      const strategies = await this.prisma.strategy.findMany({
+      const all = await this.prisma.strategy.findMany({
         where: (includeActive ? { OR: [{ autoStart: true }, { isActive: true }] } : { autoStart: true }) as any,
         include: { brokerAccount: true },
       });
+      const strategies = preOpenOnly ? all.filter((s: any) => s.type === 'STOCKS_IN_PLAY' && this.setupOf(s.config) === 'OI') : all;
 
       if (strategies.length === 0) {
-        this.logger.log('Auto-start: no strategies configured for auto-start');
+        if (!preOpenOnly) this.logger.log('Auto-start: no strategies configured for auto-start');
         return;
       }
 
@@ -258,7 +276,7 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
         if (!engine) continue;
 
         if (engine.isRunning(strategy.id)) {
-          this.logger.log(`Auto-start: ${strategy.name} already running — skipped`);
+          if (!preOpenOnly) this.logger.log(`Auto-start: ${strategy.name} already running — skipped`);
           continue;
         }
 
@@ -364,6 +382,14 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.error(`Auto-start error: ${err.message}`);
+    }
+  }
+
+  private setupOf(config: string | null): string | null {
+    try {
+      return JSON.parse(config || '{}')?.setup ?? null;
+    } catch {
+      return null;
     }
   }
 

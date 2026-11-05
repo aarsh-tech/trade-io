@@ -340,6 +340,15 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
           basis: `Shares are sized so the stop (${form.sipStopPct || 1.2}% from the entry) loses at most your max loss, and capital allows (${form.sipLeverage || 4}x). A jump through the stop can lose a little more. Target ${tr > 0 ? `${tr}x the stop` : "off"}${n(form.sipBreakevenAtR) > 0 ? `; the stop moves to ${n(form.sipBreakevenLockR) > 0 ? `entry +${form.sipBreakevenLockR}x` : "the entry"} at +${form.sipBreakevenAtR}x` : ""}${form.sipProfitLock !== false ? ", then locks +0.5x at +1.5x and +1.5x at +2.5x" : ""}; otherwise 15:05.`,
         };
       }
+      if (form.sipSetup === "OI") {
+        const tr = n(form.sipTargetR);
+        return {
+          perTrade: perTrade || null,
+          perDay: perTrade || null,
+          targetPerTrade: perTrade && tr > 0 ? perTrade * tr : null,
+          basis: `Shares are sized on yesterday's close so the stop (${form.sipStopPct || 1}% from the auction fill) loses at most your max loss, and capital allows (${form.sipLeverage || 4}x). A jump through the stop can lose a little more. Target ${tr > 0 ? `${tr}x the stop` : "off"}; otherwise 15:05. 1 trade a day.`,
+        };
+      }
       if (form.sipSetup === "TREND") {
         return {
           perTrade: perTrade || null,

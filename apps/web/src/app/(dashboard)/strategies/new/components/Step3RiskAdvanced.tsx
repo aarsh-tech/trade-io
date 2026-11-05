@@ -851,6 +851,15 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               hint="0.2 = a trade that reached the step and came back still closes in profit after charges (≈62% winning trades, same total profit as 0). 0 = the stop goes exactly to the entry."
             />
             <NumberField
+              label="Skip if yesterday's low is closer than"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipSkipNearPdlR}
+              onChange={(v) => set("sipSkipNearPdlR", v)}
+              hint="0 = off (the default). 2 = no short when yesterday's low is less than 2x the stop below the price (longs: yesterday's high above it); a later signal on another stock can still trade. Backtest 2 years: about the same profit either way (₹77.1k at 2 vs ₹77.8k off)."
+            />
+            <NumberField
               label="Min avg daily value"
               prefix={"₹"}
               suffix="Cr"
@@ -880,6 +889,41 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               value={form.sipLeverage}
               onChange={(v) => set("sipLeverage", v)}
               hint="Used for sizing. Zerodha gives up to 5x MIS on most liquid stocks."
+            />
+          </div>
+        </div>
+      )}
+
+      {form.type === "STOCKS_IN_PLAY" && form.sipSetup === "OI" && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-1.5">
+            <p className="text-xs font-semibold text-foreground">How a trade is managed</p>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              <li>Entry is a SELL LIMIT sent at 09:00, 5% under yesterday&apos;s close; the pre-open auction fills it at the 09:15 opening price.</li>
+              <li>Shares are sized on yesterday&apos;s close so the stop loses at most your max loss; the stop and target are then set from the real fill.</li>
+              <li>The exchange takes no stop orders before 09:15, so the stop-loss is placed on the exchange at 09:15.</li>
+              <li>The target is watched by the strategy; when price reaches it the short is covered at market. Otherwise 15:05.</li>
+              <li>Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1% / 3x): +₹41k, about 4 in 10 trades win, worst drop ₹9.2k. October 2026 (after the test) lost ₹1.5k on 16 trades.</li>
+            </ul>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NumberField
+              label="Stop distance"
+              suffix="% of entry"
+              decimal
+              min={0.3}
+              value={form.sipStopPct}
+              onChange={(v) => set("sipStopPct", v)}
+              hint="1% was backtested."
+            />
+            <NumberField
+              label="Target"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipTargetR}
+              onChange={(v) => set("sipTargetR", v)}
+              hint="3x was backtested. 0 = no target (held to the stop or 15:05)."
             />
           </div>
         </div>

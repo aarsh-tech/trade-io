@@ -60,6 +60,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
   } else if (form.type === "STOCKS_IN_PLAY") {
     const fade = form.sipSetup === "FADE";
     const trend = form.sipSetup === "TREND";
+    const oi = form.sipSetup === "OI";
     // "0" is a real choice (no target / no breakeven); only a blank field takes the backtested default.
     const orZero = (v: string, d: number) => (v === "" || !(Number(v) >= 0) ? d : Number(v));
     config = {
@@ -67,7 +68,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       exchange: "NSE",
       instrumentType: "STOCK",
       product: "MIS",
-      setup: fade ? "FADE" : trend ? "TREND" : "ORB",
+      setup: fade ? "FADE" : trend ? "TREND" : oi ? "OI" : "ORB",
       ...(trend && {
         watchCount: Number(form.sipWatchCount || 1),
         withGapOnly: form.sipWithGapOnly !== false,
@@ -77,18 +78,24 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
         targetR: orZero(form.sipTargetR, 3),
         breakevenAtR: orZero(form.sipBreakevenAtR, 1),
         breakevenLockR: orZero(form.sipBreakevenLockR, 0.2),
+        skipNearPdlR: orZero(form.sipSkipNearPdlR, 0),
         profitLock: form.sipProfitLock !== false,
         fadeLongs: form.sipFadeLongs === true,
       }),
+      // OI: 1 trade a day (the top pick), short only, fixed % stop and R target.
+      ...(oi && {
+        stopPct: Number(form.sipStopPct || 1),
+        targetR: orZero(form.sipTargetR, 3),
+      }),
       stopLossRs: Number(form.stopLossRs),
-      maxPositions: Number(form.maxTradesPerDay || (fade || trend ? 1 : 2)),
-      maxTradesPerDay: Number(form.maxTradesPerDay || (fade || trend ? 1 : 2)),
+      maxPositions: oi ? 1 : Number(form.maxTradesPerDay || (fade || trend ? 1 : 2)),
+      maxTradesPerDay: oi ? 1 : Number(form.maxTradesPerDay || (fade || trend ? 1 : 2)),
       minRvol: Number(form.sipMinRvol || 10),
       stopAtrFraction: Number(form.sipStopAtr || 0.2),
       minAvgValueCr: Number(form.sipMinAvgValueCr || (fade || trend ? 10 : 25)),
       minPrice: 50,
       allowShorts: true,
-      allowLongs: trend || (!fade && form.sipAllowLongs === true),
+      allowLongs: trend || (!fade && !oi && form.sipAllowLongs === true),
       leverage: Number(form.sipLeverage || 4),
       ...(Number(form.sipMaxCapital) > 0 && { maxCapital: Number(form.sipMaxCapital) }),
       entryCutoffTime: form.sipEntryCutoffTime || "15:00",

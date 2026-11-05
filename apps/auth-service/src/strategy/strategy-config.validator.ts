@@ -54,6 +54,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['targetR', 'Target (x stop)', 0, 20, false],
   ['breakevenAtR', 'Stop to entry at (x stop)', 0, 20, false],
   ['breakevenLockR', 'Profit locked at that step (x stop)', 0, 20, false],
+  ['skipNearPdlR', "Skip if yesterday's low/high is closer than (x stop)", 0, 10, false],
   ['minAvgValueCr', 'Min avg daily value (₹ Cr)', 0, 100_000, false],
   ['minPrice', 'Min stock price (₹)', 1, 1_000_000, false],
   ['leverage', 'Leverage', 1, 5, false],
@@ -115,8 +116,8 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
     errors.push('Entry timeframe must be 1min or 5min');
   }
   if (isSet(config.symbol) && String(config.symbol).trim() === '') errors.push('Symbol must not be blank');
-  if (type === 'STOCKS_IN_PLAY' && isSet(config.setup) && !['ORB', 'FADE', 'TREND'].includes(String(config.setup))) {
-    errors.push('Setup must be ORB, FADE or TREND');
+  if (type === 'STOCKS_IN_PLAY' && isSet(config.setup) && !['ORB', 'FADE', 'TREND', 'OI'].includes(String(config.setup))) {
+    errors.push('Setup must be ORB, FADE, TREND or OI');
   }
   if (type === 'EMA_VWAP_OPTIONS' && isSet(config.symbol) && !['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(String(config.symbol))) {
     errors.push('Symbol must be NIFTY, BANKNIFTY or SENSEX');

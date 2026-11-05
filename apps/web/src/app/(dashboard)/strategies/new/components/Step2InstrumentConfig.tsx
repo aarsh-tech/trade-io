@@ -381,7 +381,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
       {/* ── STOCKS-IN-PLAY BREAKOUT: STOCK SELECTION AND TIMING ── */}
       {form.type === "STOCKS_IN_PLAY" && (
         <>
-          <Section title="Setup" description="All setups use the same 09:20 opening-volume scan. They differ in how they enter and exit.">
+          <Section title="Setup" description="The fade, trend and opening-range setups use the same 09:20 opening-volume scan. The OI setup instead trades yesterday's NSE futures data in the pre-open auction.">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {([
                 {
@@ -393,6 +393,11 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                   value: "FADE",
                   title: "In-play Fade",
                   text: "Stock gapped up on 10x opening volume, then MFI, Stochastic, Bollinger or CMF turns down from overbought by 09:45: short it. Optional long side on gap-down stocks. Fixed stop and target. 2-year backtest: +₹70k at ₹500 risk, both years positive.",
+                },
+                {
+                  value: "OI",
+                  title: "OI short build-up (pre-open)",
+                  text: "Shorts the stock that fell 3% or more yesterday while its futures open interest rose the most (5–80%), in the 09:00–09:07 pre-open auction, so it fills at the 09:15 opening price. 1% stop, 3x target, else 15:05. 1 trade a day. 2-year backtest: +₹41k at ₹500 risk, both years positive; entered at 09:16 instead it earned only ₹3.5k, so the auction fill is the edge. Runs alongside the In-play Fade as a separate strategy.",
                 },
                 {
                   value: "ORB",
@@ -413,6 +418,8 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                       // Each setup's backtested defaults for the fields they share.
                       set("maxTradesPerDay", o.value === "ORB" ? "2" : "1");
                       set("sipMinAvgValueCr", o.value === "ORB" ? "25" : "10");
+                      if (o.value === "OI") { set("sipStopPct", "1"); set("sipTargetR", "3"); }
+                      if (o.value === "FADE" && form.sipSetup === "OI") set("sipStopPct", "1.2");
                     }}
                     className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer"
                   />
@@ -428,7 +435,9 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
           <Section
             title="Which stocks it trades"
             description={
-              form.sipSetup === "TREND"
+              form.sipSetup === "OI"
+                ? "No symbol to pick. Before the open the strategy reads NSE's end-of-day F&O and cash-market files for the previous trading day and keeps the stocks that fell 3% or more (less than 25%) while their total stock-futures open interest rose 5% to 80% (fresh shorts), skipping expiry days and stocks that traded under ₹25 Cr. It shorts only the one with the biggest OI rise."
+                : form.sipSetup === "TREND"
                 ? "No symbol to pick. At 09:20 the strategy ranks every NIFTY 500 and F&O stock by its first 5-minute candle volume against its usual opening volume and watches the top one(s) for the rest of the session."
                 : form.sipSetup === "FADE"
                 ? `No symbol to pick. At 09:20 the strategy checks every NIFTY 500 and F&O stock and keeps the ones that opened above yesterday's close${form.sipFadeLongs ? " (short side) or below it (long side)" : ""} with a first 5-minute candle far above their usual opening volume. Stocks within 2.5% of the circuit they would have to exit into are skipped.`
@@ -445,7 +454,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                   hint="Highest opening volume first. Backtest: 1 stock +₹5.0k, 3 stocks +₹2.0k, 5 or more lost."
                 />
               )}
-              {form.sipSetup !== "TREND" && (
+              {form.sipSetup !== "TREND" && form.sipSetup !== "OI" && (
               <NumberField
                 label="Opening volume multiple"
                 value={form.sipMinRvol}
@@ -455,6 +464,11 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 hint="First candle volume vs its 10-day average. The backtest edge was in stocks at 10x or more; lower values trade more and earned less."
               />
               )}
+              {form.sipSetup === "OI" ? (
+              <div className="rounded-lg border border-border bg-card p-3 text-xs text-muted-foreground sm:col-span-2">
+                1 trade a day: the top pick only, as backtested. A later pick is used only when the top one cannot be sized with your capital or another strategy already holds it.
+              </div>
+              ) : (
               <NumberField
                 label={form.sipSetup === "FADE" && form.sipFadeLongs ? "Trades per day (short + long together)" : "Max positions (= trades per day)"}
                 value={form.maxTradesPerDay}
@@ -468,6 +482,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                     : "Positions can be open together; capital is split between them. 2 had the steadiest backtest."
                 }
               />
+              )}
               {form.sipSetup === "TREND" && (
               <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
                 <input
@@ -516,7 +531,9 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
           <Section
             title="Timing"
             description={
-              form.sipSetup === "TREND"
+              form.sipSetup === "OI"
+                ? "Starts by itself at 08:50 (log in to Kite before 09:00). The SELL LIMIT, 5% under yesterday's close, goes in at 09:00; the exchange's pre-open auction fills it at the 09:15 opening price. If the stock opens more than 5% lower there is no fill and no trade that day. The exchange stop goes in at 09:15, then the position is held until its target, its stop or the 15:05 square-off."
+                : form.sipSetup === "TREND"
                 ? "Crossovers are checked on every 5-minute close from 09:25 to 14:30; only each side's first one of the day counts, and the order goes in within seconds of that close. The trade exits on the 5-minute close where the 15-EMA crosses back, at its stop, or at the 15:05 square-off."
                 : form.sipSetup === "FADE"
                 ? `Signals are checked on the 5-minute closes from 09:20 to 09:45, and the short is placed within seconds of that close.${form.sipFadeLongs ? " A long waits up to 30 minutes for the first-candle high to break (until 10:15 at the latest)." : " No new entries after the 09:45 close."} A position is held until its target, its stop or the 15:05 square-off.`

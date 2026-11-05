@@ -198,13 +198,14 @@ export interface EmaVwapOptionsConfig {
 }
 
 export interface StocksInPlayConfig {
-  setup?: 'ORB' | 'FADE' | 'TREND';    // ORB = break of the first candle (default); FADE = short the overbought rollover of a gap-up stock in play, 09:20-09:45; TREND = first 15/40 EMA crossover of the top-RVOL stock(s), with the gap
+  setup?: 'ORB' | 'FADE' | 'TREND' | 'OI'; // ORB = break of the first candle (default); FADE = short the overbought rollover of a gap-up stock in play, 09:20-09:45; TREND = first 15/40 EMA crossover of the top-RVOL stock(s), with the gap; OI = short yesterday's top futures-OI short build-up in the 09:00-09:07 pre-open auction (stopPct default 1, targetR 3, 1 trade/day)
   watchCount?: number;                 // TREND: stocks watched from 09:20, highest first-candle RVOL first (default 1, max 10)
   withGapOnly?: boolean;               // TREND: never short a gap-up stock or buy a gap-down one (default true)
   stopPct?: number;                    // FADE: stop distance as % of the fill (default 1.2)
   targetR?: number;                    // FADE: target at this multiple of the stop (default 3; 0 = no target, exit at the stop or 15:05)
   breakevenAtR?: number;               // FADE: stop moved to the entry at this multiple of the stop in profit (default 1; 0 = off)
   breakevenLockR?: number;             // FADE: profit that first stop move locks in R (default 0.2; 0 = the entry)
+  skipNearPdlR?: number;               // FADE: skip a signal when yesterday's low (short) / high (long) is less than this many R ahead (default 0 = off)
   profitLock?: boolean;                // FADE: then lock +0.5R at +1.5R and +1.5R at +2.5R (default true)
   fadeLongs?: boolean;                 // FADE: also buy gap-down stocks on an oversold turn-up + first-candle-high break (default false; maxPositions = trades a day over both sides)
   stopLossRs: number;                  // Max loss per trade (₹): qty = stopLossRs / stop distance, capped by capital

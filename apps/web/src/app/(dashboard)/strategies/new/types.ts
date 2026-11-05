@@ -56,7 +56,7 @@ export interface StrategyFormState {
   // Stocks-in-Play (`stopLossRs` = max loss per trade, `maxTradesPerDay` = max positions)
   /** FADE = short the overbought rollover of a gap-up stock in play (09:20-09:45); ORB = break of the first candle;
    *  TREND = first 15/40 EMA crossover of the top-RVOL stock(s), with the gap. */
-  sipSetup: "FADE" | "ORB" | "TREND";
+  sipSetup: "FADE" | "ORB" | "TREND" | "OI";
   /** TREND: stocks watched from 09:20 (highest first-candle RVOL first). */
   sipWatchCount: string;
   /** TREND: never short a gap-up stock or buy a gap-down one. */
@@ -67,6 +67,8 @@ export interface StrategyFormState {
   sipBreakevenAtR: string;
   /** FADE: profit locked by that first stop move, in x stop (0 = the entry). */
   sipBreakevenLockR: string;
+  /** FADE: skip when yesterday's low (short) / high (long) is closer than this, in x stop ("0" = off). */
+  sipSkipNearPdlR: string;
   /** FADE: lock +0.5R at +1.5R and +1.5R at +2.5R after breakeven. */
   sipProfitLock: boolean;
   /** FADE: also trade the long mirror on gap-down stocks (trades per day then count per side). */

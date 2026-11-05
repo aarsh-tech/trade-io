@@ -14,8 +14,9 @@ import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, nor
 import { StocksInPlayConfig } from './dto/strategy.dto';
 import { getIstDateStr, getIstHhmm } from './emavwap-signals';
 import { FADE_MIN_HISTORY, FadeCandle, fadeLongTrigger, fadeReadings, fadeShortTrigger, FadeTrigger, toCompletedCandles } from './inplay-fade-signals';
-import { buildSrZones, describeZonesAhead, zonesAhead } from './inplay-sr-zones';
+import { buildSrZones, describeZonesAhead, prevDayHighLow, zonesAhead } from './inplay-sr-zones';
 import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
+import { loadOiPicks, OiPick } from './oi-buildup-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
 import { logSignal } from './signal-logger';
 import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from './symbol-claims';
@@ -85,7 +86,7 @@ import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from 
 
 type Side = 'LONG' | 'SHORT';
 type ExitReason = 'SL' | 'TARGET' | 'TREND' | 'SQUARE_OFF' | 'MANUAL' | 'BROKER_SL' | 'BROKER_SYNC' | 'NO_PROTECTION';
-type Setup = 'ORB' | 'FADE' | 'TREND';
+type Setup = 'ORB' | 'FADE' | 'TREND' | 'OI';
 
 const SQUARE_OFF_HHMM = 15 * 60 + 5;
 const FIRST_CANDLE_CLOSE_HHMM = 9 * 60 + 20;
@@ -125,6 +126,35 @@ const TREND_FIRST_CANDLE_HHMM = 9 * 60 + 20;
 const TREND_LAST_CANDLE_HHMM = 14 * 60 + 25;
 /** TREND: the day-low/high stop is at least this % from the fill. */
 const TREND_MIN_STOP_PCT = 0.3;
+/** OI: pre-open order entry is 09:00-09:10 (since 7 Sep 2026: market orders only until 09:05, entry closes at a random moment
+ *  09:08-09:10, matching 09:10-09:12; an unmatched limit carries into 09:15). The LIMIT goes in from 09:00, never after 09:07. */
+const OI_ORDER_START_HHMM = 9 * 60;
+const OI_ORDER_END_HHMM = 9 * 60 + 7;
+const MARKET_OPEN_HHMM = 9 * 60 + 15;
+/** OI: the pre-open SELL LIMIT sits this far under yesterday's close; the auction fills it at the opening price when the
+ *  stock opens above it. Opening lower (a >5% gap down) means no fill and no trade (backtest Rs 41.0k vs 40.3k any gap). */
+const OI_LIMIT_BELOW_CLOSE = 0.05;
+/** OI: how often the pending pre-open order is read from Zerodha. */
+const OI_ORDER_CHECK_MS = 5000;
+
+/** OI short build-up: the day's pick list and the pre-open order. */
+interface OiState {
+  picks: OiPick[] | null;
+  signalDay: string | null;
+  triedAt: number;
+  loggedWait: boolean;
+  orderId: string | null;
+  pick: OiPick | null;
+  /** Stock of the order sent today (also known after a restart, when `pick` is not). */
+  symbol: string | null;
+  limit: number;
+  qty: number;
+  tick: number;
+  lastCheck: number;
+  /** Nothing more to do today (filled and handed to the position code, rejected, not filled, or no pick). */
+  resolved: boolean;
+  doneReason: string | null;
+}
 
 interface ResolvedConfig {
   setup: Setup;
@@ -136,6 +166,10 @@ interface ResolvedConfig {
   breakevenAtR: number;
   /** FADE: profit that first stop move locks, in R (0 = exactly the entry; default 0.2). Always below breakevenAtR. */
   breakevenLockR: number;
+  /** FADE: skip a signal when yesterday's low (short) / high (long) lies less than this many R ahead of the price
+   *  (0 = off, the default; the user switches it on). Asked for on 5 Nov 2026 after NYKAA bounced off yesterday's low at 1.8R. Backtest 2y,
+   *  1 trade/day: 2R Rs77.1k vs Rs77.8k off (Recommended exits), Rs45.2k vs Rs48.1k (1.4%/2.5R/+0.5R) - about neutral. */
+  skipNearPdlR: number;
   /** FADE: after breakeven, lock +0.5R at +1.5R and +1.5R at +2.5R (FADE_PROFIT_LOCK_STEPS). */
   profitLock: boolean;
   stopLossRs: number;
@@ -262,6 +296,8 @@ interface EngineState {
   tickerUnsubscribe?: () => void;
   lastPersistedLogTail?: string;
   lastDbPersistTime?: number;
+  /** OI setup only. */
+  oi: OiState | null;
 }
 
 interface OrderSnap {
@@ -349,6 +385,9 @@ export class StocksInPlayEngine {
       lastPnlLog: 0,
       loggedNoSession: false,
       loggedCutoff: false,
+      oi: config.setup === 'OI'
+        ? { picks: null, signalDay: null, triedAt: 0, loggedWait: false, orderId: null, pick: null, symbol: null, limit: 0, qty: 0, tick: 0.05, lastCheck: 0, resolved: false, doneReason: null }
+        : null,
     };
     this.running.set(strategyId, state);
     if (!state.isPaperTrade) {
@@ -360,9 +399,12 @@ export class StocksInPlayEngine {
     const sides = [config.allowShorts ? 'shorts' : null, config.allowLongs ? 'longs' : null].filter(Boolean).join(' + ');
     if (resumedLogs.length > 0) {
       this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${mode})`);
+    } else if (config.setup === 'OI') {
+      this.log(state, `▶ OI short build-up (pre-open) started | ${mode}`);
+      this.log(state, `⚙ From NSE's end-of-day files: the stock that fell >= 3% yesterday while its futures open interest rose the most (5–80%, not an expiry day, >= ₹25 Cr traded) | SHORT in the 09:00–09:07 pre-open auction with a SELL LIMIT ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close (fills at the 09:15 opening price; no fill on a bigger gap down = no trade) | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Broker SL from 09:15 | Max loss/trade ₹${config.stopLossRs} | 1 trade/day | Square-off 15:05`);
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
@@ -395,6 +437,7 @@ export class StocksInPlayEngine {
 
     await this.recoverOpenPositions(state, strategy.brokerAccount);
     if (state.positions.length > state.tradesToday) state.tradesToday = state.positions.length;
+    if (state.oi) await this.recoverOiOrder(state);
 
     if (state.positions.length === 0 && state.tradesToday >= config.maxPositions) {
       await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Max ${config.maxPositions} trades already taken today. Strategy completed.`);
@@ -416,23 +459,26 @@ export class StocksInPlayEngine {
     const num = (v: any, d: number) => (Number(v) > 0 ? Number(v) : d);
     // 0 is a real setting (off) for the target and the breakeven step; only a missing/invalid value takes the default.
     const numOrZero = (v: any, d: number) => (v === undefined || v === null || v === '' || !(Number(v) >= 0) ? d : Number(v));
-    const setup: Setup = raw.setup === 'FADE' ? 'FADE' : raw.setup === 'TREND' ? 'TREND' : 'ORB';
+    const setup: Setup = raw.setup === 'FADE' ? 'FADE' : raw.setup === 'TREND' ? 'TREND' : raw.setup === 'OI' ? 'OI' : 'ORB';
     const fade = setup === 'FADE';
     const trend = setup === 'TREND';
+    const oi = setup === 'OI';
     // The fade always shorts; its long mirror only with fadeLongs (and only on a break of the first-candle high).
-    // TREND trades both sides unless one is switched off.
-    const allowShorts = fade ? true : raw.allowShorts !== false;
-    const allowLongs = fade ? raw.fadeLongs === true : trend ? raw.allowLongs !== false : raw.allowLongs === true;
+    // TREND trades both sides unless one is switched off. OI is short only.
+    const allowShorts = fade || oi ? true : raw.allowShorts !== false;
+    const allowLongs = oi ? false : fade ? raw.fadeLongs === true : trend ? raw.allowLongs !== false : raw.allowLongs === true;
     if (!allowShorts && !allowLongs) throw new Error('Stocks-in-Play: enable shorts, longs or both.');
     // FADE with longs and TREND: maxPositions is the day's trade cap over both sides (each side may take all of it).
-    const perSideTrades = Math.min(5, Math.floor(num(raw.maxPositions, fade || trend ? 1 : 2)));
+    // OI: always the top pick only (the backtest's 1 trade a day).
+    const perSideTrades = oi ? 1 : Math.min(5, Math.floor(num(raw.maxPositions, fade || trend ? 1 : 2)));
     const breakevenAtR = Math.min(20, numOrZero(raw.breakevenAtR, 1));
     return {
       setup,
-      stopPct: Math.min(5, Math.max(0.3, num(raw.stopPct, 1.2))),
+      stopPct: Math.min(5, Math.max(0.3, num(raw.stopPct, oi ? 1 : 1.2))),
       targetR: Math.min(20, numOrZero(raw.targetR, 3)),
       breakevenAtR,
       breakevenLockR: Math.min(numOrZero(raw.breakevenLockR, 0.2), breakevenAtR * 0.8),
+      skipNearPdlR: Math.min(10, numOrZero(raw.skipNearPdlR, 0)),
       profitLock: raw.profitLock !== false,
       stopLossRs,
       maxPositions: perSideTrades,
@@ -480,11 +526,12 @@ export class StocksInPlayEngine {
       const sign = pos.side === 'LONG' ? -1 : 1;
       // Without a saved SL, cap the loss at the configured max loss for the quantity held.
       const sl = pos.slPrice && pos.slPrice > 0 ? pos.slPrice : roundTo(pos.avgPrice + sign * state.config.stopLossRs / pos.qty, tick, pos.side === 'LONG' ? 'down' : 'up');
-      // FADE: the target and breakeven come from the fixed % stop, so they are rebuilt from the fill alone.
+      // FADE and OI: the target and breakeven come from the fixed % stop, so they are rebuilt from the fill alone.
       const fade = state.config.setup === 'FADE';
-      const stopDist = fade ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
+      const pctStop = fade || state.config.setup === 'OI';
+      const stopDist = pctStop ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
       // `sign` points at the stop side, so the target is the other way.
-      const target = fade && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
+      const target = pctStop && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
       const probe = { side: pos.side, entryPrice: pos.avgPrice, stopDist } as OpenPosition;
       const lockedR = fade ? this.lockedROf(probe, sl) : null;
       const beDone = this.lockSteps(state.config).every(([, lk]) => lockedR !== null && lk <= lockedR + 1e-6);
@@ -499,7 +546,8 @@ export class StocksInPlayEngine {
       if (notice) this.log(state, notice);
       const p = state.positions[state.positions.length - 1];
       try { await this.tickerService.subscribeSymbol(state.brokerAccountId, p.symbol); } catch { /* REST prices cover it */ }
-      if (!state.isPaperTrade && brokerAccount?.accessToken && !pos.slOrderId) await this.armStopLoss(state, p);
+      // Before 09:15 (OI pre-open fill) the exchange takes no stop orders: the OI tick arms it at the open.
+      if (!state.isPaperTrade && brokerAccount?.accessToken && !pos.slOrderId && getIstHhmm(new Date()) >= MARKET_OPEN_HHMM) await this.armStopLoss(state, p);
     }
   }
 
@@ -634,8 +682,15 @@ export class StocksInPlayEngine {
         return;
       }
 
-      if (!state.baselines && !state.baselineLoading) this.loadBaselines(state, client);
-      if (hhmm < 9 * 60 + 15) return;
+      if (state.oi) {
+        // OI needs no volume baselines: it trades yesterday's NSE files in the pre-open auction (09:00-09:07).
+        await this.tickOi(state, client, now);
+        if (hhmm < MARKET_OPEN_HHMM) {
+          await this.persistLogs(state);
+          return;
+        }
+      } else if (!state.baselines && !state.baselineLoading) this.loadBaselines(state, client);
+      if (hhmm < MARKET_OPEN_HHMM) return;
 
       await this.refreshPrices(state, client, now);
       if (state.positions.length > 0) await this.managePositions(state, client, now);
@@ -1352,6 +1407,313 @@ export class StocksInPlayEngine {
     }
   }
 
+  // ── OI short build-up (pre-open auction) ───────────────────────────────────
+
+  /**
+   * OI flow, every tick from the start (08:50 pre-open auto-start): load yesterday's NSE picks, send the SELL LIMIT in
+   * 09:00-09:07, read its auction fill (matched ~09:08), arm the broker SL at 09:15, then the normal position code runs.
+   */
+  private async tickOi(state: EngineState, client: any, now: Date) {
+    const o = state.oi!;
+    const hhmm = getIstHhmm(now);
+    const open = hhmm >= MARKET_OPEN_HHMM;
+
+    // The exchange takes stop orders only from 09:15; a position that cannot get one is flattened.
+    if (open && !state.isPaperTrade) {
+      for (const p of [...state.positions]) {
+        if (p.slOrderId) continue;
+        await this.armStopLoss(state, p);
+        if (!p.slOrderId) {
+          this.log(state, `🚨 Broker SL could not be placed for ${p.symbol}. Flattening the position now.`);
+          await this.exitPosition(state, client, p, 'NO_PROTECTION', p.ltp ?? p.entryPrice);
+        }
+      }
+    }
+
+    if (!o.resolved && !o.orderId) {
+      if (hhmm >= OI_ORDER_END_HHMM) {
+        this.resolveOi(state, `⏱ The pre-open order window (09:00–09:07) has passed with no order sent today — this setup only trades at the auction price.`);
+      } else {
+        if (!o.picks) await this.loadOiPicksFor(state, now);
+        if (o.picks && !o.resolved) {
+          if (hhmm < OI_ORDER_START_HHMM) {
+            if (!o.loggedWait) {
+              o.loggedWait = true;
+              this.log(state, `⏳ Waiting for the pre-open session: the order goes in at 09:00.`);
+            }
+          } else {
+            await this.placeOiOrder(state, client, now);
+          }
+        }
+      }
+    } else if (!o.resolved && o.orderId && now.getTime() - o.lastCheck >= OI_ORDER_CHECK_MS) {
+      if (state.isPaperTrade) {
+        // Paper: the auction fill is the day's opening price, readable once trading starts.
+        if (open) {
+          o.lastCheck = now.getTime();
+          await this.fillPaperOi(state, client, now);
+        }
+      } else if (hhmm >= OI_ORDER_END_HHMM + 1) {
+        o.lastCheck = now.getTime();
+        await this.checkOiOrder(state, client, open);
+      }
+    }
+
+    if (open && o.resolved && state.positions.length === 0 && !state.completeReason) {
+      state.completeReason = o.doneReason ?? `🏁 OI short build-up done for today. Strategy completed.`;
+    }
+  }
+
+  /** Nothing more to send today; `msg` (if any) says why. The day completes once no position is open (from 09:15). */
+  private resolveOi(state: EngineState, msg: string | null) {
+    const o = state.oi!;
+    o.resolved = true;
+    state.enteringSymbol = null;
+    if (msg) {
+      this.log(state, msg);
+      o.doneReason = `🏁 Nothing more to trade today. Strategy completed.`;
+    }
+  }
+
+  private async loadOiPicksFor(state: EngineState, now: Date) {
+    const o = state.oi!;
+    if (now.getTime() - o.triedAt < 30_000) return;
+    o.triedAt = now.getTime();
+    try {
+      const r = await loadOiPicks(getIstDateStr(now));
+      o.signalDay = r.signalDay;
+      o.picks = r.picks.filter((p) => !state.tradedSymbols.has(p.symbol));
+      if (o.picks.length === 0) {
+        this.resolveOi(state, `🏁 No futures short build-up on ${r.signalDay} (a stock down >= 3% with futures OI up 5–80%). Nothing to trade today.`);
+        return;
+      }
+      const top = o.picks.slice(0, 5).map((p, i) => `${i + 1}. ${p.symbol} ${(p.priceChg * 100).toFixed(1)}%, futures OI +${(p.oiChg * 100).toFixed(1)}%, close ₹${p.close}`);
+      this.log(state, `📑 Short build-up on ${r.signalDay} (NSE F&O bhavcopy), highest OI rise first: ${top.join(' | ')}${o.picks.length > 5 ? ` (+${o.picks.length - 5} more)` : ''}`);
+    } catch (e: any) {
+      this.log(state, `⚠ Could not read NSE's end-of-day files (${e?.message || e}) — retrying in 30s.`);
+    }
+  }
+
+  /** The top pick's SELL LIMIT for the auction (a later pick only when an earlier one cannot be sized or is held elsewhere). */
+  private async placeOiOrder(state: EngineState, client: any, now: Date) {
+    const o = state.oi!;
+    const cfg = state.config;
+    if (now.getTime() - o.lastCheck < OI_ORDER_CHECK_MS) return;
+    o.lastCheck = now.getTime();
+
+    if (!state.isPaperTrade) {
+      const tradesToday = await countTodaysTradesForEntry({ prisma: this.prisma, factory: this.factory, strategyId: state.strategyId, brokerAccountId: state.brokerAccountId, isPaper: false });
+      if (tradesToday === null) {
+        this.log(state, `⛔ Could not verify today's trade count (Zerodha and DB unreadable) — retrying before sending the order.`);
+        return;
+      }
+      if (tradesToday >= cfg.maxPositions) {
+        state.tradesToday = Math.max(state.tradesToday, tradesToday);
+        this.resolveOi(state, `⛔ Daily trade limit reached: ${tradesToday}/${cfg.maxPositions} trades already taken today.`);
+        return;
+      }
+    }
+    let slotCapital: number;
+    if (state.isPaperTrade) slotCapital = cfg.maxCapital ?? 15000;
+    else {
+      const cash = await this.liveCash(client);
+      if (cash === null) {
+        this.log(state, `⚠ Could not read the Zerodha margin — retrying rather than sizing blind.`);
+        return;
+      }
+      slotCapital = cfg.maxCapital !== null ? Math.min(cash, cfg.maxCapital) : cash;
+    }
+
+    for (const pick of o.picks!) {
+      if (state.tradedSymbols.has(pick.symbol)) continue;
+      let tick = 0.05;
+      try { tick = Number(await client.getTickSize(pick.symbol, 'NSE')) || 0.05; } catch { /* default tick */ }
+      const limit = roundTo(pick.close * (1 - OI_LIMIT_BELOW_CLOSE), tick, 'up');
+      // Sized on yesterday's close; the stop is re-based on the real auction fill.
+      const qtyByRisk = Math.floor(cfg.stopLossRs / ((pick.close * cfg.stopPct) / 100));
+      const qtyByCapital = Math.floor((slotCapital * cfg.leverage * 0.95) / pick.close);
+      const qty = Math.min(qtyByRisk, qtyByCapital);
+      if (qty < 1) {
+        this.log(state, `⏭ ${pick.symbol} skipped: 1 share needs ₹${(pick.close / cfg.leverage).toFixed(0)} margin or risks ₹${((pick.close * cfg.stopPct) / 100).toFixed(2)} (capital ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
+        continue;
+      }
+      let orderId: string;
+      if (state.isPaperTrade) {
+        orderId = `PAPER_${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      } else {
+        const holder = symbolHeldByOther(state.strategyId, state.brokerAccountId, pick.symbol);
+        if (holder) {
+          this.log(state, `⏭ ${pick.symbol}: "${holder}" already has a position in this stock on the same Zerodha account — skipping.`);
+          continue;
+        }
+        state.enteringSymbol = normalizeSymbol(pick.symbol);
+        try {
+          orderId = await this.placeOrder(state, { symbol: pick.symbol, exchange: 'NSE', product: 'MIS', qty, side: 'SELL', orderType: 'LIMIT', price: limit, intent: 'ENTRY' });
+        } catch (e: any) {
+          this.resolveOi(state, `❌ Pre-open order for ${pick.symbol} was not accepted: ${e?.message || e}. No trade today.`);
+          return;
+        }
+      }
+      o.orderId = orderId;
+      o.symbol = pick.symbol;
+      o.pick = pick;
+      o.limit = limit;
+      o.qty = qty;
+      o.tick = tick;
+      o.lastCheck = Date.now();
+      state.tradedSymbols.add(pick.symbol);
+      this.log(state, `📨 ${state.isPaperTrade ? '[PAPER] ' : ''}Pre-open order sent: SELL ${qty} ${pick.symbol} LIMIT ₹${limit.toFixed(2)} (MIS, ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close ₹${pick.close}) — the auction fills it at the 09:15 opening price if the stock opens at or above the limit (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}) | Order ${orderId}`);
+      return;
+    }
+    this.resolveOi(state, `⏭ None of yesterday's short build-up stocks could be traded (see above). No trade today.`);
+  }
+
+  /** Live: the order after the auction match; at 09:15 an unfilled order is cancelled (opened under the limit). */
+  private async checkOiOrder(state: EngineState, client: any, final: boolean) {
+    const o = state.oi!;
+    const kite = client['kite'] || client;
+    const sym = o.symbol!;
+    const id = o.orderId!;
+    let ord = await this.readOrder(kite, id);
+    if (ord && ord.status === 'COMPLETE' && ord.filledQty > 0 && ord.avgPrice > 0) {
+      this.log(state, `✅ Pre-open order ${id} filled in the auction: ${ord.filledQty} @ ₹${ord.avgPrice.toFixed(2)}`);
+      await this.openOiPosition(state, client, ord.filledQty, ord.avgPrice, id);
+      return;
+    }
+    if (ord && (ord.status === 'REJECTED' || ord.status === 'CANCELLED')) {
+      if (ord.filledQty > 0 && ord.avgPrice > 0) {
+        this.log(state, `✅ Pre-open order ${id} ${ord.status} after a part fill: ${ord.filledQty} @ ₹${ord.avgPrice.toFixed(2)}`);
+        await this.openOiPosition(state, client, ord.filledQty, ord.avgPrice, id);
+        return;
+      }
+      this.resolveOi(state, `❌ Zerodha ${ord.status === 'REJECTED' ? 'rejected' : 'cancelled'} the pre-open order ${id} for ${sym}${ord.message ? `: ${ord.message}` : ''}. No trade today.`);
+      return;
+    }
+    if (!final) return; // still waiting for the auction match
+
+    // 09:15 and not (fully) filled: the stock opened under the limit. A resting limit must not fill later in the day.
+    await client.cancelOrder(id).catch(() => undefined);
+    ord = (await this.awaitOrder(client, id, 3000)) ?? ord;
+    if (ord && ord.filledQty > 0 && ord.avgPrice > 0) {
+      this.log(state, `✅ Pre-open order ${id}: ${ord.filledQty}/${o.qty} filled @ ₹${ord.avgPrice.toFixed(2)}, the rest cancelled.`);
+      await this.openOiPosition(state, client, ord.filledQty, ord.avgPrice, id);
+      return;
+    }
+    if (!ord) {
+      // Order book unreadable: the position book decides whether we are in.
+      const pos = await getLiveBrokerPosition(kite, sym, this.logger, { exchange: 'NSE', product: 'MIS' });
+      const avg = Number(pos.rawPosition?.average_price) || Number(pos.rawPosition?.sell_price) || 0;
+      if (-pos.netQty > 0 && avg > 0) {
+        this.log(state, `✅ Pre-open order ${id} confirmed from positions: ${-pos.netQty} qty @ ₹${avg.toFixed(2)}`);
+        await this.openOiPosition(state, client, -pos.netQty, avg, id);
+        return;
+      }
+      this.resolveOi(state, `🚨 Pre-open order ${id} for ${sym} could not be read from Zerodha and no position is open — check Kite. No trade today.`);
+      return;
+    }
+    this.resolveOi(state, `⏭ ${sym} opened under the ₹${o.limit.toFixed(2)} limit (a gap down of more than ${OI_LIMIT_BELOW_CLOSE * 100}%): no auction fill, order cancelled. No trade today (backtest rule).`);
+  }
+
+  /** Paper: fills at the day's opening price when it is at or above the limit (what the auction would have done). */
+  private async fillPaperOi(state: EngineState, client: any, now: Date) {
+    const o = state.oi!;
+    const sym = o.symbol!;
+    if (getIstHhmm(now) === MARKET_OPEN_HHMM && now.getTime() % 60_000 < 3000) return; // let the open print settle
+    let openPx = 0;
+    try {
+      const kite = client['kite'] || client;
+      const q = await kite.getQuote([`NSE:${sym}`]);
+      openPx = Number(q?.[`NSE:${sym}`]?.ohlc?.open) || 0;
+    } catch { /* retried on the next check */ }
+    if (!(openPx > 0)) {
+      if (getIstHhmm(now) >= MARKET_OPEN_HHMM + 2) this.resolveOi(state, `⚠ [PAPER] No opening price for ${sym} — no paper trade today.`);
+      return;
+    }
+    if (openPx < o.limit) {
+      this.resolveOi(state, `⏭ [PAPER] ${sym} opened at ₹${openPx.toFixed(2)}, under the ₹${o.limit.toFixed(2)} limit — no auction fill. No trade today (backtest rule).`);
+      return;
+    }
+    await this.openOiPosition(state, client, o.qty, openPx, o.orderId!);
+  }
+
+  private async openOiPosition(state: EngineState, client: any, qty: number, price: number, orderId: string) {
+    const o = state.oi!;
+    const cfg = state.config;
+    const sym = o.symbol!;
+    if (!(o.tick > 0)) {
+      try { o.tick = Number(await client.getTickSize(sym, 'NSE')) || 0.05; } catch { o.tick = 0.05; }
+    }
+    const stopDist = (price * cfg.stopPct) / 100;
+    const sl = roundTo(price + stopDist, o.tick, 'up');
+    // Target rounded toward the entry, so it is never further than targetR x the stop.
+    const target = cfg.targetR > 0 ? roundTo(price - cfg.targetR * stopDist, o.tick, 'up') : null;
+    state.tradedSymbols.add(sym);
+    state.tradesToday++;
+    state.sideTrades.SHORT++;
+    const p: OpenPosition = {
+      symbol: sym, side: 'SHORT', entryPrice: price, qty, sl, target, stopDist, beDone: true, lastBeAttempt: 0, lockedR: null, bestR: 0, tick: o.tick, rvol: null,
+      slOrderId: null, openedAt: Date.now(), ltp: price, ltpAt: 0, slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
+      candles: null, trendCheckedThrough: 0, trendFetchAt: 0,
+    };
+    state.positions.push(p);
+    this.resolveOi(state, null);
+    this.log(state, `📋 Placed Trade: NSE:${sym} — SHORT Entry: ₹${price.toFixed(2)} | Qty: ${qty} | SL: ₹${sl.toFixed(2)} (risk ₹${((sl - price) * qty).toFixed(2)}) | Target ₹${target !== null ? target.toFixed(2) : '—'} | else 15:05 | Pre-open auction fill (limit ₹${o.limit.toFixed(2)}) | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${orderId}`);
+    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'OI', symbol: sym, side: 'SHORT', level: o.limit, entry: price, sl, target, qty, oiChg: o.pick?.oiChg, priceChg: o.pick?.priceChg, signalDay: o.signalDay, isPaper: state.isPaperTrade });
+    try { await this.tickerService.subscribeSymbol(state.brokerAccountId, sym); } catch { /* REST prices cover it */ }
+    if (state.isPaperTrade) {
+      await this.recordPaperOrder(state, sym, 'SELL', qty, price, orderId, 'MARKET', 'COMPLETE');
+      await this.recordPaperOrder(state, sym, 'BUY', qty, sl, `${orderId}_SL`, 'SL', 'OPEN', sl);
+      p.slOrderId = `${orderId}_SL`;
+    } else if (getIstHhmm(new Date()) >= MARKET_OPEN_HHMM) {
+      await this.armStopLoss(state, p);
+      if (!p.slOrderId) {
+        this.log(state, `🚨 Broker SL could not be placed for ${sym}. Flattening the position now.`);
+        await this.exitPosition(state, client, p, 'NO_PROTECTION', price);
+      }
+    } else {
+      this.log(state, `🛡 The broker SL goes in at 09:15 (the exchange takes no stop orders in the pre-open session).`);
+    }
+  }
+
+  /**
+   * After a restart: an OI order already sent today is followed up, never sent twice. A still-pending pre-open order
+   * counts as today's trade in recoverTodaysTrades, so it is un-counted here: otherwise the start would complete the
+   * strategy and the order would fill at ~09:08 with nobody watching it.
+   */
+  private async recoverOiOrder(state: EngineState) {
+    const o = state.oi!;
+    const done = () => {
+      o.resolved = true;
+      o.doneReason = `🏁 Today's OI short is done. Strategy completed.`;
+    };
+    if (state.positions.length > 0) return done(); // filled and re-adopted (the SL is armed from 09:15)
+    if (state.isPaperTrade) {
+      if (state.tradesToday > 0) done(); // a paper order is only saved once filled
+      return;
+    }
+    const sent: any = await this.prisma.order.findFirst({
+      where: { ...strategyOrderWhere(state.strategyId), createdAt: { gte: istDayStart() }, isPaperTrade: false, side: 'SELL' },
+      orderBy: { createdAt: 'asc' },
+      select: { symbol: true, brokerOrderId: true, price: true, qty: true },
+    }).catch(() => null);
+    if (!sent?.brokerOrderId) {
+      if (state.tradesToday > 0) done();
+      return;
+    }
+    const client = await this.getClient(state);
+    const ord = client ? await this.readOrder(client['kite'] || client, sent.brokerOrderId) : null;
+    if (ord && ['COMPLETE', 'REJECTED', 'CANCELLED'].includes(ord.status)) return done(); // traded (and closed) or refused today
+    state.tradesToday = 0; // pending: counted again when it fills
+    o.orderId = sent.brokerOrderId;
+    o.symbol = sent.symbol;
+    o.limit = Number(sent.price) || 0;
+    o.qty = Number(sent.qty) || 0;
+    o.tick = 0;
+    o.picks = [];
+    state.enteringSymbol = normalizeSymbol(sent.symbol);
+    this.log(state, `🔁 Following up today's pre-open order ${sent.brokerOrderId} for ${sent.symbol} (SELL ${o.qty} LIMIT ₹${o.limit}).`);
+  }
+
   // ── Prices ─────────────────────────────────────────────────────────────────
 
   /** REST fallback for prices older than 4s (open positions and live candidates). */
@@ -1427,6 +1789,17 @@ export class StocksInPlayEngine {
     if ((cfg.setup === 'ORB' || (fade && c.side === 'LONG')) && chase > MAX_CHASE_OF_STOP * stopDist) {
       this.log(state, `⏭ ${c.symbol} broke ₹${c.level.toFixed(2)} but is already at ₹${ltp.toFixed(2)} (more than ${MAX_CHASE_OF_STOP} of the stop distance past it). Not chasing.`);
       return;
+    }
+
+    // FADE: no room to yesterday's low (short) / high (long). The stock is dropped; a later signal on another stock may still trade.
+    if (fade && cfg.skipNearPdlR > 0) {
+      const yday = prevDayHighLow(c.candles, new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime());
+      const lvl = yday ? (c.side === 'SHORT' ? yday.l : yday.h) : null;
+      const roomR = lvl !== null && stopDist > 0 ? (sign * (lvl - ltp)) / stopDist : null;
+      if (lvl !== null && roomR !== null && roomR > 0 && roomR < cfg.skipNearPdlR) {
+        this.log(state, `⏭ ${c.symbol} skipped: yesterday's ${c.side === 'SHORT' ? 'low' : 'high'} ₹${lvl.toFixed(2)} is only ${roomR.toFixed(2)}R ${c.side === 'SHORT' ? 'below' : 'above'} ₹${ltp.toFixed(2)} (needs at least ${cfg.skipNearPdlR}R of room).`);
+        return;
+      }
     }
 
     // Hard daily cap: re-count today's trades from Zerodha's order book (paper: saved orders) before every entry.
@@ -1589,6 +1962,8 @@ export class StocksInPlayEngine {
   // ── Position management ────────────────────────────────────────────────────
 
   private async managePositions(state: EngineState, client: any, now: Date) {
+    // An OI position filled in the pre-open auction waits for 09:15: no orders can execute before then.
+    if (getIstHhmm(now) < MARKET_OPEN_HHMM) return;
     for (const p of [...state.positions]) {
       if (!state.positions.includes(p)) continue;
       await this.managePosition(state, client, p, now);

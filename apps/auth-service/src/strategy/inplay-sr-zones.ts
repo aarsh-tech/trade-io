@@ -1,6 +1,6 @@
 /**
- * Support/resistance zones for the In-play Fade's 📋 Placed Trade log line. LOGGING ONLY: nothing here changes an
- * entry, a stop or a target.
+ * Support/resistance zones for the In-play Fade's 📋 Placed Trade log line. The zones are LOGGING ONLY: they never
+ * change an entry, a stop or a target. prevDayHighLow feeds the fade's skipNearPdlR entry rule.
  *
  * Built from the 5m candles the engine already holds for the stock, previous sessions only (today is never used):
  * - the candles are merged into 15m candles (09:15, 09:30, ...), continuous across sessions as on a chart;
@@ -94,6 +94,15 @@ export function buildSrZones(candles: FadeCandle[] | null | undefined, dayOpenMs
     }
   }
   return { zones, sessions: days.length };
+}
+
+/** Yesterday's (the last session before `dayOpenMs`) high and low from the 5m candles, 09:15-15:30 IST. */
+export function prevDayHighLow(candles: FadeCandle[] | null | undefined, dayOpenMs: number): { h: number; l: number } | null {
+  const prior = (candles || []).filter((k) => k.t < dayOpenMs && k.h > 0 && k.l > 0 && istMinuteOfDay(k.t) >= OPEN_MIN && istMinuteOfDay(k.t) < 15 * 60 + 30);
+  if (prior.length === 0) return null;
+  const last = Math.max(...prior.map((k) => istDay(k.t)));
+  const yday = prior.filter((k) => istDay(k.t) === last);
+  return { h: Math.max(...yday.map((k) => k.h)), l: Math.min(...yday.map((k) => k.l)) };
 }
 
 export interface ZoneAhead {
