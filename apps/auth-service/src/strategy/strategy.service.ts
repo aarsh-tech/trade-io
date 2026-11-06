@@ -366,36 +366,6 @@ export class StrategyService {
     const openBySymbol = new Map<string, any>();
 
     for (const line of logs) {
-      if (strategyType === 'STOCK_OPTIONS_BUYING') {
-        const entryMatch = line.match(/Position\s+Opened\s+\[(LIVE|PAPER)\]:\s+(Filled|Bought)\s+(\d+)\s+of\s+(\S+)\s+at\s+Avg\s+₹([\d.]+)/i);
-        if (entryMatch) {
-          openTrade = {
-            side: 'BUY',
-            symbol: entryMatch[4],
-            entryPrice: parseFloat(entryMatch[5]),
-            qty: parseInt(entryMatch[3])
-          };
-        }
-
-        const exitMatch = line.match(/Exiting\s+Position\s+—\s+Reason:\s+(\w+)\s+\|\s+Price:\s+₹([\d.]+)\s+\|\s+P&L:\s*([+-]?)\s*₹?\s*([\d.]+)/i);
-        if (exitMatch && openTrade) {
-          const sign = exitMatch[3] === '-' ? -1 : 1;
-          const pnl = sign * parseFloat(exitMatch[4]);
-          trades.push({
-            symbol: openTrade.symbol,
-            entryPrice: openTrade.entryPrice,
-            exitPrice: parseFloat(exitMatch[2]),
-            qty: openTrade.qty,
-            side: openTrade.side,
-            pnl,
-            isWin: pnl > 0,
-            reason: exitMatch[1],
-            source: 'log'
-          });
-          openTrade = null;
-        }
-      }
-
       if (strategyType === 'STOCKS_IN_PLAY') {
         // Several positions can be open at once, so open trades are keyed by symbol.
         // "📋 Placed Trade: NSE:SYM — SHORT Entry: ₹x | Qty: n ..." then "🏁 <reason> — SYM exit at ₹y (SHORT entry ₹x) | Realized P&L: ₹z ..."
@@ -409,31 +379,6 @@ export class StrategyService {
           const pnl = parseFloat(exitMatch[4]);
           trades.push({ symbol: open.symbol, entryPrice: open.entryPrice, exitPrice: parseFloat(exitMatch[3]), qty: open.qty, side: open.side, pnl, isWin: pnl > 0, reason: exitMatch[1], source: 'log' });
           openBySymbol.delete(exitMatch[2]);
-        }
-        continue;
-      }
-
-      if (strategyType === 'EMA_VWAP_OPTIONS') {
-        // "📋 Placed Option Trade: NFO:SYM — Entry: ₹x | Qty: n ..." then "🏁 <reason> — SYM exit at ₹y (entry ₹x) | Realized P&L: ₹z ..."
-        const entryMatch = line.match(/Placed Option Trade:\s+(?:[A-Z]+:)?(\S+)\s+—\s+Entry:\s+₹([\d.]+)\s+\|\s+Qty:\s+(\d+)/);
-        if (entryMatch) {
-          openTrade = { side: 'BUY', symbol: entryMatch[1], entryPrice: parseFloat(entryMatch[2]), qty: parseInt(entryMatch[3], 10) };
-        }
-        const exitMatch = line.match(/🏁 (.+?) — \S+ exit at ₹([\d.]+).*?Realized P&L: ₹(-?[\d.]+)/);
-        if (exitMatch && openTrade) {
-          const pnl = parseFloat(exitMatch[3]);
-          trades.push({
-            symbol: openTrade.symbol,
-            entryPrice: openTrade.entryPrice,
-            exitPrice: parseFloat(exitMatch[2]),
-            qty: openTrade.qty,
-            side: openTrade.side,
-            pnl,
-            isWin: pnl > 0,
-            reason: exitMatch[1],
-            source: 'log'
-          });
-          openTrade = null;
         }
         continue;
       }
@@ -471,7 +416,7 @@ export class StrategyService {
         }
       }
 
-      if (strategyType === 'EMA_VWAP_CROSSOVER' || strategyType === 'NIFTY_OPTIONS_SCALPER') {
+      if (strategyType === 'EMA_VWAP_CROSSOVER') {
         const optionEntryMatch = line.match(/Placed\s+Option\s+Trade:\s+(\S+)\s+—\s+Entry:\s+₹([\d.]+)/i);
         const equityEntryMatch = line.match(/Placing:\s+(\S+)\s+—\s+Qty:\s+(\d+)\s+\|\s+Entry:\s+₹([\d.]+)/i);
         const trendMatch = line.match(/(?:Found past|Detected|Triggered!)\s+(LONG|SHORT)/i) || line.match(/Trend:\s*(LONG|SHORT)/i);

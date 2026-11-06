@@ -372,13 +372,9 @@ function LiveSummary({ form }: { form: StrategyFormState }) {
         )}
         <SummaryRow label="Instrument">{auto ? "Auto" : form.symbol || "Not set"}</SummaryRow>
         <SummaryRow label="Size">
-          {form.type === "STOCK_OPTIONS_BUYING"
-            ? inr(Number(form.sMaxCapital))
-            : form.type === "EMA_VWAP_OPTIONS"
-              ? `Risk-based, max ${form.evoMaxLots || 10} lots`
-              : form.type === "STOCKS_IN_PLAY"
-                ? `${form.sipSetup === "FADE" ? "In-play Fade: " : form.sipSetup === "TREND" ? "15/40 EMA trend: " : form.sipSetup === "OI" ? "OI short build-up: " : ""}Risk and capital based, up to ${form.maxTradesPerDay || 2} position${form.maxTradesPerDay === "1" ? "" : "s"}`
-                : `${form.lots || 0} lot${auto ? "" : ` (${(Number(form.lots) || 0) * lotSize} qty)`}`}
+          {form.type === "STOCKS_IN_PLAY"
+            ? `${form.sipSetup === "FADE" ? "In-play Fade: " : form.sipSetup === "TREND" ? "15/40 EMA trend: " : form.sipSetup === "OI" ? "OI short build-up: " : ""}Risk and capital based, up to ${form.maxTradesPerDay || 2} position${form.maxTradesPerDay === "1" ? "" : "s"}`
+            : `${form.lots || 0} lot${auto ? "" : ` (${(Number(form.lots) || 0) * lotSize} qty)`}`}
         </SummaryRow>
         <SummaryRow label="Max loss / trade"><span className="text-loss">{inr(risk.perTrade)}</span></SummaryRow>
         <SummaryRow label="Max loss / day"><span className="text-loss">{inr(risk.perDay)}</span></SummaryRow>

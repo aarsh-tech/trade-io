@@ -620,11 +620,8 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
               {strategies.map((s) => {
                 const cfg =
                   typeof s.config === "string" ? JSON.parse(s.config || "{}") : s.config || {};
-                const isStockOptions = s.type === "STOCK_OPTIONS_BUYING";
-                const isNiftyScalper = s.type === "NIFTY_OPTIONS_SCALPER";
                 const is15Min = s.type === "BREAKOUT_15MIN";
                 const isEmaVwap = s.type === "EMA_VWAP_CROSSOVER";
-                const isEmaVwapOptions = s.type === "EMA_VWAP_OPTIONS";
 
                 return (
                   <div
@@ -660,26 +657,17 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                         <span
                           className={cn(
                             "text-[9.5px] font-semibold px-1.5 py-0.2 rounded border",
-                            isStockOptions && "bg-warn-subtle text-warn border-warn/30",
-                            isNiftyScalper && "bg-signal-subtle text-signal border-signal/30",
                             is15Min && "bg-brand-subtle text-accent-foreground border-primary/30",
-                            isEmaVwap && "bg-profit-subtle text-profit border-profit/30",
-                            isEmaVwapOptions && "bg-signal-subtle text-signal border-signal/30"
+                            isEmaVwap && "bg-profit-subtle text-profit border-profit/30"
                           )}
                         >
-                          {isStockOptions
-                            ? "Stock Options"
-                            : isNiftyScalper
-                              ? "Nifty Scalper"
-                              : is15Min
-                                ? "15-Min Breakout"
-                                : isEmaVwap
-                                  ? "15-EMA & VWAP"
-                                  : isEmaVwapOptions
-                                    ? "EMA-VWAP Options"
-                                    : s.type === "STOCKS_IN_PLAY"
-                                      ? "Stocks in Play"
-                                      : s.type}
+                          {is15Min
+                            ? "15-Min Breakout"
+                            : isEmaVwap
+                              ? "15-EMA & VWAP"
+                              : s.type === "STOCKS_IN_PLAY"
+                                ? "Stocks in Play"
+                                : s.type}
                         </span>
                       </div>
 
@@ -688,9 +676,7 @@ export function LiveAlgoPositionsCard({ activeBroker }: LiveAlgoPositionsCardPro
                       </h4>
 
                       <p className="text-[10.5px] text-muted-foreground mt-0.5 truncate">
-                        {isStockOptions
-                          ? `180+ F&O Scanner • Capital: ₹${Number(cfg.maxCapital || 25000).toLocaleString("en-IN")}`
-                          : `${cfg.symbol || "AUTO"} • ${cfg.product || "MIS"} • 09:15–15:05 IST`}
+                        {`${cfg.symbol || "AUTO"} • ${cfg.product || "MIS"} • 09:15–15:05 IST`}
                       </p>
                     </div>
 

@@ -23,12 +23,8 @@ export function isInPosition(liveState: any): boolean {
 }
 
 const TYPE_LABELS: Record<string, string> = {
-  NIFTY_OPTIONS_SCALPER: "Nifty 10-Pt Scalper",
-  STOCK_OPTIONS_BUYING: "Stock Options",
-  GAMMA_BLAST_EXPIRY: "Daily Index Scalper",
   BREAKOUT_15MIN: "15-Min Breakout",
   EMA_VWAP_CROSSOVER: "15-EMA & VWAP",
-  EMA_VWAP_OPTIONS: "EMA-VWAP Index Options",
   STOCKS_IN_PLAY: "Stocks-in-Play",
   DAILY_SCALPER: "Daily Scalper",
 };

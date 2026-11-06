@@ -78,13 +78,9 @@ const TIME_FIELDS: [string, string][] = [
 const REQUIRED_BY_TYPE: Record<string, string[]> = {
   BREAKOUT_15MIN: ['symbol', 'stopLossRs', 'targetRs'],
   EMA_VWAP_CROSSOVER: ['symbol', 'stopLossRs', 'targetRs'],
-  EMA_VWAP_OPTIONS: ['symbol', 'stopLossRs'],
   STOCKS_IN_PLAY: ['stopLossRs'],
   EMA_RSI_OPTIONS: ['symbol', 'stopLossRs', 'targetRs'],
-  STOCK_OPTIONS_BUYING: ['maxCapital', 'riskRewardRatio'],
   DAILY_SCALPER: ['symbol'],
-  NIFTY_OPTIONS_SCALPER: ['symbol'],
-  GAMMA_BLAST_EXPIRY: [],
 };
 
 const PRODUCTS = ['MIS', 'NRML', 'CNC'];
@@ -117,9 +113,6 @@ export function validateStrategyConfig(type: string, config: Cfg): string[] {
   if (isSet(config.symbol) && String(config.symbol).trim() === '') errors.push('Symbol must not be blank');
   if (type === 'STOCKS_IN_PLAY' && isSet(config.setup) && !['ORB', 'FADE', 'TREND', 'OI'].includes(String(config.setup))) {
     errors.push('Setup must be ORB, FADE, TREND or OI');
-  }
-  if (type === 'EMA_VWAP_OPTIONS' && isSet(config.symbol) && !['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(String(config.symbol))) {
-    errors.push('Symbol must be NIFTY, BANKNIFTY or SENSEX');
   }
 
   const times: Record<string, number> = {};

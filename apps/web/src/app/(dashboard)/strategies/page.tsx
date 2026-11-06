@@ -103,78 +103,6 @@ export default function StrategiesPage() {
     load();
   }, [load]);
 
-  // 1-Click Quick Deploy Preset: Stock Options Buying (80% Win Rate Architecture)
-  async function handleQuickDeployStockOptions() {
-    setActionId("quick-stock-options");
-    try {
-      const brokerRes = await brokerApi.list();
-      const accounts = brokerRes.data?.data ?? [];
-      const activeBroker = accounts.find((a: any) => a.isActive) || accounts[0];
-
-      if (!activeBroker) {
-        toast.error("Please connect a Zerodha broker account first in Brokers page");
-        return;
-      }
-
-      const res = await strategyApi.create({
-        name: "Auto F&O Stock Options Hunter (80% Profitability)",
-        type: "STOCK_OPTIONS_BUYING",
-        brokerAccountId: activeBroker.id,
-        isPaperTrade: false,
-        config: JSON.stringify({
-          symbol: "AUTO",
-          exchange: "NSE",
-          instrumentType: "STOCK",
-          isAutoStockSelect: true,
-          autoScanUniverse: "FNO_ALL",
-          directionBias: "BOTH",
-          setupType: "BOTH",
-          timeframe: "15min",
-          emaPeriod: 15,
-          riskRewardRatio: 2,
-          maxCapital: 25000,
-          lots: 1,
-          maxTradesPerDay: 1,
-          product: "MIS",
-          startAfterMin: 15,
-          triggerOffset: 0.5,
-          protectionBufferPct: 10,
-          minRvol: 1.25,
-          moneyness: "ITM",
-          target1RR: 1.5,
-          target2RR: 3.0,
-          enableTrailingSl: true,
-          trailingStepPct: 20,
-          enableHtfFilter: true,
-          enableMarketTrendFilter: true,
-          enableMiddayChopFilter: true,
-          middayDeadZoneStart: "11:30",
-          middayDeadZoneEnd: "13:00",
-          thetaCutoffMinutes: 25,
-          maxBidAskSpreadPct: 1.2,
-          oneWinAndDone: true,
-          oneLossAndDone: true,
-          enableDynamicSizing: true,
-        }),
-      });
-
-      const newStrategyId = res.data?.data?.id || res.data?.id;
-      if (newStrategyId) {
-        await strategyApi.setAutoStart(newStrategyId, true);
-        await strategyApi.start(newStrategyId);
-      }
-
-      toast.success("🚀 Stock Options Auto-Hunter Deployed!", {
-        description: "Scanning 180+ F&O stocks & armed to auto-start at 09:15 AM tomorrow.",
-      });
-      await load();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Failed to deploy strategy");
-    } finally {
-      setActionId(null);
-    }
-  }
-
   // 1-Click Quick Deploy Preset: Intraday Equity (₹500/day Target)
   async function handleQuickDeploy500() {
     setActionId("quick-500");
@@ -300,18 +228,10 @@ export default function StrategiesPage() {
       // Tab filter
       if (activeTab === "ACTIVE" && !s.isActive) return false;
       if (activeTab === "SCHEDULED" && !s.autoStart) return false;
-      if (
-        activeTab === "OPTIONS" &&
-        !s.type.includes("OPTIONS") &&
-        s.type !== "NIFTY_OPTIONS_SCALPER" &&
-        s.type !== "GAMMA_BLAST_EXPIRY"
-      )
-        return false;
-      if (
-        activeTab === "INTRADAY" &&
-        (s.type.includes("OPTIONS") || s.type === "NIFTY_OPTIONS_SCALPER" || s.type === "GAMMA_BLAST_EXPIRY")
-      )
-        return false;
+      // The 15-min breakout is the one index options strategy.
+      const isOptions = s.type === "BREAKOUT_15MIN" || s.type.includes("OPTIONS");
+      if (activeTab === "OPTIONS" && !isOptions) return false;
+      if (activeTab === "INTRADAY" && isOptions) return false;
 
       // Search query
       if (searchQuery.trim()) {
@@ -621,70 +541,7 @@ export default function StrategiesPage() {
       <section aria-labelledby="presets-title" className="space-y-3">
       <h2 id="presets-title" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Quick deploy presets</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {/* Card 1: Stock Options Buying preset */}
-        <div className="relative overflow-hidden rounded-lg border border-primary/30 bg-card p-4 flex flex-col justify-between gap-3 hover:border-primary/50 transition-all">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge className="bg-primary hover:bg-brand-hover text-primary-foreground font-semibold px-2 py-0 text-[9px] tracking-wider uppercase">
-                  Options buying
-                </Badge>
-                <Badge variant="outline" className="text-[9px] font-medium border-primary/30 text-accent-foreground bg-primary/5 gap-1 py-0">
-                  <Clock className="h-2.5 w-2.5" />
-                  09:15 AM
-                </Badge>
-              </div>
-              <span className="text-[10px] font-semibold text-accent-foreground bg-primary/10 px-2 py-0.5 rounded-md">
-                180+ F&amp;O Scanner
-              </span>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-sm text-foreground flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-accent-foreground shrink-0" />
-                Stock Option Auto-Hunter (Banker &amp; Runner)
-              </h4>
-              <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">
-                Scans 180+ F&amp;O stocks for 5%–10% momentum. Buys ITM options, books 50% at T1 (+50% ROI), trails SL to cost, and rides T2 (+100% ROI).
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2.5 text-[10px] text-muted-foreground pt-0.5 flex-wrap">
-              <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-accent-foreground" />
-                50% Lock @ T1
-              </span>
-              <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-accent-foreground" />
-                Breakeven Trail
-              </span>
-              <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-accent-foreground" />
-                NIFTY Macro Gate
-              </span>
-            </div>
-          </div>
-
-          <Button
-            onClick={handleQuickDeployStockOptions}
-            disabled={actionId === "quick-stock-options"}
-            className="w-full bg-primary hover:bg-brand-hover text-primary-foreground font-semibold h-8.5 text-xs shadow-md rounded-lg transition-all flex items-center justify-center gap-1.5 mt-1"
-          >
-            {actionId === "quick-stock-options" ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Deploying Options...
-              </>
-            ) : (
-              <>
-                <Zap className="h-3.5 w-3.5 fill-white" />
-                Deploy Options for Tomorrow
-              </>
-            )}
-          </Button>
-        </div>
-
-        {/* Card 2: Intraday Auto Stock Picker (Equity 5x MIS) */}
+        {/* Intraday Auto Stock Picker (Equity 5x MIS) */}
         <div className="relative overflow-hidden rounded-lg border border-profit/30 bg-card p-4 flex flex-col justify-between gap-3 hover:border-profit/50 transition-all">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -795,55 +652,35 @@ function StrategyCard({
 
   const is15Min = s.type === "BREAKOUT_15MIN";
   const isEmaVwap = s.type === "EMA_VWAP_CROSSOVER";
-  const isEmaVwapOptions = s.type === "EMA_VWAP_OPTIONS";
   const isStocksInPlay = s.type === "STOCKS_IN_PLAY";
-  const isNiftyScalper = s.type === "NIFTY_OPTIONS_SCALPER";
-  const isStockOptions = s.type === "STOCK_OPTIONS_BUYING";
-  const isGammaBlast = s.type === "GAMMA_BLAST_EXPIRY";
 
   const status: RunStatus = s.isActive ? "RUNNING" : s.latestExecution?.status === "COMPLETED" ? "COMPLETED" : "STOPPED";
   const paper = Boolean(s.isPaperTrade ?? cfg.isPaperTrade);
   const pnl = typeof s.todayPnl === "number" ? s.todayPnl : null;
 
-  const stopLossText = isEmaVwapOptions || isStocksInPlay
+  const stopLossText = isStocksInPlay
     ? `Max ₹${cfg.stopLossRs ?? 0}/trade`
-    : isStockOptions
-      ? "Breakeven @ T1"
-      : isGammaBlast
-        ? `${cfg.initialSlPct || 50}% premium`
-        : isNiftyScalper
-          ? "-7 pts"
-          : is15Min
-            ? "Candle SL"
-            : cfg.exitExactAtTarget
-              ? `Fixed ₹${cfg.stopLossRs ?? 500}`
-              : isEmaVwap
-                ? "Candle low"
-                : cfg.stopLossRs
-                  ? `₹${cfg.stopLossRs}`
-                  : "Dynamic";
+    : is15Min
+      ? "Candle SL"
+      : cfg.exitExactAtTarget
+        ? `Fixed ₹${cfg.stopLossRs ?? 500}`
+        : isEmaVwap
+          ? "Candle low"
+          : cfg.stopLossRs
+            ? `₹${cfg.stopLossRs}`
+            : "Dynamic";
 
   const targetText = isStocksInPlay
     ? "Hold to 15:05"
-    : isEmaVwapOptions
-    ? (cfg.targetMode === "PARTIAL" ? `Half at ${cfg.partialTargetR ?? 2}R + 15-EMA` : "15-EMA trail")
-    : isStockOptions
-      ? cfg.target1RR && cfg.target2RR
-        ? `1:${cfg.target1RR} / 1:${cfg.target2RR} RR`
-        : "1:1.5 / 1:3 RR"
-      : isGammaBlast
-        ? "2x to 5x ratchet"
-        : isNiftyScalper
-          ? `+${cfg.targetPoints ?? 10} pts`
-          : cfg.exitExactAtTarget
-            ? `Fixed ₹${cfg.targetRs ?? 500}`
-            : is15Min
-              ? "1:2 RR + trail"
-              : isEmaVwap
-                ? (cfg.targetMode === "PARTIAL" ? "Book half + 15-EMA trail" : cfg.targetMode === "QUICK" ? "Quick 0.5R + trail" : cfg.targetMode === "EMA" ? "15-EMA trail" : "0.5x daily ATR")
-                : cfg.targetRs
-                  ? `₹${cfg.targetRs}`
-                  : "Dynamic";
+    : cfg.exitExactAtTarget
+      ? `Fixed ₹${cfg.targetRs ?? 500}`
+      : is15Min
+        ? "1:2 RR + trail"
+        : isEmaVwap
+          ? (cfg.targetMode === "PARTIAL" ? "Book half + 15-EMA trail" : cfg.targetMode === "QUICK" ? "Quick 0.5R + trail" : cfg.targetMode === "EMA" ? "15-EMA trail" : "0.5x daily ATR")
+          : cfg.targetRs
+            ? `₹${cfg.targetRs}`
+            : "Dynamic";
 
   return (
     <Card

@@ -128,11 +128,7 @@ export function Step4BrokerReview({ form, set, brokers, errors, liveAck, onLiveA
               <EditLink step={1} onGoToStep={onGoToStep} label="instrument" />
             </div>
             <SummaryRow label="Instrument">{isAuto ? "Auto-selected each day" : `${form.symbol} (${form.exchange})`}</SummaryRow>
-            {form.type === "STOCK_OPTIONS_BUYING" ? (
-              <SummaryRow label="Capital per trade">{inr(Number(form.sMaxCapital))}</SummaryRow>
-            ) : (
-              <SummaryRow label="Position size">{isAuto ? `${form.lots} lot(s)` : `${form.lots} lot(s), ${totalQty} qty`}</SummaryRow>
-            )}
+            <SummaryRow label="Position size">{isAuto ? `${form.lots} lot(s)` : `${form.lots} lot(s), ${totalQty} qty`}</SummaryRow>
             <SummaryRow label="Product">{form.product}</SummaryRow>
             <SummaryRow label="Broker">{broker ? `${broker.broker.toUpperCase()} (${broker.clientId || "connected"})` : "None selected"}</SummaryRow>
           </div>

@@ -110,12 +110,12 @@ assert(
 );
 
 // 11. Engine stopWithStatus implementation
-const gammaEnginePath = path.join(root, 'apps/auth-service/src/strategy/gamma-blast-expiry.engine.ts');
-const gammaEngineContent = fs.readFileSync(gammaEnginePath, 'utf8');
+const breakoutEnginePath = path.join(root, 'apps/auth-service/src/strategy/breakout15min.engine.ts');
+const breakoutEngineContent = fs.readFileSync(breakoutEnginePath, 'utf8');
 assert(
-  gammaEngineContent.includes('async stopWithStatus(strategyId: string, status:') &&
-  gammaEngineContent.includes('autoStart: false'),
-  'gamma-blast-expiry.engine.ts has proper stopWithStatus and autoStart: false'
+  breakoutEngineContent.includes('async stopWithStatus(strategyId: string, status:') &&
+  breakoutEngineContent.includes('autoStart: false'),
+  'breakout15min.engine.ts has proper stopWithStatus and autoStart: false'
 );
 
 // 12. TickerService 403 backoff and market hours

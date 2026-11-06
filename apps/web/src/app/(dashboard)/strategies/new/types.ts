@@ -1,6 +1,6 @@
 export interface StrategyFormState {
   name: string;
-  type: "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "EMA_VWAP_OPTIONS" | "STOCKS_IN_PLAY" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "STOCK_OPTIONS_BUYING" | "NIFTY_OPTIONS_SCALPER" | "GAMMA_BLAST_EXPIRY" | "";
+  type: "BREAKOUT_15MIN" | "EMA_VWAP_CROSSOVER" | "STOCKS_IN_PLAY" | "EMA_RSI_OPTIONS" | "DAILY_SCALPER" | "";
   // Common
   symbol: string;
   exchange: string;
@@ -40,19 +40,6 @@ export interface StrategyFormState {
   /** EMA-VWAP stocks, AUTO mode: setups watched at once, tracked one included; the first to trigger is entered (1-5, default 1). */
   maxArmedSetups?: string;
   isOptionBuyingOnly: boolean;
-  // EMA-VWAP Options (NIFTY / BANKNIFTY / SENSEX; `symbol` holds the index, `stopLossRs` the max loss per trade)
-  evoMaxLots: string;
-  evoSlBufferPct: string;
-  evoMinSlBufferRs: string;
-  evoPartialTargetR: string;
-  /** EMA: whole position exits on a 5m close below the option's 15-EMA. PARTIAL: half at evoPartialTargetR first. */
-  evoTargetMode: "EMA" | "PARTIAL";
-  /** Also trade inside candles; off = EMA/VWAP crossover only. */
-  evoInsideCandle: boolean;
-  /** Crossover candle volume vs the previous 10 candles' average (0 = off). */
-  evoMinVolumeMultiple: string;
-  evoUseSameDayExpiry: boolean;
-  evoEntryCutoffTime: string;
   // Stocks-in-Play (`stopLossRs` = max loss per trade, `maxTradesPerDay` = max positions)
   /** FADE = short the overbought rollover of a gap-up stock in play (09:20-09:45); ORB = break of the first candle;
    *  TREND = first 15/40 EMA crossover of the top-RVOL stock(s), with the gap. */
@@ -90,51 +77,6 @@ export interface StrategyFormState {
   targetPct: string;
   slPct: string;
   startAfterMin: string;
-  // Daily Scalper & Nifty Options Scalper
-  dsCapital: string;
-  dsDailyTargetRs: string;
-  dsDailyMaxLossRs: string;
-  dsTargetPoints: string;
-  dsStopLossPoints: string;
-  dsMaxTradesPerDay: string;
-  dsTrailCostAtPoints?: string;
-  dsMaxLossesPerDay?: string;
-  dsEnablePartialBooking?: boolean;
-  dsPartialBookingPct?: string;
-  dsEnableVolumeSurge?: boolean;
-  dsEnableTrendBiasFilter?: boolean;
-  dsEnableMacroDayBias?: boolean;
-  dsTimeframe?: "3minute" | "5minute";
-  dsEnableDynamicSizing?: boolean;
-  dsMaxCapital?: string;
-  dsMaxLots?: string;
-  dsEnableTrapSniper?: boolean;
-  dsTrapSweepBufferPts?: string;
-  dsEnablePcrConfluence?: boolean;
-  // Stock Options Buying
-  sTimeframe: string;
-  sEmaPeriod: string;
-  sRiskRewardRatio: string;
-  sMaxCapital: string;
-  sTriggerOffset: string;
-  sProtectionBufferPct: string;
-  sDirectionBias: "BOTH" | "CALL_ONLY" | "PUT_ONLY";
-  sSetupType: "INSIDE_CANDLE" | "PULLBACK_REJECTION" | "BOTH";
-  sMoneyness: "ITM" | "ATM";
-  sIsAutoStockSelect: boolean;
-  sMinRvol: string;
-  sEnableMarketTrendFilter: boolean;
-  sEnableMiddayChopFilter: boolean;
-  sEnablePartialBooking: boolean;
-  sPartialBookingPct: string;
-  sMaxStagnantTimeMin: string;
-  sMaxWinsPerDay: string;
-  sMaxLossesPerDay: string;
-  sEnableHtfFilter: boolean;
-  sEnableTrailingSl: boolean;
-  sTarget1RR: string;
-  sTarget2RR: string;
-  sEnableDynamicSizing: boolean;
   // Breakout 15-Min Dynamic Upgrades
   b15EnableDynamicAtr: boolean;
   b15RiskRewardRatio: string;
@@ -164,24 +106,6 @@ export interface StrategyFormState {
   b15PartialBookingPct: string;
   b15PartialBookingR: string;
   b15EnableCprSupportResistance: boolean;
-  // Daily Index Scalper (SENSEX & NIFTY)
-  gbIndex: "AUTO" | "NIFTY" | "SENSEX";
-  gbTradingMode?: "FULL_DAY" | "AFTERNOON_ONLY";
-  gbEnableOrbMorningTrigger?: boolean;
-  gbEnableMiddayBreakout?: boolean;
-  gbMinPremiumNifty: string;
-  gbMaxPremiumNifty: string;
-  gbMinPremiumSensex: string;
-  gbMaxPremiumSensex: string;
-  gbStartTime: string;
-  gbEndTime: string;
-  gbEnableOiFilter: boolean;
-  gbEnableVolumeSurge: boolean;
-  gbEnableRatchetTrailing: boolean;
-  gbEnableHighConvictionBoost: boolean;
-  gbMaxConvictionLots: string;
-  gbEnablePartialProfitBooking: boolean;
-  gbInitialSlPct: string;
   // Broker
   brokerAccountId: string;
   isPaperTrade: boolean;

@@ -79,64 +79,7 @@ export function Step3RiskManagement({ form, set, errors }: Step3Props) {
       )}
 
       <Section title="Risk and sizing" description="The limits that protect your capital. Every trade follows these.">
-        {t === "STOCK_OPTIONS_BUYING" ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NumberField
-              label="Capital per trade"
-              prefix={"₹"}
-              value={form.sMaxCapital}
-              onChange={(v) => set("sMaxCapital", v)}
-              min={1}
-              required
-              hint="The most premium the strategy deploys on one trade."
-              error={errorFor(errors, ["Max capital"]) ?? (Number(form.sMaxCapital) > 0 ? null : "Enter an amount above 0.")}
-            />
-            <NumberField
-              label="Reward for every 1 risked"
-              suffix="x"
-              decimal
-              value={form.sRiskRewardRatio}
-              onChange={(v) => set("sRiskRewardRatio", v)}
-              min={0.1}
-              required
-              hint="2 means the target is twice the distance of the stop-loss."
-              error={errorFor(errors, ["Risk:reward"]) ?? (Number(form.sRiskRewardRatio) > 0 ? null : "Enter a ratio above 0.")}
-            />
-            {tradesField}
-          </div>
-        ) : t === "NIFTY_OPTIONS_SCALPER" ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NumberField
-              label="Stop-loss"
-              suffix="points"
-              value={form.dsStopLossPoints}
-              onChange={(v) => set("dsStopLossPoints", v)}
-              min={1}
-              decimal
-              hint="Exit if the option falls this many points. Placed on the exchange."
-              error={Number(form.dsStopLossPoints) > 0 ? null : "Enter a stop-loss above 0."}
-            />
-            <NumberField
-              label="Target"
-              suffix="points"
-              value={form.dsTargetPoints}
-              onChange={(v) => set("dsTargetPoints", v)}
-              min={1}
-              decimal
-              hint="First profit milestone."
-              error={Number(form.dsTargetPoints) > 0 ? null : "Enter a target above 0."}
-            />
-            {tradesField}
-            <NumberField
-              label="Stop for the day after losses"
-              value={form.dsMaxLossesPerDay || ""}
-              onChange={(v) => set("dsMaxLossesPerDay", v)}
-              min={1}
-              hint="Circuit-breaker: no more trades after this many stop-loss hits."
-              error={errorFor(errors, ["Max losses per day"])}
-            />
-          </div>
-        ) : t === "STOCKS_IN_PLAY" ? (
+        {t === "STOCKS_IN_PLAY" ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <NumberField
               label="Max loss per trade"
@@ -160,21 +103,6 @@ export function Step3RiskManagement({ form, set, errors }: Step3Props) {
               error={errorFor(errors, ["Max capital"])}
             />
           </div>
-        ) : t === "EMA_VWAP_OPTIONS" ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NumberField
-              label="Max loss per trade"
-              prefix={"₹"}
-              value={form.stopLossRs}
-              onChange={(v) => set("stopLossRs", v)}
-              min={1}
-              decimal
-              required
-              hint="Lots are sized so a stop-loss hit loses at most this. A setup where 1 lot already risks more is skipped."
-              error={errorFor(errors, ["Stop-loss"]) ?? (Number(form.stopLossRs) > 0 ? null : "Enter an amount above 0.")}
-            />
-            {tradesField}
-          </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <NumberField
@@ -189,7 +117,7 @@ export function Step3RiskManagement({ form, set, errors }: Step3Props) {
               error={errorFor(errors, ["Stop-loss"])}
             />
             <NumberField
-              label={t === "GAMMA_BLAST_EXPIRY" ? "Profit goal" : "Profit target per trade"}
+              label="Profit target per trade"
               prefix={"₹"}
               value={form.targetRs}
               onChange={(v) => set("targetRs", v)}

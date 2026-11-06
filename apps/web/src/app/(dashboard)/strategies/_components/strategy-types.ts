@@ -1,6 +1,5 @@
-import { BarChart2, Crosshair, Flame, Sparkles, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
+import { BarChart2, Flame, Sparkles, TrendingUp, type LucideIcon } from "lucide-react";
 import type { StrategyFormState } from "../new/types";
-import { getLotSize } from "../new/types";
 
 export type StrategyType = Exclude<StrategyFormState["type"], "">;
 export type RiskLevel = "Low" | "Medium" | "High";
@@ -49,28 +48,6 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
     },
   },
   {
-    type: "EMA_VWAP_OPTIONS",
-    label: "EMA-VWAP Index Options",
-    tagline: "Buys NIFTY, BANKNIFTY or SENSEX options when the option's own chart breaks out on a 15-EMA / VWAP crossover, then rides the 15-EMA.",
-    risk: "High",
-    riskNote: "Lots are sized so a stop-loss hit loses at most your max loss per trade.",
-    instrument: "Index options (NIFTY, BANKNIFTY, SENSEX)",
-    bestFor: "Trend days on the index, with fixed rupee risk",
-    timing: "09:25 to 15:00, square-off 15:05",
-    icon: Crosshair,
-    tile: "bg-signal-subtle text-signal border-signal/30",
-    defaultName: "EMA-VWAP Index Options",
-    defaults: {
-      symbol: "NIFTY",
-      exchange: "NFO",
-      instrumentType: "OPTION",
-      product: "MIS",
-      lots: "1",
-      stopLossRs: "3000",
-      maxTradesPerDay: "2",
-    },
-  },
-  {
     type: "STOCKS_IN_PLAY",
     label: "Stocks-in-Play",
     tagline: "At 09:20 finds the stocks trading 10x their usual opening volume. In-play Fade (default) shorts a gap-up one when MFI, Stochastic, Bollinger or CMF turns down by 09:45, with a fixed stop and target; Opening-range break shorts the break of its first candle.",
@@ -112,81 +89,6 @@ export const STRATEGY_TYPES: StrategyTypeMeta[] = [
       targetRs: "1500",
       stopLossRs: "1000",
       maxTradesPerDay: "2",
-    },
-  },
-  {
-    type: "NIFTY_OPTIONS_SCALPER",
-    label: "Nifty Options Scalper",
-    tagline: "Takes quick point-based scalps on index options, with an exchange stop-loss and a daily loss circuit-breaker.",
-    risk: "High",
-    riskNote: "Fast trades; lots can scale with your available margin.",
-    instrument: "Index options (NIFTY, SENSEX)",
-    bestFor: "Short scalps with tight, point-based risk",
-    timing: "From 09:20",
-    icon: Target,
-    tile: "bg-signal-subtle text-signal border-signal/30",
-    defaultName: "Nifty Options Scalper",
-    defaults: {
-      symbol: "NIFTY 50",
-      exchange: "NSE",
-      instrumentType: "INDEX",
-      product: "MIS",
-      lots: "1",
-      dsTargetPoints: "10",
-      dsStopLossPoints: "7",
-      maxTradesPerDay: "3",
-    },
-  },
-  {
-    type: "GAMMA_BLAST_EXPIRY",
-    label: "Daily Index Scalper",
-    tagline: "Trades NIFTY or SENSEX option breakouts through the day and trails profit as the option runs.",
-    risk: "High",
-    riskNote: "Options can move fast; the stop-loss is your main protection.",
-    instrument: "Index options (NIFTY / SENSEX)",
-    bestFor: "Active traders comfortable with fast option moves",
-    timing: "09:20 to 15:25",
-    icon: Zap,
-    tile: "bg-warn-subtle text-warn border-warn/30",
-    defaultName: "Daily Index Scalper",
-    defaults: {
-      symbol: "AUTO",
-      exchange: "NFO",
-      instrumentType: "OPTION",
-      product: "NRML",
-      lots: "1",
-      gbIndex: "AUTO",
-      gbStartTime: "09:20",
-      gbEndTime: "15:25",
-      gbEnableOiFilter: true,
-      gbEnableVolumeSurge: true,
-      gbEnableRatchetTrailing: true,
-      gbInitialSlPct: "50",
-      stopLossRs: "500",
-      targetRs: "1500",
-      maxTradesPerDay: "2",
-    },
-  },
-  {
-    type: "STOCK_OPTIONS_BUYING",
-    label: "Stock Option Auto-Hunter",
-    tagline: "Scans F&O stocks for the strongest mover, buys an option on it, and books profit in two steps.",
-    risk: "High",
-    riskNote: "You can lose the premium paid on a trade.",
-    instrument: "Stock options (auto-picked)",
-    bestFor: "Momentum days, hands-off stock selection",
-    timing: "From 09:15",
-    icon: Flame,
-    tile: "bg-brand-subtle text-accent-foreground border-primary/30",
-    defaultName: "Stock Option Auto-Hunter",
-    defaults: {
-      symbol: "AUTO",
-      exchange: "NSE",
-      instrumentType: "STOCK",
-      sIsAutoStockSelect: true,
-      sMaxCapital: "25000",
-      lots: "1",
-      maxTradesPerDay: "1",
     },
   },
 ];
@@ -233,30 +135,10 @@ const PRESETS: Record<string, Record<PresetLevel, P>> = {
     Balanced: { stopLossRs: "500", targetRs: "500", maxTradesPerDay: "2" },
     Aggressive: { stopLossRs: "800", targetRs: "1200", maxTradesPerDay: "3" },
   },
-  EMA_VWAP_OPTIONS: {
-    Conservative: { stopLossRs: "2000", maxTradesPerDay: "1" },
-    Balanced: { stopLossRs: "3000", maxTradesPerDay: "2" },
-    Aggressive: { stopLossRs: "5000", maxTradesPerDay: "3" },
-  },
   STOCKS_IN_PLAY: {
     Conservative: { stopLossRs: "250", maxTradesPerDay: "1" },
     Balanced: { stopLossRs: "400", maxTradesPerDay: "2" },
     Aggressive: { stopLossRs: "600", maxTradesPerDay: "3" },
-  },
-  GAMMA_BLAST_EXPIRY: {
-    Conservative: { stopLossRs: "300", targetRs: "1000", maxTradesPerDay: "1" },
-    Balanced: { stopLossRs: "500", targetRs: "1500", maxTradesPerDay: "2" },
-    Aggressive: { stopLossRs: "800", targetRs: "2500", maxTradesPerDay: "3" },
-  },
-  NIFTY_OPTIONS_SCALPER: {
-    Conservative: { dsStopLossPoints: "5", dsTargetPoints: "8", maxTradesPerDay: "2", dsMaxLossesPerDay: "1" },
-    Balanced: { dsStopLossPoints: "7", dsTargetPoints: "10", maxTradesPerDay: "3", dsMaxLossesPerDay: "2" },
-    Aggressive: { dsStopLossPoints: "10", dsTargetPoints: "20", maxTradesPerDay: "4", dsMaxLossesPerDay: "3" },
-  },
-  STOCK_OPTIONS_BUYING: {
-    Conservative: { sMaxCapital: "15000", sRiskRewardRatio: "2", maxTradesPerDay: "1", sMaxLossesPerDay: "1" },
-    Balanced: { sMaxCapital: "25000", sRiskRewardRatio: "2", maxTradesPerDay: "1", sMaxLossesPerDay: "1" },
-    Aggressive: { sMaxCapital: "50000", sRiskRewardRatio: "3", maxTradesPerDay: "2", sMaxLossesPerDay: "2" },
   },
 };
 PRESETS.EMA_RSI_OPTIONS = PRESETS.EMA_VWAP_CROSSOVER;
@@ -293,42 +175,8 @@ const n = (v: unknown) => {
 
 export function estimateRisk(form: StrategyFormState): RiskEstimate {
   const trades = Math.max(0, Math.floor(n(form.maxTradesPerDay)));
-  const lotSize = form.lotSize || getLotSize(form.symbol, form.lotSize);
-  const qty = Math.max(0, n(form.lots)) * lotSize;
 
   switch (form.type) {
-    case "STOCK_OPTIONS_BUYING": {
-      const perTrade = n(form.sMaxCapital);
-      const cap = Math.max(0, Math.floor(n(form.sMaxLossesPerDay) || 1));
-      return {
-        perTrade: perTrade || null,
-        perDay: perTrade ? perTrade * Math.min(trades, cap) : null,
-        targetPerTrade: null,
-        basis: "Worst case: the full premium you deploy, times the trades allowed before the daily loss limit.",
-      };
-    }
-    case "NIFTY_OPTIONS_SCALPER": {
-      const perTrade = n(form.dsStopLossPoints) * qty;
-      const cap = Math.max(0, Math.floor(n(form.dsMaxLossesPerDay) || 1));
-      const dyn = form.dsEnableDynamicSizing === true;
-      return {
-        perTrade: perTrade || null,
-        perDay: perTrade ? perTrade * Math.min(trades, cap) : null,
-        targetPerTrade: n(form.dsTargetPoints) * qty || null,
-        basis: dyn
-          ? `Stop-loss points x ${form.lots || 1} base lot(s). Dynamic sizing can add lots (up to ${form.dsMaxLots || 25}), which raises these numbers.`
-          : "Stop-loss points x quantity, times the trades allowed before the loss limit.",
-      };
-    }
-    case "EMA_VWAP_OPTIONS": {
-      const perTrade = n(form.stopLossRs);
-      return {
-        perTrade: perTrade || null,
-        perDay: perTrade ? perTrade * trades : null,
-        targetPerTrade: null,
-        basis: `Lots are sized so entry minus stop-loss stays within your max loss; a setup where 1 lot risks more is skipped. Gaps through the stop can lose a little more. Profit is not capped: ${form.evoTargetMode === "PARTIAL" ? `half is booked at ${form.evoPartialTargetR || 2}R and the rest rides the 15-EMA` : "the whole position rides the 15-EMA"}.`,
-      };
-    }
     case "STOCKS_IN_PLAY": {
       const perTrade = n(form.stopLossRs);
       if (form.sipSetup === "FADE") {

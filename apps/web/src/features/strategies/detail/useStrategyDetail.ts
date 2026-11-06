@@ -71,17 +71,12 @@ export function useStrategyDetail(id: string) {
   const qty = Math.abs(Number(liveState?.executedQty || liveState?.qty || strategy?.config?.qty || 1));
 
   // Determine trade direction:
-  // For options buying strategies, traders buy CE or PE contracts (always LONG the option contract).
+  // An option contract (CE/PE) is always bought, so the trade is LONG the option.
   // For stocks/futures (e.g. BEML, SBIN), short trades sell high first, profiting when currentLtp < entryPrice.
-  const isOptionBuyingStrategy =
-    strategy?.type === "NIFTY_OPTIONS_SCALPER" ||
-    strategy?.type === "STOCK_OPTIONS_BUYING" ||
-    strategy?.type === "GAMMA_BLAST_EXPIRY";
-
   const isRealOptionSymbol =
     Boolean(liveState?.optionSymbol && (liveState.optionSymbol.endsWith("CE") || liveState.optionSymbol.endsWith("PE")));
 
-  const isOptionTrade = isOptionBuyingStrategy || isRealOptionSymbol;
+  const isOptionTrade = isRealOptionSymbol;
 
   const isShort =
     !isOptionTrade &&
@@ -428,7 +423,6 @@ export function useStrategyDetail(id: string) {
     currentLtp,
     entryPrice,
     qty,
-    isOptionBuyingStrategy,
     isRealOptionSymbol,
     isOptionTrade,
     isShort,
@@ -494,10 +488,6 @@ export type DetailCtx = Omit<StrategyDetail, "strategy"> & {
   cfg: any;
   is15Min: any;
   isEmaVwap: any;
-  isEmaVwapOptions: boolean;
-  isNiftyScalper: any;
-  isStockOptions: any;
-  isGammaBlast: any;
   isDailyScalper: any;
 };
 
@@ -507,11 +497,7 @@ export function withStrategy(detail: StrategyDetail): DetailCtx | null {
   const cfg = strategy.config;
   const is15Min = strategy.type === "BREAKOUT_15MIN";
   const isEmaVwap = strategy.type === "EMA_VWAP_CROSSOVER";
-  const isEmaVwapOptions = strategy.type === "EMA_VWAP_OPTIONS";
-  const isNiftyScalper = strategy.type === "NIFTY_OPTIONS_SCALPER";
-  const isStockOptions = strategy.type === "STOCK_OPTIONS_BUYING";
-  const isGammaBlast = strategy.type === "GAMMA_BLAST_EXPIRY";
   const isDailyScalper = strategy.type === "DAILY_SCALPER";
 
-  return { ...detail, strategy, cfg, is15Min, isEmaVwap, isEmaVwapOptions, isNiftyScalper, isStockOptions, isGammaBlast, isDailyScalper };
+  return { ...detail, strategy, cfg, is15Min, isEmaVwap, isDailyScalper };
 }

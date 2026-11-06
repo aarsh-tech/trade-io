@@ -8,56 +8,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
   const qty = Number(form.lots || 1) * lotSize;
 
   let config: any;
-  if (form.type === "GAMMA_BLAST_EXPIRY") {
-    config = {
-      tradingMode: form.gbTradingMode === "AFTERNOON_ONLY" ? "AFTERNOON_GAMMA_ONLY" : "FULL_DAY_SCALPER",
-      enableOrbMorningTrigger: form.gbEnableOrbMorningTrigger !== false,
-      enableMiddayBreakout: form.gbEnableMiddayBreakout !== false,
-      symbol: form.symbol.trim() === "SENSEX" ? "SENSEX" : (form.symbol.trim() === "AUTO" ? "AUTO" : "NIFTY"),
-      exchange: form.symbol.trim() === "SENSEX" ? "BFO" : "NFO",
-      lots: Number(form.lots || 1),
-      product: form.product || "NRML",
-      maxTradesPerDay: Number(form.maxTradesPerDay || 2),
-      maxWinsPerDay: 1,
-      autoSelectStrike: true,
-      startTime: form.gbTradingMode === "AFTERNOON_ONLY" ? "13:00" : (form.gbStartTime || "09:20"),
-      endTime: form.gbEndTime || "15:25",
-      enableOiFilter: form.gbEnableOiFilter,
-      enableVolumeSurge: form.gbEnableVolumeSurge,
-      enableRatchetTrailing: form.gbEnableRatchetTrailing,
-      enableHighConvictionBoost: form.gbEnableHighConvictionBoost,
-      maxConvictionLots: Number(form.gbMaxConvictionLots || 3),
-      enablePartialProfitBooking: form.gbEnablePartialProfitBooking,
-      initialSlPct: Number(form.gbInitialSlPct || 50),
-      targetRs: Number(form.targetRs || 1000),
-      stopLossRs: Number(form.stopLossRs || 500),
-      targetPoints: Math.round(Number(form.targetRs || 1000) / (lotSize || 20)),
-      stopLossPoints: Math.round(Number(form.stopLossRs || 500) / (lotSize || 20)),
-      exitExactAtTarget: !!form.exitExactAtTarget,
-    };
-  } else if (form.type === "EMA_VWAP_OPTIONS") {
-    const index = ["NIFTY", "BANKNIFTY", "SENSEX"].includes(form.symbol.trim()) ? form.symbol.trim() : "NIFTY";
-    config = {
-      symbol: index,
-      exchange: index === "SENSEX" ? "BFO" : "NFO",
-      instrumentType: "OPTION",
-      product: form.product || "MIS",
-      emaPeriod: Number(form.emaPeriod || 15),
-      vwapSource: form.vwapSource || "close",
-      stopLossRs: Number(form.stopLossRs),
-      maxTradesPerDay: Number(form.maxTradesPerDay || 2),
-      maxLots: Number(form.evoMaxLots || 10),
-      slBufferPct: Number(form.evoSlBufferPct || 2),
-      minSlBufferRs: Number(form.evoMinSlBufferRs || 1),
-      targetMode: form.evoTargetMode === "PARTIAL" ? "PARTIAL" : "EMA",
-      insideCandleSetup: form.evoInsideCandle === true,
-      minVolumeMultiple: form.evoMinVolumeMultiple === "" || form.evoMinVolumeMultiple === undefined ? 1.5 : Number(form.evoMinVolumeMultiple),
-      partialTargetR: Number(form.evoPartialTargetR || 2),
-      partialBookFraction: 0.5,
-      useSameDayExpiry: form.evoUseSameDayExpiry === true,
-      entryCutoffTime: form.evoEntryCutoffTime || "15:00",
-    };
-  } else if (form.type === "STOCKS_IN_PLAY") {
+  if (form.type === "STOCKS_IN_PLAY") {
     const fade = form.sipSetup === "FADE";
     const trend = form.sipSetup === "TREND";
     const oi = form.sipSetup === "OI";
@@ -99,83 +50,6 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       leverage: Number(form.sipLeverage || 4),
       ...(Number(form.sipMaxCapital) > 0 && { maxCapital: Number(form.sipMaxCapital) }),
       entryCutoffTime: form.sipEntryCutoffTime || "15:00",
-    };
-  } else if (form.type === "NIFTY_OPTIONS_SCALPER") {
-    config = {
-      symbol: form.symbol.trim(),
-      exchange: form.exchange,
-      lots: Number(form.lots),
-      qty,
-      product: form.product,
-      emaPeriod: 15,
-      isOptionBuyingOnly: true,
-      targetPoints: Number(form.dsTargetPoints || 10),
-      stopLossPoints: Number(form.dsStopLossPoints || 7),
-      trailCostAtPoints: Number(form.dsTrailCostAtPoints || 6),
-      stopLossRs: Number(form.dsStopLossPoints || 7) * qty,
-      targetRs: Number(form.dsTargetPoints || 10) * qty,
-      maxTradesPerDay: Number(form.maxTradesPerDay || 2),
-      maxWinsPerDay: 1,
-      maxLossesPerDay: Number(form.dsMaxLossesPerDay || 2),
-      enablePartialBooking: form.dsEnablePartialBooking !== false,
-      partialBookingPct: Number(form.dsPartialBookingPct || 50),
-      enableMiddayChopFilter: false,
-      enableVolumeSurge: form.dsEnableVolumeSurge !== false,
-      enableTrendBiasFilter: form.dsEnableTrendBiasFilter !== false,
-      enableMacroDayBias: form.dsEnableMacroDayBias !== false,
-      entryStartTime: "09:20",
-      entryCutoffTime: "15:05",
-      timeframe: form.dsTimeframe || "5minute",
-      enableOrbTrigger: false,
-      enablePullbackTrigger: true,
-      enableRsiFilter: false,
-      enableRangeFilter: true,
-      enableStagnancyExit: true,
-      moneyness: "ITM",
-      enableAutoHybrid: form.symbol.toUpperCase().includes("HYBRID"),
-      enableDynamicSizing: form.dsEnableDynamicSizing === true,
-      maxCapital: form.dsMaxCapital ? Number(form.dsMaxCapital) : undefined,
-      maxLots: form.dsMaxLots ? Number(form.dsMaxLots) : 25,
-      enableTrapSniper: form.dsEnableTrapSniper === true,
-      trapSweepBufferPts: form.dsTrapSweepBufferPts ? Number(form.dsTrapSweepBufferPts) : undefined,
-      enablePcrConfluence: form.dsEnablePcrConfluence === true,
-    };
-  } else if (form.type === "STOCK_OPTIONS_BUYING") {
-    const isAuto = form.sIsAutoStockSelect || form.symbol === "AUTO";
-    config = {
-      symbol: isAuto ? "AUTO" : form.symbol.trim(),
-      exchange: "NSE",
-      timeframe: form.sTimeframe,
-      isAutoStockSelect: isAuto,
-      emaPeriod: Number(form.sEmaPeriod),
-      riskRewardRatio: Number(form.sRiskRewardRatio),
-      maxCapital: Number(form.sMaxCapital),
-      lots: Number(form.lots),
-      lotSize,
-      qty,
-      maxTradesPerDay: Number(form.maxTradesPerDay),
-      product: form.product,
-      startAfterMin: Number(form.startAfterMin),
-      triggerOffset: Number(form.sTriggerOffset),
-      protectionBufferPct: Number(form.sProtectionBufferPct),
-      directionBias: form.sDirectionBias,
-      setupType: form.sSetupType,
-      moneyness: form.sMoneyness,
-      minRvol: Number(form.sMinRvol || 1.25),
-      enableMarketTrendFilter: form.sEnableMarketTrendFilter !== false,
-      enableMiddayChopFilter: form.sEnableMiddayChopFilter !== false,
-      middayDeadZoneStart: "11:30",
-      middayDeadZoneEnd: "13:00",
-      enablePartialBooking: form.sEnablePartialBooking !== false,
-      partialBookingPct: Number(form.sPartialBookingPct || 50),
-      maxStagnantTimeMin: Number(form.sMaxStagnantTimeMin || 25),
-      maxWinsPerDay: Number(form.sMaxWinsPerDay || 1),
-      maxLossesPerDay: Number(form.sMaxLossesPerDay || 1),
-      enableHtfFilter: form.sEnableHtfFilter !== false,
-      enableTrailingSl: form.sEnableTrailingSl !== false,
-      target1RR: Number(form.sTarget1RR || 1.5),
-      target2RR: Number(form.sTarget2RR || 3.0),
-      enableDynamicSizing: form.sEnableDynamicSizing !== false,
     };
   } else if (form.type === "BREAKOUT_15MIN") {
     config = {
@@ -223,7 +97,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       }),
     };
   } else {
-    // EMA-VWAP Crossover trades stocks only (index options are EMA_VWAP_OPTIONS); the switch still applies to legacy types.
+    // EMA-VWAP Crossover trades stocks only ; the switch still applies to legacy types.
     const optionMode = form.type !== "EMA_VWAP_CROSSOVER" && form.isOptionBuyingOnly;
     config = {
       symbol: form.symbol.trim(),
