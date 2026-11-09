@@ -56,22 +56,6 @@ export function formatPct(value: number | null | undefined, opts: FormatOptions 
   return `${withSign(nf(decimals).format(value), value, signed)}%`;
 }
 
-/** Whole quantities / lots: 1,20,000. */
-export function formatQty(value: number | null | undefined): string {
-  if (!finite(value)) return EMPTY;
-  return nf(0).format(value);
-}
-
-/** 1.2 L / 3.4 Cr style compaction for large rupee figures in tight spaces. */
-export function formatCompactINR(value: number | null | undefined): string {
-  if (!finite(value)) return EMPTY;
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
-  if (abs >= 1e7) return `${sign}₹${nf(2).format(abs / 1e7)} Cr`;
-  if (abs >= 1e5) return `${sign}₹${nf(2).format(abs / 1e5)} L`;
-  return formatINR(value, { decimals: 0 });
-}
-
 /** "profit" | "loss" | "flat" — drives the semantic colour classes (never colour alone: also show the sign). */
 export function pnlTone(value: number | null | undefined): "profit" | "loss" | "flat" {
   if (!finite(value) || value === 0) return "flat";

@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plug, Plus, X, CheckCircle2, RefreshCcw, Trash2, ExternalLink, Copy, Check } from "lucide-react";
+import { Plug, Plus, X, CheckCircle2, RefreshCcw, Trash2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import Link from "next/link";

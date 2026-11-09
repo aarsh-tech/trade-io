@@ -19,7 +19,7 @@ import { requestTokenRefresh } from "@/lib/api";
 const REFRESH_INTERVAL_MS = 12 * 60 * 1000;
 
 export function useTokenRefresh() {
-  const { isAuthenticated, clearAuth } = useAuthStore();
+  const { isAuthenticated } = useAuthStore();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const silentRefresh = async () => {

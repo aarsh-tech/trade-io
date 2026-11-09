@@ -1,6 +1,5 @@
 "use client";
 
-import React from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Shield, Target, Zap, TrendingUp, Info, Activity, Timer } from "lucide-react";

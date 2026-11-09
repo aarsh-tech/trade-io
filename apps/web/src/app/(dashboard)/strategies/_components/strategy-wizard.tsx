@@ -168,7 +168,6 @@ export function StrategyWizard({
     }
   };
 
-  const meta = getTypeMeta(form.type);
   const title = isEdit ? "Edit strategy" : "Create strategy";
 
   return (

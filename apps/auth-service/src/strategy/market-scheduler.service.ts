@@ -125,7 +125,6 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
 
     const h = ist.getHours();
     const m = ist.getMinutes();
-    const s = ist.getSeconds();
     const hhmm = h * 60 + m;
 
     const MARKET_OPEN = 9 * 60 + 15; // 09:15

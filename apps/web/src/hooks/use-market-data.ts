@@ -5,11 +5,6 @@ import { findTick, useMarketStore } from "@/store/market-store";
 
 export type { MarketTick } from "@/store/market-store";
 
-/** Latest tick for one symbol; re-renders only when that symbol's tick changes. Does not subscribe. */
-export function useTick(symbol: string | null | undefined) {
-  return useMarketStore((s) => findTick(s, symbol));
-}
-
 /**
  * Subscribes to `symbols` on the shared market socket (ref-counted) and returns their live prices.
  * Only the requested symbols are selected, so the caller re-renders when one of them ticks, not on every tick.

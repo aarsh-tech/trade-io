@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings, ChevronDown, ChevronUp, RotateCcw, Plus, Minus, Loader2, AlertTriangle, X,
-  Zap, ShieldAlert, Target, CheckCircle2, Radio,
+  Zap, ShieldAlert, Target, CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

@@ -1,10 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
@@ -20,8 +19,6 @@ import {
   Globe,
   RefreshCw,
   CheckCircle2,
-  AlertTriangle,
-  Server,
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -33,7 +30,7 @@ interface BrokerSessionModalProps {
 }
 
 export function BrokerSessionModal({ open, onOpenChange }: BrokerSessionModalProps) {
-  const { brokers, isLoading } = useBrokers();
+  const { brokers } = useBrokers();
   const zerodhaAccount = brokers.find((b: any) => b.broker === "ZERODHA");
 
   const {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { OrderWindow, type BracketPreset } from "@/components/dashboard/OrderWindow";
+import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import { useMarketData } from "@/hooks/use-market-data";
 
 interface TradeSetup {

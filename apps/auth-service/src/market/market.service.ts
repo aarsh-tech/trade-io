@@ -41,7 +41,6 @@ export class MarketService {
     try {
       const symbols = instruments.map((s: any) => `${s.exchange}:${s.symbol}`);
       const quotes = await client.getLTP(symbols);
-      const hasQ = Object.keys(quotes).length > 0;
       return instruments.map((s: any) => {
         const exactKey = `${s.exchange}:${s.symbol}`;
         const ltpVal = quotes[exactKey] ?? quotes[`NSE:${s.symbol}`] ?? quotes[`NFO:${s.symbol}`] ?? quotes[`BSE:${s.symbol}`] ?? null;

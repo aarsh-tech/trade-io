@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { withKiteRetry } from '../brokers/kite-errors';
 import { Breakout15MinConfig } from './dto/strategy.dto';
-import { autoSelectStock, getInstrumentTickSize, roundToInstrumentTick } from './smart-stock-picker';
+import { autoSelectStock, getInstrumentTickSize } from './smart-stock-picker';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { strategyEvents } from '../common/events';

@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { brokerApi } from "@/lib/api";
 import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 
 import { queryKeys } from "@/lib/query-keys";
 import { TRADING_QUERY } from "@/lib/query-options";
@@ -11,7 +10,6 @@ export const PORTFOLIO_KEYS = queryKeys.portfolio;
 
 export function usePortfolio(brokerId?: string | null) {
   const queryClient = useQueryClient();
-  const router = useRouter();
 
   const holdingsQuery = useQuery({
     queryKey: PORTFOLIO_KEYS.holdings(brokerId || undefined),

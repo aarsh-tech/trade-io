@@ -17,7 +17,7 @@ import {
   Info,
   RefreshCcw
 } from "lucide-react";
-import { OrderWindow, type BracketPreset } from "@/components/dashboard/OrderWindow";
+import { OrderWindow } from "@/components/dashboard/OrderWindow";
 import { useMarketData } from "@/hooks/use-market-data";
 
 interface TradeSetup {

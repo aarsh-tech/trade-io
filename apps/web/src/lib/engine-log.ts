@@ -56,8 +56,3 @@ export function filterLogs(logs: ParsedLog[], filter: LogFilter, query: string):
   });
 }
 
-/** Most recent log of the given kind, newest first. */
-export function lastOfKind(logs: ParsedLog[], kind: LogKind): ParsedLog | undefined {
-  for (let i = logs.length - 1; i >= 0; i--) if (logs[i].kind === kind) return logs[i];
-  return undefined;
-}

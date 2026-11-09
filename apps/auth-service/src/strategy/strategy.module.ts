@@ -8,7 +8,6 @@ import { StocksInPlayEngine } from './stocks-in-play.engine';
 import { MarketSchedulerService } from './market-scheduler.service';
 import { BrokersModule } from '../brokers/brokers.module';
 import { PrismaModule } from '../prisma/prisma.module';
-import { SwingScannerModule } from '../swing-scanner/swing-scanner.module';
 import { MarketModule } from '../market/market.module';
 import { AuthModule } from '../auth/auth.module';
 import { RiskModule } from '../risk/risk.module';

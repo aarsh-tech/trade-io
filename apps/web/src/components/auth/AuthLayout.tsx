@@ -1,6 +1,6 @@
 "use client";
 
-import React, { ReactNode } from "react";
+import { ReactNode } from "react";
 import Link from "next/link";
 import { Zap } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";

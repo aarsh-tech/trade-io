@@ -70,11 +70,6 @@ function decipher(key: Buffer, ivHex: string, authTagHex: string, cipherHex: str
   return d.update(cipherHex, 'hex', 'utf8') + d.final('utf8');
 }
 
-/** True if the value is in the current versioned format. */
-export function isCurrentFormat(value: string | null | undefined): boolean {
-  return !!value && value.startsWith(VERSION_PREFIX);
-}
-
 export function decrypt(hash: string): string {
   if (!hash) return hash;
 

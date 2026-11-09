@@ -6,15 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Briefcase, TrendingUp, TrendingDown, RefreshCcw, Zap, Search,
-  ShoppingCart, Plus, Minus, Info, Box, Settings2, Calculator,
-  ChevronDown, MousePointer2, LayoutGrid, BarChart3, Clock, Wallet,
-  ArrowUpRight, ArrowDownRight, Layers, Activity, Loader2, CheckCircle2,
-  ShieldCheck, AlertCircle, Sparkles, ExternalLink
+  ShoppingCart, Wallet,
+  ArrowUpRight, ArrowDownRight, Layers, Activity, Loader2, ShieldCheck, Sparkles, ExternalLink
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
 import { usePortfolio } from "@/hooks/usePortfolio";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { OrderWindow } from "@/components/dashboard/OrderWindow";

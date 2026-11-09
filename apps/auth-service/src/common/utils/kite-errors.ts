@@ -17,14 +17,3 @@ export function isKiteAuthError(err: any): boolean {
   return msg.includes('incorrect `api_key` or `access_token`') || msg.includes('incorrect api_key or access_token');
 }
 
-/** True for errors that are worth a retry: network drops, timeouts, 429, 5xx. */
-export function isKiteTransientError(err: any): boolean {
-  if (!err) return false;
-  const code = String(err?.code ?? '');
-  const status = Number(err?.status ?? err?.response?.status ?? 0);
-  return (
-    ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(code) ||
-    status === 429 ||
-    status >= 500
-  );
-}

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import { useAuthStore } from "@/store";
 import { toast } from "sonner";
@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 export function useAuth() {
   const queryClient = useQueryClient();
-  const { setAuth, clearAuth } = useAuthStore();
+  const { clearAuth } = useAuthStore();
   const router = useRouter();
 
   const loginMutation = useMutation({

@@ -1,6 +1,5 @@
 "use client";
 
-import React from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StrategyFormState } from "../types";

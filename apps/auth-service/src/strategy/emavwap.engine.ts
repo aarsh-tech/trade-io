@@ -4134,7 +4134,7 @@ export class EmaVwapCrossoverEngine {
 
     // Calculate Dynamic Stock Volatility & Adaptive Metrics from Zerodha multi-day candles
     const metrics = this.calculateDynamicStockMetrics(candles, now, symbol || config.symbol);
-    const { pdh, pdl, pdc } = this.extractPdhPdlPdc(candles, now);
+    const { pdh, pdl } = this.extractPdhPdlPdc(candles, now);
 
     // Calculate Dynamic Average Candle Range (ATR/ACR) over last 10 candles
     const recentCandles = candles.slice(Math.max(0, lastIdx - 9), lastIdx + 1);

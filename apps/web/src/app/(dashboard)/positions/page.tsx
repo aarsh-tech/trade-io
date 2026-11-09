@@ -5,9 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Activity, TrendingUp, TrendingDown, RefreshCcw, AlertTriangle,
-  Zap, ArrowUpRight, ArrowDownRight, Layers, ShieldAlert, CheckCircle2,
-  Loader2
+  Activity, TrendingUp, RefreshCcw, Zap, ArrowUpRight, ArrowDownRight, Layers, ShieldAlert, Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBrokers } from "@/hooks/useBrokers";
@@ -39,7 +37,7 @@ const exchangeOf = (p: Position) =>
   p.exchange || (/(CE|PE|FUT)$/.test(p.symbol) ? (p.symbol.startsWith("SENSEX") || p.symbol.startsWith("BANKEX") ? "BFO" : "NFO") : "NSE");
 
 export default function PositionsPage() {
-  const { brokers = [], isLoading: brokersLoading } = useBrokers();
+  const { brokers = [] } = useBrokers();
   const [selectedBroker, setSelectedBroker] = useState<string | null>(null);
   const [squareOffPosition, setSquareOffPosition] = useState<Position | null>(null);
   const [showSquareOffAll, setShowSquareOffAll] = useState(false);

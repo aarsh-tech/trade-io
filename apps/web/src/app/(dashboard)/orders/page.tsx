@@ -6,9 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   ClipboardList, RefreshCcw, CheckCircle2, XCircle, Clock,
-  AlertCircle, ArrowUpRight, ArrowDownRight, Ban, Filter,
-  Layers, Search, Loader2, BookOpen, ShieldCheck, Sparkles,
-  Calendar, Check, ShieldAlert
+  Ban, Search, Loader2, BookOpen, ShieldCheck, Calendar
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -699,7 +697,7 @@ export default function OrdersPage() {
                 {filteredOrders.map((ord) => {
                   const isBuy = ord.side === "BUY";
                   const isOpen = ord.status === "OPEN" || ord.status === "PENDING";
-                  const { date, time } = formatDateTime(ord.createdAt);
+                  const { time } = formatDateTime(ord.createdAt);
                   const formatted = formatTradingSymbol(ord.symbol);
 
                   return (

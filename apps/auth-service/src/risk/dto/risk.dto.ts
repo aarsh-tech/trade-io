@@ -1,5 +1,5 @@
 import { IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
-import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateRiskSettingsDto {
   @ApiPropertyOptional({ description: 'Maximum allowable daily loss in INR before Kill Switch triggers', example: 5000 })

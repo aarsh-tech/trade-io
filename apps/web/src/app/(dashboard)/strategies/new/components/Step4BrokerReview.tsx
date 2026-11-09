@@ -1,6 +1,5 @@
 "use client";
 
-import React from "react";
 import { AlertTriangle, FlaskConical, Pencil, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StrategyFormState, BrokerAccount, getLotSize } from "../types";

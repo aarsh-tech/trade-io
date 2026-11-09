@@ -308,15 +308,6 @@ export class TickerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Disconnect and forget one account's ticker; its viewer sees `closed` on the next health pass. */
-  private removeTicker(accountId: string) {
-    const existing = this.tickers.get(accountId);
-    if (existing?.disconnect) {
-      try { existing.disconnect(); } catch (_) {}
-    }
-    this.tickers.delete(accountId);
-  }
-
   /**
    * Kite refused the websocket handshake as unauthorised. A refused socket alone isn't proof the login is dead,
    * so confirm over REST first: only a TokenException there retires the feed and marks the account EXPIRED

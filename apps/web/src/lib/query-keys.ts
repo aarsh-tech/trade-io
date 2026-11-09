@@ -72,4 +72,3 @@ export const queryKeys = {
   },
 } as const;
 
-export type QueryKeys = typeof queryKeys;
