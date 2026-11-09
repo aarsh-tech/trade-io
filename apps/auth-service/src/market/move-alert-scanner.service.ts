@@ -7,6 +7,7 @@ import { getSharedInstruments } from '../brokers/instrument-store';
 import { sendAlert } from '../common/utils/alert';
 import { NIFTY_500_UNIVERSE } from './market.constants';
 import { isTradingDay, istParts } from './market-calendar';
+import { TokenException, toKiteError } from '../brokers/kite-errors';
 
 /**
  * Move alerts: watches the NIFTY 500 + F&O universe for the moves the engines do not trade and tells you,
@@ -146,7 +147,11 @@ export class MoveAlertScannerService implements OnModuleInit, OnModuleDestroy {
       const kite = client['kite'] || client;
 
       if (!this.ranges) {
-        if (!this.rangesLoading) void this.loadRanges(client, kite);
+        if (!this.rangesLoading) {
+          // Before the day's Zerodha login the saved token is dead: one check here instead of 525 failing history calls every 3 minutes.
+          if (await this.isLoggedOut(kite)) { this.status = 'waiting for the Zerodha login'; return; }
+          void this.loadRanges(client, kite);
+        }
         this.status = 'preparing 5-day ranges';
         return;
       }
@@ -169,6 +174,16 @@ export class MoveAlertScannerService implements OnModuleInit, OnModuleDestroy {
       }
     } finally {
       this.busy = false;
+    }
+  }
+
+  /** True only when Zerodha says the session is invalid; any other failure lets the load go ahead as usual. */
+  private async isLoggedOut(kite: any): Promise<boolean> {
+    try {
+      await kite.getProfile();
+      return false;
+    } catch (e) {
+      return toKiteError(e) instanceof TokenException;
     }
   }
 

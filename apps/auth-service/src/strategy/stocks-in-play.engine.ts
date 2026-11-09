@@ -1803,7 +1803,12 @@ export class StocksInPlayEngine {
     }
 
     // Hard daily cap: re-count today's trades from Zerodha's order book (paper: saved orders) before every entry.
-    const tradesToday = await countTodaysTradesForEntry({ prisma: this.prisma, factory: this.factory, strategyId: state.strategyId, brokerAccountId: state.brokerAccountId, isPaper: state.isPaperTrade });
+    // The bid/ask is only recorded for later study, so it is not waited for here; the two checks run together to get the order out sooner.
+    const quoteAtEntry = this.readBidAsk(client, c.symbol);
+    const [tradesToday, liveCashNow] = await Promise.all([
+      countTodaysTradesForEntry({ prisma: this.prisma, factory: this.factory, strategyId: state.strategyId, brokerAccountId: state.brokerAccountId, isPaper: state.isPaperTrade }),
+      state.isPaperTrade ? Promise.resolve(null) : this.liveCash(client),
+    ]);
     if (tradesToday === null) {
       this.log(state, `⛔ Could not verify today's trade count (Zerodha and DB unreadable) — skipping ${c.symbol} to stay within the ${cfg.maxPositions}-trade limit.`);
       c.done = false; // try again on the next price
@@ -1821,7 +1826,7 @@ export class StocksInPlayEngine {
     if (state.isPaperTrade) {
       slotCapital = (cfg.maxCapital ?? 15000) / cfg.maxPositions;
     } else {
-      const cash = await this.liveCash(client);
+      const cash = liveCashNow;
       if (cash === null) {
         this.log(state, `⚠ Could not read the Zerodha margin — skipping ${c.symbol} rather than sizing blind.`);
         return;
@@ -1910,6 +1915,36 @@ export class StocksInPlayEngine {
         await this.exitPosition(state, client, p, 'NO_PROTECTION', p.ltp ?? fill.price);
       }
     }
+    await this.logEntryQuality(state, c, ltp, fill, quoteAtEntry);
+  }
+
+  /** Best bid and offer from a quote. Never throws; null when the quote or either side is missing. */
+  private async readBidAsk(client: any, symbol: string): Promise<{ bid: number; ask: number } | null> {
+    try {
+      const kite = client['kite'] || client;
+      const key = `NSE:${symbol}`;
+      const q = await kite.getQuote([key]);
+      const bid = Number(q?.[key]?.depth?.buy?.[0]?.price) || 0;
+      const ask = Number(q?.[key]?.depth?.sell?.[0]?.price) || 0;
+      return bid > 0 && ask > 0 ? { bid, ask } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Records what the entry cost against the price at the order and the bid/ask, to separate spread from price movement. Runs after the stop is placed. */
+  private async logEntryQuality(state: EngineState, c: Candidate, ltp: number, fill: { qty: number; price: number; orderId: string }, quote: Promise<{ bid: number; ask: number } | null>) {
+    try {
+      const q = await Promise.race([quote, sleep(3000).then(() => null)]);
+      const sign = c.side === 'LONG' ? 1 : -1;
+      // Positive = a worse price than expected, for either side.
+      const costPct = ((fill.price - ltp) * sign * 100) / ltp;
+      const touch = q ? (c.side === 'LONG' ? q.ask : q.bid) : null;
+      const spreadPct = q ? ((q.ask - q.bid) * 200) / (q.ask + q.bid) : null;
+      const vsTouchPct = touch ? ((fill.price - touch) * sign * 100) / touch : null;
+      this.log(state, `🔎 ${c.symbol} entry cost: price at the order ₹${ltp.toFixed(2)}, fill ₹${fill.price.toFixed(2)}, ${costPct.toFixed(3)}% (₹${(costPct * ltp * fill.qty / 100).toFixed(2)})${q ? ` | bid ₹${q.bid.toFixed(2)}, ask ₹${q.ask.toFixed(2)}, spread ${spreadPct!.toFixed(3)}%, fill vs ${c.side === 'LONG' ? 'ask' : 'bid'} ${vsTouchPct!.toFixed(3)}%` : ' | bid/ask unavailable'}`);
+      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: state.config.setup, event: 'ENTRY_QUOTE', symbol: c.symbol, side: c.side, ltpAtOrder: ltp, fill: fill.price, qty: fill.qty, orderId: fill.orderId, bid: q?.bid ?? null, ask: q?.ask ?? null, costPct, spreadPct, vsTouchPct, isPaper: state.isPaperTrade });
+    } catch { /* recording must not disturb trading */ }
   }
 
   /** MARKET order through the gateway, then the real fill from the order book. Null when nothing filled. */
