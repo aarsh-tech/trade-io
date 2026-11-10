@@ -4,6 +4,7 @@ import { GeneralKiteException, InputException, NetworkException, OrderException,
 import {
   classifyMarginError, isIntradayBlockedError, leverageText, MARGIN_CHECK_NOTIONAL, MarginInfo, marginInfoFromRow, marginRequest, qtyByCapital,
 } from '../src/strategy/sip-margin';
+import { getSurveillanceList, lastSurveillanceError, parseSurveillance, resetSurveillanceCache } from '../src/strategy/nse-surveillance';
 import { logSignal } from '../src/strategy/signal-logger';
 import { StocksInPlayEngine } from '../src/strategy/stocks-in-play.engine';
 
@@ -14,16 +15,27 @@ describe('sip-margin helpers', () => {
     expect(marginRequest('MRF', 'BUY', 150000).qty).toBe(1); // never 0 shares
   });
 
-  test('leverage = notional / margin, kept within 1x..5x', () => {
+  test('leverage = notional / margin, at most 5x', () => {
     const r = { symbol: 'X', side: 'SELL' as const, qty: 100, price: 500 }; // ₹50,000
     expect(marginInfoFromRow(r, { symbol: 'X', total: 10000, leverage: 5 })).toMatchObject({ kind: 'OK', leverage: 5, zerodhaLeverage: 5, marginRs: 10000, notionalRs: 50000 });
     expect(marginInfoFromRow(r, { symbol: 'X', total: 20000, leverage: null })).toMatchObject({ kind: 'OK', leverage: 2.5, zerodhaLeverage: null });
     // Netted against an opposite position: Zerodha blocks almost nothing; never more than 5x.
     expect(marginInfoFromRow(r, { symbol: 'X', total: 100, leverage: null })).toMatchObject({ kind: 'OK', leverage: 5 });
-    // More margin than the notional (should not happen): never below 1x.
-    expect(marginInfoFromRow(r, { symbol: 'X', total: 60000, leverage: null })).toMatchObject({ kind: 'OK', leverage: 1 });
     expect(marginInfoFromRow(r, { symbol: 'X', total: 0, leverage: null }).kind).toBe('UNKNOWN');
     expect(marginInfoFromRow(r, null).kind).toBe('UNKNOWN');
+  });
+
+  test('real 10 Nov answers: RELIANCE 5x, FINCABLES 4.1x, HFCL-BE 1x = not traded', () => {
+    const rel = { symbol: 'RELIANCE', side: 'SELL' as const, qty: 37, price: 1324.4 };
+    const fin = { symbol: 'FINCABLES', side: 'SELL' as const, qty: 40, price: 1232.4 };
+    const hfcl = { symbol: 'HFCL-BE', side: 'SELL' as const, qty: 242, price: 206.45 };
+    expect(marginInfoFromRow(rel, { symbol: 'RELIANCE', total: 9800.560000000001, leverage: null })).toMatchObject({ kind: 'OK', leverage: 5 });
+    expect(marginInfoFromRow(fin, { symbol: 'FINCABLES', total: 12018.3648, leverage: null })).toMatchObject({ kind: 'OK', leverage: 4.1 });
+    const h = marginInfoFromRow(hfcl, { symbol: 'HFCL-BE', total: 49965.74, leverage: null });
+    expect(h.kind).toBe('BLOCKED');
+    expect((h as any).reason).toBe('Zerodha gives no intraday leverage: ₹49966 margin for ₹49961 of stock (1.00x)');
+    // Just above the line is still traded.
+    expect(marginInfoFromRow(rel, { symbol: 'RELIANCE', total: 49003 / 1.1, leverage: null })).toMatchObject({ kind: 'OK', leverage: 1.1 });
   });
 
   test('only a clear "not allowed intraday" error counts as BLOCKED', () => {
@@ -112,7 +124,7 @@ describe('engine margin check', () => {
     expect(state.margins.get('AAA')).toMatchObject({ kind: 'OK', leverage: 5 });
     expect(state.margins.get('BBB')).toMatchObject({ kind: 'BLOCKED' });
     expect(state.candidates.map((c) => c.done)).toEqual([false, true]);
-    expect(logs.some((l) => l.includes('BBB NOT ALLOWED intraday'))).toBe(true);
+    expect(logs.some((l) => l.includes('BBB NOT TRADED (refused intraday)'))).toBe(true);
     expect(logs.at(-1)).toContain('BBB dropped: Zerodha does not allow it intraday');
   });
 
@@ -180,5 +192,73 @@ describe('engine margin check', () => {
     const waited = Date.now() - t0;
     expect(waited).toBeGreaterThanOrEqual(1400);
     expect(waited).toBeLessThan(3000);
+  });
+});
+
+describe('NSE surveillance list', () => {
+  // Trimmed from NSE's real 10 Nov 2026 answers.
+  const asm = {
+    longterm: { data: [
+      { symbol: 'HFCL', asmSurvIndicator: 'Stage IV' },
+      { symbol: 'ALLCARGO', asmSurvIndicator: 'Stage I' },
+    ] },
+    shortterm: { data: [{ symbol: 'EMUDHRA', asmSurvIndicator: 'Stage I' }] },
+  };
+  const gsm = [{ symbol: 'AGSTRA', gsmStage: 'LXII' }, { symbol: 'ALLCARGO', gsmStage: '0' }];
+  beforeEach(() => resetSurveillanceCache());
+
+  test('parses ASM long/short term and GSM into symbol -> label', () => {
+    const p = parseSurveillance(asm, gsm);
+    expect(p.asm).toBe(3);
+    expect(p.gsm).toBe(2);
+    expect(p.bySymbol.get('HFCL')).toBe('ASM long-term Stage IV');
+    expect(p.bySymbol.get('EMUDHRA')).toBe('ASM short-term Stage I');
+    expect(p.bySymbol.get('AGSTRA')).toBe('GSM stage LXII');
+    expect(p.bySymbol.get('ALLCARGO')).toBe('ASM long-term Stage I + GSM stage 0');
+    expect(p.bySymbol.has('RELIANCE')).toBe(false);
+  });
+
+  test('an unexpected answer is an error, never an empty list', () => {
+    expect(() => parseSurveillance({ message: 'blocked' }, gsm)).toThrow();
+    expect(() => parseSurveillance(asm, '<html>')).toThrow();
+  });
+
+  test('loaded once a day and shared', async () => {
+    const fetcher = jest.fn(async (e: string) => (e === 'reportASM' ? asm : gsm));
+    const a = await getSurveillanceList('2026-11-11', fetcher);
+    const b = await getSurveillanceList('2026-11-11', fetcher);
+    expect(a).toBe(b);
+    expect(fetcher).toHaveBeenCalledTimes(2); // ASM + GSM once
+    await getSurveillanceList('2026-11-12', fetcher);
+    expect(fetcher).toHaveBeenCalledTimes(4); // new day, new load
+  });
+
+  test('a failed load returns null and is retried at most once a minute', async () => {
+    const bad = jest.fn(async () => { throw new Error('NSE reportASM HTTP 403'); });
+    expect(await getSurveillanceList('2026-11-11', bad)).toBeNull();
+    expect(lastSurveillanceError()).toBe('NSE reportASM HTTP 403');
+    const good = jest.fn(async (e: string) => (e === 'reportASM' ? asm : gsm));
+    expect(await getSurveillanceList('2026-11-11', good)).toBeNull(); // within the minute: not asked again
+    expect(good).not.toHaveBeenCalled();
+    expect(await getSurveillanceList('2026-11-11', good, Date.now() + 61_000)).not.toBeNull();
+  });
+
+  test('engine: loads the list once, logs it, warns once when NSE is down', async () => {
+    const proto = StocksInPlayEngine.prototype as any;
+    const logs: string[] = [];
+    const self: any = { log: (_s: any, m: string) => logs.push(m) };
+    const state: any = { surveillance: null, survLogged: false };
+
+    // NSE down: one warning, null
+    const real = global.fetch;
+    (global as any).fetch = jest.fn(async () => ({ ok: false, status: 403, json: async () => ({}) }));
+    try {
+      expect(await proto.surveillanceFor.call(self, state, 200)).toBeNull();
+      expect(await proto.surveillanceFor.call(self, state, 200)).toBeNull();
+      expect(logs.filter((l) => l.startsWith('⚠ NSE')).length).toBe(1);
+      expect(logs[0]).toContain('HTTP 403');
+    } finally {
+      (global as any).fetch = real;
+    }
   });
 });

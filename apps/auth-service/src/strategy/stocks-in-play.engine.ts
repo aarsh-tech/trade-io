@@ -18,6 +18,7 @@ import { buildSrZones, describeZonesAhead, prevDayHighLow, zonesAhead } from './
 import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
 import { loadOiPicks, OiPick } from './oi-buildup-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
+import { getSurveillanceList, lastSurveillanceError, SurveillanceList } from './nse-surveillance';
 import { classifyMarginError, isTransientMarginError, leverageText, MARGIN_WAIT_MS, MarginInfo, marginInfoFromRow, marginRequest, MarginRequest, qtyByCapital } from './sip-margin';
 import { logSignal } from './signal-logger';
 import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from './symbol-claims';
@@ -304,6 +305,9 @@ interface EngineState {
   margins: Map<string, MarginInfo>;
   /** The margin check in flight (awaited briefly at the entry). */
   marginCheck: Promise<void> | null;
+  /** NSE's ASM/GSM list for today (stocks on it are never traded); null until loaded. */
+  surveillance: SurveillanceList | null;
+  survLogged: boolean;
 }
 
 interface OrderSnap {
@@ -392,6 +396,8 @@ export class StocksInPlayEngine {
       loggedNoSession: false,
       margins: new Map(),
       marginCheck: null,
+      surveillance: null,
+      survLogged: false,
       loggedCutoff: false,
       oi: config.setup === 'OI'
         ? { picks: null, signalDay: null, triedAt: 0, loggedWait: false, orderId: null, pick: null, symbol: null, limit: 0, qty: 0, tick: 0.05, lastCheck: 0, resolved: false, doneReason: null }
@@ -404,6 +410,7 @@ export class StocksInPlayEngine {
     }
 
     const mode = state.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING';
+    void this.surveillanceFor(state, 15_000);
     const sides = [config.allowShorts ? 'shorts' : null, config.allowLongs ? 'longs' : null].filter(Boolean).join(' + ');
     if (resumedLogs.length > 0) {
       this.log(state, `🔁 Engine reconnected — resuming console from the interrupted session (${mode})`);
@@ -1025,8 +1032,16 @@ export class StocksInPlayEngine {
       const tick = b.tick || 0.05;
       list.push({ symbol: sym, side, level: side === 'SHORT' ? f.l : f.h, stopDist: Math.max(tick * 4, cfg.stopAtrFraction * b.atr), rvol, tick, first: f, ltp: null, ltpAt: 0, done: false, candles: null, candlesAt: 0, checkedThrough: 0, armedUntil: 0, stopLevel: 0, crossSeen: new Set() });
     }
-    list.sort((a, b) => b.rvol - a.rvol);
-    state.candidates = list.slice(0, fade ? FADE_MAX_CANDIDATES : trend ? cfg.watchCount : MAX_CANDIDATES);
+    // NSE surveillance (ASM/GSM) stocks are never traded: dropped before ranking so they take no candidate slot.
+    const surv = await this.surveillanceFor(state, 500);
+    const restricted = surv ? list.filter((c) => surv.bySymbol.has(c.symbol)).sort((a, b) => b.rvol - a.rvol) : [];
+    if (restricted.length > 0) {
+      const shown = restricted.slice(0, 10).map((c) => `${c.symbol} (${surv!.bySymbol.get(c.symbol)}, ${c.rvol.toFixed(1)}x volume)`).join(', ');
+      this.log(state, `🚫 Not traded — on NSE's surveillance list: ${shown}${restricted.length > 10 ? ` and ${restricted.length - 10} more` : ''}`);
+    }
+    const tradeable = restricted.length > 0 ? list.filter((c) => !surv!.bySymbol.has(c.symbol)) : list;
+    tradeable.sort((a, b) => b.rvol - a.rvol);
+    state.candidates = tradeable.slice(0, fade ? FADE_MAX_CANDIDATES : trend ? cfg.watchCount : MAX_CANDIDATES);
     if (fade && state.candidates.length > 0) state.candidates = await this.dropNearCircuit(state, kite, state.candidates);
     // Zerodha's intraday leverage for every candidate, asked once now (in the background) so the entry needs no extra call.
     if (state.candidates.length > 0) {
@@ -1535,8 +1550,15 @@ export class StocksInPlayEngine {
     // Zerodha's intraday leverage for every pick, in one call (each stock is asked only once a day).
     await this.checkMargins(state, client, o.picks!.filter((p) => !state.tradedSymbols.has(p.symbol)).map((p) => ({ symbol: p.symbol, side: 'SHORT' as Side, price: p.close, tick: 0.05 })));
 
+    const surv = await this.surveillanceFor(state, 5_000);
+
     for (const pick of o.picks!) {
       if (state.tradedSymbols.has(pick.symbol)) continue;
+      const listed = surv?.bySymbol.get(pick.symbol);
+      if (listed) {
+        this.log(state, `🚫 ${pick.symbol} not traded — on NSE's surveillance list (${listed}).`);
+        continue;
+      }
       const m = state.margins.get(pick.symbol);
       if (m?.kind === 'BLOCKED') {
         this.log(state, `⏭ ${pick.symbol} skipped: Zerodha does not allow it intraday (${m.reason}).`);
@@ -2043,7 +2065,7 @@ export class StocksInPlayEngine {
           }
         }));
         // Same request format for every stock: if Zerodha answered for another one, a rejection is about this stock.
-        const otherAnswered = reqs.some((r) => state.margins.get(r.symbol)?.kind === 'OK');
+        const otherAnswered = reqs.some((r) => state.margins.has(r.symbol)); // only answered stocks are stored at this point
         for (const { r, e } of failed) {
           const reason = `${e?.name || 'Error'}: ${e?.message || e}`;
           state.margins.set(r.symbol, classifyMarginError(e, otherAnswered) === 'BLOCKED' ? { kind: 'BLOCKED', reason } : { kind: 'UNKNOWN', reason });
@@ -2054,7 +2076,7 @@ export class StocksInPlayEngine {
     const fallback = `${state.config.leverage}x`;
     const parts = reqs.map((r) => {
       const m = state.margins.get(r.symbol)!;
-      return m.kind === 'OK' ? `${r.symbol} ${m.leverage}x` : m.kind === 'BLOCKED' ? `${r.symbol} NOT ALLOWED intraday` : `${r.symbol} unknown (${m.reason}; ${fallback} fallback)`;
+      return m.kind === 'OK' ? `${r.symbol} ${m.leverage}x` : m.kind === 'BLOCKED' ? `${r.symbol} NOT TRADED (${m.reason.startsWith('Zerodha gives no intraday leverage') ? '1x' : 'refused intraday'})` : `${r.symbol} unknown (${m.reason}; ${fallback} fallback)`;
     });
     this.log(state, `🧮 Zerodha intraday leverage: ${parts.join(', ')}`);
     for (const r of reqs) {
@@ -2065,6 +2087,27 @@ export class StocksInPlayEngine {
         isPaper: state.isPaperTrade,
       });
     }
+  }
+
+  /**
+   * Today's NSE ASM/GSM list, waiting at most `waitMs` for the load. Logged once: the list size when it loads, or a
+   * warning when NSE cannot be read (trading then goes on; Zerodha's 1x answer still skips the strictest stocks).
+   */
+  private async surveillanceFor(state: EngineState, waitMs: number): Promise<SurveillanceList | null> {
+    const day = getIstDateStr(new Date());
+    if (state.surveillance?.day === day) return state.surveillance;
+    const list = await Promise.race([getSurveillanceList(day), sleep(waitMs).then(() => undefined)]);
+    if (list) {
+      state.surveillance = list;
+      this.log(state, `🛡 NSE surveillance list for ${day}: ${list.asm} ASM + ${list.gsm} GSM stocks — none of them is traded.`);
+      state.survLogged = false;
+      return list;
+    }
+    if (list === null && !state.survLogged) {
+      state.survLogged = true;
+      this.log(state, `⚠ NSE's ASM/GSM list could not be read (${lastSurveillanceError() || 'no answer'}) — retrying; until then stocks with no Zerodha intraday leverage (1x) are still skipped.`);
+    }
+    return null;
   }
 
   /** Drops the candidates Zerodha does not allow intraday, so their signals never send an order. */

@@ -44,12 +44,22 @@ export function marginRequest(symbol: string, side: MarginSide, price: number, t
   return { symbol, side, qty: Math.max(1, Math.floor(MARGIN_CHECK_NOTIONAL / px)), price: px };
 }
 
-/** Leverage = notional / margin Zerodha blocks, kept within 1x..5x. */
+/**
+ * At or below this, Zerodha asks for (about) the full order value: no intraday leverage. Such stocks are not traded
+ * (decided 10 Nov 2026; T2T stocks such as HFCL-BE answer exactly 1x instead of an error).
+ */
+export const NO_INTRADAY_LEVERAGE_MAX = 1.05;
+
+/** Leverage = notional / margin Zerodha blocks, at most 5x. About 1x (no intraday leverage) = BLOCKED. */
 export function marginInfoFromRow(req: MarginRequest, row: MarginRow | null | undefined): MarginInfo {
   const total = Number(row?.total);
   if (!row || !Number.isFinite(total) || total <= 0) return { kind: 'UNKNOWN', reason: 'Zerodha returned no margin' };
   const notional = req.qty * req.price;
-  const leverage = Math.min(MAX_MIS_LEVERAGE, Math.max(1, notional / total));
+  const raw = notional / total;
+  if (raw <= NO_INTRADAY_LEVERAGE_MAX) {
+    return { kind: 'BLOCKED', reason: `Zerodha gives no intraday leverage: ₹${total.toFixed(0)} margin for ₹${notional.toFixed(0)} of stock (${raw.toFixed(2)}x)` };
+  }
+  const leverage = Math.min(MAX_MIS_LEVERAGE, raw);
   const z = Number(row.leverage);
   return { kind: 'OK', leverage: Number(leverage.toFixed(2)), marginRs: total, notionalRs: notional, zerodhaLeverage: Number.isFinite(z) && z > 0 ? z : null };
 }
