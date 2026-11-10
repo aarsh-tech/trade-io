@@ -1,0 +1,30 @@
+name: tradeio_mobile
+description: "Tradeio Android app. Calls the same API (apps/auth-service) as the web app."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.11.1
+  flutter_riverpod: ^3.3.2
+  go_router: ^17.0.0
+  socket_io_client: ^3.1.6
+  flutter_secure_storage: ^10.3.4
+  freezed_annotation: ^3.1.0
+  json_annotation: ^4.9.0
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.5.4
+  freezed: ^3.1.0
+  json_serializable: ^6.9.5
+
+flutter:
+  uses-material-design: true
