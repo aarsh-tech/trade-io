@@ -98,6 +98,8 @@ final authControllerProvider = NotifierProvider<AuthController, AuthState>(AuthC
 /// Created here rather than in api_client.dart so the client can reach the controller
 /// without a circular import: the callbacks run later, never while providers are building.
 final apiClientProvider = Provider<ApiClient>((ref) {
+  // Recreate feature caches when the signed-in account changes.
+  ref.watch(authControllerProvider.select((s) => s is AuthSignedIn ? s.user.id : null));
   return ApiClient(
     ref.watch(tokenStoreProvider),
     onForceLogout: () => ref.read(authControllerProvider.notifier).handleForcedLogout(),

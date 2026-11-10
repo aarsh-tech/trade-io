@@ -7,10 +7,17 @@ import 'package:dio/dio.dart';
 /// This is the one place the envelope is opened; feature APIs never touch it.
 T unwrapData<T>(Response<dynamic> res) {
   final body = res.data;
-  if (body is Map<String, dynamic> && body.containsKey('data')) {
-    return body['data'] as T;
+  _checkFailure(body);
+  final data = body is Map<String, dynamic> && body.containsKey('data') ? body['data'] : body;
+  // Strategy engines return their own outcome inside the controller's data envelope.
+  _checkFailure(data);
+  return data as T;
+}
+
+void _checkFailure(dynamic body) {
+  if (body is Map<String, dynamic> && body['success'] == false) {
+    throw ApiException(body['message'] is String ? body['message'] as String : 'The request failed');
   }
-  return body as T;
 }
 
 /// Thrown by feature APIs for a response that was 2xx but not what we expected.
@@ -23,6 +30,10 @@ class ApiException implements Exception {
   @override
   String toString() => message;
 }
+
+/// True when the server answered the request (any HTTP status, or a 2xx failure envelope);
+/// false when the outcome is unknown because no response arrived (timeout, connection lost).
+bool serverAnswered(Object error) => error is ApiException || (error is DioException && error.response != null);
 
 /// Human-readable text for any error a request can throw.
 ///

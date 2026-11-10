@@ -4,6 +4,9 @@ formatter:
   page_width: 120
 
 analyzer:
+  errors:
+    # freezed puts @JsonKey on factory parameters by design; the analyzer can't see that.
+    invalid_annotation_target: ignore
   exclude:
     - "**/*.g.dart"
     - "**/*.freezed.dart"

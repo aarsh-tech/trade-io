@@ -1,6 +1,6 @@
 # Tradeio mobile — build plan
 
-Decided 10 Nov 2026. **Android only** for now (iOS needs a Mac). The app is a second client of the existing API; the backend does not change for it.
+Decided 10 Nov 2026. **Android only** for now (iOS needs a Mac). The app is a second client of the existing API; business rules stay on the backend. Implementation filled one missing shared cancel-order route already called by the web client.
 
 ## Why it fits the existing backend
 
@@ -20,10 +20,10 @@ dio · flutter_riverpod 3 · go_router 17 · socket_io_client 3 · flutter_secur
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Project, API client, token refresh, auth state, router with auth guard, theme (web tokens), login + 2FA, tab shell, enum-drift check, format helpers + tests, docs | **done 10 Nov** |
-| 1 | Dashboard (overview, movers, today summary), Positions (live P&L from `/market` ticks), Orders (list, cancel, day P&L, `order_update`) | next |
-| 2 | Strategies list + detail: live console over `/strategy`, start / stop / square-off, autoStart; edit form with the config bounds from `strategy-config.ts` | |
-| 3 | Brokers: accounts, Zerodha login in a webview, session renew; Risk: status, kill switch, settings | |
-| 4 | Live screener, move alerts, swing scanner, ledger | |
+| 1 | Dashboard (overview, movers, today summary), Positions (live P&L from `/market` ticks), Orders (list, cancel, day P&L, `order_update`), manual order ticket | **implemented 10 Nov** |
+| 2 | Strategies list + detail: live console over `/strategy`, start / stop / square-off, autoStart; create/edit form with the config bounds from `strategy-config.ts` | **implemented 10 Nov** |
+| 3 | Brokers: accounts, Zerodha login in a webview, session renew; Risk: status, kill switch, settings | **implemented 10 Nov** |
+| 4 | Live screener, move alerts, swing scanner, ledger | **implemented 10 Nov** |
 | later | Push notifications (FCM; needs one new backend endpoint for device tokens), theme override setting, IBM Plex fonts, release signing + Play listing | |
 | never | Admin screens | |
 
@@ -32,9 +32,19 @@ dio · flutter_riverpod 3 · go_router 17 · socket_io_client 3 · flutter_secur
 - `format.ts` → `core/utils/format.dart` ✔
 - `api.ts` refresh/retry rules → `core/network/api_client.dart` ✔
 - `socket.ts` reconnect rules → `core/socket/authed_socket.dart` ✔
-- `useLivePositions` P&L overlay → phase 1
-- `order-ticket.ts` qty/tick rounding → phase 1/3
-- `strategy-config.ts` bounds → phase 2
+- `useLivePositions` P&L overlay → `features/portfolio/live_pnl.dart` ✔
+- `order-ticket.ts` qty/tick rounding and limits → `features/orders/order_ticket.dart` ✔
+- `strategy-config.ts` bounds → `features/strategies/strategy_config.dart` ✔
+- `build-config.ts` + `form-defaults.ts` create-time defaults per type → `defaultStrategyConfig` in `strategy_config.dart` ✔ (change the web wizard's defaults and this together)
+- `useOrderTicket` idempotency-key rule (reuse only while the outcome is unknown) → `OrderAttempt` in `order_ticket.dart` ✔
+
+## Verification and remaining release work
+
+- Unit tests cover live P&L, models, config validation, tick/lot/order limits, IST day boundaries, callback URL/state checks, API contracts and account-cache isolation.
+- Widget smoke tests cover phone layouts with enlarged text; trading actions require explicit confirmation.
+- The broker cancel route expected by both clients was missing. It is now implemented in auth-service with ownership/session checks; deploy that backend change before testing cancellation against production.
+- Broker authentication, live order fills, strategy execution and the emergency stop still require an end-to-end check with a signed-in test account. Automated tests use fixtures and never place live orders.
+- Push notifications, theme override, fonts, production signing and the Play listing remain in the **later** phase above.
 
 ## Keeping web and mobile in sync
 

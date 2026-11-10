@@ -109,9 +109,8 @@ enum OrderStatus {
   final String wire;
 }
 
-/// For payloads parsed by hand (socket events, loose maps): the member whose wire value is
-/// [wire], or null for an unknown or missing value. Never throws, so a new server value
-/// can't crash a screen.
+/// The member whose wire value is [wire], or null for an unknown or missing value. Never
+/// throws, so a new server value can't crash a screen.
 T? enumFromWire<T extends Enum>(List<T> values, String Function(T) wireOf, Object? wire) {
   if (wire is! String) return null;
   for (final v in values) {
@@ -119,3 +118,12 @@ T? enumFromWire<T extends Enum>(List<T> values, String Function(T) wireOf, Objec
   }
   return null;
 }
+
+// Tolerant parsers for models: `@JsonKey(fromJson: orderStatusFromJson) OrderStatus? status`.
+// json_serializable's default enum decoding throws on an unknown value; these return null.
+BrokerType? brokerTypeFromJson(Object? v) => enumFromWire(BrokerType.values, (e) => e.wire, v);
+StrategyType? strategyTypeFromJson(Object? v) => enumFromWire(StrategyType.values, (e) => e.wire, v);
+OrderSide? orderSideFromJson(Object? v) => enumFromWire(OrderSide.values, (e) => e.wire, v);
+OrderType? orderTypeFromJson(Object? v) => enumFromWire(OrderType.values, (e) => e.wire, v);
+ProductType? productTypeFromJson(Object? v) => enumFromWire(ProductType.values, (e) => e.wire, v);
+OrderStatus? orderStatusFromJson(Object? v) => enumFromWire(OrderStatus.values, (e) => e.wire, v);

@@ -215,6 +215,7 @@ export const brokerApi = {
   placeOrder: (id: string, data: unknown, idempotencyKey?: string) =>
     api.post(`/brokers/${id}/orders`, data, idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined),
   placeGtt: (id: string, data: unknown) => api.post(`/brokers/${id}/gtt`, data),
+  /** Requests cancellation at an owned account; order_update supplies the final broker status. */
   cancelOrder: (id: string, orderId: string) => api.delete(`/brokers/${id}/orders/${orderId}`),
   tickSize: (id: string, symbol: string, exchange: string) =>
     api.get(`/brokers/${id}/tick-size`, { params: { symbol, exchange } }),

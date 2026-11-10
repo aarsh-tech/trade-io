@@ -92,6 +92,13 @@ export class BrokersController {
     return { success: true, data: result };
   }
 
+  @Delete(':id/orders/:orderId')
+  @ApiOperation({ summary: 'Request cancellation of an order at an owned broker account' })
+  async cancelOrder(@Request() req, @Param('id') id: string, @Param('orderId') orderId: string) {
+    await this.brokersService.cancelOrder(req.user.id, id, orderId);
+    return { success: true, message: 'Cancellation requested' };
+  }
+
   @Get(':id/tick-size')
   @ApiOperation({ summary: 'Get tick size for an instrument' })
   async getTickSize(

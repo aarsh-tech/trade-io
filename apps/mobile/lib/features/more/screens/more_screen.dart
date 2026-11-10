@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/auth/auth_controller.dart';
 import '../../../core/config/app_config.dart';
+import '../../../router.dart';
 
-/// Account, app info and sign-out. Settings, brokers and risk controls plug in here later.
+/// Account, trading tools, broker sessions, risk controls and sign-out.
 class MoreScreen extends ConsumerWidget {
   const MoreScreen({super.key});
 
@@ -42,6 +44,27 @@ class MoreScreen extends ConsumerWidget {
               subtitle: Text(user?.email ?? ''),
               trailing:
                   user?.role == null ? null : Chip(label: Text(user!.role!), visualDensity: VisualDensity.compact),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Column(
+              children: [
+                for (final item in [
+                  (Icons.account_balance_outlined, 'Broker accounts', Routes.brokers),
+                  (Icons.shield_outlined, 'Risk management', Routes.risk),
+                  (Icons.filter_alt_outlined, 'Live screener', Routes.screener),
+                  (Icons.notifications_active_outlined, 'Move alerts', Routes.moveAlerts),
+                  (Icons.radar, 'Swing scanner', Routes.swing),
+                  (Icons.book_outlined, 'P&L ledger', Routes.ledger),
+                ])
+                  ListTile(
+                    leading: Icon(item.$1),
+                    title: Text(item.$2),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push(item.$3),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 12),

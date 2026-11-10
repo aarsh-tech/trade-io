@@ -241,6 +241,29 @@ export class BrokersService {
     return client.getTickSize(symbol, exchange);
   }
 
+  async cancelOrder(userId: string, accountId: string, orderId: string): Promise<void> {
+    const account = await this.prisma.brokerAccount.findUnique({ where: { id: accountId } });
+    if (!account || account.userId !== userId) throw new NotFoundException('Account not found');
+    if (!account.accessToken || account.tokenHealth === 'EXPIRED') {
+      throw new BadRequestException('Broker session expired. Sign in to the broker again.');
+    }
+    if (!orderId.trim() || /^(PAPER_|ORDER_)/i.test(orderId)) {
+      throw new BadRequestException('A real broker order ID is required');
+    }
+    try {
+      await this.factory.createClient(account).cancelOrder(orderId);
+      this.clearAccountCache(accountId, userId);
+      // The broker postback is authoritative for final status and partial fills.
+    } catch (err: any) {
+      if (this.isTokenExpiredError(err)) {
+        await this.markTokenExpired(accountId);
+        throw new BadRequestException('Broker session expired. Sign in to the broker again.');
+      }
+      if (err instanceof HttpException) throw err;
+      throw new BadRequestException(err?.message || 'Broker refused the cancellation request');
+    }
+  }
+
 
   async setSession(userId: string, accountId: string, requestToken: string, state?: string) {
     const acc = await this.prisma.brokerAccount.findUnique({

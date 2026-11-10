@@ -24,6 +24,7 @@ class AuthedSocket {
     socket = io.io(
       '${AppConfig.socketBaseUrl}$namespace',
       io.OptionBuilder()
+          .enableForceNew()
           // Plain websocket only: the Dart client's long-polling fallback is unreliable and the
           // gateway accepts websocket upgrades directly.
           .setTransports(['websocket'])
