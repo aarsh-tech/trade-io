@@ -108,7 +108,8 @@ export default function OrdersPage() {
       return (res.data?.data || []) as Order[];
     },
     staleTime: 10_000,
-    refetchInterval: 10_000,
+    // Fills/rejections arrive as socket `order_update` events, which refetch this at once; the timer is a fallback.
+    refetchInterval: 30_000,
     ...TRADING_QUERY,
   });
 

@@ -80,6 +80,9 @@ async function bootstrap() {
       return callback(new Error(`Blocked by CORS: ${origin}`), false);
     },
     credentials: true,
+    // The web app (tradeio.site) calls api.tradeio.site, so every authed request needs an OPTIONS preflight.
+    // Without Access-Control-Max-Age, Chrome re-sends it after 5s, doubling each API round trip. 2h is Chrome's cap.
+    maxAge: 7200,
   });
 
   // Global prefix

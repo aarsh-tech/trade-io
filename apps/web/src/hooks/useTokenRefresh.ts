@@ -1,74 +1,61 @@
 /**
  * useTokenRefresh — Proactive silent token refresh
  *
- * Runs every REFRESH_INTERVAL_MS (default 12 min) and silently exchanges the
- * refresh token for a new access token BEFORE the current one expires.
- * This prevents 401 logouts during idle periods (no user-triggered API calls).
- *
- * The access token is currently issued for 8h, but this hook refreshes every
- * 12 min as a belt-and-suspenders measure, ensuring the token is always fresh.
+ * Exchanges the refresh token for a new access token shortly BEFORE the current one expires, so an idle tab
+ * never hits a 401 logout. It reads the token's own `exp`, so it only calls the server when a refresh is due
+ * (the access token lasts 8h); a check every few minutes and on tab focus costs nothing.
  */
 
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useAuthStore } from "@/store";
 import { requestTokenRefresh } from "@/lib/api";
 
-// Refresh 12 minutes — well before any reasonable access-token expiry
-const REFRESH_INTERVAL_MS = 12 * 60 * 1000;
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+/** Refresh once the access token has less than this left. Comfortably above the check interval. */
+const REFRESH_BEFORE_EXPIRY_MS = 30 * 60 * 1000;
+
+/** The access token's expiry in ms, or null if it can't be read (then we refresh, as before). */
+function accessTokenExpiryMs(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof json.exp === "number" ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
 
 export function useTokenRefresh() {
   const { isAuthenticated } = useAuthStore();
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const silentRefresh = async () => {
-    // Don't run if not authenticated
-    if (!isAuthenticated) return;
-
-    const refreshToken = typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
-    if (!refreshToken) {
-      return;
-    }
-
-    try {
-      await requestTokenRefresh();
-    } catch (err: any) {
-      console.warn("[TokenRefresh] Silent refresh noticed:", err?.message);
-    }
-  };
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      // Clear any running timer when logged out
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      return;
-    }
+    if (!isAuthenticated) return;
 
-    // Run once immediately on mount (catches tokens close to expiry after page reload)
-    silentRefresh();
-
-    // Then refresh on schedule
-    timerRef.current = setInterval(silentRefresh, REFRESH_INTERVAL_MS);
-
-    // Refresh automatically when tab becomes visible again after being idle
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        silentRefresh();
+    const refreshIfDue = async () => {
+      if (!localStorage.getItem("refreshToken")) return;
+      const access = localStorage.getItem("accessToken");
+      const exp = access ? accessTokenExpiryMs(access) : null;
+      if (exp !== null && exp - Date.now() > REFRESH_BEFORE_EXPIRY_MS) return;
+      try {
+        await requestTokenRefresh();
+      } catch (err: any) {
+        console.warn("[TokenRefresh] Silent refresh noticed:", err?.message);
       }
     };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Once on mount (a reload near expiry), on a schedule, and when the tab comes back after being idle.
+    refreshIfDue();
+    const timer = setInterval(refreshIfDue, CHECK_INTERVAL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshIfDue();
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 }

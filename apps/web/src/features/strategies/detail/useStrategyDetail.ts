@@ -233,9 +233,11 @@ export function useStrategyDetail(id: string) {
     };
   }, [id, applyLogs]);
 
-  // Periodic status & strategy synchronization to guarantee state and trades started from mobile are synced on desktop
+  // Periodic status & strategy synchronization to guarantee state and trades started from mobile are synced on desktop.
+  // The /strategy socket pushes every engine event, so this is only a safety net: slow while the socket is up, and
+  // skipped in a hidden tab (it catches up the moment the tab is shown again). Errors stay quiet: it is a background sync.
   useEffect(() => {
-    const interval = setInterval(async () => {
+    const sync = async () => {
       try {
         const [statusRes, stratRes] = await Promise.all([
           strategyApi.status(id),
@@ -252,8 +254,18 @@ export function useStrategyDetail(id: string) {
           }
         }
       } catch { }
-    }, isWsConnected ? 20000 : 10000);
-    return () => clearInterval(interval);
+    };
+    const interval = setInterval(() => {
+      if (document.visibilityState !== "hidden") sync();
+    }, isWsConnected ? 60000 : 10000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [id, isWsConnected, applyLogs]);
 
   async function toggleEngine() {
