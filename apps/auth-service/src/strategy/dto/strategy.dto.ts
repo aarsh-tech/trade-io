@@ -150,7 +150,7 @@ export interface StocksInPlayConfig {
   allowShorts?: boolean;               // trade red first candles short (default true)
   allowLongs?: boolean;                // trade green first candles long (default false: no edge in the backtest)
   leverage?: number;                   // intraday leverage used for sizing (default 4, max 5)
-  maxCapital?: number;                 // live: cap on capital used; paper: capital (default ₹15,000)
+  // Capital is not configurable: sized on the free Zerodha funds at each entry (paper: the same, else ₹15,000).
   entryCutoffTime?: string;            // no new entries from this IST time (default '15:00'; square-off is 15:05)
 }
 

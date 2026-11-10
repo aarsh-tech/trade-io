@@ -48,7 +48,6 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       allowShorts: true,
       allowLongs: trend || (!fade && !oi && form.sipAllowLongs === true),
       leverage: Number(form.sipLeverage || 4),
-      ...(Number(form.sipMaxCapital) > 0 && { maxCapital: Number(form.sipMaxCapital) }),
       entryCutoffTime: form.sipEntryCutoffTime || "15:00",
     };
   } else if (form.type === "BREAKOUT_15MIN") {

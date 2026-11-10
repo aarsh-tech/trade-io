@@ -88,18 +88,8 @@ export function Step3RiskManagement({ form, set, errors }: Step3Props) {
               min={1}
               decimal
               required
-              hint="Shares are sized so the stop loses at most this. Capital usually limits the size first."
+              hint="Shares are sized so the stop loses at most this, within your free Zerodha funds (read at each entry, nothing to enter)."
               error={errorFor(errors, ["Stop-loss"]) ?? (Number(form.stopLossRs) > 0 ? null : "Enter an amount above 0.")}
-            />
-            <NumberField
-              label="Capital to use"
-              prefix={"₹"}
-              value={form.sipMaxCapital}
-              onChange={(v) => set("sipMaxCapital", v)}
-              min={0}
-              decimal
-              hint="Optional cap. Live: at most your free Zerodha margin. Paper: blank means ₹15,000."
-              error={errorFor(errors, ["Max capital"])}
             />
           </div>
         ) : (

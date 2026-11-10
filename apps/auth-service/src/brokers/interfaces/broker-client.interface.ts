@@ -66,6 +66,18 @@ export interface OrderChargeParams {
   avgPrice: number;
 }
 
+/** A prospective order for the order-margin check (nothing is placed). */
+export interface OrderMarginParams {
+  symbol: string;
+  exchange: string;
+  side: 'BUY' | 'SELL';
+  product: string;
+  orderType: string;
+  qty: number;
+  /** LIMIT price (0 for MARKET). */
+  price?: number;
+}
+
 /**
  * Why an order is being placed. Only ENTRY orders are subject to the kill switch,
  * per-order user limits, rate limiting and dedup; exits and protective (SL/target)
@@ -107,6 +119,8 @@ export interface IBrokerClient {
     symbols: string[],
   ): Promise<Record<string, { ltp: number; close: number | null; volume: number | null; exchangeTs: string | null }>>;
   getMargins(): Promise<any>;
+  /** Zerodha's margin for prospective orders, one row per order; throws when the broker refuses. */
+  getOrderMargins?(orders: OrderMarginParams[]): Promise<{ symbol: string; total: number; leverage: number | null }[]>;
   getOrder(orderId: string): Promise<Order>;
   cancelOrder(orderId: string): Promise<void>;
   modifyOrder?(orderId: string, params: { price?: number; triggerPrice?: number; quantity?: number; variety?: string }): Promise<void>;

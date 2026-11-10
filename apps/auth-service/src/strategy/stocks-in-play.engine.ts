@@ -18,6 +18,7 @@ import { buildSrZones, describeZonesAhead, prevDayHighLow, zonesAhead } from './
 import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
 import { loadOiPicks, OiPick } from './oi-buildup-signals';
 import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
+import { classifyMarginError, isTransientMarginError, leverageText, MARGIN_WAIT_MS, MarginInfo, marginInfoFromRow, marginRequest, MarginRequest, qtyByCapital } from './sip-margin';
 import { logSignal } from './signal-logger';
 import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from './symbol-claims';
 
@@ -91,6 +92,8 @@ type Setup = 'ORB' | 'FADE' | 'TREND' | 'OI';
 const SQUARE_OFF_HHMM = 15 * 60 + 5;
 const FIRST_CANDLE_CLOSE_HHMM = 9 * 60 + 20;
 const DEFAULT_ENTRY_CUTOFF = '15:00';
+/** Paper sizing when the Zerodha funds cannot be read (no login today). */
+const PAPER_FALLBACK_FUNDS = 15_000;
 /** Live: if the price sits beyond the SL this long without the broker SL filling, exit at market. */
 const SL_BREACH_GRACE_MS = 3000;
 /** Do not enter a breakout the price has already run past by more than this share of the stop distance. */
@@ -184,7 +187,6 @@ interface ResolvedConfig {
   allowLongs: boolean;
   allowShorts: boolean;
   leverage: number;
-  maxCapital: number | null;
   entryCutoffTime: string;
   /** TREND: stocks watched from 09:20 (highest first-candle RVOL first). */
   watchCount: number;
@@ -298,6 +300,10 @@ interface EngineState {
   lastDbPersistTime?: number;
   /** OI setup only. */
   oi: OiState | null;
+  /** Zerodha's intraday margin per candidate stock (asked once, when the candidates are known). */
+  margins: Map<string, MarginInfo>;
+  /** The margin check in flight (awaited briefly at the entry). */
+  marginCheck: Promise<void> | null;
 }
 
 interface OrderSnap {
@@ -384,6 +390,8 @@ export class StocksInPlayEngine {
       subscribed: new Set(),
       lastPnlLog: 0,
       loggedNoSession: false,
+      margins: new Map(),
+      marginCheck: null,
       loggedCutoff: false,
       oi: config.setup === 'OI'
         ? { picks: null, signalDay: null, triedAt: 0, loggedWait: false, orderId: null, pick: null, symbol: null, limit: 0, qty: 0, tick: 0.05, lastCheck: 0, resolved: false, doneReason: null }
@@ -404,14 +412,14 @@ export class StocksInPlayEngine {
       this.log(state, `⚙ From NSE's end-of-day files: the stock that fell >= 3% yesterday while its futures open interest rose the most (5–80%, not an expiry day, >= ₹25 Cr traded) | SHORT in the 09:00–09:07 pre-open auction with a SELL LIMIT ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close (fills at the 09:15 opening price; no fill on a bigger gap down = no trade) | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Broker SL from 09:15 | Max loss/trade ₹${config.stopLossRs} | 1 trade/day | Square-off 15:05`);
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x | Square-off 15:05`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: watch the ${config.watchCount} stock(s) with the highest first 5m candle volume vs usual (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Each side's first 15/40 EMA crossover on the 5m closes 09:25–14:30: BUY when the 15-EMA crosses above the 40-EMA with the close above VWAP, SHORT when it crosses below with the close below VWAP${config.withGapOnly ? ' | Only with the gap: a gap-up stock is never shorted, a gap-down stock never bought' : ''} | Stop at the day low/high | Exit when the 15-EMA crosses back, else 15:05 | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, ${config.leverage}x`);
+      this.log(state, `⚙ At 09:20: watch the ${config.watchCount} stock(s) with the highest first 5m candle volume vs usual (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Each side's first 15/40 EMA crossover on the 5m closes 09:25–14:30: BUY when the 15-EMA crosses above the 40-EMA with the close above VWAP, SHORT when it crosses below with the close below VWAP${config.withGapOnly ? ' | Only with the gap: a gap-up stock is never shorted, a gap-down stock never bought' : ''} | Stop at the day low/high | Exit when the 15-EMA crosses back, else 15:05 | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds`);
     } else {
       this.log(state, `▶ Stocks-in-Play ORB started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Trading ${sides} on the break of that candle | Stop ${config.stopAtrFraction} x 14-day ATR | Max loss/trade ₹${config.stopLossRs} | Up to ${config.maxPositions} positions (= trades/day), ${config.leverage}x | Entries until ${config.entryCutoffTime}, square-off 15:05`);
+      this.log(state, `⚙ At 09:20: stocks whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Trading ${sides} on the break of that candle | Stop ${config.stopAtrFraction} x 14-day ATR | Max loss/trade ₹${config.stopLossRs} | Up to ${config.maxPositions} positions (= trades/day), Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Entries until ${config.entryCutoffTime}, square-off 15:05`);
     }
 
     // Today's trades come from the broker's order book (live) or saved paper orders, so a restart cannot trade past the cap.
@@ -490,7 +498,6 @@ export class StocksInPlayEngine {
       allowLongs,
       allowShorts,
       leverage: Math.min(5, num(raw.leverage, 4)),
-      maxCapital: Number(raw.maxCapital) > 0 ? Number(raw.maxCapital) : null,
       entryCutoffTime: /^\d{1,2}:\d{2}$/.test(raw.entryCutoffTime || '') ? raw.entryCutoffTime : DEFAULT_ENTRY_CUTOFF,
       watchCount: Math.min(10, Math.floor(num(raw.watchCount, 1))),
       withGapOnly: raw.withGapOnly !== false,
@@ -1021,6 +1028,11 @@ export class StocksInPlayEngine {
     list.sort((a, b) => b.rvol - a.rvol);
     state.candidates = list.slice(0, fade ? FADE_MAX_CANDIDATES : trend ? cfg.watchCount : MAX_CANDIDATES);
     if (fade && state.candidates.length > 0) state.candidates = await this.dropNearCircuit(state, kite, state.candidates);
+    // Zerodha's intraday leverage for every candidate, asked once now (in the background) so the entry needs no extra call.
+    if (state.candidates.length > 0) {
+      const asked = state.candidates.map((c) => ({ symbol: c.symbol, side: c.side, price: c.first.c, tick: c.tick }));
+      state.marginCheck = this.checkMargins(state, client, asked).then(() => this.dropBlockedCandidates(state)).catch(() => undefined);
+    }
 
     if (state.candidates.length === 0) {
       this.log(state, fade
@@ -1513,28 +1525,34 @@ export class StocksInPlayEngine {
         return;
       }
     }
-    let slotCapital: number;
-    if (state.isPaperTrade) slotCapital = cfg.maxCapital ?? 15000;
-    else {
-      const cash = await this.liveCash(client);
-      if (cash === null) {
-        this.log(state, `⚠ Could not read the Zerodha margin — retrying rather than sizing blind.`);
-        return;
-      }
-      slotCapital = cfg.maxCapital !== null ? Math.min(cash, cfg.maxCapital) : cash;
+    // Sized on the free Zerodha funds (paper: the same funds when logged in, else ₹15,000).
+    const cash = await this.liveCash(client);
+    if (cash === null && !state.isPaperTrade) {
+      this.log(state, `⚠ Could not read the Zerodha margin — retrying rather than sizing blind.`);
+      return;
     }
+    const slotCapital = cash ?? PAPER_FALLBACK_FUNDS;
+    // Zerodha's intraday leverage for every pick, in one call (each stock is asked only once a day).
+    await this.checkMargins(state, client, o.picks!.filter((p) => !state.tradedSymbols.has(p.symbol)).map((p) => ({ symbol: p.symbol, side: 'SHORT' as Side, price: p.close, tick: 0.05 })));
 
     for (const pick of o.picks!) {
       if (state.tradedSymbols.has(pick.symbol)) continue;
+      const m = state.margins.get(pick.symbol);
+      if (m?.kind === 'BLOCKED') {
+        this.log(state, `⏭ ${pick.symbol} skipped: Zerodha does not allow it intraday (${m.reason}).`);
+        continue;
+      }
+      const lev = m?.kind === 'OK' ? m.leverage : cfg.leverage;
+      const levText = leverageText(lev, m?.kind === 'OK' ? 'ZERODHA' : 'FALLBACK');
       let tick = 0.05;
       try { tick = Number(await client.getTickSize(pick.symbol, 'NSE')) || 0.05; } catch { /* default tick */ }
       const limit = roundTo(pick.close * (1 - OI_LIMIT_BELOW_CLOSE), tick, 'up');
       // Sized on yesterday's close; the stop is re-based on the real auction fill.
       const qtyByRisk = Math.floor(cfg.stopLossRs / ((pick.close * cfg.stopPct) / 100));
-      const qtyByCapital = Math.floor((slotCapital * cfg.leverage * 0.95) / pick.close);
-      const qty = Math.min(qtyByRisk, qtyByCapital);
+      const qtyByCap = qtyByCapital(slotCapital, lev, pick.close);
+      const qty = Math.min(qtyByRisk, qtyByCap);
       if (qty < 1) {
-        this.log(state, `⏭ ${pick.symbol} skipped: 1 share needs ₹${(pick.close / cfg.leverage).toFixed(0)} margin or risks ₹${((pick.close * cfg.stopPct) / 100).toFixed(2)} (capital ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
+        this.log(state, `⏭ ${pick.symbol} skipped: 1 share needs ₹${(pick.close / lev).toFixed(0)} margin at ${levText} or risks ₹${((pick.close * cfg.stopPct) / 100).toFixed(2)} (capital ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
         continue;
       }
       let orderId: string;
@@ -1562,7 +1580,7 @@ export class StocksInPlayEngine {
       o.tick = tick;
       o.lastCheck = Date.now();
       state.tradedSymbols.add(pick.symbol);
-      this.log(state, `📨 ${state.isPaperTrade ? '[PAPER] ' : ''}Pre-open order sent: SELL ${qty} ${pick.symbol} LIMIT ₹${limit.toFixed(2)} (MIS, ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close ₹${pick.close}) — the auction fills it at the 09:15 opening price if the stock opens at or above the limit (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}) | Order ${orderId}`);
+      this.log(state, `📨 ${state.isPaperTrade ? '[PAPER] ' : ''}Pre-open order sent: SELL ${qty} ${pick.symbol} LIMIT ₹${limit.toFixed(2)} (MIS, ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close ₹${pick.close}) — the auction fills it at the 09:15 opening price if the stock opens at or above the limit (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}) | Order ${orderId}`);
       return;
     }
     this.resolveOi(state, `⏭ None of yesterday's short build-up stocks could be traded (see above). No trade today.`);
@@ -1805,9 +1823,10 @@ export class StocksInPlayEngine {
     // Hard daily cap: re-count today's trades from Zerodha's order book (paper: saved orders) before every entry.
     // The bid/ask is only recorded for later study, so it is not waited for here; the two checks run together to get the order out sooner.
     const quoteAtEntry = this.readBidAsk(client, c.symbol);
-    const [tradesToday, liveCashNow] = await Promise.all([
+    const [tradesToday, liveCashNow, margin] = await Promise.all([
       countTodaysTradesForEntry({ prisma: this.prisma, factory: this.factory, strategyId: state.strategyId, brokerAccountId: state.brokerAccountId, isPaper: state.isPaperTrade }),
-      state.isPaperTrade ? Promise.resolve(null) : this.liveCash(client),
+      this.liveCash(client),
+      this.marginFor(state, c.symbol),
     ]);
     if (tradesToday === null) {
       this.log(state, `⛔ Could not verify today's trade count (Zerodha and DB unreadable) — skipping ${c.symbol} to stay within the ${cfg.maxPositions}-trade limit.`);
@@ -1820,34 +1839,40 @@ export class StocksInPlayEngine {
       return;
     }
 
-    // Capital per position slot. Live: the free margin (already net of open positions) split over the slots still
-    // free, never more than an even share of maxCapital. Paper: an even share of maxCapital (default ₹15,000).
+    // Capital per position slot, from the free Zerodha funds read just now. Live: the funds (already net of open
+    // positions) split over the slots still free. Paper: the same funds when logged in (else ₹15,000), split evenly,
+    // since paper positions do not use real margin.
     let slotCapital: number;
     if (state.isPaperTrade) {
-      slotCapital = (cfg.maxCapital ?? 15000) / cfg.maxPositions;
+      slotCapital = (liveCashNow ?? PAPER_FALLBACK_FUNDS) / cfg.maxPositions;
     } else {
-      const cash = liveCashNow;
-      if (cash === null) {
+      if (liveCashNow === null) {
         this.log(state, `⚠ Could not read the Zerodha margin — skipping ${c.symbol} rather than sizing blind.`);
         return;
       }
-      slotCapital = cash / Math.max(1, cfg.maxPositions - state.positions.length);
-      if (cfg.maxCapital !== null) slotCapital = Math.min(slotCapital, cfg.maxCapital / cfg.maxPositions);
+      slotCapital = liveCashNow / Math.max(1, cfg.maxPositions - state.positions.length);
     }
-    const qtyByCapital = Math.floor((slotCapital * cfg.leverage * 0.95) / ltp);
+    if (margin?.kind === 'BLOCKED') {
+      this.log(state, `⏭ ${c.symbol} skipped: Zerodha does not allow it intraday (${margin.reason}).`);
+      return;
+    }
+    // Zerodha's leverage for this stock, else the strategy's fallback leverage.
+    const lev = margin?.kind === 'OK' ? margin.leverage : cfg.leverage;
+    const levText = leverageText(lev, margin?.kind === 'OK' ? 'ZERODHA' : 'FALLBACK');
+    const qtyByCap = qtyByCapital(slotCapital, lev, ltp);
     const qtyByRisk = Math.floor(cfg.stopLossRs / stopDist);
-    const qty = Math.min(qtyByCapital, qtyByRisk);
+    const qty = Math.min(qtyByCap, qtyByRisk);
     if (qty < 1) {
-      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / cfg.leverage).toFixed(0)} margin or risks ₹${stopDist.toFixed(2)} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
+      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / lev).toFixed(0)} margin at ${levText} or risks ₹${stopDist.toFixed(2)} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
       return;
     }
     this.log(state, trend
-      ? `🚀 ${c.symbol} 15/40 EMA crossover at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
+      ? `🚀 ${c.symbol} 15/40 EMA crossover at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
       : fade
       ? c.side === 'SHORT'
-        ? `🚀 ${c.symbol} fade signal at ₹${ltp.toFixed(2)} — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
-        : `🚀 ${c.symbol} broke its first-candle high ₹${c.level} at ₹${ltp.toFixed(2)} after the oversold turn-up — buying ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`
-      : `🚀 ${c.symbol} broke ₹${c.level.toFixed(2)} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCapital}).`);
+        ? `🚀 ${c.symbol} fade signal at ₹${ltp.toFixed(2)} — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
+        : `🚀 ${c.symbol} broke its first-candle high ₹${c.level} at ₹${ltp.toFixed(2)} after the oversold turn-up — buying ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
+      : `🚀 ${c.symbol} broke ₹${c.level.toFixed(2)} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`);
 
     const entrySide: 'BUY' | 'SELL' = c.side === 'LONG' ? 'BUY' : 'SELL';
     let fill: { qty: number; price: number; orderId: string } | null;
@@ -1981,6 +2006,81 @@ export class StocksInPlayEngine {
     }
     this.log(state, `🚨 Entry ${orderId} for ${symbol} could not be confirmed (order ${order?.status ?? 'not found'}, position ${pos.netQty}). Not tracking it — check Kite.`);
     return null;
+  }
+
+  /**
+   * Asks Zerodha once for the intraday (MIS) margin of every stock in `items` (POST /margins/orders, nothing is
+   * placed) and keeps the leverage per stock for the day. A batch refused as a whole is asked again stock by stock,
+   * so one stock Zerodha won't allow intraday does not hide the others. Session/network failures leave the stocks
+   * UNKNOWN: they are then sized at the fallback leverage.
+   */
+  private async checkMargins(state: EngineState, client: any, items: { symbol: string; side: Side; price: number; tick: number }[]): Promise<void> {
+    const todo = items.filter((i) => i.price > 0 && !state.margins.has(i.symbol));
+    if (todo.length === 0) return;
+    const reqs = todo.map((i) => marginRequest(i.symbol, i.side === 'LONG' ? 'BUY' : 'SELL', i.price, i.tick));
+    if (!client?.getOrderMargins) {
+      for (const r of reqs) state.margins.set(r.symbol, { kind: 'UNKNOWN', reason: 'this broker has no margin check' });
+    } else {
+      const ask = (rs: MarginRequest[]) => client.getOrderMargins(rs.map((r) => ({ symbol: r.symbol, exchange: 'NSE', side: r.side, product: 'MIS', orderType: 'LIMIT', qty: r.qty, price: r.price })));
+      const whole = isTransientMarginError;
+      let batchErr: any = null;
+      try {
+        const rows = await ask(reqs);
+        reqs.forEach((r, k) => state.margins.set(r.symbol, marginInfoFromRow(r, rows[k])));
+      } catch (e: any) {
+        batchErr = e;
+      }
+      if (batchErr && whole(batchErr)) {
+        for (const r of reqs) state.margins.set(r.symbol, { kind: 'UNKNOWN', reason: String(batchErr?.message || batchErr) });
+      } else if (batchErr) {
+        const failed: { r: MarginRequest; e: any }[] = [];
+        await Promise.all(reqs.map(async (r) => {
+          try {
+            const [row] = await ask([r]);
+            state.margins.set(r.symbol, marginInfoFromRow(r, row));
+          } catch (e: any) {
+            failed.push({ r, e });
+          }
+        }));
+        // Same request format for every stock: if Zerodha answered for another one, a rejection is about this stock.
+        const otherAnswered = reqs.some((r) => state.margins.get(r.symbol)?.kind === 'OK');
+        for (const { r, e } of failed) {
+          const reason = `${e?.name || 'Error'}: ${e?.message || e}`;
+          state.margins.set(r.symbol, classifyMarginError(e, otherAnswered) === 'BLOCKED' ? { kind: 'BLOCKED', reason } : { kind: 'UNKNOWN', reason });
+        }
+      }
+      if (batchErr) this.log(state, `⚠ Zerodha refused the margin check for the ${reqs.length} stock(s) together (${batchErr?.message || batchErr})${whole(batchErr) ? '' : ' — asked stock by stock'}.`);
+    }
+    const fallback = `${state.config.leverage}x`;
+    const parts = reqs.map((r) => {
+      const m = state.margins.get(r.symbol)!;
+      return m.kind === 'OK' ? `${r.symbol} ${m.leverage}x` : m.kind === 'BLOCKED' ? `${r.symbol} NOT ALLOWED intraday` : `${r.symbol} unknown (${m.reason}; ${fallback} fallback)`;
+    });
+    this.log(state, `🧮 Zerodha intraday leverage: ${parts.join(', ')}`);
+    for (const r of reqs) {
+      const m = state.margins.get(r.symbol)!;
+      logSignal('SETUP', state.strategyId, {
+        engine: 'STOCKS_IN_PLAY', setup: state.config.setup, event: 'MARGIN', symbol: r.symbol, side: r.side, qty: r.qty, price: r.price, kind: m.kind,
+        ...(m.kind === 'OK' ? { leverage: m.leverage, zerodhaLeverage: m.zerodhaLeverage, marginRs: m.marginRs, notionalRs: m.notionalRs } : { reason: m.reason }),
+        isPaper: state.isPaperTrade,
+      });
+    }
+  }
+
+  /** Drops the candidates Zerodha does not allow intraday, so their signals never send an order. */
+  private dropBlockedCandidates(state: EngineState) {
+    for (const c of state.candidates ?? []) {
+      const m = state.margins.get(c.symbol);
+      if (c.done || m?.kind !== 'BLOCKED') continue;
+      c.done = true;
+      this.log(state, `⏭ ${c.symbol} dropped: Zerodha does not allow it intraday (${m.reason}).`);
+    }
+  }
+
+  /** The stock's margin answer; waits up to MARGIN_WAIT_MS for a check still in flight. null = not asked or not back yet. */
+  private async marginFor(state: EngineState, symbol: string): Promise<MarginInfo | null> {
+    if (!state.margins.has(symbol) && state.marginCheck) await Promise.race([state.marginCheck, sleep(MARGIN_WAIT_MS)]);
+    return state.margins.get(symbol) ?? null;
   }
 
   private async liveCash(client: any): Promise<number | null> {

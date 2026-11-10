@@ -35,7 +35,7 @@ function Rows({ rows }: { rows: Row[] }) {
 
 function sizing(ctx: DetailCtx): string {
   const { cfg, is15Min, isEmaVwap } = ctx;
-  if (ctx.strategy.type === "STOCKS_IN_PLAY") return `Risk and capital based (${cfg.leverage ?? 4}x), up to ${cfg.setup === "OI" ? 1 : cfg.maxPositions ?? (cfg.setup === "TREND" || cfg.setup === "FADE" ? 1 : 2)} position${Number(cfg.maxPositions ?? 1) > 1 ? "s" : ""}`;
+  if (ctx.strategy.type === "STOCKS_IN_PLAY") return `Risk based, within the free Zerodha funds at Zerodha's leverage per stock (fallback ${cfg.leverage ?? 4}x), up to ${cfg.setup === "OI" ? 1 : cfg.maxPositions ?? (cfg.setup === "TREND" || cfg.setup === "FADE" ? 1 : 2)} position${Number(cfg.maxPositions ?? 1) > 1 ? "s" : ""}`;
   if (is15Min || (isEmaVwap && cfg.symbol === "AUTO")) return "Risk-based (5x MIS)";
   if (cfg.symbol === "AUTO") return "Auto (5x MIS)";
   return cfg.qty ? `${cfg.qty} qty` : cfg.lots ? `${cfg.lots} lot(s)` : "Dynamic";
@@ -168,7 +168,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
     { label: "Max trades per day", value: String(cfg.maxTradesPerDay ?? 1) },
     { label: "Max losses per day", value: cfg.maxLossesPerDay !== undefined || is15Min ? String(cfg.maxLossesPerDay ?? 1) : undefined },
     { label: "Daily loss limit", value: rs(cfg.dailyMaxLossRs), tone: "loss" },
-    { label: "Max capital", value: rs(cfg.maxCapital) },
+    { label: "Max capital", value: strategy.type === "STOCKS_IN_PLAY" ? undefined : rs(cfg.maxCapital) },
   ];
 
   const exits: Row[] = [

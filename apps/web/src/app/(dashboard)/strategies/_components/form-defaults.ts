@@ -49,7 +49,6 @@ export function createDefaultForm(): StrategyFormState {
     sipMinAvgValueCr: "10",
     sipAllowLongs: false,
     sipLeverage: "4",
-    sipMaxCapital: "",
     sipEntryCutoffTime: "15:00",
     emaFast: "9",
     emaSlow: "21",
@@ -170,7 +169,6 @@ export function strategyToForm(strategy: StrategyLike): StrategyFormState {
     sipMinAvgValueCr: str(c.minAvgValueCr, type === "STOCKS_IN_PLAY" && c.setup !== "FADE" && c.setup !== "TREND" && c.setup !== "OI" ? "25" : base.sipMinAvgValueCr),
     sipAllowLongs: c.allowLongs === true,
     sipLeverage: str(c.leverage, base.sipLeverage),
-    sipMaxCapital: str(c.maxCapital, base.sipMaxCapital),
     sipEntryCutoffTime: str(c.entryCutoffTime, base.sipEntryCutoffTime),
 
     // 15-min breakout

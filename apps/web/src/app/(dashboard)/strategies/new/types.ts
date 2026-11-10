@@ -65,7 +65,6 @@ export interface StrategyFormState {
   sipMinAvgValueCr: string;
   sipAllowLongs: boolean;
   sipLeverage: string;
-  sipMaxCapital: string;
   sipEntryCutoffTime: string;
   // EMA-RSI Options
   emaFast: string;

@@ -541,13 +541,13 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               </span>
             </label>
             <NumberField
-              label="Leverage"
+              label="Fallback leverage"
               suffix="x"
               decimal
               min={1}
               value={form.sipLeverage}
               onChange={(v) => set("sipLeverage", v)}
-              hint="Used for sizing. Zerodha gives up to 5x MIS on most liquid stocks."
+              hint="Sizing uses Zerodha's own intraday leverage for each stock, asked at 09:20. This is used only when Zerodha cannot say (up to 5x)."
             />
           </div>
         </div>
@@ -620,13 +620,13 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               hint="Skips thinly traded stocks, where fills slip more."
             />
             <NumberField
-              label="Leverage"
+              label="Fallback leverage"
               suffix="x"
               decimal
               min={1}
               value={form.sipLeverage}
               onChange={(v) => set("sipLeverage", v)}
-              hint="Used for sizing. Zerodha gives up to 5x MIS on most liquid stocks."
+              hint="Sizing uses Zerodha's own intraday leverage for each stock, asked at 09:20. This is used only when Zerodha cannot say (up to 5x)."
             />
           </div>
         </div>

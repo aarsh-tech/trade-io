@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BrokerType, BrokerAccount } from '@prisma/client';
-import { IBrokerClient, OrderParams, OrderChargeParams, Holding, Position, Order as IOrder, Trade as ITrade } from './interfaces/broker-client.interface';
+import { IBrokerClient, OrderParams, OrderChargeParams, OrderMarginParams, Holding, Position, Order as IOrder, Trade as ITrade } from './interfaces/broker-client.interface';
 import { decrypt } from '../common/utils/crypto';
 import * as https from 'https';
 import * as http from 'http';
@@ -421,6 +421,39 @@ class ZerodhaClient implements IBrokerClient {
       const kerr = toKiteError(err);
       console.error(`Zerodha getQuote Error (${kerr.name}):`, kerr.message);
       throw kerr;
+    }
+  }
+
+  /**
+   * Zerodha's margin for prospective orders (POST /margins/orders, full mode for the `leverage` field), one row per
+   * order in the same order. Read-only: nothing is placed. Throws a KiteError when Zerodha refuses the request.
+   */
+  async getOrderMargins(orders: OrderMarginParams[]): Promise<{ symbol: string; total: number; leverage: number | null }[]> {
+    if (orders.length === 0) return [];
+    try {
+      const rows: any[] = await this.kite.orderMargins(orders.map((o) => ({
+        exchange: o.exchange,
+        tradingsymbol: o.symbol,
+        transaction_type: o.side,
+        variety: 'regular',
+        product: o.product,
+        order_type: o.orderType,
+        quantity: o.qty,
+        price: o.price ?? 0,
+        trigger_price: 0,
+      })));
+      if (!Array.isArray(rows) || rows.length !== orders.length) {
+        throw new Error(`order margins returned ${Array.isArray(rows) ? rows.length : 'no'} rows for ${orders.length} orders`);
+      }
+      return rows.map((r, i) => {
+        if (r?.tradingsymbol && r.tradingsymbol !== orders[i].symbol) {
+          throw new Error(`order margins row ${i} is ${r.tradingsymbol}, expected ${orders[i].symbol}`);
+        }
+        const lev = Number(r?.leverage);
+        return { symbol: orders[i].symbol, total: Number(r?.total), leverage: Number.isFinite(lev) && lev > 0 ? lev : null };
+      });
+    } catch (err) {
+      throw toKiteError(err);
     }
   }
 

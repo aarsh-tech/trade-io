@@ -4,7 +4,7 @@
  * Kite limits are enforced per api_key, and every engine, scanner and poller shares one
  * api_key, so buckets are keyed by api_key rather than by client instance.
  *
- *   general     10 req/s   (holdings, positions, orders, margins, profile, instruments, GTT)
+ *   general     10 req/s   (holdings, positions, orders, margins, order margins, profile, instruments, GTT)
  *   quote        1 req/s   (/quote/*)
  *   historical   3 req/s
  *   orders      10 req/s and 400 req/min
@@ -86,7 +86,7 @@ const METHOD_CLASS: Record<string, KiteEndpointClass> = {
   getTrades: 'general', getOrderTrades: 'general', getMargins: 'general', getProfile: 'general',
   getInstruments: 'general', getGTTs: 'general', getGTT: 'general', placeGTT: 'general',
   modifyGTT: 'general', deleteGTT: 'general', generateSession: 'general', renewAccessToken: 'general',
-  invalidateAccessToken: 'general', getvirtualContractNote: 'general',
+  invalidateAccessToken: 'general', getvirtualContractNote: 'general', orderMargins: 'general',
   getQuote: 'quote', getLTP: 'quote', getOHLC: 'quote',
   getHistoricalData: 'historical',
   placeOrder: 'orders', modifyOrder: 'orders', cancelOrder: 'orders', exitOrder: 'orders',
