@@ -243,3 +243,34 @@ List<String> validateStrategyConfig(String type, Map<String, dynamic> config) {
   pair('rsiEntryMin', 'rsiEntryMax', 'RSI entry minimum must be below the maximum', strict: true);
   return errors;
 }
+
+/// Form label for a config key: the bound's label, the time field's label, a known text field,
+/// or the camelCase key in sentence case with trading acronyms kept upper case
+/// (`vwapSource` -> "VWAP source").
+String configLabel(String key) {
+  final known = configBounds[key]?.label ?? configTimes[key] ?? _textFieldLabels[key];
+  if (known != null) return known;
+  final words = key.replaceAllMapped(RegExp('[A-Z]'), (m) => ' ${m[0]}').trim().split(' ');
+  final text = [
+    for (final (i, w) in words.indexed)
+      _acronyms.contains(w.toLowerCase())
+          ? w.toUpperCase()
+          : i == 0
+          ? '${w[0].toUpperCase()}${w.substring(1)}'
+          : w.toLowerCase(),
+  ].join(' ');
+  return text;
+}
+
+const _acronyms = {'ema', 'vwap', 'rsi', 'sl', 'atr', 'orb', 'pdl', 'pdh', 'rr', 'oi', 'ltp', 'id'};
+
+const _textFieldLabels = {
+  'symbol': 'Symbol',
+  'exchange': 'Exchange',
+  'instrumentType': 'Instrument type',
+  'vwapSource': 'VWAP source',
+  'product': 'Product',
+  'targetMode': 'Target mode',
+  'entryTimeframe': 'Entry timeframe',
+  'setup': 'Setup',
+};

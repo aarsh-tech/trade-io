@@ -299,7 +299,7 @@ as String,
 /// @nodoc
 mixin _$Holding {
 
- String get symbol; int get qty; double get avgPrice; double get ltp; double get pnl; double? get pnlPct;
+ String get symbol; String? get exchange; int get qty; double get avgPrice; double get ltp; double? get pnl; double? get pnlPct; double? get closePrice;
 /// Create a copy of Holding
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -312,16 +312,16 @@ $HoldingCopyWith<Holding> get copyWith => _$HoldingCopyWithImpl<Holding>(this as
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Holding&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.qty, qty) || other.qty == qty)&&(identical(other.avgPrice, avgPrice) || other.avgPrice == avgPrice)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.pnl, pnl) || other.pnl == pnl)&&(identical(other.pnlPct, pnlPct) || other.pnlPct == pnlPct));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Holding&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.exchange, exchange) || other.exchange == exchange)&&(identical(other.qty, qty) || other.qty == qty)&&(identical(other.avgPrice, avgPrice) || other.avgPrice == avgPrice)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.pnl, pnl) || other.pnl == pnl)&&(identical(other.pnlPct, pnlPct) || other.pnlPct == pnlPct)&&(identical(other.closePrice, closePrice) || other.closePrice == closePrice));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,symbol,qty,avgPrice,ltp,pnl,pnlPct);
+int get hashCode => Object.hash(runtimeType,symbol,exchange,qty,avgPrice,ltp,pnl,pnlPct,closePrice);
 
 @override
 String toString() {
-  return 'Holding(symbol: $symbol, qty: $qty, avgPrice: $avgPrice, ltp: $ltp, pnl: $pnl, pnlPct: $pnlPct)';
+  return 'Holding(symbol: $symbol, exchange: $exchange, qty: $qty, avgPrice: $avgPrice, ltp: $ltp, pnl: $pnl, pnlPct: $pnlPct, closePrice: $closePrice)';
 }
 
 
@@ -332,7 +332,7 @@ abstract mixin class $HoldingCopyWith<$Res>  {
   factory $HoldingCopyWith(Holding value, $Res Function(Holding) _then) = _$HoldingCopyWithImpl;
 @useResult
 $Res call({
- String symbol, int qty, double avgPrice, double ltp, double pnl, double? pnlPct
+ String symbol, String? exchange, int qty, double avgPrice, double ltp, double? pnl, double? pnlPct, double? closePrice
 });
 
 
@@ -349,14 +349,16 @@ class _$HoldingCopyWithImpl<$Res>
 
 /// Create a copy of Holding
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? symbol = null,Object? qty = null,Object? avgPrice = null,Object? ltp = null,Object? pnl = null,Object? pnlPct = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? symbol = null,Object? exchange = freezed,Object? qty = null,Object? avgPrice = null,Object? ltp = null,Object? pnl = freezed,Object? pnlPct = freezed,Object? closePrice = freezed,}) {
   return _then(_self.copyWith(
 symbol: null == symbol ? _self.symbol : symbol // ignore: cast_nullable_to_non_nullable
-as String,qty: null == qty ? _self.qty : qty // ignore: cast_nullable_to_non_nullable
+as String,exchange: freezed == exchange ? _self.exchange : exchange // ignore: cast_nullable_to_non_nullable
+as String?,qty: null == qty ? _self.qty : qty // ignore: cast_nullable_to_non_nullable
 as int,avgPrice: null == avgPrice ? _self.avgPrice : avgPrice // ignore: cast_nullable_to_non_nullable
 as double,ltp: null == ltp ? _self.ltp : ltp // ignore: cast_nullable_to_non_nullable
-as double,pnl: null == pnl ? _self.pnl : pnl // ignore: cast_nullable_to_non_nullable
-as double,pnlPct: freezed == pnlPct ? _self.pnlPct : pnlPct // ignore: cast_nullable_to_non_nullable
+as double,pnl: freezed == pnl ? _self.pnl : pnl // ignore: cast_nullable_to_non_nullable
+as double?,pnlPct: freezed == pnlPct ? _self.pnlPct : pnlPct // ignore: cast_nullable_to_non_nullable
+as double?,closePrice: freezed == closePrice ? _self.closePrice : closePrice // ignore: cast_nullable_to_non_nullable
 as double?,
   ));
 }
@@ -442,10 +444,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String symbol,  int qty,  double avgPrice,  double ltp,  double pnl,  double? pnlPct)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String symbol,  String? exchange,  int qty,  double avgPrice,  double ltp,  double? pnl,  double? pnlPct,  double? closePrice)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Holding() when $default != null:
-return $default(_that.symbol,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.pnlPct);case _:
+return $default(_that.symbol,_that.exchange,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.pnlPct,_that.closePrice);case _:
   return orElse();
 
 }
@@ -463,10 +465,10 @@ return $default(_that.symbol,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String symbol,  int qty,  double avgPrice,  double ltp,  double pnl,  double? pnlPct)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String symbol,  String? exchange,  int qty,  double avgPrice,  double ltp,  double? pnl,  double? pnlPct,  double? closePrice)  $default,) {final _that = this;
 switch (_that) {
 case _Holding():
-return $default(_that.symbol,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.pnlPct);case _:
+return $default(_that.symbol,_that.exchange,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.pnlPct,_that.closePrice);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -483,10 +485,10 @@ return $default(_that.symbol,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String symbol,  int qty,  double avgPrice,  double ltp,  double pnl,  double? pnlPct)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String symbol,  String? exchange,  int qty,  double avgPrice,  double ltp,  double? pnl,  double? pnlPct,  double? closePrice)?  $default,) {final _that = this;
 switch (_that) {
 case _Holding() when $default != null:
-return $default(_that.symbol,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.pnlPct);case _:
+return $default(_that.symbol,_that.exchange,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.pnlPct,_that.closePrice);case _:
   return null;
 
 }
@@ -498,15 +500,17 @@ return $default(_that.symbol,_that.qty,_that.avgPrice,_that.ltp,_that.pnl,_that.
 @JsonSerializable()
 
 class _Holding implements Holding {
-  const _Holding({required this.symbol, this.qty = 0, this.avgPrice = 0, this.ltp = 0, this.pnl = 0, this.pnlPct});
+  const _Holding({required this.symbol, this.exchange, this.qty = 0, this.avgPrice = 0, this.ltp = 0, this.pnl, this.pnlPct, this.closePrice});
   factory _Holding.fromJson(Map<String, dynamic> json) => _$HoldingFromJson(json);
 
 @override final  String symbol;
+@override final  String? exchange;
 @override@JsonKey() final  int qty;
 @override@JsonKey() final  double avgPrice;
 @override@JsonKey() final  double ltp;
-@override@JsonKey() final  double pnl;
+@override final  double? pnl;
 @override final  double? pnlPct;
+@override final  double? closePrice;
 
 /// Create a copy of Holding
 /// with the given fields replaced by the non-null parameter values.
@@ -521,16 +525,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Holding&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.qty, qty) || other.qty == qty)&&(identical(other.avgPrice, avgPrice) || other.avgPrice == avgPrice)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.pnl, pnl) || other.pnl == pnl)&&(identical(other.pnlPct, pnlPct) || other.pnlPct == pnlPct));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Holding&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.exchange, exchange) || other.exchange == exchange)&&(identical(other.qty, qty) || other.qty == qty)&&(identical(other.avgPrice, avgPrice) || other.avgPrice == avgPrice)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.pnl, pnl) || other.pnl == pnl)&&(identical(other.pnlPct, pnlPct) || other.pnlPct == pnlPct)&&(identical(other.closePrice, closePrice) || other.closePrice == closePrice));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,symbol,qty,avgPrice,ltp,pnl,pnlPct);
+int get hashCode => Object.hash(runtimeType,symbol,exchange,qty,avgPrice,ltp,pnl,pnlPct,closePrice);
 
 @override
 String toString() {
-  return 'Holding(symbol: $symbol, qty: $qty, avgPrice: $avgPrice, ltp: $ltp, pnl: $pnl, pnlPct: $pnlPct)';
+  return 'Holding(symbol: $symbol, exchange: $exchange, qty: $qty, avgPrice: $avgPrice, ltp: $ltp, pnl: $pnl, pnlPct: $pnlPct, closePrice: $closePrice)';
 }
 
 
@@ -541,7 +545,7 @@ abstract mixin class _$HoldingCopyWith<$Res> implements $HoldingCopyWith<$Res> {
   factory _$HoldingCopyWith(_Holding value, $Res Function(_Holding) _then) = __$HoldingCopyWithImpl;
 @override @useResult
 $Res call({
- String symbol, int qty, double avgPrice, double ltp, double pnl, double? pnlPct
+ String symbol, String? exchange, int qty, double avgPrice, double ltp, double? pnl, double? pnlPct, double? closePrice
 });
 
 
@@ -558,14 +562,16 @@ class __$HoldingCopyWithImpl<$Res>
 
 /// Create a copy of Holding
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? symbol = null,Object? qty = null,Object? avgPrice = null,Object? ltp = null,Object? pnl = null,Object? pnlPct = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? symbol = null,Object? exchange = freezed,Object? qty = null,Object? avgPrice = null,Object? ltp = null,Object? pnl = freezed,Object? pnlPct = freezed,Object? closePrice = freezed,}) {
   return _then(_Holding(
 symbol: null == symbol ? _self.symbol : symbol // ignore: cast_nullable_to_non_nullable
-as String,qty: null == qty ? _self.qty : qty // ignore: cast_nullable_to_non_nullable
+as String,exchange: freezed == exchange ? _self.exchange : exchange // ignore: cast_nullable_to_non_nullable
+as String?,qty: null == qty ? _self.qty : qty // ignore: cast_nullable_to_non_nullable
 as int,avgPrice: null == avgPrice ? _self.avgPrice : avgPrice // ignore: cast_nullable_to_non_nullable
 as double,ltp: null == ltp ? _self.ltp : ltp // ignore: cast_nullable_to_non_nullable
-as double,pnl: null == pnl ? _self.pnl : pnl // ignore: cast_nullable_to_non_nullable
-as double,pnlPct: freezed == pnlPct ? _self.pnlPct : pnlPct // ignore: cast_nullable_to_non_nullable
+as double,pnl: freezed == pnl ? _self.pnl : pnl // ignore: cast_nullable_to_non_nullable
+as double?,pnlPct: freezed == pnlPct ? _self.pnlPct : pnlPct // ignore: cast_nullable_to_non_nullable
+as double?,closePrice: freezed == closePrice ? _self.closePrice : closePrice // ignore: cast_nullable_to_non_nullable
 as double?,
   ));
 }

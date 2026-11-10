@@ -22,12 +22,21 @@ class StrategiesApi {
   Future<void> setAutoStart(String id, bool value) async =>
       unwrapData<dynamic>(await _dio.patch<dynamic>('/strategies/$id/auto-start', data: {'autoStart': value}));
   Future<void> delete(String id) async => unwrapData<dynamic>(await _dio.delete<dynamic>('/strategies/$id'));
-  Future<void> save(String? id, Map<String, dynamic> body) async {
-    unwrapData<dynamic>(
+
+  /// Creates (no [id]) or updates a strategy; returns its id.
+  Future<String?> save(String? id, Map<String, dynamic> body) async {
+    final data = unwrapData<dynamic>(
       id == null
           ? await _dio.post<dynamic>('/strategies', data: body)
           : await _dio.patch<dynamic>('/strategies/$id', data: body),
     );
+    return data is Map && data['id'] is String ? data['id'] as String : id;
+  }
+
+  /// Past runs of a strategy (`GET /strategies/:id/executions`).
+  Future<List<Map<String, dynamic>>> executions(String id) async {
+    final data = unwrapData<dynamic>(await _dio.get<dynamic>('/strategies/$id/executions'));
+    return data is List ? data.whereType<Map<String, dynamic>>().toList() : const [];
   }
 
   Future<List<StrategyRow>> list() async {

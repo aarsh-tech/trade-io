@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
 import '../../../shared/widgets/async_view.dart';
+import '../../../shared/widgets/design.dart';
+import '../../../shared/widgets/pnl_text.dart';
+import '../../../shared/widgets/status_chip.dart';
+import '../scanner_models.dart';
 import '../scanner_providers.dart';
 
 class MoveAlertsScreen extends ConsumerStatefulWidget {
@@ -25,7 +31,7 @@ class _MoveAlertsScreenState extends ConsumerState<MoveAlertsScreen> {
     });
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Move alerts'),
+        title: const Text('Move Alerts'),
         actions: [
           IconButton(
             tooltip: _sound ? 'Mute alert sound' : 'Enable alert sound',
@@ -41,40 +47,100 @@ class _MoveAlertsScreenState extends ConsumerState<MoveAlertsScreen> {
             (data) => RefreshIndicator(
               onRefresh: () => ref.refresh(moveAlertsProvider.future),
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: AppSpace.pageInsets,
                 physics: const AlwaysScrollableScrollPhysics(),
                 children: [
-                  Text('${data.day ?? ''} · ${data.status ?? ''}'),
-                  const Text('Alerts refresh every 15 seconds while this screen is open.'),
+                  if ((data.day ?? '').isNotEmpty || (data.status ?? '').isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        [data.day, data.status].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  const InfoNote('New moves appear automatically while you’re here.', icon: Icons.bolt_rounded),
                   if (data.alerts.isEmpty)
                     const EmptyState(icon: Icons.notifications_none, title: 'No move alerts yet'),
                   // The server sends the newest alert first.
-                  for (final a in data.alerts)
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('${a.symbol} · ${a.hhmm} IST', style: Theme.of(context).textTheme.titleMedium),
-                            // `level` is the drop threshold (2 or 4 %) of an open-drive alert, else 0.
-                            Text(
-                              '${a.type.replaceAll('_', ' ')}${a.type == 'OPEN_DRIVE' && a.level > 0 ? ' ${formatPrice(a.level, decimals: 0)}%' : ''}',
-                            ),
-                            const SizedBox(height: 8),
-                            Text(a.text),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Alert price ${formatPrice(a.ltp)} · Change ${formatPct(a.changePct)}\nStop reference ${formatPrice(a.stopRef)} · Volume pace ${a.volPace.toStringAsFixed(1)}×',
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  for (final a in data.alerts) _AlertCard(alert: a),
                 ],
               ),
             ),
       ),
     );
   }
+}
+
+class _AlertCard extends StatelessWidget {
+  const _AlertCard({required this.alert});
+
+  final MoveAlert alert;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = alert;
+    final theme = Theme.of(context);
+    final colors = context.colors;
+    final up = a.changePct >= 0;
+    // `level` is the drop threshold (2 or 4 %) of an open-drive alert, else 0.
+    final kind =
+        '${a.type.replaceAll('_', ' ')}${a.type == 'OPEN_DRIVE' && a.level > 0 ? ' ${formatPrice(a.level, decimals: 0)}%' : ''}';
+    return Card(
+      margin: const EdgeInsets.only(bottom: AppSpace.gap),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.card),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(a.symbol, style: theme.textTheme.titleSmall?.copyWith(fontSize: 14))),
+                if (a.hhmm.isNotEmpty) Text('${a.hhmm} IST', style: theme.textTheme.labelMedium),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                StatusChip(kind, color: colors.signal),
+                if (a.changePct != 0) StatusChip(formatPct(a.changePct), color: up ? colors.profit : colors.loss),
+              ],
+            ),
+            if (a.text.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(a.text, style: theme.textTheme.bodySmall?.copyWith(color: colors.foreground)),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _Metric('Price', formatPrice(a.ltp)),
+                _Metric('Stop ref', a.stopRef > 0 ? formatPrice(a.stopRef) : '—'),
+                _Metric('Volume pace', a.volPace > 0 ? '${a.volPace.toStringAsFixed(1)}×' : '—'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Metric extends StatelessWidget {
+  const _Metric(this.label, this.value);
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelSmall),
+        const SizedBox(height: 2),
+        Text(value, style: tabular(Theme.of(context).textTheme.titleSmall)),
+      ],
+    ),
+  );
 }

@@ -36,7 +36,9 @@ class ApiClient {
 
   late final Dio dio;
 
-  Future<String?>? _inFlightRefresh;
+  /// Shared by every ApiClient: the tokens are per app, not per client, so two clients that
+  /// hit a 401 together must wait for the same refresh (the server rotates the refresh token).
+  static Future<String?>? _inFlightRefresh;
 
   static const _noRefreshPaths = ['/auth/refresh', '/auth/login', '/auth/register'];
 

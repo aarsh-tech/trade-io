@@ -24,7 +24,9 @@ dio · flutter_riverpod 3 · go_router 17 · socket_io_client 3 · flutter_secur
 | 2 | Strategies list + detail: live console over `/strategy`, start / stop / square-off, autoStart; create/edit form with the config bounds from `strategy-config.ts` | **implemented 10 Nov** |
 | 3 | Brokers: accounts, Zerodha login in a webview, session renew; Risk: status, kill switch, settings | **implemented 10 Nov** |
 | 4 | Live screener, move alerts, swing scanner, ledger | **implemented 10 Nov** |
-| later | Push notifications (FCM; needs one new backend endpoint for device tokens), theme override setting, IBM Plex fonts, release signing + Play listing | |
+| UI polish | Mobile visual system, consistent spacing, light/dark palettes, saved Auto / Light / Dark appearance | **implemented 10 Nov** |
+| Web parity | Web design tokens + IBM Plex, web phone navigation (Dashboard · Strategies · Positions · Orders · More sheet), top bar + status strip, every web page except Admin: Portfolio, Intraday Picks, Settings (profile, password, 2FA), registration notice, forgot/reset password, the 4-step strategy wizard, strategy detail tabs, Kite-style order ticket with pre-fill | **implemented 10 Nov (evening)** |
+| later | Push notifications (FCM; needs one new backend endpoint for device tokens), release signing + Play listing | |
 | never | Admin screens | |
 
 ## Logic ported from the web (each with tests)
@@ -35,7 +37,7 @@ dio · flutter_riverpod 3 · go_router 17 · socket_io_client 3 · flutter_secur
 - `useLivePositions` P&L overlay → `features/portfolio/live_pnl.dart` ✔
 - `order-ticket.ts` qty/tick rounding and limits → `features/orders/order_ticket.dart` ✔
 - `strategy-config.ts` bounds → `features/strategies/strategy_config.dart` ✔
-- `build-config.ts` + `form-defaults.ts` create-time defaults per type → `defaultStrategyConfig` in `strategy_config.dart` ✔ (change the web wizard's defaults and this together)
+- `build-config.ts` + `form-defaults.ts` + `strategy-types.ts` (form, presets, risk estimate, config↔form) → `strategies/strategy_form.dart` ✔; `defaultStrategyConfig` in `strategy_config.dart` is the regression fixture (change the web wizard and both together)
 - `useOrderTicket` idempotency-key rule (reuse only while the outcome is unknown) → `OrderAttempt` in `order_ticket.dart` ✔
 
 ## Verification and remaining release work
@@ -44,7 +46,7 @@ dio · flutter_riverpod 3 · go_router 17 · socket_io_client 3 · flutter_secur
 - Widget smoke tests cover phone layouts with enlarged text; trading actions require explicit confirmation.
 - The broker cancel route expected by both clients was missing. It is now implemented in auth-service with ownership/session checks; deploy that backend change before testing cancellation against production.
 - Broker authentication, live order fills, strategy execution and the emergency stop still require an end-to-end check with a signed-in test account. Automated tests use fixtures and never place live orders.
-- Push notifications, theme override, fonts, production signing and the Play listing remain in the **later** phase above.
+- Push notifications, production signing and the Play listing remain in the **later** phase above. Appearance and typography are implemented.
 
 ## Keeping web and mobile in sync
 

@@ -32,6 +32,23 @@ class AuthApi {
     return AppUser.fromJson(unwrapData<Map<String, dynamic>>(res));
   }
 
+  /// Always answers success (the server never reveals whether an account exists).
+  Future<void> forgotPassword(String email) async =>
+      unwrapData<dynamic>(await _dio.post<dynamic>('/auth/forgot-password', data: {'email': email}));
+
+  Future<void> resetPassword({required String token, required String newPassword}) async => unwrapData<dynamic>(
+    await _dio.post<dynamic>('/auth/reset-password', data: {'token': token, 'newPassword': newPassword}),
+  );
+
+  /// Starts 2FA enrolment: a QR code (PNG data URL) for the authenticator app.
+  Future<TwoFaSetup> setup2fa() async =>
+      TwoFaSetup.fromJson(unwrapData<Map<String, dynamic>>(await _dio.post<dynamic>('/auth/2fa/setup')));
+
+  Future<void> verify2fa(String code) async =>
+      unwrapData<dynamic>(await _dio.post<dynamic>('/auth/2fa/verify', data: {'code': code}));
+
+  Future<void> disable2fa() async => unwrapData<dynamic>(await _dio.post<dynamic>('/auth/2fa/disable'));
+
   Future<void> logout(String? refreshToken) => _dio.post<dynamic>('/auth/logout', data: {'refreshToken': refreshToken});
 }
 

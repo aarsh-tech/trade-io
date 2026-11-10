@@ -52,6 +52,17 @@ String apiErrorMessage(Object error, String fallback) {
     if (unreachable.contains(error.type)) {
       return 'Cannot reach the server. Check your connection and try again.';
     }
+    if (error.type == DioExceptionType.badCertificate) {
+      return "The secure connection to the server failed. Check the phone's date and time, then try again.";
+    }
+    if (error.type == DioExceptionType.unknown && error.response == null) {
+      // dart:io socket / TLS errors land here (no internet, DNS failure, handshake failure).
+      final cause = '${error.error}';
+      if (cause.contains('Handshake') || cause.contains('CERTIFICATE')) {
+        return "The secure connection to the server failed. Check the phone's date and time, then try again.";
+      }
+      return 'Cannot reach the server. Check your connection and try again.';
+    }
     final data = error.response?.data;
     if (data is Map<String, dynamic>) {
       final message = data['message'];
@@ -61,6 +72,9 @@ String apiErrorMessage(Object error, String fallback) {
       }
       if (message is String && message.isNotEmpty) return message;
     }
+    // A reply without our JSON (e.g. a proxy error page): say which status, so it can be traced.
+    final status = error.response?.statusCode;
+    if (status != null) return '$fallback (server replied $status)';
   }
   return fallback;
 }

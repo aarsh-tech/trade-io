@@ -47,12 +47,29 @@ void main() {
       );
     });
     test('falls back when the body has no message', () {
-      expect(apiErrorMessage(badResponse('<html>502</html>', status: 502), 'Login failed'), 'Login failed');
+      expect(
+        apiErrorMessage(badResponse('<html>502</html>', status: 502), 'Login failed'),
+        'Login failed (server replied 502)',
+      );
       expect(apiErrorMessage(StateError('x'), 'Login failed'), 'Login failed');
     });
     test('names an unreachable server', () {
       final err = DioException(requestOptions: RequestOptions(path: '/x'), type: DioExceptionType.connectionError);
       expect(apiErrorMessage(err, 'fallback'), contains('Cannot reach the server'));
+    });
+    test('names a socket error with no response as unreachable', () {
+      final err = DioException(
+        requestOptions: RequestOptions(path: '/x'),
+        error: 'SocketException: Failed host lookup',
+      );
+      expect(apiErrorMessage(err, 'fallback'), contains('Cannot reach the server'));
+    });
+    test('names a TLS failure', () {
+      final err = DioException(
+        requestOptions: RequestOptions(path: '/x'),
+        error: 'HandshakeException: CERTIFICATE_VERIFY_FAILED',
+      );
+      expect(apiErrorMessage(err, 'fallback'), contains('secure connection'));
     });
     test('ApiException carries its own message', () {
       expect(apiErrorMessage(const ApiException('Unexpected login response'), 'fallback'), 'Unexpected login response');

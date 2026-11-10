@@ -10,6 +10,7 @@ _Instrument _$InstrumentFromJson(Map<String, dynamic> json) => _Instrument(
   symbol: json['symbol'] as String,
   exchange: json['exchange'] as String,
   name: json['name'] as String?,
+  segment: json['segment'] as String?,
   ltp: (json['ltp'] as num?)?.toDouble(),
   lotSize: (json['lotSize'] as num?)?.toInt() ?? 1,
 );
@@ -18,6 +19,7 @@ Map<String, dynamic> _$InstrumentToJson(_Instrument instance) => <String, dynami
   'symbol': instance.symbol,
   'exchange': instance.exchange,
   'name': instance.name,
+  'segment': instance.segment,
   'ltp': instance.ltp,
   'lotSize': instance.lotSize,
 };

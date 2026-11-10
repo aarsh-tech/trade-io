@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
+<!-- Launch screen before Android 12: the app background with the Tradeio mark centred,
+     at the same size and place as the Flutter splash that follows. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
-
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+    <item android:drawable="@color/tradeio_background" />
+    <item android:width="88dp" android:height="88dp" android:gravity="center" android:drawable="@drawable/splash_logo" />
 </layer-list>

@@ -8,6 +8,9 @@ abstract class Instrument with _$Instrument {
     required String symbol,
     required String exchange,
     String? name,
+
+    /// Kite segment, e.g. `NFO-OPT`, `INDICES`, `NSE`.
+    String? segment,
     double? ltp,
     @Default(1) int lotSize,
   }) = _Instrument;

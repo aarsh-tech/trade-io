@@ -30,20 +30,24 @@ Map<String, dynamic> _$BrokerPositionToJson(_BrokerPosition instance) => <String
 
 _Holding _$HoldingFromJson(Map<String, dynamic> json) => _Holding(
   symbol: json['symbol'] as String,
+  exchange: json['exchange'] as String?,
   qty: (json['qty'] as num?)?.toInt() ?? 0,
   avgPrice: (json['avgPrice'] as num?)?.toDouble() ?? 0,
   ltp: (json['ltp'] as num?)?.toDouble() ?? 0,
-  pnl: (json['pnl'] as num?)?.toDouble() ?? 0,
+  pnl: (json['pnl'] as num?)?.toDouble(),
   pnlPct: (json['pnlPct'] as num?)?.toDouble(),
+  closePrice: (json['closePrice'] as num?)?.toDouble(),
 );
 
 Map<String, dynamic> _$HoldingToJson(_Holding instance) => <String, dynamic>{
   'symbol': instance.symbol,
+  'exchange': instance.exchange,
   'qty': instance.qty,
   'avgPrice': instance.avgPrice,
   'ltp': instance.ltp,
   'pnl': instance.pnl,
   'pnlPct': instance.pnlPct,
+  'closePrice': instance.closePrice,
 };
 
 _Margins _$MarginsFromJson(Map<String, dynamic> json) => _Margins(

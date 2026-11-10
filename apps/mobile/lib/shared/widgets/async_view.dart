@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/api_envelope.dart';
+import 'ui.dart';
 
 /// Renders an [AsyncValue]: a spinner on first load, the data afterwards (also while it
 /// refreshes in the background), and an error with a retry button when there is no data to show.
@@ -18,12 +19,32 @@ class AsyncView<T> extends StatelessWidget {
     return value.when(
       skipLoadingOnReload: true,
       data: data,
-      loading:
-          () =>
-              loading ?? const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())),
+      loading: () => loading ?? const Loading(),
       error: (e, _) => ErrorRetry(message: apiErrorMessage(e, 'Could not load this'), onRetry: onRetry),
     );
   }
+}
+
+/// Small centred spinner with an optional caption.
+class Loading extends StatelessWidget {
+  const Loading({super.key, this.label});
+  final String? label;
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.2)),
+          if (label != null) ...[
+            const SizedBox(height: 10),
+            Text(label!, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 class ErrorRetry extends StatelessWidget {
@@ -33,54 +54,25 @@ class ErrorRetry extends StatelessWidget {
   final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_off_outlined, color: scheme.onSurfaceVariant, size: 32),
-            const SizedBox(height: 8),
-            Text(message, textAlign: TextAlign.center, style: TextStyle(color: scheme.onSurfaceVariant)),
-            if (onRetry != null) ...[
-              const SizedBox(height: 12),
-              OutlinedButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh), label: const Text('Retry')),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Center(
+    child: EmptyPanel(
+      icon: Icons.cloud_off_outlined,
+      title: 'Could not load',
+      message: message,
+      actions: [if (onRetry != null) ToneButton(label: 'Retry', icon: Icons.refresh_rounded, onPressed: onRetry)],
+    ),
+  );
 }
 
 class EmptyState extends StatelessWidget {
-  const EmptyState({super.key, required this.icon, required this.title, this.message});
+  const EmptyState({super.key, required this.icon, required this.title, this.message, this.actions = const []});
 
   final IconData icon;
   final String title;
   final String? message;
+  final List<Widget> actions;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 36, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 10),
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            if (message != null) ...[
-              const SizedBox(height: 4),
-              Text(message!, textAlign: TextAlign.center, style: TextStyle(color: scheme.onSurfaceVariant)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      Center(child: EmptyPanel(icon: icon, title: title, message: message, actions: actions));
 }

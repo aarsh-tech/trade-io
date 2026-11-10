@@ -1,20 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
-import '../../../core/socket/market_socket.dart';
+import '../../../core/auth/auth_controller.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../shared/widgets/status_chip.dart';
+import '../../../core/utils/market_time.dart';
+import '../../../router.dart';
+import '../../../shared/widgets/ui.dart';
 import '../../brokers/brokers_providers.dart';
 import '../../brokers/widgets/broker_banner.dart';
-import '../../market/market_models.dart';
+import '../../home/app_chrome.dart';
 import '../../market/market_providers.dart';
 import '../../orders/orders_providers.dart';
 import '../../portfolio/portfolio_providers.dart';
 import '../../risk/risk_providers.dart';
 import '../../strategies/strategies_providers.dart';
+import '../widgets/algo_card.dart';
+import '../widgets/funds_cards.dart';
 import '../widgets/market_cards.dart';
 import '../widgets/today_summary.dart';
 
+/// Web /dashboard on a phone: greeting + actions, today's numbers, live positions and
+/// strategies, funds, market movers.
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
@@ -28,64 +36,63 @@ class DashboardScreen extends ConsumerWidget {
       ..invalidate(riskStatusProvider)
       ..invalidate(strategiesProvider)
       ..invalidate(brokersProvider);
-    if (brokerId != null) ref.invalidate(marginsProvider(brokerId));
-    // Wait for the two main loads so the refresh spinner means something; errors show in their cards.
+    if (brokerId != null) {
+      ref
+        ..invalidate(marginsProvider(brokerId))
+        ..invalidate(holdingsProvider(brokerId))
+        ..invalidate(positionsProvider(brokerId));
+    }
     await Future.wait<void>([
-      ref.read(marketOverviewProvider.future).then<void>((_) {}, onError: (Object _) {}),
       ref.read(dayPnlProvider.future).then<void>((_) {}, onError: (Object _) {}),
+      ref.read(strategiesProvider.future).then<void>((_) {}, onError: (Object _) {}),
     ]);
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Keeps the feed subscription for the indices and watchlist alive while this tab exists.
     ref.watch(overviewSubscriptionProvider);
-    final session = ref.watch(sessionProvider).value;
-    final feed = ref.watch(marketSocketProvider.select((s) => s.feed.status));
-    final colors = context.colors;
-
-    final feedColor = switch (feed) {
-      FeedState.connected => colors.profit,
-      FeedState.stale => colors.warn,
-      FeedState.closed => Theme.of(context).colorScheme.onSurfaceVariant,
-    };
-    final feedLabel = switch (feed) {
-      FeedState.connected => 'Live',
-      FeedState.stale => 'Stale',
-      FeedState.closed => 'Feed off',
-    };
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Dashboard'),
-        actions: [
-          if (session != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: StatusChip(
-                session.state.label,
-                color:
-                    session.state == SessionState.open ? colors.profit : Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: StatusChip(feedLabel, color: feedColor, icon: Icons.circle),
-          ),
-        ],
-      ),
+    final auth = ref.watch(authControllerProvider);
+    final first = auth is AuthSignedIn ? auth.user.name.split(' ').first : '';
+    final today = DateFormat('EEEE, d MMM').format(marketTime(DateTime.now()));
+    return TabScaffold(
+      title: 'Dashboard',
       body: RefreshIndicator(
         onRefresh: () => _refreshAll(ref),
         child: ListView(
-          padding: const EdgeInsets.only(bottom: 24),
-          children: const [
-            BrokerBanner(),
-            SizedBox(height: 12),
-            TodaySummary(),
-            SizedBox(height: 12),
-            IndicesStrip(),
-            WatchlistCard(),
-            MoversCard(),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: AppSpace.pageInsets,
+          children: [
+            PageHeader(
+              first.isEmpty ? 'Dashboard' : 'Hi, $first',
+              subtitle: '$today · Funds, live algo positions and market movers',
+              actions: [
+                ToneButton(
+                  label: 'Daily login',
+                  icon: Icons.bolt_rounded,
+                  tone: Tone.warn,
+                  height: 34,
+                  onPressed: () => showKiteSheet(context),
+                ),
+                ToneButton(
+                  label: 'Place order',
+                  icon: Icons.shopping_cart_outlined,
+                  filled: true,
+                  height: 34,
+                  onPressed: () => context.push(Routes.trade),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpace.gap),
+            const BrokerBanner(),
+            const IndicesRow(),
+            const SizedBox(height: AppSpace.gap),
+            const TodaySummary(),
+            const SizedBox(height: AppSpace.gap),
+            const AlgoCard(),
+            const SizedBox(height: AppSpace.gap),
+            const FundsCards(),
+            const SizedBox(height: AppSpace.gap),
+            const MoversPanel(),
           ],
         ),
       ),

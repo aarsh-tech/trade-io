@@ -30,3 +30,11 @@ sealed class LoginResult with _$LoginResult {
     required String refreshToken,
   }) = LoginSession;
 }
+
+/// POST /auth/2fa/setup
+@freezed
+abstract class TwoFaSetup with _$TwoFaSetup {
+  const factory TwoFaSetup({required String secret, required String qrCode}) = _TwoFaSetup;
+
+  factory TwoFaSetup.fromJson(Map<String, dynamic> json) => _$TwoFaSetupFromJson(json);
+}

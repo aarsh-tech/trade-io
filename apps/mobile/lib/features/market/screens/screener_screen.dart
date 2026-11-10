@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
+import '../../../router.dart';
 import '../../../shared/widgets/async_view.dart';
-import '../../../shared/widgets/pnl_text.dart';
+import '../../../shared/widgets/ui.dart';
+import '../../orders/order_ticket.dart';
+import '../scanner_models.dart';
 import '../scanner_providers.dart';
 
+/// Web /live-screener: Open = Low (buy) and Open = High (sell) stocks, live, with suggested
+/// stop-loss and targets and one tap into the order ticket.
 class ScreenerScreen extends ConsumerStatefulWidget {
   const ScreenerScreen({super.key});
   @override
@@ -14,123 +22,202 @@ class ScreenerScreen extends ConsumerStatefulWidget {
 class _ScreenerScreenState extends ConsumerState<ScreenerScreen> {
   String _universe = 'fno', _signal = 'ALL', _search = '';
   double _tolerance = 0.05;
+
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     final query = (universe: _universe, tolerance: _tolerance);
+    final data = ref.watch(liveScreenerProvider(query));
+    final all = data.value?.stocks ?? const <ScreenerStock>[];
+    int count(String s) => all.where((x) => x.signal == s).length;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Live screener'),
+        title: const Text('OHL Screener'),
         actions: [
           IconButton(
             tooltip: 'Refresh',
             onPressed: () => ref.invalidate(screenerProvider(query)),
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+      body: RefreshIndicator(
+        onRefresh: () => ref.refresh(screenerProvider(query).future),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: AppSpace.pageInsets,
+          children: [
+            const PageHeader(
+              'Live OHL screener',
+              subtitle: 'Open = Low (bullish) and Open = High (bearish) stocks, live',
+            ),
+            const SizedBox(height: AppSpace.gap),
+            StatStrip(
+              items: [
+                (label: 'Open = Low (buy)', value: '${count('OPEN_LOW')}', color: c.profit),
+                (label: 'Open = High (sell)', value: '${count('OPEN_HIGH')}', color: c.loss),
+                (label: 'Near O=L', value: '${count('NEAR_OPEN_LOW')}', color: null),
+                (label: 'Near O=H', value: '${count('NEAR_OPEN_HIGH')}', color: null),
+              ],
+            ),
+            const SizedBox(height: AppSpace.gap),
+            SegmentTabs<String>(
+              options: const [
+                (value: 'fno', label: 'F&O stocks', tone: null),
+                (value: 'nifty50', label: 'NIFTY 50', tone: null),
+              ],
+              value: _universe,
+              onChanged: (v) => setState(() => _universe = v),
+            ),
+            const SizedBox(height: 8),
+            Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        isExpanded: true,
-                        value: _universe,
-                        decoration: const InputDecoration(labelText: 'Universe'),
-                        items: const [
-                          DropdownMenuItem(value: 'fno', child: Text('F&O stocks')),
-                          DropdownMenuItem(value: 'nifty50', child: Text('NIFTY 50')),
-                        ],
-                        onChanged: (v) => setState(() => _universe = v!),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<double>(
-                        isExpanded: true,
-                        value: _tolerance,
-                        decoration: const InputDecoration(labelText: 'Tolerance %'),
-                        items: [
-                          for (final n in [0.0, 0.05, 0.1, 0.25, 0.5]) DropdownMenuItem(value: n, child: Text('$n')),
-                        ],
-                        onChanged: (v) => setState(() => _tolerance = v!),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search symbol'),
-                  onChanged: (v) => setState(() => _search = v.toUpperCase()),
-                ),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final s in ['ALL', 'OPEN_LOW', 'OPEN_HIGH', 'NEAR_OPEN_LOW', 'NEAR_OPEN_HIGH'])
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: ChoiceChip(
-                            label: Text(s.replaceAll('_', ' ')),
-                            selected: _signal == s,
-                            onSelected: (_) => setState(() => _signal = s),
+                Text('Tolerance', style: Theme.of(context).textTheme.labelMedium),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final t in const [0.0, 0.05, 0.1, 0.25]) ...[
+                          ChoiceChip(
+                            label: Text(t == 0 ? 'Exact' : '$t%'),
+                            selected: _tolerance == t,
+                            onSelected: (_) => setState(() => _tolerance = t),
                           ),
-                        ),
-                    ],
+                          const SizedBox(width: 6),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
-          Expanded(
-            child: AsyncView(
-              value: ref.watch(liveScreenerProvider(query)),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final (s, label) in const [
+                    ('ALL', 'All'),
+                    ('OPEN_LOW', 'Open = Low'),
+                    ('OPEN_HIGH', 'Open = High'),
+                    ('NEAR_OPEN_LOW', 'Near O=L'),
+                    ('NEAR_OPEN_HIGH', 'Near O=H'),
+                  ]) ...[
+                    ChoiceChip(
+                      label: Text(label),
+                      selected: _signal == s,
+                      onSelected: (_) => setState(() => _signal = s),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            SearchField(onChanged: (v) => setState(() => _search = v.toUpperCase())),
+            const SizedBox(height: AppSpace.gap),
+            AsyncView(
+              value: data,
+              loading: const Loading(label: 'Scanning opening ranges…'),
               onRetry: () => ref.invalidate(screenerProvider(query)),
-              data: (data) {
+              data: (d) {
                 final rows =
-                    data.stocks
+                    d.stocks
                         .where(
                           (s) => s.symbol.toUpperCase().contains(_search) && (_signal == 'ALL' || s.signal == _signal),
                         )
                         .toList();
-                return RefreshIndicator(
-                  onRefresh: () => ref.refresh(screenerProvider(query).future),
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                    physics: const AlwaysScrollableScrollPhysics(),
+                if (rows.isEmpty) {
+                  return const Card(
+                    child: EmptyPanel(
+                      icon: Icons.manage_search_rounded,
+                      title: 'No matching stocks',
+                      message: 'Try a wider tolerance or another universe. Signals appear after the open.',
+                    ),
+                  );
+                }
+                return Card(
+                  child: Column(
                     children: [
-                      const Text('Prices update live. Signals and levels refresh every 15 seconds.'),
-                      if (rows.isEmpty) const EmptyState(icon: Icons.filter_alt_outlined, title: 'No matching stocks'),
-                      for (final s in rows)
-                        Card(
-                          child: ExpansionTile(
-                            title: Text(s.symbol),
-                            subtitle: Text(s.signal.replaceAll('_', ' ')),
-                            trailing: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [Text(formatPrice(s.ltp)), PctText(s.changePct)],
-                            ),
-                            children: [
-                              ListTile(
-                                title: Text('${s.suggestedAction} · Stop ${formatPrice(s.suggestedSL)}'),
-                                subtitle: Text(
-                                  'Targets ${formatPrice(s.suggestedTarget)} / ${formatPrice(s.suggestedTarget2)} · Open ${formatPrice(s.open)}\nVolume ${formatQty(s.volume)}',
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      for (final (i, s) in rows.indexed) ...[
+                        if (i > 0) Divider(color: c.border),
+                        _ScreenerRow(stock: s),
+                      ],
                     ],
                   ),
                 );
               },
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ScreenerRow extends StatelessWidget {
+  const _ScreenerRow({required this.stock});
+  final ScreenerStock stock;
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final s = stock;
+    final bullish = s.signal.endsWith('OPEN_LOW');
+    final bearish = s.signal.endsWith('OPEN_HIGH');
+    final tone = bullish ? Tone.profit : (bearish ? Tone.loss : Tone.neutral);
+    void trade(String side) => context.push(
+      Routes.trade,
+      extra: TicketPrefill(
+        symbol: s.symbol,
+        exchange: s.exchange,
+        side: side,
+        ltp: s.ltp,
+        qty: s.lotSize > 1 ? s.lotSize : null,
+        note:
+            s.suggestedSL > 0
+                ? 'Suggested stop ${formatPrice(s.suggestedSL)} · targets ${formatPrice(s.suggestedTarget)} / ${formatPrice(s.suggestedTarget2)}'
+                : null,
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Text(s.symbol, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 6),
+              Pill(s.signal.replaceAll('_', ' '), tone: tone),
+              const Spacer(),
+              Text(formatPrice(s.ltp), style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 58,
+                child: Text(
+                  formatPct(s.changePct),
+                  textAlign: TextAlign.end,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: c.pnl(s.changePct)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Open ${formatPrice(s.open)}'
+                  '${s.suggestedSL > 0 ? ' · SL ${formatPrice(s.suggestedSL)} · T ${formatPrice(s.suggestedTarget)}' : ''}'
+                  '${s.volume > 0 ? ' · Vol ${formatQty(s.volume)}' : ''}',
+                  style: TextStyle(fontSize: 11, color: c.mutedForeground),
+                ),
+              ),
+              ToneButton(label: 'B', tone: Tone.brand, height: 26, onPressed: () => trade('BUY')),
+              const SizedBox(width: 4),
+              ToneButton(label: 'S', tone: Tone.loss, height: 26, onPressed: () => trade('SELL')),
+            ],
           ),
         ],
       ),

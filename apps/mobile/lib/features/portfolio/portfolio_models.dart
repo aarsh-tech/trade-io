@@ -30,11 +30,13 @@ abstract class BrokerPosition with _$BrokerPosition {
 abstract class Holding with _$Holding {
   const factory Holding({
     required String symbol,
+    String? exchange,
     @Default(0) int qty,
     @Default(0) double avgPrice,
     @Default(0) double ltp,
-    @Default(0) double pnl,
+    double? pnl,
     double? pnlPct,
+    double? closePrice,
   }) = _Holding;
 
   factory Holding.fromJson(Map<String, dynamic> json) => _$HoldingFromJson(json);

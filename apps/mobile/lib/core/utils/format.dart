@@ -51,3 +51,17 @@ String formatPct(num? value, {int decimals = 2, bool signed = true}) {
 
 /// Plain integer with grouping, for quantities.
 String formatQty(num? value) => formatPrice(value, decimals: 0);
+
+/// `2h 05m` / `45m` (web `formatCountdown`): minutes left on a token or until the open.
+String formatCountdown(Duration d) {
+  final m = d.inMinutes < 0 ? 0 : d.inMinutes;
+  return m >= 60 ? '${m ~/ 60}h ${m % 60}m' : '${m}m';
+}
+
+/// `12s` / `4m` / `2h` (web `formatAge`): how long ago a tick arrived.
+String formatAge(Duration d) {
+  final s = d.inSeconds < 0 ? 0 : d.inSeconds;
+  if (s < 60) return '${s}s';
+  if (s < 3600) return '${s ~/ 60}m';
+  return '${s ~/ 3600}h';
+}

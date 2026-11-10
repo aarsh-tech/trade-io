@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ splash icon: a 288dp canvas (the system's size) with the 88dp mark centred. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="288dp" android:height="288dp" android:viewportWidth="288" android:viewportHeight="288">
+    <group android:translateX="100" android:translateY="100" android:scaleX="1.375" android:scaleY="1.375">
+        <path android:pathData="M16,0H48A16,16 0 0 1 64,16V48A16,16 0 0 1 48,64H16A16,16 0 0 1 0,48V16A16,16 0 0 1 16,0Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="64" android:endY="64">
+                    <item android:offset="0" android:color="#FF2563EB" />
+                    <item android:offset="0.5" android:color="#FF3B82F6" />
+                    <item android:offset="1" android:color="#FF1D4ED8" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <group android:translateX="-1">
+            <path android:fillColor="#FFFFFFFF" android:pathData="M35,11L18,34H33L29,53L48,29H33L35,11Z" />
+        </group>
+    </group>
+</vector>

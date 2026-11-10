@@ -1,11 +1,19 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Where the session lives on the device: the two JWTs and the last known user, encrypted
-/// by the Android Keystore. The access token is also kept in memory so attaching it to
-/// every request doesn't cost a platform call.
+/// by the Android Keystore. Both tokens are also kept in memory, so attaching the access token
+/// to every request doesn't cost a platform call.
+///
+/// The Keystore can fail on a real phone in ways a test never sees (a key that no longer matches
+/// its encrypted data after a reinstall, a vendor Keystore bug). None of that may stop someone
+/// from signing in, so every storage error is caught here:
+/// * a read that fails counts as "nothing saved" and wipes the unreadable data;
+/// * a write that fails keeps the session in memory, so this run of the app stays signed in
+///   and only the next cold start asks for the password again.
 class TokenStore {
   TokenStore(this._storage);
 
@@ -16,16 +24,19 @@ class TokenStore {
   static const _userKey = 'user';
 
   String? _accessCache;
+  String? _refreshCache;
+  Map<String, dynamic>? _userCache;
 
-  Future<String?> readAccess() async => _accessCache ??= await _storage.read(key: _accessKey);
+  Future<String?> readAccess() async => _accessCache ??= await _read(_accessKey);
 
-  Future<String?> readRefresh() => _storage.read(key: _refreshKey);
+  Future<String?> readRefresh() async => _refreshCache ??= await _read(_refreshKey);
 
   Future<Map<String, dynamic>?> readUser() async {
-    final raw = await _storage.read(key: _userKey);
+    if (_userCache != null) return _userCache;
+    final raw = await _read(_userKey);
     if (raw == null) return null;
     try {
-      return jsonDecode(raw) as Map<String, dynamic>;
+      return _userCache = jsonDecode(raw) as Map<String, dynamic>;
     } catch (_) {
       return null;
     }
@@ -33,19 +44,49 @@ class TokenStore {
 
   Future<void> saveTokens({required String access, required String refresh}) async {
     _accessCache = access;
-    await _storage.write(key: _accessKey, value: access);
-    await _storage.write(key: _refreshKey, value: refresh);
+    _refreshCache = refresh;
+    await _write(_accessKey, access);
+    await _write(_refreshKey, refresh);
   }
 
-  Future<void> saveUser(Map<String, dynamic> user) => _storage.write(key: _userKey, value: jsonEncode(user));
+  Future<void> saveUser(Map<String, dynamic> user) async {
+    _userCache = user;
+    await _write(_userKey, jsonEncode(user));
+  }
 
   Future<void> clear() async {
     _accessCache = null;
-    await Future.wait([
-      _storage.delete(key: _accessKey),
-      _storage.delete(key: _refreshKey),
-      _storage.delete(key: _userKey),
-    ]);
+    _refreshCache = null;
+    _userCache = null;
+    // Key by key: the same storage also holds the appearance setting, which outlives a sign-out.
+    for (final key in const [_accessKey, _refreshKey, _userKey]) {
+      try {
+        await _storage.delete(key: key);
+      } catch (e) {
+        debugPrint('TokenStore: deleting "$key" failed: $e');
+      }
+    }
+  }
+
+  Future<String?> _read(String key) async {
+    try {
+      return await _storage.read(key: key);
+    } catch (e) {
+      // Unreadable (usually a Keystore key that no longer matches the data): start clean.
+      debugPrint('TokenStore: reading "$key" failed, clearing saved session: $e');
+      try {
+        await _storage.deleteAll();
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  Future<void> _write(String key, String value) async {
+    try {
+      await _storage.write(key: key, value: value);
+    } catch (e) {
+      debugPrint('TokenStore: saving "$key" failed, keeping it in memory only: $e');
+    }
   }
 
   /// The `exp` claim of a JWT as a UTC time, or null when it can't be read.

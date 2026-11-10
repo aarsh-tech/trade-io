@@ -4,7 +4,13 @@
     <application
         android:label="Tradeio"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
+        <!-- No backups: the session tokens are encrypted with a Keystore key that a restore can't
+             bring back, so a restored copy would break sign-in on the next install. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

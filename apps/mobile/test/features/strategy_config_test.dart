@@ -60,4 +60,16 @@ void main() {
     expect(row.config, {'stopLossRs': 500, 'newSetting': true});
     expect(StrategyRow.fromJson({'id': 's', 'name': 'Empty'}).config, isEmpty);
   });
+
+  group('configLabel', () {
+    test('uses the known label for bounded, time and text fields', () {
+      expect(configLabel('emaPeriod'), 'EMA period');
+      expect(configLabel('vwapSource'), 'VWAP source');
+      expect(configLabel('instrumentType'), 'Instrument type');
+    });
+    test('turns an unknown camelCase key into sentence case, keeping acronyms', () {
+      expect(configLabel('trailEmaAfterOrb'), 'Trail EMA after ORB');
+      expect(configLabel('cooldown'), 'Cooldown');
+    });
+  });
 }

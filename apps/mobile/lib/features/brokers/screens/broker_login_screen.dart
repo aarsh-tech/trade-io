@@ -109,7 +109,7 @@ class _BrokerLoginScreenState extends ConsumerState<BrokerLoginScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(_error!),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     OutlinedButton(onPressed: _load, child: const Text('Restart login')),
                   ],
                 ),

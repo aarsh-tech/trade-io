@@ -36,11 +36,16 @@ class MarketApi {
   );
   Future<MoveAlertsData> moveAlerts() async =>
       MoveAlertsData.fromJson(unwrapData<Map<String, dynamic>>(await _dio.get<dynamic>('/market/move-alerts')));
-  Future<SwingScan?> swing(int page, String pattern, String sortBy) async {
+  Future<SwingScan?> swing(int page, String pattern, String sortBy, {int pageSize = 25}) async {
     final data = unwrapData<dynamic>(
       await _dio.get<dynamic>(
         '/swing-scanner/last',
-        queryParameters: {'page': page, 'pageSize': 25, 'pattern': pattern, 'sortBy': sortBy},
+        queryParameters: {
+          'page': page,
+          'pageSize': pageSize,
+          'pattern': pattern,
+          if (sortBy.isNotEmpty) 'sortBy': sortBy,
+        },
       ),
     );
     return data == null ? null : SwingScan.fromJson(data as Map<String, dynamic>);

@@ -116,3 +116,39 @@ List<TicketIssue> validateTicket(TicketInput t) {
   }
   return issues;
 }
+
+/// What the order ticket opens with when another screen sends the user to trade
+/// (a mover, a holding, an intraday pick): the web's OrderWindow props.
+class TicketPrefill {
+  const TicketPrefill({
+    required this.symbol,
+    this.exchange = 'NSE',
+    this.side = 'BUY',
+    this.ltp,
+    this.qty,
+    this.price,
+    this.trigger,
+    this.product,
+    this.orderType,
+    this.note,
+  });
+
+  final String symbol;
+  final String exchange;
+
+  /// `BUY` or `SELL`.
+  final String side;
+  final double? ltp;
+  final int? qty;
+  final double? price;
+  final double? trigger;
+
+  /// `MIS` / `CNC` / `NRML`.
+  final String? product;
+
+  /// `MARKET` / `LIMIT` / `SL` / `SL-M`.
+  final String? orderType;
+
+  /// Context shown on the ticket (e.g. the pick's stop and targets).
+  final String? note;
+}

@@ -63,3 +63,68 @@ List<(String, String)> strategyStateSummary(Map<String, dynamic> state) {
   }
   return items;
 }
+
+/// The four tiles at the top of a strategy (port of the web's MetricCards).
+class StrategyMetrics {
+  const StrategyMetrics({
+    required this.todayPnl,
+    required this.inPosition,
+    required this.tradesToday,
+    required this.winRate,
+    required this.totalTrades,
+    required this.statusText,
+  });
+
+  /// Null when there is nothing to show yet.
+  final double? todayPnl;
+  final bool inPosition;
+  final int? tradesToday;
+  final double? winRate;
+  final int totalTrades;
+  final String statusText;
+
+  static StrategyMetrics of({
+    required bool running,
+    required String runStatus,
+    Map<String, dynamic>? state,
+    int? perfTodayTrades,
+    double? perfTodayPnl,
+    int totalTrades = 0,
+    double winRate = 0,
+  }) {
+    num? first(List<String> keys) {
+      for (final k in keys) {
+        final v = state?[k];
+        final n = v is num ? v : num.tryParse('${v ?? ''}');
+        if (v != null && n != null && n.isFinite) return n;
+      }
+      return null;
+    }
+
+    final triggered = state?['entryTriggered'];
+    final inPosition =
+        state != null &&
+        (state['stateType'] == 'ACTIVE_POSITION' ||
+            triggered == true ||
+            (triggered is String && triggered.isNotEmpty) ||
+            ((first(['entryPrice']) ?? 0) > 0 && (first(['positionQty', 'qty']) ?? 0) > 0));
+    // Stored fills are net of charges, so they win; the engine's gross figure covers the gap.
+    final stored = (perfTodayTrades ?? 0) > 0 ? perfTodayPnl : null;
+    final realised = stored ?? first(['dailyRealizedPnlRs'])?.toDouble();
+    final open = inPosition ? (first(['pnlRs'])?.toDouble() ?? 0) : 0.0;
+    final hasPnl = realised != null || inPosition;
+    final trades = first(['tradesToday', 'tradesTaken', 'tradeCount', 'dailyTradeCount'])?.toInt() ?? perfTodayTrades;
+    final statusText =
+        runStatus == 'RUNNING'
+            ? (inPosition ? 'In position' : (state?['isGoalAchieved'] == true ? 'Target hit' : 'Scanning'))
+            : (runStatus == 'COMPLETED' ? 'Completed' : 'Stopped');
+    return StrategyMetrics(
+      todayPnl: hasPnl ? (realised ?? 0) + open : null,
+      inPosition: inPosition,
+      tradesToday: trades,
+      winRate: totalTrades > 0 ? winRate : null,
+      totalTrades: totalTrades,
+      statusText: running ? statusText : (runStatus == 'COMPLETED' ? 'Completed' : 'Stopped'),
+    );
+  }
+}

@@ -15,7 +15,8 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Instrument {
 
- String get symbol; String get exchange; String? get name; double? get ltp; int get lotSize;
+ String get symbol; String get exchange; String? get name;/// Kite segment, e.g. `NFO-OPT`, `INDICES`, `NSE`.
+ String? get segment; double? get ltp; int get lotSize;
 /// Create a copy of Instrument
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +29,16 @@ $InstrumentCopyWith<Instrument> get copyWith => _$InstrumentCopyWithImpl<Instrum
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Instrument&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.exchange, exchange) || other.exchange == exchange)&&(identical(other.name, name) || other.name == name)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.lotSize, lotSize) || other.lotSize == lotSize));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Instrument&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.exchange, exchange) || other.exchange == exchange)&&(identical(other.name, name) || other.name == name)&&(identical(other.segment, segment) || other.segment == segment)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.lotSize, lotSize) || other.lotSize == lotSize));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,symbol,exchange,name,ltp,lotSize);
+int get hashCode => Object.hash(runtimeType,symbol,exchange,name,segment,ltp,lotSize);
 
 @override
 String toString() {
-  return 'Instrument(symbol: $symbol, exchange: $exchange, name: $name, ltp: $ltp, lotSize: $lotSize)';
+  return 'Instrument(symbol: $symbol, exchange: $exchange, name: $name, segment: $segment, ltp: $ltp, lotSize: $lotSize)';
 }
 
 
@@ -48,7 +49,7 @@ abstract mixin class $InstrumentCopyWith<$Res>  {
   factory $InstrumentCopyWith(Instrument value, $Res Function(Instrument) _then) = _$InstrumentCopyWithImpl;
 @useResult
 $Res call({
- String symbol, String exchange, String? name, double? ltp, int lotSize
+ String symbol, String exchange, String? name, String? segment, double? ltp, int lotSize
 });
 
 
@@ -65,11 +66,12 @@ class _$InstrumentCopyWithImpl<$Res>
 
 /// Create a copy of Instrument
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? symbol = null,Object? exchange = null,Object? name = freezed,Object? ltp = freezed,Object? lotSize = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? symbol = null,Object? exchange = null,Object? name = freezed,Object? segment = freezed,Object? ltp = freezed,Object? lotSize = null,}) {
   return _then(_self.copyWith(
 symbol: null == symbol ? _self.symbol : symbol // ignore: cast_nullable_to_non_nullable
 as String,exchange: null == exchange ? _self.exchange : exchange // ignore: cast_nullable_to_non_nullable
 as String,name: freezed == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
+as String?,segment: freezed == segment ? _self.segment : segment // ignore: cast_nullable_to_non_nullable
 as String?,ltp: freezed == ltp ? _self.ltp : ltp // ignore: cast_nullable_to_non_nullable
 as double?,lotSize: null == lotSize ? _self.lotSize : lotSize // ignore: cast_nullable_to_non_nullable
 as int,
@@ -157,10 +159,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String symbol,  String exchange,  String? name,  double? ltp,  int lotSize)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String symbol,  String exchange,  String? name,  String? segment,  double? ltp,  int lotSize)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Instrument() when $default != null:
-return $default(_that.symbol,_that.exchange,_that.name,_that.ltp,_that.lotSize);case _:
+return $default(_that.symbol,_that.exchange,_that.name,_that.segment,_that.ltp,_that.lotSize);case _:
   return orElse();
 
 }
@@ -178,10 +180,10 @@ return $default(_that.symbol,_that.exchange,_that.name,_that.ltp,_that.lotSize);
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String symbol,  String exchange,  String? name,  double? ltp,  int lotSize)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String symbol,  String exchange,  String? name,  String? segment,  double? ltp,  int lotSize)  $default,) {final _that = this;
 switch (_that) {
 case _Instrument():
-return $default(_that.symbol,_that.exchange,_that.name,_that.ltp,_that.lotSize);case _:
+return $default(_that.symbol,_that.exchange,_that.name,_that.segment,_that.ltp,_that.lotSize);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -198,10 +200,10 @@ return $default(_that.symbol,_that.exchange,_that.name,_that.ltp,_that.lotSize);
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String symbol,  String exchange,  String? name,  double? ltp,  int lotSize)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String symbol,  String exchange,  String? name,  String? segment,  double? ltp,  int lotSize)?  $default,) {final _that = this;
 switch (_that) {
 case _Instrument() when $default != null:
-return $default(_that.symbol,_that.exchange,_that.name,_that.ltp,_that.lotSize);case _:
+return $default(_that.symbol,_that.exchange,_that.name,_that.segment,_that.ltp,_that.lotSize);case _:
   return null;
 
 }
@@ -213,12 +215,14 @@ return $default(_that.symbol,_that.exchange,_that.name,_that.ltp,_that.lotSize);
 @JsonSerializable()
 
 class _Instrument implements Instrument {
-  const _Instrument({required this.symbol, required this.exchange, this.name, this.ltp, this.lotSize = 1});
+  const _Instrument({required this.symbol, required this.exchange, this.name, this.segment, this.ltp, this.lotSize = 1});
   factory _Instrument.fromJson(Map<String, dynamic> json) => _$InstrumentFromJson(json);
 
 @override final  String symbol;
 @override final  String exchange;
 @override final  String? name;
+/// Kite segment, e.g. `NFO-OPT`, `INDICES`, `NSE`.
+@override final  String? segment;
 @override final  double? ltp;
 @override@JsonKey() final  int lotSize;
 
@@ -235,16 +239,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Instrument&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.exchange, exchange) || other.exchange == exchange)&&(identical(other.name, name) || other.name == name)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.lotSize, lotSize) || other.lotSize == lotSize));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Instrument&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.exchange, exchange) || other.exchange == exchange)&&(identical(other.name, name) || other.name == name)&&(identical(other.segment, segment) || other.segment == segment)&&(identical(other.ltp, ltp) || other.ltp == ltp)&&(identical(other.lotSize, lotSize) || other.lotSize == lotSize));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,symbol,exchange,name,ltp,lotSize);
+int get hashCode => Object.hash(runtimeType,symbol,exchange,name,segment,ltp,lotSize);
 
 @override
 String toString() {
-  return 'Instrument(symbol: $symbol, exchange: $exchange, name: $name, ltp: $ltp, lotSize: $lotSize)';
+  return 'Instrument(symbol: $symbol, exchange: $exchange, name: $name, segment: $segment, ltp: $ltp, lotSize: $lotSize)';
 }
 
 
@@ -255,7 +259,7 @@ abstract mixin class _$InstrumentCopyWith<$Res> implements $InstrumentCopyWith<$
   factory _$InstrumentCopyWith(_Instrument value, $Res Function(_Instrument) _then) = __$InstrumentCopyWithImpl;
 @override @useResult
 $Res call({
- String symbol, String exchange, String? name, double? ltp, int lotSize
+ String symbol, String exchange, String? name, String? segment, double? ltp, int lotSize
 });
 
 
@@ -272,11 +276,12 @@ class __$InstrumentCopyWithImpl<$Res>
 
 /// Create a copy of Instrument
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? symbol = null,Object? exchange = null,Object? name = freezed,Object? ltp = freezed,Object? lotSize = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? symbol = null,Object? exchange = null,Object? name = freezed,Object? segment = freezed,Object? ltp = freezed,Object? lotSize = null,}) {
   return _then(_Instrument(
 symbol: null == symbol ? _self.symbol : symbol // ignore: cast_nullable_to_non_nullable
 as String,exchange: null == exchange ? _self.exchange : exchange // ignore: cast_nullable_to_non_nullable
 as String,name: freezed == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
+as String?,segment: freezed == segment ? _self.segment : segment // ignore: cast_nullable_to_non_nullable
 as String?,ltp: freezed == ltp ? _self.ltp : ltp // ignore: cast_nullable_to_non_nullable
 as double?,lotSize: null == lotSize ? _self.lotSize : lotSize // ignore: cast_nullable_to_non_nullable
 as int,

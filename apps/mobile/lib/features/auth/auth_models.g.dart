@@ -23,3 +23,11 @@ Map<String, dynamic> _$AppUserToJson(_AppUser instance) => <String, dynamic>{
   'isActive': instance.isActive,
   'twoFaEnabled': instance.twoFaEnabled,
 };
+
+_TwoFaSetup _$TwoFaSetupFromJson(Map<String, dynamic> json) =>
+    _TwoFaSetup(secret: json['secret'] as String, qrCode: json['qrCode'] as String);
+
+Map<String, dynamic> _$TwoFaSetupToJson(_TwoFaSetup instance) => <String, dynamic>{
+  'secret': instance.secret,
+  'qrCode': instance.qrCode,
+};
