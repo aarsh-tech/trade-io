@@ -340,11 +340,16 @@ export class StocksInPlayEngine {
     private readonly orderGateway: OrderGateway,
   ) { }
 
-  /** All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record). */
-  private async placeOrder(state: EngineState, params: OrderParams): Promise<string> {
+  /**
+   * All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record).
+   * `estimatedPrice` (a MARKET entry's last known price) lets the gateway's order-value check skip its own LTP call:
+   * Kite allows one quote call a second, so that lookup queued 1-2 s behind the engine's own quotes on every entry.
+   */
+  private async placeOrder(state: EngineState, params: OrderParams, estimatedPrice?: number): Promise<string> {
     const placed = await this.orderGateway.place(state.userId, state.brokerAccountId, params, {
       strategyId: state.strategyId,
       executionId: state.executionId,
+      estimatedPrice,
     });
     return placed.orderId;
   }
@@ -1910,7 +1915,7 @@ export class StocksInPlayEngine {
       }
       state.enteringSymbol = normalizeSymbol(c.symbol);
       try {
-        fill = await this.placeLiveEntry(state, client, c.symbol, entrySide, qty);
+        fill = await this.placeLiveEntry(state, client, c.symbol, entrySide, qty, ltp);
       } finally {
         state.enteringSymbol = null;
       }
@@ -1995,23 +2000,26 @@ export class StocksInPlayEngine {
   }
 
   /** MARKET order through the gateway, then the real fill from the order book. Null when nothing filled. */
-  private async placeLiveEntry(state: EngineState, client: any, symbol: string, side: 'BUY' | 'SELL', qty: number): Promise<{ qty: number; price: number; orderId: string } | null> {
+  private async placeLiveEntry(state: EngineState, client: any, symbol: string, side: 'BUY' | 'SELL', qty: number, ltp: number): Promise<{ qty: number; price: number; orderId: string } | null> {
     let orderId: string;
+    const t0 = Date.now();
     try {
-      orderId = await this.placeOrder(state, { symbol, exchange: 'NSE', product: 'MIS', qty, side, orderType: 'MARKET', intent: 'ENTRY' });
+      orderId = await this.placeOrder(state, { symbol, exchange: 'NSE', product: 'MIS', qty, side, orderType: 'MARKET', intent: 'ENTRY' }, ltp);
     } catch (e: any) {
       this.log(state, `❌ Entry order for ${symbol} failed: ${e?.message || e}`);
       return null;
     }
+    const sentMs = Date.now() - t0;
 
     let order = await this.awaitOrder(client, orderId, 5000);
+    const seenMs = Date.now() - t0;
     if (order && order.filledQty < qty && !['COMPLETE', 'REJECTED', 'CANCELLED'].includes(order.status)) {
       this.log(state, `⏳ Entry ${orderId} still ${order.status} (${order.filledQty}/${qty} filled) — cancelling the rest.`);
       await client.cancelOrder(orderId).catch(() => undefined);
       order = (await this.awaitOrder(client, orderId, 2000)) ?? order;
     }
     if (order && order.filledQty > 0 && order.avgPrice > 0) {
-      this.log(state, `✅ Entry ${orderId} filled ${order.filledQty}/${qty} @ ₹${order.avgPrice.toFixed(2)} (${order.status})`);
+      this.log(state, `✅ Entry ${orderId} filled ${order.filledQty}/${qty} @ ₹${order.avgPrice.toFixed(2)} (${order.status}) | order accepted in ${sentMs} ms, fill seen after ${seenMs} ms`);
       return { qty: order.filledQty, price: order.avgPrice, orderId };
     }
     if (order && (order.status === 'REJECTED' || order.status === 'CANCELLED')) {
@@ -2458,13 +2466,18 @@ export class StocksInPlayEngine {
     }
   }
 
-  /** Polls the order book until the order is final or `maxMs` passes; returns the last state seen. */
+  /**
+   * Polls the order book until the order is final or `maxMs` passes; returns the last state seen.
+   * First look after 200 ms (a MARKET order is usually final by then, so the stop goes in sooner), then every 400 ms.
+   */
   private async awaitOrder(client: any, orderId: string, maxMs: number): Promise<OrderSnap | null> {
     const kite = client['kite'] || client;
     const deadline = Date.now() + maxMs;
     let last: OrderSnap | null = null;
+    let wait = 200;
     do {
-      await sleep(500);
+      await sleep(wait);
+      wait = 400;
       last = (await this.readOrder(kite, orderId)) ?? last;
       if (last && ['COMPLETE', 'REJECTED', 'CANCELLED'].includes(last.status)) return last;
     } while (Date.now() < deadline);
