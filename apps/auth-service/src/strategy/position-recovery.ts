@@ -339,7 +339,7 @@ function closedRoundTrips(fills: Fill[]): Pick<DailyTally, 'wins' | 'losses' | '
 }
 
 /** An entry order that may have opened a position: anything but a rejection or an unfilled cancel. */
-function mayHaveFilled(status: string, filledQty: number): boolean {
+export function mayHaveFilled(status: string, filledQty: number): boolean {
   if (filledQty > 0) return true;
   const s = (status || '').toUpperCase();
   return s !== 'REJECTED' && !s.includes('CANCEL');

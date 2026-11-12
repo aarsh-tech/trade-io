@@ -1,14 +1,16 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { getSharedInstruments } from '../brokers/instrument-store';
 import { strategyEvents } from '../common/events';
+import { sendAlert } from '../common/utils/alert';
 import { loadResumableLogs, MAX_ENGINE_LOGS, pushEngineLog } from '../common/utils/engine-log';
 import { NIFTY_500_UNIVERSE } from '../market/market.constants';
 import { TickerService } from '../market/ticker.service';
 import { OrderGateway } from '../order-gateway/order-gateway.service';
+import { buildOrderTag } from '../order-gateway/order-rules';
 import { PrismaService } from '../prisma/prisma.service';
 import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, normalizeSymbol } from './broker-position-guard';
 import { StocksInPlayConfig } from './dto/strategy.dto';
@@ -17,7 +19,7 @@ import { FADE_MIN_HISTORY, FadeCandle, fadeLongTrigger, fadeReadings, fadeShortT
 import { buildSrZones, describeZonesAhead, prevDayHighLow, zonesAhead } from './inplay-sr-zones';
 import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
 import { loadOiPicks, OiPick } from './oi-buildup-signals';
-import { countTodaysTradesForEntry, findOpenPosition, istDayStart, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
+import { countTodaysTradesForEntry, findOpenPosition, istDayStart, mayHaveFilled, PositionUnknownError, protectionNotice, recoverTodaysTrades, strategyOrderWhere } from './position-recovery';
 import { getSurveillanceList, lastSurveillanceError, SurveillanceList } from './nse-surveillance';
 import { classifyMarginError, isTransientMarginError, leverageText, MARGIN_WAIT_MS, MarginInfo, marginInfoFromRow, marginRequest, MarginRequest, qtyByCapital } from './sip-margin';
 import { logSignal } from './signal-logger';
@@ -141,6 +143,35 @@ const OI_LIMIT_BELOW_CLOSE = 0.05;
 /** OI: how often the pending pre-open order is read from Zerodha. */
 const OI_ORDER_CHECK_MS = 5000;
 
+/** Reply to an entry order lost: Zerodha's order book is read this many times, 1 s apart, before the entry is marked uncertain. */
+const LOST_REPLY_POLLS = 3;
+/** How often an entry of unknown outcome is re-read from Zerodha. */
+const UNCERTAIN_CHECK_MS = 3000;
+/** An entry that neither the order book nor the position book shows after this long is treated as never placed (Kite's HTTP timeout is 15 s). */
+const UNCERTAIN_NOT_FOUND_MS = 20_000;
+/** How often an entry order still working after its first fill, or a stop quantity to change, is followed up. */
+const ENTRY_FOLLOW_MS = 1000;
+/** A market entry gets this long to fill before what is left of it is cancelled. */
+const ENTRY_FILL_WAIT_MS = 5000;
+/** A stop order rejected or cancelled at the broker is replaced this many times; after that the position is flattened. */
+const MAX_STOP_REPLACEMENTS = 2;
+/** The stop quantity cannot be matched to the position after this many tries: the position is flattened. */
+const MAX_STOP_RESIZE_FAILS = 3;
+/** The position book is ignored for this long after an entry (it can lag the order book). */
+const QTY_CHECK_SETTLE_MS = 15_000;
+/** A quantity difference seen at the broker is re-read after this long, and acted on only if it is still there. */
+const QTY_RECHECK_MS = 3000;
+/** Order postbacks from the Kite websocket are kept this long (they stand in for an order-book read while fresh). */
+const ORDER_UPDATE_TTL_MS = 10 * 60_000;
+/** From this IST time a missing Zerodha login is alerted (earlier it is normal: the user logs in before the open). */
+const NO_LOGIN_ALERT_HHMM = 9 * 60 + 5;
+/** Alert when one tick has been running this long (the 2 s loop is blocked). */
+const TICK_STUCK_ALERT_MS = 60_000;
+/** Alert after this many ticks in a row fail (about 10 s at the 2 s loop). */
+const TICK_ERROR_ALERT_COUNT = 5;
+/** Alert when an open position has had no price (websocket or REST) for this long during the session. */
+const NO_PRICE_ALERT_MS = 30_000;
+
 /** OI short build-up: the day's pick list and the pre-open order. */
 interface OiState {
   picks: OiPick[] | null;
@@ -263,6 +294,45 @@ interface OpenPosition {
   candles: FadeCandle[] | null;
   trendCheckedThrough: number;
   trendFetchAt: number;
+  /** The entry order's remainder could not be cancelled: later fills are added here and to the stop. */
+  pendingEntry?: { orderId: string; filledQty: number; lastCheck: number; cancelAfter: number } | null;
+  /** The stop order's quantity still has to be changed to match the position. */
+  stopQtyDirty?: boolean;
+  stopResizeFails?: number;
+  lastStopResize?: number;
+  /** Stop orders rejected or cancelled at the broker so far. */
+  stopReplacements?: number;
+  /** Broker quantity that differed from the engine's on the last check (acted on when seen twice). */
+  qtyMismatch?: number | null;
+  /** Problems already alerted, so a retry loop sends one alert. */
+  alerted?: Set<string>;
+}
+
+/** An entry whose outcome at the broker is not known. While one exists no new entry is sent; exits and stops are unaffected. */
+interface UncertainEntry {
+  symbol: string;
+  side: Side;
+  qty: number;
+  /** Null when the placement reply was lost: the order is then looked up by this strategy's entry tag. */
+  orderId: string | null;
+  /** The reply was lost, so the gateway never saved this order. */
+  replyLost: boolean;
+  since: number;
+  lastCheck: number;
+  /** Null for the OI pre-open order, which is followed by the OI flow once found. */
+  candidate: Candidate | null;
+  loggedBlock: boolean;
+}
+
+interface EntryFill {
+  qty: number;
+  price: number;
+  orderId: string;
+  /** The order is not final at the broker: part of it may still fill. */
+  remainderOpen?: boolean;
+  /** When the rest of a still-working entry is cancelled (epoch ms). */
+  cancelAfter?: number;
+  replyLost?: boolean;
 }
 
 interface EngineState {
@@ -280,6 +350,13 @@ interface EngineState {
   positions: OpenPosition[];
   /** Stock whose entry order is in flight (seen by other engines through symbol-claims before the position exists). */
   enteringSymbol: string | null;
+  uncertainEntry: UncertainEntry | null;
+  /** Engine problems already alerted today (stalls, repeated tick errors), so a retry loop sends one alert. */
+  alertedKeys: Set<string>;
+  /** Consecutive failed ticks (an alert goes out when it keeps failing). */
+  tickErrors: number;
+  /** When the tick now running started (epoch ms), for the stuck-tick alert. */
+  busySince: number;
   tradesToday: number;
   /** Entries per side today (FADE per-side cap). */
   sideTrades: Record<Side, number>;
@@ -310,6 +387,9 @@ interface EngineState {
   survLogged: boolean;
 }
 
+/** The day's OHLC and volume from a quote, read just after 09:20 (log-only comparison with Kite's 09:15 candle). */
+interface QuoteCandle { o: number; h: number; l: number; c: number; v: number; at: number }
+
 interface OrderSnap {
   status: string;
   filledQty: number;
@@ -318,7 +398,16 @@ interface OrderSnap {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const roundTo = (p: number, tick: number, dir: 'up' | 'down' | 'near') => {
+const isFinalOrder = (o: OrderSnap) => ['COMPLETE', 'REJECTED', 'CANCELLED'].includes(o.status);
+const toOrderSnap = (o: any): OrderSnap => ({ status: o.status, filledQty: Number(o.filled_quantity) || 0, avgPrice: Number(o.average_price) || 0, message: o.status_message });
+/**
+ * True when an order was refused before it could reach the exchange (our own gateway or client guards). The broker
+ * client turns every Kite failure into a plain message, so anything else, a timeout included, may have gone through.
+ */
+/** TREND: from the price to the day low/high, at least TREND_MIN_STOP_PCT away. */
+const trendStopDistance = (c: { stopLevel: number; side: Side }, px: number) => Math.max((px * TREND_MIN_STOP_PCT) / 100, (px - c.stopLevel) * (c.side === 'LONG' ? 1 : -1));
+const isDefiniteRefusal = (e: any) => e instanceof HttpException || /^(🛑|IP Access Denied|Market is currently CLOSED|Zerodha AMO Error)/.test(String(e?.message || ''));
+const roundTo =(p: number, tick: number, dir: 'up' | 'down' | 'near') => {
   const n = p / tick;
   const k = dir === 'up' ? Math.ceil(n - 1e-9) : dir === 'down' ? Math.floor(n + 1e-9) : Math.round(n);
   return Number((k * tick).toFixed(2));
@@ -338,7 +427,55 @@ export class StocksInPlayEngine {
     private factory: BrokerClientFactory,
     private tickerService: TickerService,
     private readonly orderGateway: OrderGateway,
-  ) { }
+  ) {
+    // Kite pushes every order change on the websocket. A final state seen there ends a fill wait at once,
+    // instead of at the next order-book poll; the order book stays the fallback and the source for everything else.
+    this.tickerService.registerOrderListener((_accountId, u) => this.onOrderUpdate(u));
+  }
+
+  /** Latest websocket postback per order id (final states are never overwritten by a late non-final one). */
+  private readonly orderUpdates = new Map<string, { snap: OrderSnap; at: number }>();
+  private readonly orderWaiters = new Map<string, Set<() => void>>();
+
+  private onOrderUpdate(u: { orderId: string; status: string; filledQuantity?: number; averagePrice?: number; statusMessage?: string | null }) {
+    if (!u?.orderId) return;
+    const snap: OrderSnap = { status: String(u.status || '').toUpperCase(), filledQty: Number(u.filledQuantity) || 0, avgPrice: Number(u.averagePrice) || 0, message: u.statusMessage ?? undefined };
+    const prev = this.orderUpdates.get(u.orderId);
+    // Postbacks can arrive out of order: a final state stays, and the filled quantity never goes down.
+    if (prev && (isFinalOrder(prev.snap) || prev.snap.filledQty > snap.filledQty) && !isFinalOrder(snap)) return;
+    const now = Date.now();
+    this.orderUpdates.set(u.orderId, { snap, at: now });
+    if (this.orderUpdates.size > 500) {
+      for (const [id, v] of this.orderUpdates) if (now - v.at > ORDER_UPDATE_TTL_MS) this.orderUpdates.delete(id);
+    }
+    const waiters = this.orderWaiters.get(u.orderId);
+    if (waiters) for (const wake of waiters) wake();
+  }
+
+  /** The websocket's view of an order while fresh; null when none arrived. */
+  private pushedOrder(orderId: string): OrderSnap | null {
+    const v = this.orderUpdates.get(orderId);
+    return v && Date.now() - v.at <= ORDER_UPDATE_TTL_MS ? v.snap : null;
+  }
+
+  /** Resolves after `ms`, or earlier when a postback for this order arrives. */
+  private waitForOrderEvent(orderId: string, ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      let set = this.orderWaiters.get(orderId);
+      if (!set) {
+        set = new Set();
+        this.orderWaiters.set(orderId, set);
+      }
+      const done = () => {
+        clearTimeout(timer);
+        set!.delete(done);
+        if (set!.size === 0) this.orderWaiters.delete(orderId);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      set.add(done);
+    });
+  }
 
   /**
    * All broker orders go through the OrderGateway (kill switch, limits, tagging, DB record).
@@ -385,6 +522,10 @@ export class StocksInPlayEngine {
       tradedSymbols: new Set(),
       positions: [],
       enteringSymbol: null,
+      uncertainEntry: null,
+      alertedKeys: new Set(),
+      tickErrors: 0,
+      busySince: 0,
       tradesToday: 0,
       sideTrades: { LONG: 0, SHORT: 0 },
       winsToday: 0,
@@ -411,7 +552,7 @@ export class StocksInPlayEngine {
     this.running.set(strategyId, state);
     if (!state.isPaperTrade) {
       registerSymbolHolder(strategyId, state.brokerAccountId, strategy.name || 'Stocks in Play', (sym) =>
-        state.enteringSymbol === sym || state.positions.some((p) => normalizeSymbol(p.symbol) === sym));
+        state.enteringSymbol === sym || (!!state.uncertainEntry && normalizeSymbol(state.uncertainEntry.symbol) === sym) || state.positions.some((p) => normalizeSymbol(p.symbol) === sym));
     }
 
     const mode = state.isPaperTrade ? 'PAPER TRADING' : 'LIVE TRADING';
@@ -443,15 +584,18 @@ export class StocksInPlayEngine {
     if (day.trades > 0) {
       this.log(state, `📊 [STATE RECOVERY] Today so far: ${day.trades}/${config.maxPositions} trades | ${day.wins} wins | ${day.losses} losses | Realized P&L: ₹${day.realizedPnlRs.toFixed(2)} [${day.source === 'BROKER' ? 'Zerodha order book' : 'saved orders'}]`);
     }
-    // A stock already ordered today is never entered again; its first order (the entry) gives the side for the per-side cap.
+    // A stock already ordered today is never entered again. Its first order that may have filled (the entry) gives the
+    // side for the per-side cap; a rejected or unfilled-cancelled entry is not a trade and must not use up the side.
     const todays: any[] = await this.prisma.order.findMany({
       where: { ...strategyOrderWhere(strategyId), createdAt: { gte: istDayStart() }, isPaperTrade: state.isPaperTrade },
-      select: { symbol: true, side: true },
+      select: { symbol: true, side: true, status: true, filledQty: true },
       orderBy: { createdAt: 'asc' },
     }).catch(() => []);
+    const sideCounted = new Set<string>();
     for (const o of todays) {
-      if (state.tradedSymbols.has(o.symbol)) continue;
       state.tradedSymbols.add(o.symbol);
+      if (sideCounted.has(o.symbol) || !mayHaveFilled(o.status, Number(o.filledQty) || 0)) continue;
+      sideCounted.add(o.symbol);
       state.sideTrades[o.side === 'BUY' ? 'LONG' : 'SHORT']++;
     }
 
@@ -584,6 +728,12 @@ export class StocksInPlayEngine {
       state.busy = true;
 
       this.log(state, reason);
+      if (state.uncertainEntry) {
+        // One last look, so a position that did open is squared off below rather than left behind.
+        const client = await this.getClient(state);
+        if (client) await this.reconcileUncertainEntry(state, client, true).catch(() => undefined);
+        if (state.uncertainEntry) this.alert(state, `🚨 Stopping with the entry in ${state.uncertainEntry.symbol} still unconfirmed. Check Kite for an open position or order.`);
+      }
       if (state.positions.length > 0) {
         const client = await this.getClient(state);
         if (client || state.isPaperTrade) {
@@ -597,7 +747,7 @@ export class StocksInPlayEngine {
           }
         }
         for (const p of state.positions) {
-          this.log(state, `🚨 POSITION NOT CONFIRMED FLAT (${p.symbol}). The broker stop-loss order is left ACTIVE. Verify and close it in Kite.`);
+          this.alert(state, `🚨 POSITION NOT CONFIRMED FLAT (${p.symbol}). The broker stop-loss order is left ACTIVE. Verify and close it in Kite.`);
         }
       }
 
@@ -606,7 +756,7 @@ export class StocksInPlayEngine {
       this.timers.delete(strategyId);
       this.running.delete(strategyId);
       // A position left unconfirmed keeps its stock off-limits to the other engines until the next start.
-      if (state.positions.length === 0) unregisterSymbolHolder(strategyId);
+      if (state.positions.length === 0 && !state.uncertainEntry) unregisterSymbolHolder(strategyId);
       state.busy = false;
 
       await this.prisma.strategyExecution.update({
@@ -686,8 +836,16 @@ export class StocksInPlayEngine {
 
   private async tick(strategyId: string) {
     const state = this.running.get(strategyId);
-    if (!state || state.busy || state.stopping) return;
+    if (!state || state.stopping) return;
+    if (state.busy) {
+      // The 2 s timer finds the previous tick still running: one that hangs this long leaves positions unwatched.
+      if (Date.now() - state.busySince > TICK_STUCK_ALERT_MS) {
+        this.alertKey(state, 'stuck', `🚨 The engine has been stuck on one step for over ${Math.round(TICK_STUCK_ALERT_MS / 1000)} s. Open positions keep their broker stop; check the console.`);
+      }
+      return;
+    }
     state.busy = true;
+    state.busySince = Date.now();
     try {
       const now = new Date();
       const hhmm = getIstHhmm(now);
@@ -698,8 +856,17 @@ export class StocksInPlayEngine {
           state.loggedNoSession = true;
           this.log(state, `⚠ No Zerodha session for this account — waiting for login.`);
         }
+        // Close to the open (or with a position open) a missing login costs the day's trade: tell the user.
+        // OI sends its order from 09:00, so it is warned before that.
+        const alertFrom = state.oi ? OI_ORDER_START_HHMM - 2 : NO_LOGIN_ALERT_HHMM;
+        if (!state.isPaperTrade && (hhmm >= alertFrom || state.positions.length > 0) && hhmm < SQUARE_OFF_HHMM) {
+          this.alertKey(state, 'no-session', `🚨 Not logged in to Zerodha${state.positions.length > 0 ? ` with ${state.positions.length} position(s) open (their broker stops stay at Zerodha)` : ''}. The engine cannot trade until you log in.`);
+        }
         return;
       }
+      this.clearAlertKey(state, 'no-session', `✅ Zerodha login is back; the engine is trading again.`);
+
+      await this.reconcileUncertainEntry(state, client);
 
       if (state.oi) {
         // OI needs no volume baselines: it trades yesterday's NSE files in the pre-open auction (09:00-09:07).
@@ -746,13 +913,16 @@ export class StocksInPlayEngine {
           else await this.checkEntries(state, client, now);
         }
       }
+      this.tickSucceeded(state);
     } catch (err: any) {
       this.log(state, `❌ Tick error: ${err?.message || err}`);
+      this.tickFailed(state, err);
     } finally {
       state.busy = false;
     }
 
-    if (state.completeReason && state.positions.length === 0) {
+    // An entry of unknown outcome may still be a live position, so the day does not end until it is resolved.
+    if (state.completeReason && state.positions.length === 0 && !state.uncertainEntry) {
       const reason = state.completeReason;
       state.completeReason = null;
       await this.stopWithStatus(strategyId, 'COMPLETED', reason);
@@ -979,13 +1149,17 @@ export class StocksInPlayEngine {
       let shortlist: string[] = [];
       // TREND has no RVOL floor: it ranks every stock, so the quote screen keeps a margin over the watch count.
       const ranked: { sym: string; rv: number }[] = [];
+      // The day's OHLC and volume from the same quotes, for the log-only check against Kite's 09:15 candle (see logQuoteCandleCheck).
+      const quoteFirsts = new Map<string, QuoteCandle>();
       for (let i = 0; i < missing.length; i += 500) {
         const keys = missing.slice(i, i + 500).map((s) => `NSE:${s}`);
         let q: Record<string, any> = {};
         try { q = await kite.getQuote(keys); } catch (e: any) { this.log(state, `⚠ Quotes unavailable: ${e?.message || e}`); return; }
+        const quotedAt = Date.now();
         for (const sym of missing.slice(i, i + 500)) {
           const x = q[`NSE:${sym}`];
           if (!x?.volume) continue;
+          if (fade) quoteFirsts.set(sym, { o: Number(x.ohlc?.open) || 0, h: Number(x.ohlc?.high) || 0, l: Number(x.ohlc?.low) || 0, c: Number(x.last_price) || 0, v: Number(x.volume) || 0, at: quotedAt });
           circuits.set(sym, { lower: Number(x.lower_circuit_limit) || 0, upper: Number(x.upper_circuit_limit) || 0 });
           const rv = x.volume / base.get(sym)!.avgFirstVol;
           if (trend) ranked.push({ sym, rv });
@@ -1008,6 +1182,7 @@ export class StocksInPlayEngine {
       // Kite publishes the 09:15 candle a moment after 09:20: try again shortly unless it is getting late.
       const got = shortlist.filter((s) => firsts.has(s)).length;
       if (got < shortlist.length && getIstHhmm(now) < 9 * 60 + 22) return;
+      if (fade) this.logQuoteCandleCheck(state, shortlist, firsts, quoteFirsts, histories, now);
     }
 
     const list: Candidate[] = [];
@@ -1086,6 +1261,52 @@ export class StocksInPlayEngine {
   }
 
   /** FADE: drops shorts within FADE_MIN_CIRCUIT_ROOM of the upper circuit and longs that close to the lower one (no exit there). */
+  /**
+   * Log only, no effect on trading. A faster 09:20 scan could build the first 5m candle from one batch of quotes instead
+   * of one history call per stock (Kite allows 3 a second, so the scan takes 4-15 s). This checks, every day, whether
+   * that would change anything: the fade signal is worked out on both versions of the candle and the results compared.
+   */
+  private logQuoteCandleCheck(state: EngineState, syms: string[], firsts: Map<string, { o: number; h: number; l: number; c: number; v: number }>, quotes: Map<string, QuoteCandle>, histories: Map<string, { candles: FadeCandle[]; at: number }>, now: Date) {
+    try {
+      const cfg = state.config;
+      const base = state.baselines!;
+      const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+      const closeMs = dayOpenMs + FIVE_MIN_MS;
+      const rows: Record<string, unknown>[] = [];
+      let compared = 0;
+      let sameDecision = 0;
+      for (const sym of syms) {
+        const k = firsts.get(sym);
+        const q = quotes.get(sym);
+        const b = base.get(sym);
+        if (!k || !q || !b) continue;
+        const side: Side | null = k.o > b.prevClose ? 'SHORT' : k.o < b.prevClose ? 'LONG' : null;
+        const inPlay = (v: number, o: number) => v / b.avgFirstVol >= cfg.minRvol && (o > b.prevClose || (o < b.prevClose && cfg.allowLongs));
+        const candles = histories.get(sym)?.candles;
+        const idx = candles ? candles.findIndex((x) => x.t === dayOpenMs) : -1;
+        let kTrig: string | null = null;
+        let qTrig: string | null = null;
+        if (side && candles && idx >= FADE_MIN_HISTORY) {
+          const alt = candles.slice(0, idx + 1);
+          alt[idx] = { ...alt[idx], o: q.o, h: q.h, l: q.l, c: q.c, v: q.v };
+          kTrig = (side === 'SHORT' ? fadeShortTrigger(candles, idx) : fadeLongTrigger(candles, idx)) ?? null;
+          qTrig = (side === 'SHORT' ? fadeShortTrigger(alt, idx) : fadeLongTrigger(alt, idx)) ?? null;
+        }
+        const kIn = inPlay(k.v, k.o);
+        const qIn = inPlay(q.v, q.o);
+        compared++;
+        const same = kIn === qIn && (!kIn || kTrig === qTrig);
+        if (same) sameDecision++;
+        if (!same || kIn || qIn) rows.push({ symbol: sym, kite: [k.o, k.h, k.l, k.c, k.v], quote: [q.o, q.h, q.l, q.c, q.v], inPlay: [kIn, qIn], trigger: [kTrig, qTrig], same });
+      }
+      const ageMs = Math.max(...Array.from(quotes.values()).map((q) => q.at)) - closeMs;
+      logSignal('SCAN', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'FADE', event: 'QUOTE_CANDLE_CHECK', quoteAgeMs: ageMs, compared, sameDecision, rows, isPaper: state.isPaperTrade });
+      this.logger.log(`[${state.strategyId}] Quote-vs-candle check (log only): ${sameDecision}/${compared} shortlisted stocks get the same decision from the quote-built 09:15 candle (quotes read ${(ageMs / 1000).toFixed(1)} s after the close).`);
+    } catch (e: any) {
+      this.logger.warn(`[${state.strategyId}] Quote-vs-candle check failed: ${e?.message || e}`);
+    }
+  }
+
   private async dropNearCircuit(state: EngineState, kite: any, list: Candidate[]): Promise<Candidate[]> {
     let q: Record<string, any>;
     try {
@@ -1456,13 +1677,15 @@ export class StocksInPlayEngine {
         if (p.slOrderId) continue;
         await this.armStopLoss(state, p);
         if (!p.slOrderId) {
-          this.log(state, `🚨 Broker SL could not be placed for ${p.symbol}. Flattening the position now.`);
+          this.alert(state, `🚨 Broker SL could not be placed for ${p.symbol}. Flattening the position now.`);
           await this.exitPosition(state, client, p, 'NO_PROTECTION', p.ltp ?? p.entryPrice);
         }
       }
     }
 
-    if (!o.resolved && !o.orderId) {
+    if (state.uncertainEntry) {
+      // The pre-open order's reply was lost: no second order and no "window passed" until Zerodha has been read.
+    } else if (!o.resolved && !o.orderId) {
       if (hhmm >= OI_ORDER_END_HHMM) {
         this.resolveOi(state, `⏱ The pre-open order window (09:00–09:07) has passed with no order sent today — this setup only trades at the auction price.`);
       } else {
@@ -1595,7 +1818,18 @@ export class StocksInPlayEngine {
         try {
           orderId = await this.placeOrder(state, { symbol: pick.symbol, exchange: 'NSE', product: 'MIS', qty, side: 'SELL', orderType: 'LIMIT', price: limit, intent: 'ENTRY' });
         } catch (e: any) {
-          this.resolveOi(state, `❌ Pre-open order for ${pick.symbol} was not accepted: ${e?.message || e}. No trade today.`);
+          if (isDefiniteRefusal(e)) {
+            this.resolveOi(state, `❌ Pre-open order for ${pick.symbol} was not accepted: ${e?.message || e}. No trade today.`);
+            return;
+          }
+          // No clear refusal: the order may be live at Zerodha, so it is looked for before anything else is done.
+          o.symbol = pick.symbol;
+          o.pick = pick;
+          o.limit = limit;
+          o.qty = qty;
+          o.tick = tick;
+          state.tradedSymbols.add(pick.symbol);
+          this.markEntryUncertain(state, { symbol: pick.symbol, side: 'SHORT', qty, orderId: null, replyLost: true, candidate: null }, `🚨 The pre-open order for ${pick.symbol} returned an error (${e?.message || e}) but may still be live. Reading Zerodha's order book before doing anything else.`);
           return;
         }
       }
@@ -1637,11 +1871,16 @@ export class StocksInPlayEngine {
     if (!final) return; // still waiting for the auction match
 
     // 09:15 and not (fully) filled: the stock opened under the limit. A resting limit must not fill later in the day.
-    await client.cancelOrder(id).catch(() => undefined);
-    ord = (await this.awaitOrder(client, id, 3000)) ?? ord;
+    ord = (await this.cancelOrderUntilFinal(client, id)) ?? ord;
     if (ord && ord.filledQty > 0 && ord.avgPrice > 0) {
-      this.log(state, `✅ Pre-open order ${id}: ${ord.filledQty}/${o.qty} filled @ ₹${ord.avgPrice.toFixed(2)}, the rest cancelled.`);
-      await this.openOiPosition(state, client, ord.filledQty, ord.avgPrice, id);
+      const remainderOpen = !isFinalOrder(ord);
+      this.log(state, `✅ Pre-open order ${id}: ${ord.filledQty}/${o.qty} filled @ ₹${ord.avgPrice.toFixed(2)}${remainderOpen ? '; the rest could not be cancelled yet' : ', the rest cancelled'}.`);
+      await this.openOiPosition(state, client, ord.filledQty, ord.avgPrice, id, remainderOpen);
+      return;
+    }
+    if (ord && !isFinalOrder(ord)) {
+      // A resting limit that could not be cancelled can still fill: stay on it (retried on the next check).
+      this.alert(state, `🚨 Pre-open order ${id} for ${sym} could not be cancelled and may still fill. Retrying; check Kite.`);
       return;
     }
     if (!ord) {
@@ -1650,7 +1889,7 @@ export class StocksInPlayEngine {
       const avg = Number(pos.rawPosition?.average_price) || Number(pos.rawPosition?.sell_price) || 0;
       if (-pos.netQty > 0 && avg > 0) {
         this.log(state, `✅ Pre-open order ${id} confirmed from positions: ${-pos.netQty} qty @ ₹${avg.toFixed(2)}`);
-        await this.openOiPosition(state, client, -pos.netQty, avg, id);
+        await this.openOiPosition(state, client, -pos.netQty, avg, id, true);
         return;
       }
       this.resolveOi(state, `🚨 Pre-open order ${id} for ${sym} could not be read from Zerodha and no position is open — check Kite. No trade today.`);
@@ -1681,7 +1920,7 @@ export class StocksInPlayEngine {
     await this.openOiPosition(state, client, o.qty, openPx, o.orderId!);
   }
 
-  private async openOiPosition(state: EngineState, client: any, qty: number, price: number, orderId: string) {
+  private async openOiPosition(state: EngineState, client: any, qty: number, price: number, orderId: string, remainderOpen = false) {
     const o = state.oi!;
     const cfg = state.config;
     const sym = o.symbol!;
@@ -1699,6 +1938,7 @@ export class StocksInPlayEngine {
       symbol: sym, side: 'SHORT', entryPrice: price, qty, sl, target, stopDist, beDone: true, lastBeAttempt: 0, lockedR: null, bestR: 0, tick: o.tick, rvol: null,
       slOrderId: null, openedAt: Date.now(), ltp: price, ltpAt: 0, slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
       candles: null, trendCheckedThrough: 0, trendFetchAt: 0,
+      pendingEntry: remainderOpen ? { orderId, filledQty: qty, lastCheck: 0, cancelAfter: 0 } : null,
     };
     state.positions.push(p);
     this.resolveOi(state, null);
@@ -1712,7 +1952,7 @@ export class StocksInPlayEngine {
     } else if (getIstHhmm(new Date()) >= MARKET_OPEN_HHMM) {
       await this.armStopLoss(state, p);
       if (!p.slOrderId) {
-        this.log(state, `🚨 Broker SL could not be placed for ${sym}. Flattening the position now.`);
+        this.alert(state, `🚨 Broker SL could not be placed for ${sym}. Flattening the position now.`);
         await this.exitPosition(state, client, p, 'NO_PROTECTION', price);
       }
     } else {
@@ -1816,6 +2056,14 @@ export class StocksInPlayEngine {
   private async enterTrade(state: EngineState, client: any, c: Candidate, now: Date) {
     const cfg = state.config;
     const fade = cfg.setup === 'FADE';
+    // An earlier entry may be live at the broker: nothing new goes in until that is known.
+    if (state.uncertainEntry) {
+      if (!state.uncertainEntry.loggedBlock) {
+        state.uncertainEntry.loggedBlock = true;
+        this.log(state, `⛔ ${c.symbol} not entered: the outcome of the earlier entry in ${state.uncertainEntry.symbol} is not known yet. No new entries until it is.`);
+      }
+      return;
+    }
     c.done = true;
     if (c.ltp === null || !(c.ltp > 0)) {
       this.log(state, `⏭ ${c.symbol}: no current price available — not entering blind.`);
@@ -1825,7 +2073,7 @@ export class StocksInPlayEngine {
     const sign = c.side === 'LONG' ? 1 : -1;
     const trend = cfg.setup === 'TREND';
     // TREND: from the price to the day low/high (at least TREND_MIN_STOP_PCT), re-based on the real fill below.
-    const trendStopDist = (px: number) => Math.max((px * TREND_MIN_STOP_PCT) / 100, (px - c.stopLevel) * sign);
+    const trendStopDist = (px: number) => trendStopDistance(c, px);
     // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below).
     const stopDist = fade ? (ltp * cfg.stopPct) / 100 : trend ? trendStopDist(ltp) : c.stopDist;
 
@@ -1902,7 +2150,7 @@ export class StocksInPlayEngine {
       : `🚀 ${c.symbol} broke ₹${c.level.toFixed(2)} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`);
 
     const entrySide: 'BUY' | 'SELL' = c.side === 'LONG' ? 'BUY' : 'SELL';
-    let fill: { qty: number; price: number; orderId: string } | null;
+    let fill: EntryFill | null;
     if (state.isPaperTrade) {
       fill = { qty, price: ltp, orderId: `PAPER_${Math.random().toString(36).substring(2, 10).toUpperCase()}` };
       await this.recordPaperOrder(state, c.symbol, entrySide, qty, ltp, fill.orderId, 'MARKET', 'COMPLETE');
@@ -1915,15 +2163,26 @@ export class StocksInPlayEngine {
       }
       state.enteringSymbol = normalizeSymbol(c.symbol);
       try {
-        fill = await this.placeLiveEntry(state, client, c.symbol, entrySide, qty, ltp);
+        fill = await this.placeLiveEntry(state, client, c, entrySide, qty, ltp);
       } finally {
         state.enteringSymbol = null;
       }
       if (!fill) return;
     }
+    await this.afterEntryFill(state, client, c, fill, now, quoteAtEntry);
+  }
+
+  /** Books a confirmed entry fill: the position, its stop and target, and (live) the exchange stop order. */
+  private async afterEntryFill(state: EngineState, client: any, c: Candidate, fill: EntryFill, now: Date, quoteAtEntry: Promise<{ bid: number; ask: number } | null> | null) {
+    const cfg = state.config;
+    const fade = cfg.setup === 'FADE';
+    const trend = cfg.setup === 'TREND';
+    const sign = c.side === 'LONG' ? 1 : -1;
+    const entrySide: 'BUY' | 'SELL' = c.side === 'LONG' ? 'BUY' : 'SELL';
+    const ltp = c.ltp ?? fill.price;
     state.tradedSymbols.add(c.symbol);
 
-    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDist(fill.price) : c.stopDist;
+    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
     const sl = roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
     // Target rounded toward the entry, so it is never further than targetR x the stop.
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
@@ -1933,6 +2192,7 @@ export class StocksInPlayEngine {
       symbol: c.symbol, side: c.side, entryPrice: fill.price, qty: fill.qty, sl, target, stopDist: fillStopDist, beDone: this.lockSteps(cfg).length === 0, lastBeAttempt: 0, lockedR: null, bestR: 0, tick: c.tick, rvol: c.rvol,
       slOrderId: null, openedAt: now.getTime(), ltp: ltp, ltpAt: Date.now(), slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
       candles: trend ? c.candles : null, trendCheckedThrough: 0, trendFetchAt: 0,
+      pendingEntry: fill.remainderOpen ? { orderId: fill.orderId, filledQty: fill.qty, lastCheck: 0, cancelAfter: fill.cancelAfter ?? 0 } : null,
     };
     state.positions.push(p);
     const exitPlan = fade
@@ -1961,13 +2221,17 @@ export class StocksInPlayEngine {
       await this.recordPaperOrder(state, c.symbol, entrySide === 'BUY' ? 'SELL' : 'BUY', p.qty, sl, `${fill.orderId}_SL`, 'SL', 'OPEN', sl);
       p.slOrderId = `${fill.orderId}_SL`;
     } else {
+      // The reply was lost, so the gateway never saved this order; without a row a restart could not re-adopt the position.
+      if (fill.replyLost && fill.orderId !== 'UNKNOWN') {
+        await this.orderGateway.recordEngineOrder({ userId: state.userId, accountId: state.brokerAccountId, strategyId: state.strategyId, executionId: state.executionId, symbol: c.symbol, exchange: 'NSE', side: entrySide, orderType: 'MARKET', product: 'MIS', qty: fill.qty, price: fill.price, brokerOrderId: fill.orderId, status: 'COMPLETE', isPaper: false }).catch(() => undefined);
+      }
       await this.armStopLoss(state, p);
       if (!p.slOrderId) {
-        this.log(state, `🚨 Broker SL could not be placed for ${p.symbol}. Flattening the position now.`);
+        this.alert(state, `🚨 Broker SL could not be placed for ${p.symbol}. Flattening the position now.`);
         await this.exitPosition(state, client, p, 'NO_PROTECTION', p.ltp ?? fill.price);
       }
     }
-    await this.logEntryQuality(state, c, ltp, fill, quoteAtEntry);
+    if (quoteAtEntry) await this.logEntryQuality(state, c, ltp, fill, quoteAtEntry);
   }
 
   /** Best bid and offer from a quote. Never throws; null when the quote or either side is missing. */
@@ -1999,43 +2263,297 @@ export class StocksInPlayEngine {
     } catch { /* recording must not disturb trading */ }
   }
 
-  /** MARKET order through the gateway, then the real fill from the order book. Null when nothing filled. */
-  private async placeLiveEntry(state: EngineState, client: any, symbol: string, side: 'BUY' | 'SELL', qty: number, ltp: number): Promise<{ qty: number; price: number; orderId: string } | null> {
+  /** MARKET order through the gateway, then the real fill from the order book. Null when nothing filled or the outcome is unknown. */
+  private async placeLiveEntry(state: EngineState, client: any, c: Candidate, side: 'BUY' | 'SELL', qty: number, ltp: number): Promise<EntryFill | null> {
+    const symbol = c.symbol;
+    const kite = client['kite'] || client;
     let orderId: string;
+    let replyLost = false;
     const t0 = Date.now();
     try {
       orderId = await this.placeOrder(state, { symbol, exchange: 'NSE', product: 'MIS', qty, side, orderType: 'MARKET', intent: 'ENTRY' }, ltp);
     } catch (e: any) {
       this.log(state, `❌ Entry order for ${symbol} failed: ${e?.message || e}`);
-      return null;
+      if (isDefiniteRefusal(e)) return null;
+      // A timeout or a dropped connection does not mean the order failed: it may be live with no stop and nobody watching.
+      const found = await this.findLostEntry(state, kite, symbol, side);
+      if (!found) {
+        this.markEntryUncertain(state, { symbol, side: c.side, qty, orderId: null, replyLost: true, candidate: c }, `🚨 The entry order for ${symbol} returned an error and Zerodha's order book does not show it yet, but it may still be live. Blocking new entries and watching for it.`);
+        return null;
+      }
+      orderId = found;
+      replyLost = true;
+      this.alert(state, `🚨 The reply to the entry order for ${symbol} was lost, but the order is at Zerodha (${orderId}). Taking it over and protecting it.`);
     }
     const sentMs = Date.now() - t0;
 
-    let order = await this.awaitOrder(client, orderId, 5000);
+    // Returns at the first fill, so even a part-filled position gets its stop at once; the rest is followed by managePosition.
+    const placedAt = Date.now();
+    let order = await this.awaitFirstFill(client, orderId, ENTRY_FILL_WAIT_MS);
     const seenMs = Date.now() - t0;
-    if (order && order.filledQty < qty && !['COMPLETE', 'REJECTED', 'CANCELLED'].includes(order.status)) {
-      this.log(state, `⏳ Entry ${orderId} still ${order.status} (${order.filledQty}/${qty} filled) — cancelling the rest.`);
-      await client.cancelOrder(orderId).catch(() => undefined);
-      order = (await this.awaitOrder(client, orderId, 2000)) ?? order;
+    const viaPush = !!order && order === this.pushedOrder(orderId);
+    logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: state.config.setup, event: 'ENTRY_TIMING', symbol, orderId, sentMs, seenMs, viaPush, replyLost, isPaper: state.isPaperTrade });
+    if (order && order.filledQty === 0 && !isFinalOrder(order)) {
+      this.log(state, `⏳ Entry ${orderId} still ${order.status} with nothing filled — cancelling it.`);
+      order = (await this.cancelOrderUntilFinal(client, orderId)) ?? order;
     }
     if (order && order.filledQty > 0 && order.avgPrice > 0) {
-      this.log(state, `✅ Entry ${orderId} filled ${order.filledQty}/${qty} @ ₹${order.avgPrice.toFixed(2)} (${order.status}) | order accepted in ${sentMs} ms, fill seen after ${seenMs} ms`);
-      return { qty: order.filledQty, price: order.avgPrice, orderId };
+      const remainderOpen = !isFinalOrder(order);
+      this.log(state, `✅ Entry ${orderId} filled ${order.filledQty}/${qty} @ ₹${order.avgPrice.toFixed(2)} (${order.status}) | order accepted in ${sentMs} ms, fill seen after ${seenMs} ms${viaPush ? ' (websocket)' : ''}${remainderOpen ? ' | the rest is still working and is followed up' : ''}`);
+      return { qty: order.filledQty, price: order.avgPrice, orderId, remainderOpen, cancelAfter: placedAt + ENTRY_FILL_WAIT_MS, replyLost };
     }
     if (order && (order.status === 'REJECTED' || order.status === 'CANCELLED')) {
       this.log(state, `❌ Entry ${orderId} ${order.status}${order.message ? `: ${order.message}` : ''}. Not counted as a trade.`);
       return null;
     }
     // Order book silent: the position book decides whether we are in.
-    const pos = await getLiveBrokerPosition(client['kite'] || client, symbol, this.logger, { exchange: 'NSE', product: 'MIS' });
+    const pos = await getLiveBrokerPosition(kite, symbol, this.logger, { exchange: 'NSE', product: 'MIS' });
     const avg = Number(pos.rawPosition?.average_price) || Number(side === 'BUY' ? pos.rawPosition?.buy_price : pos.rawPosition?.sell_price) || 0;
     const held = side === 'BUY' ? pos.netQty : -pos.netQty;
     if (held > 0 && avg > 0) {
       this.log(state, `✅ Entry ${orderId} confirmed from positions: ${held} qty @ ₹${avg.toFixed(2)}`);
-      return { qty: held, price: avg, orderId };
+      return { qty: held, price: avg, orderId, remainderOpen: !(order && isFinalOrder(order)), cancelAfter: placedAt + ENTRY_FILL_WAIT_MS, replyLost };
     }
-    this.log(state, `🚨 Entry ${orderId} for ${symbol} could not be confirmed (order ${order?.status ?? 'not found'}, position ${pos.netQty}). Not tracking it — check Kite.`);
+    this.markEntryUncertain(state, { symbol, side: c.side, qty, orderId, replyLost, candidate: c }, `🚨 Entry ${orderId} for ${symbol} could not be confirmed (order ${order?.status ?? 'not found'}, position ${pos.netQty}). Blocking new entries and watching it.`);
     return null;
+  }
+
+  /** Looks for this strategy's entry order in Zerodha's book after a lost reply. Null when it is not there (or the book is unreadable). */
+  private async findLostEntry(state: EngineState, kite: any, symbol: string, side: 'BUY' | 'SELL'): Promise<string | null> {
+    for (let i = 0; i < LOST_REPLY_POLLS; i++) {
+      await sleep(1000);
+      const book = await this.readOrderBook(kite);
+      const hit = book ? this.taggedEntry(state, book, symbol, side) : null;
+      if (hit) return hit.order_id;
+    }
+    return null;
+  }
+
+  /** The newest order in the book carrying this strategy's entry tag for the stock and side. */
+  private taggedEntry(state: EngineState, book: any[], symbol: string, side: 'BUY' | 'SELL'): any | null {
+    const tag = buildOrderTag(state.strategyId, 'ENTRY');
+    const hits = book.filter((o) => o.tag === tag && o.tradingsymbol === symbol && o.transaction_type === side);
+    return hits.length > 0 ? hits[hits.length - 1] : null;
+  }
+
+  private markEntryUncertain(state: EngineState, u: Pick<UncertainEntry, 'symbol' | 'side' | 'qty' | 'orderId' | 'replyLost' | 'candidate'>, msg: string) {
+    state.uncertainEntry = { ...u, since: Date.now(), lastCheck: Date.now(), loggedBlock: false };
+    this.alert(state, msg);
+  }
+
+  /**
+   * Settles an entry of unknown outcome from Zerodha's books: a fill becomes a normal position with its stop, a final
+   * unfilled order is dropped, a working order with no fill is cancelled. Unreadable books change nothing (still blocked).
+   */
+  private async reconcileUncertainEntry(state: EngineState, client: any, force = false) {
+    const u = state.uncertainEntry;
+    if (!u) return;
+    const nowMs = Date.now();
+    if (!force && nowMs - u.lastCheck < UNCERTAIN_CHECK_MS) return;
+    u.lastCheck = nowMs;
+    const kite = client['kite'] || client;
+    const orderSide: 'BUY' | 'SELL' = u.side === 'LONG' ? 'BUY' : 'SELL';
+
+    const book = await this.readOrderBook(kite);
+    if (!book) return;
+    const raw = u.orderId ? book.find((x: any) => x.order_id === u.orderId) : this.taggedEntry(state, book, u.symbol, orderSide);
+    if (raw) {
+      u.orderId = raw.order_id;
+      const o = toOrderSnap(raw);
+      if (!u.candidate) return this.settleUncertainOi(state, u, o);
+      if (o.filledQty > 0 && o.avgPrice > 0) {
+        state.uncertainEntry = null;
+        this.alert(state, `🚨 Entry ${u.orderId} for ${u.symbol} found filled (${o.filledQty} @ ₹${o.avgPrice.toFixed(2)}). Taking it over and placing the stop.`);
+        await this.afterEntryFill(state, client, u.candidate, { qty: o.filledQty, price: o.avgPrice, orderId: u.orderId!, remainderOpen: !isFinalOrder(o), replyLost: u.replyLost }, new Date(), null);
+        return;
+      }
+      if (isFinalOrder(o)) {
+        state.uncertainEntry = null;
+        this.log(state, `ℹ Entry ${u.orderId} for ${u.symbol} ended ${o.status} with no fill. Not a trade; new entries are allowed again.`);
+        return;
+      }
+      await client.cancelOrder(u.orderId).catch(() => undefined); // working with no fill: it must not fill later unattended
+      return;
+    }
+
+    const pos = await getLiveBrokerPosition(kite, u.symbol, this.logger, { exchange: 'NSE', product: 'MIS' });
+    if (pos.isOpen && pos.netQty === 0) return; // position book unreadable
+    const held = u.side === 'LONG' ? pos.netQty : -pos.netQty;
+    const avg = Number(pos.rawPosition?.average_price) || 0;
+    if (held > 0 && avg > 0) {
+      state.uncertainEntry = null;
+      const orderId = u.orderId ?? 'UNKNOWN';
+      this.alert(state, `🚨 Zerodha shows ${held} ${u.symbol} open for the unconfirmed entry. Taking it over and placing the stop.`);
+      if (u.candidate) await this.afterEntryFill(state, client, u.candidate, { qty: held, price: avg, orderId, remainderOpen: false, replyLost: u.replyLost && !!u.orderId }, new Date(), null);
+      else await this.openOiPosition(state, client, held, avg, orderId);
+      return;
+    }
+    if (nowMs - u.since < UNCERTAIN_NOT_FOUND_MS) return;
+    state.uncertainEntry = null;
+    if (u.candidate) this.alert(state, `ℹ The entry in ${u.symbol} never appeared at Zerodha and no position is open. Not a trade; new entries are allowed again.`);
+    else this.resolveOi(state, `ℹ The pre-open order for ${u.symbol} never appeared at Zerodha and no position is open. No trade today.`);
+  }
+
+  /** OI: the lost pre-open order was found, so the normal OI flow follows it from here. */
+  private settleUncertainOi(state: EngineState, u: UncertainEntry, o: OrderSnap) {
+    const oi = state.oi!;
+    state.uncertainEntry = null;
+    if (isFinalOrder(o) && !(o.filledQty > 0)) {
+      this.resolveOi(state, `❌ Pre-open order ${u.orderId} for ${u.symbol} ended ${o.status}${o.message ? `: ${o.message}` : ''}. No trade today.`);
+      return;
+    }
+    oi.orderId = u.orderId;
+    oi.lastCheck = 0;
+    this.alert(state, `🚨 The reply to the pre-open order for ${u.symbol} was lost, but the order is at Zerodha (${u.orderId}). Following it as usual.`);
+    void this.orderGateway.recordEngineOrder({ userId: state.userId, accountId: state.brokerAccountId, strategyId: state.strategyId, executionId: state.executionId, symbol: u.symbol, exchange: 'NSE', side: 'SELL', orderType: 'LIMIT', product: 'MIS', qty: u.qty, price: oi.limit, brokerOrderId: u.orderId, status: 'OPEN', isPaper: false }).catch(() => undefined);
+  }
+
+  /** Cancels an order and waits for a final state, retrying a refused cancel. Returns the last state seen. */
+  private async cancelOrderUntilFinal(client: any, orderId: string, attempts = 3): Promise<OrderSnap | null> {
+    let last: OrderSnap | null = null;
+    for (let i = 0; i < attempts; i++) {
+      await client.cancelOrder(orderId).catch(() => undefined);
+      last = (await this.awaitOrder(client, orderId, 700)) ?? last;
+      if (last && isFinalOrder(last)) return last;
+    }
+    return last;
+  }
+
+  /**
+   * Entry order whose remainder could not be cancelled: keeps cancelling it, adds any later fill to the position and
+   * extends the stop to match. The stop price never moves. Clears `pendingEntry` once the order is final.
+   */
+  private async followOpenEntry(state: EngineState, client: any, kite: any, p: OpenPosition, nowMs: number, cancelNow = false) {
+    const e = p.pendingEntry;
+    if (!e) return;
+    e.lastCheck = nowMs;
+    let o = await this.readOrder(kite, e.orderId);
+    if (!o) return;
+    if (!isFinalOrder(o) && (cancelNow || nowMs >= e.cancelAfter)) {
+      await client.cancelOrder(e.orderId).catch(() => undefined);
+      o = (await this.readOrder(kite, e.orderId)) ?? o;
+      if (!isFinalOrder(o)) this.alertOnce(state, p, 'remainder', `🚨 The unfilled part of entry ${e.orderId} (${p.symbol}) could not be cancelled. It may still fill; the engine keeps cancelling it and will extend the stop to any later fill.`);
+    }
+    if (o.filledQty > e.filledQty && o.avgPrice > 0) {
+      const added = o.filledQty - e.filledQty;
+      e.filledQty = o.filledQty;
+      p.qty += added;
+      p.entryPrice = o.avgPrice;
+      this.log(state, `➕ ${added} more ${p.symbol} filled on entry ${e.orderId}. Position now ${p.qty} @ ₹${o.avgPrice.toFixed(2)}; extending the stop to match.`);
+      await this.resizeStop(state, client, p);
+    }
+    if (isFinalOrder(o)) {
+      p.pendingEntry = null;
+      this.log(state, `ℹ Entry ${e.orderId} (${p.symbol}) is now ${o.status}: ${p.qty} held.`);
+    }
+  }
+
+  /** Makes the stop order's quantity match the position. The old order stays in force if this fails (retried by managePosition). */
+  private async resizeStop(state: EngineState, client: any, p: OpenPosition) {
+    p.lastStopResize = Date.now();
+    if (state.isPaperTrade) return;
+    if (!p.slOrderId) {
+      await this.armStopLoss(state, p);
+      p.stopQtyDirty = !p.slOrderId;
+      if (p.stopQtyDirty) p.stopResizeFails = (p.stopResizeFails ?? 0) + 1;
+      return;
+    }
+    const trigger = roundTo(p.sl, p.tick, p.side === 'LONG' ? 'down' : 'up');
+    try {
+      await client.modifyOrder(p.slOrderId, { quantity: p.qty, triggerPrice: trigger, price: this.slLimit(p, trigger) });
+      p.stopQtyDirty = false;
+      p.stopResizeFails = 0;
+      this.log(state, `🛡 Broker SL ${p.slOrderId} (${p.symbol}) now covers ${p.qty}.`);
+    } catch (e: any) {
+      p.stopQtyDirty = true;
+      p.stopResizeFails = (p.stopResizeFails ?? 0) + 1;
+      this.alertOnce(state, p, 'resize', `🚨 Could not change the stop quantity for ${p.symbol} to ${p.qty} (${e?.message || e}). Retrying.`);
+    }
+  }
+
+  /**
+   * The stop order is rejected or cancelled at the broker while the position may be open. Replaces it, or exits at market
+   * when the price is already through the stop or replacements keep failing. Returns true when this check is finished.
+   */
+  private async handleLostStop(state: EngineState, client: any, kite: any, p: OpenPosition, o: OrderSnap): Promise<boolean> {
+    const match = { exchange: 'NSE', product: 'MIS' };
+    const pos = await getLiveBrokerPosition(kite, p.symbol, this.logger, match);
+    if (pos.isOpen && pos.netQty === 0) return false; // position book unreadable: the engine keeps watching the stop level
+    if (!pos.isOpen) {
+      p.slOrderId = null;
+      p.lastBrokerPosCheck = 0; // flat: the position check that follows books the exit
+      return false;
+    }
+    const held = p.side === 'LONG' ? pos.netQty : -pos.netQty;
+    if (held > 0) p.qty = held;
+    const lost = p.slOrderId;
+    p.slOrderId = null;
+    p.stopReplacements = (p.stopReplacements ?? 0) + 1;
+    this.alert(state, `🚨 Broker SL ${lost} for ${p.symbol} is ${o.status}${o.message ? ` (${o.message})` : ''}: the position has no stop at the exchange.`);
+    const px = p.ltp;
+    const through = px !== null && (p.side === 'LONG' ? px <= p.sl : px >= p.sl);
+    if (!through && p.stopReplacements <= MAX_STOP_REPLACEMENTS) await this.armStopLoss(state, p);
+    if (p.slOrderId) {
+      this.alert(state, `🛡 New broker SL ${p.slOrderId} placed for ${p.symbol}.`);
+    } else {
+      this.alert(state, `🚨 No stop could be kept on ${p.symbol}. Flattening the position now.`);
+      await this.exitPosition(state, client, p, 'NO_PROTECTION', px ?? p.entryPrice);
+    }
+    return true;
+  }
+
+  /**
+   * Cancels the stop order and confirms it is really gone. FILLED: it executed, so that fill is the exit. UNCONFIRMED:
+   * it may still be working, and no exit may be sent next to it (both would fill and reverse the position).
+   */
+  private async cancelStopConfirmed(client: any, kite: any, orderId: string): Promise<{ result: 'GONE' | 'FILLED' | 'UNCONFIRMED'; order: OrderSnap | null }> {
+    let last: OrderSnap | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await sleep(300);
+      await client.cancelOrder(orderId).catch(() => undefined);
+      const book = await this.readOrderBook(kite);
+      if (!book) continue;
+      const raw = book.find((x: any) => x.order_id === orderId);
+      if (!raw) return { result: 'GONE', order: null }; // the book is readable and has no such order: nothing is working
+      last = toOrderSnap(raw);
+      if (last.status === 'COMPLETE' && last.filledQty > 0) return { result: 'FILLED', order: last };
+      if (last.status === 'CANCELLED' || last.status === 'REJECTED') return { result: 'GONE', order: last };
+    }
+    return { result: 'UNCONFIRMED', order: last };
+  }
+
+  /**
+   * Compares the broker's quantity with the engine's once the entry has settled. Less at the broker (part closed outside
+   * the engine): the position and stop shrink, so the stop cannot over-fill into a reversal. More, or the opposite side:
+   * alert only, since those shares did not come from this strategy's entry.
+   */
+  private async reconcileBrokerQty(state: EngineState, client: any, kite: any, p: OpenPosition, netQty: number, now: Date) {
+    const held = p.side === 'LONG' ? netQty : -netQty;
+    if (held === p.qty) {
+      p.qtyMismatch = null;
+      return;
+    }
+    if (now.getTime() - p.openedAt < QTY_CHECK_SETTLE_MS) return;
+    if (p.qtyMismatch !== netQty) {
+      p.qtyMismatch = netQty;
+      p.lastBrokerPosCheck = now.getTime() - (15_000 - QTY_RECHECK_MS);
+      return;
+    }
+    if (held > p.qty) {
+      this.alertOnce(state, p, 'extra', `🚨 Zerodha holds ${held} ${p.symbol} but this strategy manages ${p.qty}. The extra ${held - p.qty} have no stop from this strategy; check Kite.`);
+      return;
+    }
+    if (held < 0) {
+      this.alertOnce(state, p, 'reversed', `🚨 Zerodha shows ${p.symbol} on the OPPOSITE side (net ${netQty}) of this ${p.side} position. Check Kite now.`);
+      return;
+    }
+    // A part-filled stop explains the difference and already covers only what is left; the full quantity is booked when it completes.
+    const stop = p.slOrderId ? await this.readOrder(kite, p.slOrderId) : null;
+    if (stop && stop.filledQty > 0) return;
+    this.alert(state, `🚨 Zerodha holds ${held} ${p.symbol}, less than the ${p.qty} managed here. Reducing the position and its stop to ${held}.`);
+    p.qty = held;
+    p.qtyMismatch = null;
+    await this.resizeStop(state, client, p);
   }
 
   /**
@@ -2171,21 +2689,41 @@ export class StocksInPlayEngine {
     const match = { exchange: 'NSE', product: 'MIS' };
 
     if (!state.isPaperTrade && kite) {
+      if (p.pendingEntry && now.getTime() - p.pendingEntry.lastCheck >= ENTRY_FOLLOW_MS) await this.followOpenEntry(state, client, kite, p, now.getTime());
+      if (p.stopQtyDirty && now.getTime() - (p.lastStopResize ?? 0) >= ENTRY_FOLLOW_MS) {
+        await this.resizeStop(state, client, p);
+        if (p.stopQtyDirty && (p.stopResizeFails ?? 0) >= MAX_STOP_RESIZE_FAILS) {
+          this.alert(state, `🚨 The stop on ${p.symbol} cannot be matched to the ${p.qty} held. Flattening the position now.`);
+          await this.exitPosition(state, client, p, 'NO_PROTECTION', p.ltp ?? p.entryPrice);
+          return;
+        }
+      }
       if (p.slOrderId && now.getTime() - p.lastOrdersCheck >= 2500) {
         p.lastOrdersCheck = now.getTime();
         const o = await this.readOrder(kite, p.slOrderId);
         if (o && o.status === 'COMPLETE' && o.filledQty > 0) {
           this.log(state, `🛑 Broker SL order ${p.slOrderId} (${p.symbol}) filled ${o.filledQty} @ ₹${o.avgPrice.toFixed(2)}`);
+          if (p.pendingEntry) this.alert(state, `🚨 The stop on ${p.symbol} filled while the rest of entry ${p.pendingEntry.orderId} was still open. Check Kite for a leftover order or position.`);
           this.closePosition(state, p, o.avgPrice || p.sl, 'BROKER_SL', p.slOrderId);
           return;
         }
+        // Accepted orders can still be rejected by the exchange (e.g. the trigger was already crossed).
+        if (o && (o.status === 'REJECTED' || o.status === 'CANCELLED') && await this.handleLostStop(state, client, kite, p, o)) return;
       }
       if (now.getTime() - p.lastBrokerPosCheck >= 15_000) {
         p.lastBrokerPosCheck = now.getTime();
         const pos = await getLiveBrokerPosition(kite, p.symbol, this.logger, match);
+        if (pos.isOpen && pos.netQty !== 0 && !p.pendingEntry) await this.reconcileBrokerQty(state, client, kite, p, pos.netQty, now);
         if (!pos.isOpen) {
           // A manual exit in Kite leaves the SL order working; if it later triggered it would open a new position.
-          if (p.slOrderId) await client.cancelOrder(p.slOrderId).catch(() => undefined);
+          if (p.slOrderId) {
+            const cancelled = await this.cancelStopConfirmed(client, kite, p.slOrderId);
+            if (cancelled.result === 'UNCONFIRMED') {
+              this.alertOnce(state, p, 'flat-sl', `🚨 ${p.symbol} is flat at Zerodha but its stop ${p.slOrderId} could not be cancelled and could open a new position. Retrying; check Kite.`);
+              p.lastBrokerPosCheck = now.getTime() - (15_000 - QTY_RECHECK_MS);
+              return;
+            }
+          }
           const exit = await getCompletedBrokerExitDetails(kite, p.symbol, p.slOrderId, null, exitSide, this.logger, match);
           const px = exit.found && exit.exitPrice > 0 ? exit.exitPrice : (p.ltp ?? p.entryPrice);
           this.log(state, `ℹ [AUTO-SYNC] ${p.symbol} is flat at the broker (closed outside the engine) — exit ₹${px.toFixed(2)}${exit.found ? ` (order ${exit.orderId})` : ' (last price; exit order not found)'}.`);
@@ -2201,6 +2739,8 @@ export class StocksInPlayEngine {
       await this.exitPosition(state, client, p, p.retryExit, price ?? p.entryPrice);
       return;
     }
+    // An exit is already waiting for its retry: every price tick must not start another round of broker calls.
+    if (p.retryExit) return;
     if (getIstHhmm(now) >= SQUARE_OFF_HHMM) {
       this.log(state, `⏰ 15:05 square-off — exiting ${p.side} ${p.symbol}.`);
       await this.exitPosition(state, client, p, 'SQUARE_OFF', price ?? p.entryPrice);
@@ -2367,13 +2907,29 @@ export class StocksInPlayEngine {
     }
     const kite = client['kite'] || client;
 
+    // The rest of the entry must be dead first, or it could fill after the exit and reopen the position.
+    if (p.pendingEntry) {
+      await this.followOpenEntry(state, client, kite, p, Date.now(), true);
+      if (p.pendingEntry) {
+        p.retryExit = reason;
+        this.alertOnce(state, p, 'exit-entry', `🚨 Exit of ${p.symbol} is waiting: the rest of entry ${p.pendingEntry.orderId} could not be cancelled. The stop stays active; retrying.`);
+        return;
+      }
+    }
+
     // Cancel the protective order first; if it filled meanwhile, that fill is the exit.
     if (p.slOrderId) {
-      await client.cancelOrder(p.slOrderId).catch(() => undefined);
-      const sl = await this.readOrder(kite, p.slOrderId);
-      if (sl && sl.status === 'COMPLETE' && sl.filledQty > 0) {
+      const cancelled = await this.cancelStopConfirmed(client, kite, p.slOrderId);
+      if (cancelled.result === 'FILLED') {
+        const sl = cancelled.order!;
         this.log(state, `🛑 Broker SL ${p.slOrderId} (${p.symbol}) had already filled @ ₹${sl.avgPrice.toFixed(2)}`);
         this.closePosition(state, p, sl.avgPrice || p.sl, 'BROKER_SL', p.slOrderId);
+        return;
+      }
+      if (cancelled.result === 'UNCONFIRMED') {
+        // Sending the exit next to a live stop could fill both and reverse the position. The stop keeps protecting it meanwhile.
+        p.retryExit = reason;
+        this.alertOnce(state, p, 'exit-sl', `🚨 Exit of ${p.symbol} is waiting: its stop ${p.slOrderId} could not be confirmed cancelled, so no exit order was sent. The stop stays active; retrying.`);
         return;
       }
     }
@@ -2404,7 +2960,7 @@ export class StocksInPlayEngine {
     try {
       orderId = await this.placeOrder(state, { symbol: p.symbol, exchange: 'NSE', product: 'MIS', qty: exitQty, side: exitSide, orderType: 'MARKET', intent: 'EXIT' });
     } catch (e: any) {
-      this.log(state, `❌ Exit order for ${p.symbol} failed: ${e?.message || e}. Re-arming the SL and retrying.`);
+      this.alertOnce(state, p, 'exit-failed', `❌ Exit order for ${p.symbol} failed: ${e?.message || e}. Re-arming the SL and retrying.`);
       p.retryExit = reason;
       p.slOrderId = null;
       await this.armStopLoss(state, p);
@@ -2422,7 +2978,7 @@ export class StocksInPlayEngine {
       p.qty = remaining;
       p.slOrderId = null;
       p.retryExit = reason;
-      this.log(state, `🚨 ${p.symbol} not confirmed flat after the exit order (${o?.status ?? 'status unknown'}, broker qty ${unreadable ? 'unreadable' : after.netQty}). Re-arming the SL for ${remaining} qty and retrying.`);
+      this.alertOnce(state, p, 'not-flat', `🚨 ${p.symbol} not confirmed flat after the exit order (${o?.status ?? 'status unknown'}, broker qty ${unreadable ? 'unreadable' : after.netQty}). Re-arming the SL for ${remaining} qty and retrying.`);
       await this.armStopLoss(state, p);
       return;
     }
@@ -2456,32 +3012,57 @@ export class StocksInPlayEngine {
 
   // ── Orders and records ─────────────────────────────────────────────────────
 
-  private async readOrder(kite: any, orderId: string): Promise<OrderSnap | null> {
+  /** Zerodha's order book; null when it cannot be read (never to be taken as "no orders"). */
+  private async readOrderBook(kite: any): Promise<any[] | null> {
     try {
       const orders: any[] = await kite.getOrders();
-      const o = orders?.find((x: any) => x.order_id === orderId);
-      return o ? { status: o.status, filledQty: Number(o.filled_quantity) || 0, avgPrice: Number(o.average_price) || 0, message: o.status_message } : null;
+      return Array.isArray(orders) ? orders : null;
     } catch {
       return null;
     }
   }
 
+  private async readOrder(kite: any, orderId: string): Promise<OrderSnap | null> {
+    const orders = await this.readOrderBook(kite);
+    const o = orders?.find((x: any) => x.order_id === orderId);
+    return o ? toOrderSnap(o) : null;
+  }
+
   /**
-   * Polls the order book until the order is final or `maxMs` passes; returns the last state seen.
-   * First look after 200 ms (a MARKET order is usually final by then, so the stop goes in sooner), then every 400 ms.
+   * Waits until `done` holds for the order, or `maxMs` passes; returns the last state seen. A websocket postback that
+   * satisfies `done` ends the wait at once; otherwise the order book is read after 200 ms, then every 400 ms.
    */
-  private async awaitOrder(client: any, orderId: string, maxMs: number): Promise<OrderSnap | null> {
+  private async waitOrder(client: any, orderId: string, maxMs: number, done: (o: OrderSnap) => boolean): Promise<OrderSnap | null> {
     const kite = client['kite'] || client;
     const deadline = Date.now() + maxMs;
+    const pushedDone = () => {
+      const pushed = this.pushedOrder(orderId);
+      // A COMPLETE postback without a price is left to the order book.
+      return pushed && done(pushed) && !(pushed.filledQty > 0 && !(pushed.avgPrice > 0)) ? pushed : null;
+    };
     let last: OrderSnap | null = null;
     let wait = 200;
     do {
-      await sleep(wait);
+      const early = pushedDone();
+      if (early) return early;
+      await this.waitForOrderEvent(orderId, Math.max(0, Math.min(wait, deadline - Date.now())));
       wait = 400;
+      const pushed = pushedDone();
+      if (pushed) return pushed;
       last = (await this.readOrder(kite, orderId)) ?? last;
-      if (last && ['COMPLETE', 'REJECTED', 'CANCELLED'].includes(last.status)) return last;
+      if (last && done(last)) return last;
     } while (Date.now() < deadline);
-    return last;
+    return pushedDone() ?? last;
+  }
+
+  /** Polls until the order is final or `maxMs` passes; returns the last state seen. */
+  private awaitOrder(client: any, orderId: string, maxMs: number): Promise<OrderSnap | null> {
+    return this.waitOrder(client, orderId, maxMs, isFinalOrder);
+  }
+
+  /** Polls until anything has filled, the order is final, or `maxMs` passes; returns the last state seen. */
+  private awaitFirstFill(client: any, orderId: string, maxMs: number): Promise<OrderSnap | null> {
+    return this.waitOrder(client, orderId, maxMs, (o) => isFinalOrder(o) || (o.filledQty > 0 && o.avgPrice > 0));
   }
 
   private async recordPaperOrder(state: EngineState, symbol: string, side: 'BUY' | 'SELL', qty: number, price: number, orderId: string, orderType: 'MARKET' | 'SL', status: 'OPEN' | 'COMPLETE', triggerPrice?: number) {
@@ -2510,6 +3091,58 @@ export class StocksInPlayEngine {
     const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
     pushEngineLog(state.logs, `[${ts}] ${msg}`);
     this.logger.log(`[${state.executionId}] ${msg}`);
+  }
+
+  /** Logs a problem that needs the user, and (live) sends it to the configured alert channels (Telegram). */
+  private alert(state: EngineState, msg: string) {
+    this.log(state, msg);
+    if (!state.isPaperTrade) void sendAlert(`Stocks-in-Play: ${msg}`);
+  }
+
+  /** `alert`, once per position and problem, for checks that retry every few seconds. */
+  private alertOnce(state: EngineState, p: OpenPosition, key: string, msg: string) {
+    if (!p.alerted) p.alerted = new Set();
+    if (p.alerted.has(key)) return;
+    p.alerted.add(key);
+    this.alert(state, msg);
+  }
+
+  /** `alert`, once per engine problem until it clears (see `clearAlertKey`). */
+  private alertKey(state: EngineState, key: string, msg: string) {
+    if (state.alertedKeys.has(key)) return;
+    state.alertedKeys.add(key);
+    this.alert(state, msg);
+  }
+
+  /** The problem behind `alertKey` is over: say so once, and allow a fresh alert if it comes back. */
+  private clearAlertKey(state: EngineState, key: string, msg: string) {
+    if (!state.alertedKeys.delete(key)) return;
+    this.alert(state, msg);
+  }
+
+  private tickSucceeded(state: EngineState) {
+    state.tickErrors = 0;
+    this.clearAlertKey(state, 'tick-errors', `✅ The engine is running normally again.`);
+    this.clearAlertKey(state, 'stuck', `✅ The engine is running normally again.`);
+    // Open positions must keep getting prices, or the target, the lock and the 15:05 square-off are blind.
+    const now = Date.now();
+    const hhmm = getIstHhmm(new Date(now));
+    if (hhmm < MARKET_OPEN_HHMM || hhmm >= SQUARE_OFF_HHMM) return;
+    for (const p of state.positions) {
+      if (now - p.openedAt < NO_PRICE_ALERT_MS) continue;
+      if (now - p.ltpAt > NO_PRICE_ALERT_MS) {
+        this.alertOnce(state, p, 'no-price', `🚨 No price for ${p.symbol} for over ${NO_PRICE_ALERT_MS / 1000} s (websocket and REST). Its broker stop is still at Zerodha; the target and the stop moves cannot run until prices return.`);
+      } else if (p.alerted?.delete('no-price')) {
+        this.alert(state, `✅ Prices for ${p.symbol} are back.`);
+      }
+    }
+  }
+
+  private tickFailed(state: EngineState, err: any) {
+    state.tickErrors++;
+    if (state.tickErrors >= TICK_ERROR_ALERT_COUNT) {
+      this.alertKey(state, 'tick-errors', `🚨 The engine has failed ${state.tickErrors} times in a row (last: ${err?.message || err}). Open positions keep their broker stop; check the console.`);
+    }
   }
 
   private async persistLogs(state: EngineState) {
