@@ -6,6 +6,15 @@ import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { StocksInPlayEngine } from './stocks-in-play.engine';
 import { RiskService } from '../risk/risk.service';
 import { isTradingDay, closedReason } from '../market/market-calendar';
+import { sendAlert } from '../common/utils/alert';
+import { buildDailySummary, readSignalRows } from './daily-summary';
+import { getIstDateStr } from './emavwap-signals';
+import { istDayStart } from './position-recovery';
+import * as fs from 'fs';
+import * as path from 'path';
+
+/** The end-of-day summary goes out from this IST time (after the 15:30 auto-stop), once a day. */
+const DAILY_SUMMARY_HHMM = 15 * 60 + 35;
 
 /**
  * MarketSchedulerService
@@ -55,6 +64,9 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
    * next calendar day (i.e. the next auto-start cycle).
    */
   private readonly manuallyStoppedToday = new Set<string>();
+
+  /** IST day (YYYY-MM-DD) whose end-of-day summary was handled (also marked on disk, so a restart does not send it twice). */
+  private summarySentDay: string | null = null;
 
   /** Pre-open auto-start of the OI short build-up strategies (08:50-09:07): last attempt and the day it last ran. */
   private lastPreOpenStartTry = 0;
@@ -192,6 +204,34 @@ export class MarketSchedulerService implements OnModuleInit, OnModuleDestroy {
         await this.autoStopStrategies();
       }
     }
+
+    // ── End-of-day summary to Telegram (15:35, once a day; late after a restart, but not after 22:00) ──
+    if (hhmm >= DAILY_SUMMARY_HHMM && hhmm < 22 * 60) {
+      const dayStr = getIstDateStr(now);
+      if (this.summarySentDay !== dayStr) {
+        this.summarySentDay = dayStr;
+        this.sendDailySummary(dayStr).catch((e) => this.logger.error(`Daily summary failed: ${e?.message || e}`));
+      }
+    }
+  }
+
+  /** Builds the day's summary from the signal log and sends it to the alert channels, unless already sent today. */
+  private async sendDailySummary(day: string) {
+    const dir = path.join(process.cwd(), 'logs', 'daily-summary');
+    const marker = path.join(dir, `${day}.sent`);
+    if (fs.existsSync(marker)) return;
+    if (!process.env.TELEGRAM_BOT_TOKEN && !process.env.ALERT_WEBHOOK_URL) return; // nowhere to send it
+    const runs = await this.prisma.strategyExecution.findMany({
+      where: { startedAt: { gte: istDayStart() } },
+      select: { strategy: { select: { id: true, name: true, isPaperTrade: true } } },
+    });
+    const seen = new Map<string, { id: string; name: string; isPaper: boolean }>();
+    for (const r of runs) if (r.strategy && !seen.has(r.strategy.id)) seen.set(r.strategy.id, { id: r.strategy.id, name: r.strategy.name, isPaper: r.strategy.isPaperTrade });
+    const text = buildDailySummary(day, readSignalRows(day), Array.from(seen.values()));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(marker, new Date().toISOString());
+    await sendAlert(text);
+    this.logger.log(`📊 Daily summary sent for ${day}`);
   }
 
   // ── Boot recovery ───────────────────────────────────────────────────────────
