@@ -46,7 +46,7 @@ function stopLoss(ctx: DetailCtx): string {
   if (ctx.strategy.type === "STOCKS_IN_PLAY") {
     if (cfg.setup === "TREND") return "The day low (long) / day high (short) at the signal, at least 0.3% away, on the exchange";
     if (cfg.setup === "OI") return `${cfg.stopPct ?? 1}% above the auction fill, on the exchange from 09:15`;
-    if (cfg.setup === "FADE") return `${cfg.stopPct ?? 1.2}% ${cfg.fadeLongs === true ? "beyond" : "above"} the fill, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to ${Number(cfg.breakevenLockR ?? 0.2) > 0 ? `entry +${cfg.breakevenLockR ?? 0.2}x` : "the entry"} at +${cfg.breakevenAtR ?? 1}x the stop` : ""}${cfg.profitLock !== false ? "; locks +0.5x at +1.5x, +1.5x at +2.5x" : ""}`;
+    if (cfg.setup === "FADE") return `${cfg.fixedStopPct === true ? `${cfg.stopPct ?? 1.2}% ${cfg.fadeLongs === true ? "beyond" : "above"} the fill` : `Structural: 0.8–1.5% (by ATR) past the day high${cfg.fadeLongs === true ? " (long: low)" : ""}; 1x = ${cfg.stopPct ?? 1.2}% of the fill`}, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to ${Number(cfg.breakevenLockR ?? 0.2) > 0 ? `entry +${cfg.breakevenLockR ?? 0.2}x` : "the entry"} at +${cfg.breakevenAtR ?? 1}x the stop` : ""}${cfg.profitLock !== false ? "; locks +0.5x at +1.5x, +1.5x at +2.5x" : ""}`;
     return `${cfg.stopAtrFraction ?? 0.2} x 14-day ATR from the fill, on the exchange`;
   }
   if (cfg.exitExactAtTarget) return `Fixed ${rs(cfg.stopLossRs ?? 500)}`;

@@ -48,8 +48,10 @@ export interface StrategyFormState {
   sipWatchCount: string;
   /** TREND: never short a gap-up stock or buy a gap-down one. */
   sipWithGapOnly: boolean;
-  /** FADE: stop as % of the fill, target in multiples of the stop, stop to entry at this multiple ("0" = off). */
+  /** FADE: 1R as % of the fill (the stop distance only with sipFixedStopPct), target in multiples of it, stop to entry at this multiple ("0" = off). */
   sipStopPct: string;
+  /** FADE: true = stop at sipStopPct from the fill; false (default) = structural stop past the day high (long: low). */
+  sipFixedStopPct: boolean;
   sipTargetR: string;
   sipBreakevenAtR: string;
   /** FADE: profit locked by that first stop move, in x stop (0 = the entry). */

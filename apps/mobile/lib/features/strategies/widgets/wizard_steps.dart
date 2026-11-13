@@ -1134,7 +1134,10 @@ class AdvancedRisk extends StatelessWidget {
       const Text('How a trade is managed', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
       Bullets([
         'Entry is a market SHORT right after the 5-minute close that gave the signal.',
-        'The stop-loss is placed on the exchange at once, the stop distance above the fill.',
+        if (form['sipFixedStopPct'] == true)
+          'The stop-loss is placed on the exchange at once, the stop distance above the fill.'
+        else
+          "The stop-loss is placed on the exchange at once, past the day's high so far (longs: below the low), with a 0.8–1.5% buffer set by the stock's ATR. A wider stop means fewer shares, so the loss at the stop is still at most your max loss. The target and the stop moves are measured in \"1R\", a fixed % of the entry.",
         'The target is watched by the strategy; when price reaches it the short is covered at market.',
         'Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.',
         if (form['sipProfitLock'] != false)
@@ -1154,14 +1157,23 @@ class AdvancedRisk extends StatelessWidget {
         },
         options: [for (final p in presets) (value: p.label, title: p.label, body: p.text)],
       ),
+      ToggleCard(
+        title: 'Fixed % stop instead of the structural stop',
+        body:
+            "Off (default): the stop sits past the day's high/low, so a normal pullback does not hit it, and fewer shares are traded. On: the old stop at a fixed % from the entry, as backtested. The structural stop has not been backtested.",
+        value: form['sipFixedStopPct'] == true,
+        onChanged: (v) => set('sipFixedStopPct', v),
+      ),
       FieldPair(
         BoundField(
-          label: 'Stop distance',
+          label: form['sipFixedStopPct'] == true ? 'Stop distance' : '1R (target unit)',
           suffix: '%',
           kind: FieldKind.decimal,
           value: s(form, 'sipStopPct'),
           onChanged: (v) => set('sipStopPct', v),
-          hint: '1.2% was backtested. 0.8% to 1.6% were also positive.',
+          hint: form['sipFixedStopPct'] == true
+              ? '1.2% was backtested. 0.8% to 1.6% were also positive.'
+              : 'Not the stop: the target and the stop moves are multiples of this % of the entry. The stop itself is structural.',
         ),
         BoundField(
           label: 'Target',

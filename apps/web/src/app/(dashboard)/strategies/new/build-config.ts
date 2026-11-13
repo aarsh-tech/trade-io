@@ -26,6 +26,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       }),
       ...(fade && {
         stopPct: Number(form.sipStopPct || 1.2),
+        fixedStopPct: form.sipFixedStopPct === true,
         targetR: orZero(form.sipTargetR, 3),
         breakevenAtR: orZero(form.sipBreakevenAtR, 1),
         breakevenLockR: orZero(form.sipBreakevenLockR, 0.2),

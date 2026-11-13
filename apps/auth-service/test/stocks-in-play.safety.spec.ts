@@ -160,7 +160,7 @@ function makeWorld(o: Opts = {}) {
 
 type World = ReturnType<typeof makeWorld>;
 
-const cfg = (over: Record<string, unknown> = {}) => ({ setup: 'FADE', stopPct: 1.2, targetR: 3, breakevenAtR: 1, breakevenLockR: 0.2, skipNearPdlR: 0, profitLock: true, stopLossRs: 500, maxPositions: 1, perSideTrades: 1, minRvol: 10, stopAtrFraction: 0.2, minAvgValueCr: 10, minPrice: 50, allowLongs: true, allowShorts: true, leverage: 5, entryCutoffTime: '15:00', watchCount: 1, withGapOnly: true, ...over });
+const cfg = (over: Record<string, unknown> = {}) => ({ setup: 'FADE', stopPct: 1.2, fixedStopPct: true, targetR: 3, breakevenAtR: 1, breakevenLockR: 0.2, skipNearPdlR: 0, profitLock: true, stopLossRs: 500, maxPositions: 1, perSideTrades: 1, minRvol: 10, stopAtrFraction: 0.2, minAvgValueCr: 10, minPrice: 50, allowLongs: true, allowShorts: true, leverage: 5, entryCutoffTime: '15:00', watchCount: 1, withGapOnly: true, ...over });
 const makeState = (w: World, over: Record<string, unknown> = {}): any => ({ strategyId: SID, executionId: 'exec1', userId: 'u1', brokerAccountId: 'acct1', isPaperTrade: false, config: cfg(), baselines: null, baselineLoading: false, candidates: [], candidatesTriedAt: 0, tradedSymbols: new Set(), positions: [], enteringSymbol: null, uncertainEntry: null, alertedKeys: new Set(), tickErrors: 0, busySince: 0, margins: new Map(), marginCheck: null, surveillance: null, survLogged: false, tradesToday: 0, sideTrades: { LONG: 0, SHORT: 0 }, winsToday: 0, lossesToday: 0, realizedTodayRs: 0, logs: [], busy: false, stopping: false, completeReason: null, client: w.client, clientCheckedAt: Date.now(), subscribed: new Set(), lastPnlLog: FAR_FUTURE, loggedNoSession: false, loggedCutoff: false, oi: null, ...over });
 const candidate = (over: Record<string, unknown> = {}): any => ({ symbol: 'ABC', side: 'SHORT', level: 100, stopDist: 0, rvol: 12, tick: 0.05, first: { o: 100, h: 101, l: 99, c: 100, v: 1 }, ltp: 100, ltpAt: Date.now(), done: false, candles: null, candlesAt: 0, checkedThrough: 0, armedUntil: 0, stopLevel: 0, crossSeen: new Set(), ...over });
 
@@ -848,6 +848,49 @@ describe('existing behaviour stays', () => {
     await w.engine.exitPosition(s, w.client, p, 'TARGET', 99);
     expect(w.b.placed).toHaveLength(0);
     expect(s.realizedTodayRs).toBeCloseTo(p.qty, 2);
+  });
+});
+
+describe('FADE structural stop (default, fixedStopPct off)', () => {
+  const structural = (w: World, over: Record<string, unknown> = {}) => makeState(w, { config: cfg({ fixedStopPct: false }), ...over });
+
+  it('puts the stop past the first-candle high, sizes on it and keeps the % target', async () => {
+    const w = makeWorld();
+    const s = structural(w);
+    const p = await enter(w, s);
+    // No ATR known: 1% past the high 101 = 102.01, rounded up to the tick.
+    expect(p.sl).toBe(102.05);
+    expect(w.stops()[0].trigger_price).toBe(102.05);
+    expect(p.qty).toBeLessThanOrEqual(Math.floor(500 / (102.05 - 100)));
+    expect((p.sl - p.entryPrice) * p.qty).toBeLessThanOrEqual(500);
+    // 1R for the target and the ladder stays 1.2% of the fill.
+    expect(p.stopDist).toBeCloseTo(p.entryPrice * 0.012, 6);
+    expect(p.target).toBeCloseTo(p.entryPrice - 3 * p.entryPrice * 0.012, 1);
+  });
+
+  it('uses the highest price seen today and an ATR buffer capped at 1.5%', async () => {
+    const w = makeWorld();
+    const s = structural(w, { baselines: new Map([['ABC', { avgFirstVol: 1, atr: 8, avgValueCr: 50, prevClose: 98, tick: 0.05 }]]) });
+    // 0.3 x 8% ATR = 2.4% -> capped at 1.5%; the 09:20 quote saw 103.
+    const p = await enter(w, s, candidate({ seenHigh: 103 }));
+    expect(p.sl).toBe(104.55);
+  });
+
+  it('keeps the buffer at least 0.8% on a quiet stock', async () => {
+    const w = makeWorld();
+    const s = structural(w, { baselines: new Map([['ABC', { avgFirstVol: 1, atr: 1, avgValueCr: 50, prevClose: 98, tick: 0.05 }]]) });
+    const p = await enter(w, s);
+    // 0.3 x 1% = 0.3% -> 0.8%: 101 x 1.008 = 101.808 -> 101.85.
+    expect(p.sl).toBe(101.85);
+  });
+
+  it('skips the trade when the stop order would sit past the upper circuit', async () => {
+    const w = makeWorld();
+    const s = structural(w);
+    await w.engine.enterTrade(s, w.client, candidate({ upperCircuit: 102.5 }), new Date());
+    expect(s.positions).toHaveLength(0);
+    expect(w.b.placed).toHaveLength(0);
+    expect(s.logs.some((l: any) => /past the upper circuit/.test(typeof l === 'string' ? l : l.message))).toBe(true);
   });
 });
 

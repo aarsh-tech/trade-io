@@ -84,6 +84,7 @@ Map<String, dynamic> defaultStrategyConfig(String type) => switch (type) {
     'product': 'MIS',
     'setup': 'FADE',
     'stopPct': 1.2,
+    'fixedStopPct': false,
     'targetR': 3,
     'breakevenAtR': 1,
     'breakevenLockR': 0.2,

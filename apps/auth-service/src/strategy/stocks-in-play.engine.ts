@@ -48,7 +48,10 @@ import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from 
  * - Signal: on each 5m candle closing 09:20..09:45, MFI/Stochastic/Bollinger/CMF turning down from overbought
  *   (inplay-fade-signals.ts). The earliest candle wins; several on one candle -> highest RVOL first.
  * - Entry: SHORT at market right after that candle closes (skipped if more than 2 minutes late).
- * - Exits: stop stopPct above the fill (exchange SL order), target targetR x the stop below it (engine-watched,
+ * - Stop (since 13 Nov 2026, default): structural, 0.8-1.5% (by ATR) above the day high so far (long: below the day low),
+ *   quantity sized to it; stopPct is then only the 1R unit of the target and the stop ladder. fixedStopPct = the old
+ *   stop at stopPct from the fill, which every backtest below used.
+ * - Exits: stop (exchange SL order), target targetR x stopPct below the fill (engine-watched,
  *   market exit), stop moved to the entry (+breakevenLockR) once the trade is breakevenAtR x the stop in profit, then (profitLock)
  *   to +0.5R at +1.5R and +1.5R at +2.5R; else 15:05.
  * - Backtest (2024-09 .. 2026-09, 1m bars, Zerodha costs + slippage, 1 trade/day, ₹500 risk, 1.2% / 3R / BE at 1R,
@@ -120,6 +123,19 @@ const FADE_CANDLE_WAIT_MS = 45_000;
 const FADE_MAX_ENTRY_DELAY_MS = 120_000;
 /** Skip a fade candidate whose upper circuit is this close (short squeezed into the circuit cannot be covered). */
 const FADE_MIN_CIRCUIT_ROOM = 0.025;
+/**
+ * FADE structural stop (the default; fixedStopPct switches back to the % stop). Asked for by the user on 13 Nov 2026 after
+ * GODREJIND (12 Nov HINDCOPPER too) hit the 1.4% stop in the first pullback and then reached the target. The stop sits
+ * past the day's high (short) / low (long) so far, by a buffer of STRUCT_BUFFER_ATR_FRACTION x the stock's 14-day daily
+ * ATR, kept within STRUCT_BUFFER_MIN_PCT..MAX_PCT % of the price (a quiet stock gets 0.8%, a wild one 1.5%). The target
+ * and the stop ladder stay measured in stopPct (unchanged prices); the quantity shrinks so the wider stop still loses at
+ * most stopLossRs. Not backtested (the user asked for it as is; earlier studies had structure stops below the % stop).
+ */
+const STRUCT_BUFFER_MIN_PCT = 0.8;
+const STRUCT_BUFFER_MAX_PCT = 1.5;
+const STRUCT_BUFFER_ATR_FRACTION = 0.3;
+/** Buffer used when the stock's ATR is unknown. */
+const STRUCT_BUFFER_FALLBACK_PCT = 1;
 /** FADE long: after the oversold turn-up, the first-candle high must break within this long. */
 const FADE_LONG_BREAK_WINDOW_MS = 30 * 60_000;
 /** Retry a failed breakeven SL modification after this long. */
@@ -193,8 +209,10 @@ interface OiState {
 
 interface ResolvedConfig {
   setup: Setup;
-  /** FADE: stop distance as % of the fill. */
+  /** FADE: stop distance as % of the fill with fixedStopPct; otherwise only the unit (1R) of the target and the stop ladder. */
   stopPct: number;
+  /** FADE: true = the old fixed stopPct stop; false (default) = the structural stop past the day high/low. */
+  fixedStopPct: boolean;
   /** FADE: target at this multiple of the stop distance (0 = no target). */
   targetR: number;
   /** FADE: move the stop to the entry once the trade is this multiple of the stop in profit (0 = off). */
@@ -259,6 +277,12 @@ interface Candidate {
   stopLevel: number;
   /** TREND: sides whose first crossover of the day has been seen (only that one may be traded). */
   crossSeen: Set<Side>;
+  /** FADE structural stop: highest / lowest price seen today outside the 5m candles (quotes and ticks). */
+  seenHigh?: number;
+  seenLow?: number;
+  /** Today's circuit limits from the 09:20 quote (0 = unknown). */
+  upperCircuit?: number;
+  lowerCircuit?: number;
 }
 
 interface OpenPosition {
@@ -405,6 +429,31 @@ const toOrderSnap = (o: any): OrderSnap => ({ status: o.status, filledQty: Numbe
  * client turns every Kite failure into a plain message, so anything else, a timeout included, may have gone through.
  */
 /** TREND: from the price to the day low/high, at least TREND_MIN_STOP_PCT away. */
+/** A candidate's latest price; also widens the day's high/low seen so far (structural stop). */
+const notePrice = (c: Candidate, px: number) => {
+  c.ltp = px;
+  c.ltpAt = Date.now();
+  c.seenHigh = Math.max(c.seenHigh ?? 0, px);
+  c.seenLow = Math.min(c.seenLow ?? Infinity, px);
+};
+
+/**
+ * FADE structural stop for an entry at `px`: past the day's high (short) / low (long) so far, from the first candle,
+ * today's completed 5m candles, the 09:20 quote's high/low, every price seen since and `px` itself. The buffer is
+ * STRUCT_BUFFER_ATR_FRACTION x the 14-day daily ATR as % of the price, kept within STRUCT_BUFFER_MIN_PCT..MAX_PCT.
+ */
+export function structuralStop(c: Pick<Candidate, 'side' | 'first' | 'candles' | 'seenHigh' | 'seenLow' | 'tick'>, px: number, atr: number | undefined, dayOpenMs: number) {
+  const today = (c.candles ?? []).filter((k) => k.t >= dayOpenMs);
+  const short = c.side === 'SHORT';
+  const extreme = short
+    ? Math.max(c.first.h, px, c.seenHigh ?? 0, ...today.map((k) => k.h))
+    : Math.min(c.first.l, px, c.seenLow ?? Infinity, ...today.map((k) => k.l));
+  const atrPct = atr && atr > 0 && px > 0 ? (atr / px) * 100 : null;
+  const bufPct = atrPct === null ? STRUCT_BUFFER_FALLBACK_PCT : Math.min(STRUCT_BUFFER_MAX_PCT, Math.max(STRUCT_BUFFER_MIN_PCT, STRUCT_BUFFER_ATR_FRACTION * atrPct));
+  const sl = short ? roundTo(extreme * (1 + bufPct / 100), c.tick, 'up') : roundTo(extreme * (1 - bufPct / 100), c.tick, 'down');
+  return { sl, dist: Math.abs(sl - px), extreme, bufPct, atrPct };
+}
+
 const trendStopDistance = (c: { stopLevel: number; side: Side }, px: number) => Math.max((px * TREND_MIN_STOP_PCT) / 100, (px - c.stopLevel) * (c.side === 'LONG' ? 1 : -1));
 const isDefiniteRefusal = (e: any) => e instanceof HttpException || /^(🛑|IP Access Denied|Market is currently CLOSED|Zerodha AMO Error)/.test(String(e?.message || ''));
 const roundTo =(p: number, tick: number, dir: 'up' | 'down' | 'near') => {
@@ -565,8 +614,8 @@ export class StocksInPlayEngine {
       this.log(state, `⚙ From NSE's end-of-day files: the stock that fell >= 3% yesterday while its futures open interest rose the most (5–80%, not an expiry day, >= ₹25 Cr traded) | SHORT in the 09:00–09:07 pre-open auction with a SELL LIMIT ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close (fills at the 09:15 opening price; no fill on a bigger gap down = no trade) | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Broker SL from 09:15 | Max loss/trade ₹${config.stopLossRs} | 1 trade/day | Square-off 15:05`);
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
-      if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | ${config.fixedStopPct ? `Stop ${config.stopPct}%` : `Structural stop: ${STRUCT_BUFFER_MIN_PCT}–${STRUCT_BUFFER_MAX_PCT}% (by the stock's ATR) above the day high (long: below the day low), quantity sized to it | R = ${config.stopPct}% for the target and stop moves`} | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
+      if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | ${config.fixedStopPct ? 'same stop' : 'stop below the day low'}, same target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
       this.log(state, `⚙ At 09:20: watch the ${config.watchCount} stock(s) with the highest first 5m candle volume vs usual (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Each side's first 15/40 EMA crossover on the 5m closes 09:25–14:30: BUY when the 15-EMA crosses above the 40-EMA with the close above VWAP, SHORT when it crosses below with the close below VWAP${config.withGapOnly ? ' | Only with the gap: a gap-up stock is never shorted, a gap-down stock never bought' : ''} | Stop at the day low/high | Exit when the 15-EMA crosses back, else 15:05 | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds`);
@@ -639,6 +688,7 @@ export class StocksInPlayEngine {
     return {
       setup,
       stopPct: Math.min(5, Math.max(0.3, num(raw.stopPct, oi ? 1 : 1.2))),
+      fixedStopPct: raw.fixedStopPct === true,
       targetR: Math.min(20, numOrZero(raw.targetR, 3)),
       breakevenAtR,
       breakevenLockR: Math.min(numOrZero(raw.breakevenLockR, 0.2), breakevenAtR * 0.8),
@@ -937,7 +987,7 @@ export class StocksInPlayEngine {
     for (const c of state.candidates || []) {
       if (c.done) continue;
       const px = ticks[`NSE:${c.symbol}`] ?? ticks[c.symbol];
-      if (px && px > 0) { c.ltp = px; c.ltpAt = Date.now(); touched = true; }
+      if (px && px > 0) { notePrice(c, px); touched = true; }
     }
     for (const p of state.positions) {
       const px = ticks[`NSE:${p.symbol}`] ?? ticks[p.symbol];
@@ -1318,7 +1368,13 @@ export class StocksInPlayEngine {
     return list.filter((c) => {
       const x = q[`NSE:${c.symbol}`];
       const upper = Number(x?.upper_circuit_limit) || 0, lower = Number(x?.lower_circuit_limit) || 0, last = Number(x?.last_price) || 0;
-      if (last > 0) { c.ltp = last; c.ltpAt = Date.now(); }
+      if (last > 0) notePrice(c, last);
+      // The exchange's day high/low so far and the circuit limits, for the structural stop.
+      const hi = Number(x?.ohlc?.high) || 0, lo = Number(x?.ohlc?.low) || 0;
+      if (hi > 0) c.seenHigh = Math.max(c.seenHigh ?? 0, hi);
+      if (lo > 0) c.seenLow = Math.min(c.seenLow ?? Infinity, lo);
+      c.upperCircuit = upper;
+      c.lowerCircuit = lower;
       if (c.side === 'SHORT' && upper > 0 && last > 0 && (upper - last) / last < FADE_MIN_CIRCUIT_ROOM) {
         this.log(state, `⏭ ${c.symbol} skipped: ₹${last} is within ${(FADE_MIN_CIRCUIT_ROOM * 100).toFixed(1)}% of its upper circuit ₹${upper} (a short there may not be coverable).`);
         return false;
@@ -1648,13 +1704,19 @@ export class StocksInPlayEngine {
     }
   }
 
+  /** FADE structural stop for an entry at `px` (see structuralStop), with the stock's 14-day ATR from the baselines. */
+  private fadeStructuralStop(state: EngineState, c: Candidate, px: number, now: Date) {
+    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+    return structuralStop(c, px, state.baselines?.get(c.symbol)?.atr, dayOpenMs);
+  }
+
   /** Fresh price right before a FADE entry (ticks if under 3s old, else REST). */
   private async refreshCandidateLtp(state: EngineState, client: any, c: Candidate) {
     if (c.ltp !== null && Date.now() - c.ltpAt < 3000) return;
     try {
       const ltps: Record<string, number> = await client.getLTP([`NSE:${c.symbol}`]);
       const px = ltps[`NSE:${c.symbol}`];
-      if (px && px > 0) { c.ltp = px; c.ltpAt = Date.now(); }
+      if (px && px > 0) notePrice(c, px);
     } catch (e: any) {
       this.logger.warn(`[${state.strategyId}] LTP for ${c.symbol} failed: ${e?.message || e}`);
     }
@@ -2006,7 +2068,7 @@ export class StocksInPlayEngine {
     const t = now.getTime();
     const stale: { symbol: string; set: (px: number) => void }[] = [];
     for (const p of state.positions) if (t - p.ltpAt > 4000) stale.push({ symbol: p.symbol, set: (px) => { p.ltp = px; p.ltpAt = Date.now(); this.trackBest(p, px); } });
-    for (const c of state.candidates || []) if (!c.done && t - c.ltpAt > 4000) stale.push({ symbol: c.symbol, set: (px) => { c.ltp = px; c.ltpAt = Date.now(); } });
+    for (const c of state.candidates || []) if (!c.done && t - c.ltpAt > 4000) stale.push({ symbol: c.symbol, set: (px) => notePrice(c, px) });
     if (stale.length === 0) return;
     try {
       const ltps: Record<string, number> = await client.getLTP(stale.map((s) => `NSE:${s.symbol}`));
@@ -2074,8 +2136,12 @@ export class StocksInPlayEngine {
     const trend = cfg.setup === 'TREND';
     // TREND: from the price to the day low/high (at least TREND_MIN_STOP_PCT), re-based on the real fill below.
     const trendStopDist = (px: number) => trendStopDistance(c, px);
-    // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below).
+    // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below); with the
+    // structural stop that % is only the unit (1R) of the target, the stop ladder and the chase guard.
     const stopDist = fade ? (ltp * cfg.stopPct) / 100 : trend ? trendStopDist(ltp) : c.stopDist;
+    const struct = fade && !cfg.fixedStopPct ? this.fadeStructuralStop(state, c, ltp, now) : null;
+    // The distance that is really lost at the stop: it sizes the position.
+    const riskDist = struct ? struct.dist : stopDist;
 
     // ORB and the FADE long enter on a level break and must not chase it; the FADE short and TREND enter at market on the candle close by design.
     const chase = (ltp - c.level) * sign;
@@ -2091,6 +2157,16 @@ export class StocksInPlayEngine {
       const roomR = lvl !== null && stopDist > 0 ? (sign * (lvl - ltp)) / stopDist : null;
       if (lvl !== null && roomR !== null && roomR > 0 && roomR < cfg.skipNearPdlR) {
         this.log(state, `⏭ ${c.symbol} skipped: yesterday's ${c.side === 'SHORT' ? 'low' : 'high'} ₹${lvl.toFixed(2)} is only ${roomR.toFixed(2)}R ${c.side === 'SHORT' ? 'below' : 'above'} ₹${ltp.toFixed(2)} (needs at least ${cfg.skipNearPdlR}R of room).`);
+        return;
+      }
+    }
+
+    // Structural stop past the circuit: Zerodha refuses a stop order outside the day's price band, and the position would
+    // then be flattened at once. Checked on the SL-limit price, which sits a little beyond the trigger.
+    if (struct) {
+      const lim = struct.sl * (c.side === 'SHORT' ? 1.005 : 0.995);
+      if ((c.side === 'SHORT' && (c.upperCircuit ?? 0) > 0 && lim >= c.upperCircuit!) || (c.side === 'LONG' && (c.lowerCircuit ?? 0) > 0 && lim <= c.lowerCircuit!)) {
+        this.log(state, `⏭ ${c.symbol} skipped: the structural stop ₹${struct.sl.toFixed(2)} is at or past the ${c.side === 'SHORT' ? 'upper' : 'lower'} circuit ₹${(c.side === 'SHORT' ? c.upperCircuit : c.lowerCircuit)!.toFixed(2)} (Zerodha would refuse the stop order).`);
         return;
       }
     }
@@ -2135,12 +2211,13 @@ export class StocksInPlayEngine {
     const lev = margin?.kind === 'OK' ? margin.leverage : cfg.leverage;
     const levText = leverageText(lev, margin?.kind === 'OK' ? 'ZERODHA' : 'FALLBACK');
     const qtyByCap = qtyByCapital(slotCapital, lev, ltp);
-    const qtyByRisk = Math.floor(cfg.stopLossRs / stopDist);
+    const qtyByRisk = Math.floor(cfg.stopLossRs / riskDist);
     const qty = Math.min(qtyByCap, qtyByRisk);
     if (qty < 1) {
-      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / lev).toFixed(0)} margin at ${levText} or risks ₹${stopDist.toFixed(2)} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
+      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / lev).toFixed(0)} margin at ${levText} or risks ₹${riskDist.toFixed(2)}${struct ? ` to the structural stop ₹${struct.sl.toFixed(2)}` : ''} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
       return;
     }
+    if (struct) this.log(state, `📐 ${c.symbol} structural stop ₹${struct.sl.toFixed(2)}: day ${c.side === 'SHORT' ? 'high' : 'low'} ₹${struct.extreme.toFixed(2)} ${c.side === 'SHORT' ? '+' : '−'} ${struct.bufPct.toFixed(2)}% buffer (${struct.atrPct !== null ? `${STRUCT_BUFFER_ATR_FRACTION} x the ${struct.atrPct.toFixed(1)}% daily ATR, kept within ${STRUCT_BUFFER_MIN_PCT}–${STRUCT_BUFFER_MAX_PCT}%` : 'ATR unknown'}) = ${((struct.dist / ltp) * 100).toFixed(2)}% from ₹${ltp.toFixed(2)}.`);
     this.log(state, trend
       ? `🚀 ${c.symbol} 15/40 EMA crossover at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
       : fade
@@ -2182,8 +2259,11 @@ export class StocksInPlayEngine {
     const ltp = c.ltp ?? fill.price;
     state.tradedSymbols.add(c.symbol);
 
+    // FADE: 1R for the target and the stop ladder is always stopPct of the fill; the stop itself is that far only with
+    // fixedStopPct, else at the structure (re-read now, so a new high/low printed during the order is included).
     const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
-    const sl = roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
+    const struct = fade && !cfg.fixedStopPct ? this.fadeStructuralStop(state, c, fill.price, now) : null;
+    const sl = struct ? struct.sl : roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
     // Target rounded toward the entry, so it is never further than targetR x the stop.
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
     state.tradesToday++;
@@ -2214,8 +2294,9 @@ export class StocksInPlayEngine {
         srText = '';
       }
     }
-    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}${srText}`);
-    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
+    const slWhy = struct ? ` ${(Math.abs(fill.price - sl) / fill.price * 100).toFixed(2)}%, day ${c.side === 'SHORT' ? 'high' : 'low'} ₹${struct.extreme.toFixed(2)} ${c.side === 'SHORT' ? '+' : '−'} ${struct.bufPct.toFixed(2)}%;` : '';
+    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (${slWhy}risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}${srText}`);
+    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(fade ? { stopMode: struct ? 'STRUCTURE' : 'PERCENT', rUnit: fillStopDist } : {}), ...(struct ? { structExtreme: struct.extreme, structBufPct: struct.bufPct, atrPct: struct.atrPct } : {}), ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
 
     if (state.isPaperTrade) {
       await this.recordPaperOrder(state, c.symbol, entrySide === 'BUY' ? 'SELL' : 'BUY', p.qty, sl, `${fill.orderId}_SL`, 'SL', 'OPEN', sl);

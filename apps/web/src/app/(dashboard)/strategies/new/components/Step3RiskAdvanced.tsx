@@ -445,7 +445,9 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             <p className="text-xs font-semibold text-foreground">How a trade is managed</p>
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
               <li>Entry is a market SHORT right after the 5-minute close that gave the signal.</li>
-              <li>The stop-loss is placed on the exchange at once, the stop distance below above the fill.</li>
+              {form.sipFixedStopPct === true
+                ? <li>The stop-loss is placed on the exchange at once, the stop distance above the fill.</li>
+                : <li>The stop-loss is placed on the exchange at once, past the day&apos;s high so far (longs: below the low), with a 0.8–1.5% buffer set by the stock&apos;s ATR. A wider stop means fewer shares, so the loss at the stop is still at most your max loss. The target and the stop moves below are measured in &quot;1R&quot;, a fixed % of the entry.</li>}
               <li>The target is watched by the strategy; when price reaches it the short is covered at market.</li>
               <li>Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.</li>
               {form.sipProfitLock !== false && <li>Profit lock: at +1.5x the stop the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x.</li>}
@@ -472,15 +474,29 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               );
             })}
           </div>
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted">
+            <input
+              type="checkbox"
+              checked={form.sipFixedStopPct === true}
+              onChange={(e) => set("sipFixedStopPct", e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+            />
+            <span>
+              <span className="block text-xs font-semibold text-foreground">Fixed % stop instead of the structural stop</span>
+              <span className="block text-xs text-muted-foreground">Off (default): the stop sits past the day&apos;s high/low, so a normal pullback does not hit it, and fewer shares are traded. On: the old stop at a fixed % from the entry, as backtested. The structural stop has not been backtested.</span>
+            </span>
+          </label>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <NumberField
-              label="Stop distance"
+              label={form.sipFixedStopPct === true ? "Stop distance" : "1R (target and stop-move unit)"}
               suffix="% of entry"
               decimal
               min={0.3}
               value={form.sipStopPct}
               onChange={(v) => set("sipStopPct", v)}
-              hint="1.2% was backtested. 0.8% to 1.6% were also positive."
+              hint={form.sipFixedStopPct === true
+                ? "1.2% was backtested. 0.8% to 1.6% were also positive."
+                : "Not the stop: the target and the stop moves are multiples of this % of the entry. The stop itself is structural."}
             />
             <NumberField
               label="Target"
