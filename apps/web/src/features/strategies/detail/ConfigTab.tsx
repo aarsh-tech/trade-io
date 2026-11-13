@@ -46,7 +46,7 @@ function stopLoss(ctx: DetailCtx): string {
   if (ctx.strategy.type === "STOCKS_IN_PLAY") {
     if (cfg.setup === "TREND") return "The day low (long) / day high (short) at the signal, at least 0.3% away, on the exchange";
     if (cfg.setup === "OI") return `${cfg.stopPct ?? 1}% above the auction fill, on the exchange from 09:15`;
-    if (cfg.setup === "FADE") return `${cfg.fixedStopPct === true ? `${cfg.stopPct ?? 1.2}% ${cfg.fadeLongs === true ? "beyond" : "above"} the fill` : `Structural: 0.8–1.5% (by ATR) past the day high${cfg.fadeLongs === true ? " (long: low)" : ""}; 1x = ${cfg.stopPct ?? 1.2}% of the fill`}, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to ${Number(cfg.breakevenLockR ?? 0.2) > 0 ? `entry +${cfg.breakevenLockR ?? 0.2}x` : "the entry"} at +${cfg.breakevenAtR ?? 1}x the stop` : ""}${cfg.profitLock !== false ? "; locks +0.5x at +1.5x, +1.5x at +2.5x" : ""}`;
+    if (cfg.setup === "FADE") return `${cfg.fixedStopPct === true ? `${cfg.stopPct ?? 1.2}% ${cfg.fadeLongs === true ? "beyond" : "above"} the fill` : `Structural: 0.8–1.5% (by ATR) past the day high${cfg.fadeLongs === true ? " (long: low)" : ""}, sized to lose the max loss (1x = ₹${cfg.stopLossRs ?? "—"})`}, on the exchange${Number(cfg.breakevenAtR ?? 1) > 0 ? `; moved to ${Number(cfg.breakevenLockR ?? 0.2) > 0 ? `entry +${cfg.breakevenLockR ?? 0.2}x` : "the entry"} at +${cfg.breakevenAtR ?? 1}x the stop` : ""}${cfg.profitLock !== false ? "; locks +0.5x at +1.5x, +1.5x at +2.5x" : ""}`;
     return `${cfg.stopAtrFraction ?? 0.2} x 14-day ATR from the fill, on the exchange`;
   }
   if (cfg.exitExactAtTarget) return `Fixed ${rs(cfg.stopLossRs ?? 500)}`;
@@ -66,6 +66,7 @@ function targetText(ctx: DetailCtx): string {
   if (ctx.strategy.type === "STOCKS_IN_PLAY") {
     if (cfg.setup === "TREND") return "None: exits at market on the 5m close where the 15-EMA crosses back over the 40-EMA, else the stop or 15:05";
     if (cfg.setup === "OI" && Number(cfg.targetR ?? 3) > 0) return `${cfg.targetR ?? 3}x the stop (${(Number(cfg.stopPct ?? 1) * Number(cfg.targetR ?? 3)).toFixed(1)}% below the entry), closed at market`;
+    if (cfg.setup === "FADE" && Number(cfg.targetR ?? 3) > 0 && cfg.fixedStopPct !== true) return `${cfg.targetR ?? 3}x the max loss (≈ ₹${Math.round(Number(cfg.stopLossRs ?? 0) * Number(cfg.targetR ?? 3))}), closed at market`;
     if (cfg.setup === "FADE" && Number(cfg.targetR ?? 3) > 0) return `${cfg.targetR ?? 3}x the stop (${(Number(cfg.stopPct ?? 1.2) * Number(cfg.targetR ?? 3)).toFixed(1)}% ${cfg.fadeLongs === true ? "from" : "below"} the entry), closed at market`;
     return "None: held until the stop or 15:05";
   }

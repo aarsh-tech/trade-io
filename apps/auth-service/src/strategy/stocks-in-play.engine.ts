@@ -49,9 +49,10 @@ import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from 
  *   (inplay-fade-signals.ts). The earliest candle wins; several on one candle -> highest RVOL first.
  * - Entry: SHORT at market right after that candle closes (skipped if more than 2 minutes late).
  * - Stop (since 13 Nov 2026, default): structural, 0.8-1.5% (by ATR) above the day high so far (long: below the day low),
- *   quantity sized to it; stopPct is then only the 1R unit of the target and the stop ladder. fixedStopPct = the old
- *   stop at stopPct from the fill, which every backtest below used.
- * - Exits: stop (exchange SL order), target targetR x stopPct below the fill (engine-watched,
+ *   quantity sized to it, and 1R = the distance to that stop (= the max loss), so targetR / breakevenAtR /
+ *   breakevenLockR are multiples of the max loss (1.5 at ₹500 = a ₹750 target). fixedStopPct = the old stop at stopPct
+ *   from the fill with 1R = stopPct, which every backtest below used.
+ * - Exits: stop (exchange SL order), target targetR x 1R below the fill (engine-watched,
  *   market exit), stop moved to the entry (+breakevenLockR) once the trade is breakevenAtR x the stop in profit, then (profitLock)
  *   to +0.5R at +1.5R and +1.5R at +2.5R; else 15:05.
  * - Backtest (2024-09 .. 2026-09, 1m bars, Zerodha costs + slippage, 1 trade/day, ₹500 risk, 1.2% / 3R / BE at 1R,
@@ -127,7 +128,9 @@ const FADE_MIN_CIRCUIT_ROOM = 0.025;
  * FADE structural stop (the default; fixedStopPct switches back to the % stop). Asked for by the user on 13 Nov 2026 after
  * GODREJIND (12 Nov HINDCOPPER too) hit the 1.4% stop in the first pullback and then reached the target. The stop sits
  * past the day's high (short) / low (long) so far, by a buffer of STRUCT_BUFFER_ATR_FRACTION x the stock's 14-day daily
- * ATR, kept within STRUCT_BUFFER_MIN_PCT..MAX_PCT % of the price (a quiet stock gets 0.8%, a wild one 1.5%). The target
+ * ATR, kept within STRUCT_BUFFER_MIN_PCT..MAX_PCT % of the price (a quiet stock gets 0.8%, a wild one 1.5%). Since
+ * 14 Nov 2026 (user: "₹500 SL and ₹750 target") 1R is the distance to this stop, not stopPct. The note below is the
+ * first version (13 Nov). The target
  * and the stop ladder stay measured in stopPct (unchanged prices); the quantity shrinks so the wider stop still loses at
  * most stopLossRs. Not backtested (the user asked for it as is; earlier studies had structure stops below the % stop).
  */
@@ -209,7 +212,7 @@ interface OiState {
 
 interface ResolvedConfig {
   setup: Setup;
-  /** FADE: stop distance as % of the fill with fixedStopPct; otherwise only the unit (1R) of the target and the stop ladder. */
+  /** FADE: stop distance (= 1R) as % of the fill with fixedStopPct; with the structural stop only the long's chase limit. */
   stopPct: number;
   /** FADE: true = the old fixed stopPct stop; false (default) = the structural stop past the day high/low. */
   fixedStopPct: boolean;
@@ -614,7 +617,7 @@ export class StocksInPlayEngine {
       this.log(state, `⚙ From NSE's end-of-day files: the stock that fell >= 3% yesterday while its futures open interest rose the most (5–80%, not an expiry day, >= ₹25 Cr traded) | SHORT in the 09:00–09:07 pre-open auction with a SELL LIMIT ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close (fills at the 09:15 opening price; no fill on a bigger gap down = no trade) | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Broker SL from 09:15 | Max loss/trade ₹${config.stopLossRs} | 1 trade/day | Square-off 15:05`);
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | ${config.fixedStopPct ? `Stop ${config.stopPct}%` : `Structural stop: ${STRUCT_BUFFER_MIN_PCT}–${STRUCT_BUFFER_MAX_PCT}% (by the stock's ATR) above the day high (long: below the day low), quantity sized to it | R = ${config.stopPct}% for the target and stop moves`} | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | ${config.fixedStopPct ? `Stop ${config.stopPct}%` : `Structural stop: ${STRUCT_BUFFER_MIN_PCT}–${STRUCT_BUFFER_MAX_PCT}% (by the stock's ATR) above the day high (long: below the day low), quantity sized so it loses ₹${config.stopLossRs} = 1R`} | Target ${config.targetR > 0 ? `${config.targetR}R (${config.fixedStopPct ? `${(config.stopPct * config.targetR).toFixed(2)}%` : `≈ ₹${Math.round(config.stopLossRs * config.targetR)}`})` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | ${config.fixedStopPct ? 'same stop' : 'stop below the day low'}, same target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
@@ -739,12 +742,19 @@ export class StocksInPlayEngine {
       const sign = pos.side === 'LONG' ? -1 : 1;
       // Without a saved SL, cap the loss at the configured max loss for the quantity held.
       const sl = pos.slPrice && pos.slPrice > 0 ? pos.slPrice : roundTo(pos.avgPrice + sign * state.config.stopLossRs / pos.qty, tick, pos.side === 'LONG' ? 'down' : 'up');
-      // FADE and OI: the target and breakeven come from the fixed % stop, so they are rebuilt from the fill alone.
+      // FADE and OI: the target and breakeven come from 1R, so they are rebuilt here. Fixed % stop: 1R = stopPct of the fill.
+      // FADE structural stop: 1R = the distance to the saved stop while it is still the original one (behind the
+      // entry); once a lock has moved it, the max loss over the quantity (the position was sized as maxLoss / 1R, so
+      // this is 1R or a little more when capital, not risk, capped the size).
       const fade = state.config.setup === 'FADE';
-      const pctStop = fade || state.config.setup === 'OI';
-      const stopDist = pctStop ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
+      const rTarget = fade || state.config.setup === 'OI';
+      const structural = fade && !state.config.fixedStopPct;
+      const slBehind = (sl - pos.avgPrice) * sign > 0;
+      const stopDist = structural
+        ? (pos.slPrice && pos.slPrice > 0 && slBehind ? Math.abs(pos.avgPrice - sl) : state.config.stopLossRs / pos.qty)
+        : rTarget ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
       // `sign` points at the stop side, so the target is the other way.
-      const target = pctStop && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
+      const target = rTarget && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
       const probe = { side: pos.side, entryPrice: pos.avgPrice, stopDist } as OpenPosition;
       const lockedR = fade ? this.lockedROf(probe, sl) : null;
       const beDone = this.lockSteps(state.config).every(([, lk]) => lockedR !== null && lk <= lockedR + 1e-6);
@@ -2137,10 +2147,10 @@ export class StocksInPlayEngine {
     // TREND: from the price to the day low/high (at least TREND_MIN_STOP_PCT), re-based on the real fill below.
     const trendStopDist = (px: number) => trendStopDistance(c, px);
     // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below); with the
-    // structural stop that % is only the unit (1R) of the target, the stop ladder and the chase guard.
+    // structural stop that % only sets how far a long may chase its break (the stop is far wider).
     const stopDist = fade ? (ltp * cfg.stopPct) / 100 : trend ? trendStopDist(ltp) : c.stopDist;
     const struct = fade && !cfg.fixedStopPct ? this.fadeStructuralStop(state, c, ltp, now) : null;
-    // The distance that is really lost at the stop: it sizes the position.
+    // The distance that is really lost at the stop (= 1R): it sizes the position.
     const riskDist = struct ? struct.dist : stopDist;
 
     // ORB and the FADE long enter on a level break and must not chase it; the FADE short and TREND enter at market on the candle close by design.
@@ -2154,7 +2164,7 @@ export class StocksInPlayEngine {
     if (fade && cfg.skipNearPdlR > 0) {
       const yday = prevDayHighLow(c.candles, new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime());
       const lvl = yday ? (c.side === 'SHORT' ? yday.l : yday.h) : null;
-      const roomR = lvl !== null && stopDist > 0 ? (sign * (lvl - ltp)) / stopDist : null;
+      const roomR = lvl !== null && riskDist > 0 ? (sign * (lvl - ltp)) / riskDist : null;
       if (lvl !== null && roomR !== null && roomR > 0 && roomR < cfg.skipNearPdlR) {
         this.log(state, `⏭ ${c.symbol} skipped: yesterday's ${c.side === 'SHORT' ? 'low' : 'high'} ₹${lvl.toFixed(2)} is only ${roomR.toFixed(2)}R ${c.side === 'SHORT' ? 'below' : 'above'} ₹${ltp.toFixed(2)} (needs at least ${cfg.skipNearPdlR}R of room).`);
         return;
@@ -2259,10 +2269,11 @@ export class StocksInPlayEngine {
     const ltp = c.ltp ?? fill.price;
     state.tradedSymbols.add(c.symbol);
 
-    // FADE: 1R for the target and the stop ladder is always stopPct of the fill; the stop itself is that far only with
-    // fixedStopPct, else at the structure (re-read now, so a new high/low printed during the order is included).
-    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
+    // FADE structural stop (re-read now, so a new high/low printed during the order is included): 1R = the distance
+    // from the fill to that stop, so the target and the stop ladder are multiples of the max loss (targetR 1.5 at ₹500
+    // risk = a ₹750 target). With fixedStopPct, 1R = stopPct of the fill as before.
     const struct = fade && !cfg.fixedStopPct ? this.fadeStructuralStop(state, c, fill.price, now) : null;
+    const fillStopDist = struct ? struct.dist : fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
     const sl = struct ? struct.sl : roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
     // Target rounded toward the entry, so it is never further than targetR x the stop.
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;

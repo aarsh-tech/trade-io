@@ -614,6 +614,13 @@ double _n(Object? v) {
 
 String _fmt(Object? v) => _text(v);
 
+/// In-play Fade with the structural stop: a multiple of the max loss in ₹, as " = ₹750" for the field hints
+/// ('' when the max loss or the multiple is not set). Matches the web Step 3 hints.
+String fadeRupees(StrategyForm f, String key) {
+  final maxLoss = _n(f['stopLossRs']), x = _n(f[key]);
+  return maxLoss > 0 && x > 0 ? ' = ${inr(maxLoss * x)}' : '';
+}
+
 RiskEstimate estimateRisk(StrategyForm f) {
   final trades = _n(f['maxTradesPerDay']).floor().clamp(0, 1 << 30);
   final perTrade = _n(f['stopLossRs']);
@@ -632,12 +639,11 @@ RiskEstimate estimateRisk(StrategyForm f) {
               : "0.8–1.5% past the day's high for a short, or low for a long; the buffer is set by each stock's ATR";
           final tgtText = fixed
               ? '${_fmt(f['sipTargetR'])}x the stop'
-              : '${_fmt(f['sipTargetR'])}x $stop% (${(tr * (double.tryParse(stop) ?? 1.2)).toStringAsFixed(1)}% from the entry)';
+              : '${_fmt(f['sipTargetR'])}x the max loss${perTrade > 0 ? ' (${inr(perTrade * tr)})' : ''}';
           return RiskEstimate(
             perTrade: orNull(perTrade),
             perDay: orNull(perTrade * trades),
-            // Structural stop: the target is a fixed % while the stop distance varies, so the ₹ target is not known in advance.
-            targetPerTrade: perTrade > 0 && tr > 0 && fixed ? perTrade * tr : null,
+            targetPerTrade: perTrade > 0 && tr > 0 ? perTrade * tr : null,
             basis:
                 "Shares are sized so the stop ($stopText) loses at most your max loss, and your free Zerodha funds allow at Zerodha's leverage for the stock (fallback ${lev}x). A jump through the stop can lose a little more. Target ${tr > 0 ? tgtText : 'off'}"
                 "${beAt > 0 ? '; the stop moves to ${beLock > 0 ? 'entry +${_fmt(f['sipBreakevenLockR'])}x' : 'the entry'} at +${_fmt(f['sipBreakevenAtR'])}x' : ''}"

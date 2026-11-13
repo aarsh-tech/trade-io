@@ -1102,6 +1102,9 @@ class AdvancedRisk extends StatelessWidget {
 
   List<Widget> _fade(BuildContext context) {
     final stop = double.tryParse(s(form, 'sipStopPct')) ?? 1.2;
+    // Structural stop (default): the multiples below are of the max loss; fixed % stop: of the stop distance.
+    final fixed = form['sipFixedStopPct'] == true;
+    final unit = fixed ? 'x stop' : 'x max loss';
     final lock = s(form, 'sipBreakevenLockR').isEmpty ? '0' : s(form, 'sipBreakevenLockR');
     final presets = const [
       (
@@ -1137,15 +1140,16 @@ class AdvancedRisk extends StatelessWidget {
         if (form['sipFixedStopPct'] == true)
           'The stop-loss is placed on the exchange at once, the stop distance above the fill.'
         else
-          "The stop-loss is placed on the exchange at once, past the day's high so far (longs: below the low), with a 0.8–1.5% buffer set by the stock's ATR. A wider stop means fewer shares, so the loss at the stop is still at most your max loss. The target and the stop moves are measured in \"1R\", a fixed % of the entry.",
+          "The stop-loss is placed on the exchange at once, past the day's high so far (longs: below the low), with a 0.8–1.5% buffer set by the stock's ATR. The quantity is sized so the stop loses your max loss; the target and the stop move are multiples of that max loss.",
         'The target is watched by the strategy; when price reaches it the short is covered at market.',
         'Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.',
         if (form['sipProfitLock'] != false)
           'Profit lock: at +1.5x the stop the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x.',
         'Otherwise the position is squared off at 15:05.',
-        'Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1.2% / 3R / breakeven at 1R): about 4 in 10 trades win, the average loss is about ₹340, runs of 8 losing days happened, and 5 of 25 months were red.',
+        if (fixed)
+          'Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1.2% / 3R / breakeven at 1R): about 4 in 10 trades win, the average loss is about ₹340, runs of 8 losing days happened, and 5 of 25 months were red.',
       ]),
-      ChoiceCards<String>(
+      if (fixed) ChoiceCards<String>(
         value: active,
         onChanged: (label) {
           final p = presets.firstWhere((p) => p.label == label);
@@ -1164,52 +1168,63 @@ class AdvancedRisk extends StatelessWidget {
         value: form['sipFixedStopPct'] == true,
         onChanged: (v) => set('sipFixedStopPct', v),
       ),
-      FieldPair(
-        BoundField(
-          label: form['sipFixedStopPct'] == true ? 'Stop distance' : '1R (target unit)',
-          suffix: '%',
-          kind: FieldKind.decimal,
-          value: s(form, 'sipStopPct'),
-          onChanged: (v) => set('sipStopPct', v),
-          hint: form['sipFixedStopPct'] == true
-              ? '1.2% was backtested. 0.8% to 1.6% were also positive.'
-              : 'Not the stop: the target and the stop moves are multiples of this % of the entry. The stop itself is structural.',
-        ),
+      if (fixed)
+        FieldPair(
+          BoundField(
+            label: 'Stop distance',
+            suffix: '%',
+            kind: FieldKind.decimal,
+            value: s(form, 'sipStopPct'),
+            onChanged: (v) => set('sipStopPct', v),
+            hint: '1.2% was backtested. 0.8% to 1.6% were also positive.',
+          ),
+          BoundField(
+            label: 'Target',
+            suffix: unit,
+            kind: FieldKind.decimal,
+            value: s(form, 'sipTargetR'),
+            onChanged: (v) => set('sipTargetR', v),
+            hint: '3 = ${(stop * 3).toStringAsFixed(1)}% below the entry. 0 = no target.',
+          ),
+        )
+      else
         BoundField(
           label: 'Target',
-          suffix: 'x stop',
+          suffix: unit,
           kind: FieldKind.decimal,
           value: s(form, 'sipTargetR'),
           onChanged: (v) => set('sipTargetR', v),
-          hint: '3 = ${(stop * 3).toStringAsFixed(1)}% below the entry. 0 = no target.',
+          hint: 'Profit at the target${fadeRupees(form, 'sipTargetR')}. 1.5 at ₹500 max loss = ₹750. 0 = no target.',
         ),
-      ),
       FieldPair(
         BoundField(
           label: 'Stop to entry at',
-          suffix: 'x stop',
+          suffix: unit,
           kind: FieldKind.decimal,
           value: s(form, 'sipBreakevenAtR'),
           onChanged: (v) => set('sipBreakevenAtR', v),
-          hint: '1 = once up by the stop distance. 0 = off.',
+          hint: fixed ? '1 = once up by the stop distance. 0 = off.' : 'Once the trade is up${fadeRupees(form, 'sipBreakevenAtR')}. 0 = never.',
         ),
         BoundField(
           label: 'Profit locked there',
-          suffix: 'x stop',
+          suffix: unit,
           kind: FieldKind.decimal,
           value: s(form, 'sipBreakevenLockR'),
           onChanged: (v) => set('sipBreakevenLockR', v),
-          hint: '0.2 = closes in profit after charges. 0 = exactly the entry.',
+          hint: fixed
+              ? '0.2 = closes in profit after charges. 0 = exactly the entry.'
+              : 'The moved stop keeps${fadeRupees(form, 'sipBreakevenLockR')}. 0 = exactly the entry.',
         ),
       ),
       BoundField(
         label: "Skip if yesterday's low is closer than",
-        suffix: 'x stop',
+        suffix: unit,
         kind: FieldKind.decimal,
         value: s(form, 'sipSkipNearPdlR'),
         onChanged: (v) => set('sipSkipNearPdlR', v),
-        hint:
-            "0 = off (the default). 2 = no short when yesterday's low is less than 2x the stop below the price (longs: yesterday's high above it). Backtest 2 years: about the same profit either way.",
+        hint: fixed
+            ? "0 = off (the default). 2 = no short when yesterday's low is less than 2x the stop below the price (longs: yesterday's high above it). Backtest 2 years: about the same profit either way."
+            : '0 = off (recommended). With the wide structural stop, any value skips most trades.',
       ),
       BoundField(
         label: 'Min avg daily value',

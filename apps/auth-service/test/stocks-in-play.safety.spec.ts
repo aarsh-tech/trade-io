@@ -854,7 +854,7 @@ describe('existing behaviour stays', () => {
 describe('FADE structural stop (default, fixedStopPct off)', () => {
   const structural = (w: World, over: Record<string, unknown> = {}) => makeState(w, { config: cfg({ fixedStopPct: false }), ...over });
 
-  it('puts the stop past the first-candle high, sizes on it and keeps the % target', async () => {
+  it('puts the stop past the first-candle high, sizes on it, and measures the target in that risk', async () => {
     const w = makeWorld();
     const s = structural(w);
     const p = await enter(w, s);
@@ -863,9 +863,25 @@ describe('FADE structural stop (default, fixedStopPct off)', () => {
     expect(w.stops()[0].trigger_price).toBe(102.05);
     expect(p.qty).toBeLessThanOrEqual(Math.floor(500 / (102.05 - 100)));
     expect((p.sl - p.entryPrice) * p.qty).toBeLessThanOrEqual(500);
-    // 1R for the target and the ladder stays 1.2% of the fill.
-    expect(p.stopDist).toBeCloseTo(p.entryPrice * 0.012, 6);
-    expect(p.target).toBeCloseTo(p.entryPrice - 3 * p.entryPrice * 0.012, 1);
+    // 1R = the distance to the structural stop, so targetR 3 = 3x the max loss.
+    expect(p.stopDist).toBeCloseTo(p.sl - p.entryPrice, 6);
+    expect(p.target).toBeCloseTo(p.entryPrice - 3 * (p.sl - p.entryPrice), 1);
+  });
+
+  it('re-adopts a structural position with 1R from its saved stop', async () => {
+    // No fixedStopPct in the saved config = structural.
+    const w = makeWorld({ config: { stopLossRs: 500, setup: 'FADE', maxPositions: 1, targetR: 1.5 } });
+    w.rows.push({ symbol: 'ABC', side: 'SELL', status: 'OPEN', isPaperTrade: false, createdAt: new Date(), brokerOrderId: 'O1', tag: ENTRY_TAG });
+    w.b.orders.push(w.mk({ symbol: 'ABC', orderType: 'MARKET', side: 'SELL', qty: 10, tag: ENTRY_TAG }, 'COMPLETE', 10, 100));
+    w.fill('ABC', 'SELL', 10);
+    w.b.orders.push(w.mk({ symbol: 'ABC', orderType: 'SL', side: 'BUY', qty: 10, triggerPrice: 104, price: 104.5, tag: 'x' }, 'TRIGGER PENDING', 0, 0));
+    await w.engine.start(SID);
+    const s = w.engine.running.get(SID);
+    const p = s.positions[0];
+    expect(p.stopDist).toBeCloseTo(4, 6);
+    expect(p.target).toBe(94);
+    s.positions.length = 0;
+    await w.engine.stop(SID);
   });
 
   it('uses the highest price seen today and an ATR buffer capped at 1.5%', async () => {

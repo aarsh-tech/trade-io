@@ -184,9 +184,8 @@ export function estimateRisk(form: StrategyFormState): RiskEstimate {
         return {
           perTrade: perTrade || null,
           perDay: perTrade ? perTrade * trades : null,
-          // Structural stop: the target is a fixed % from the entry while the stop distance varies, so the ₹ target is not known in advance.
-          targetPerTrade: perTrade && tr > 0 && form.sipFixedStopPct === true ? perTrade * tr : null,
-          basis: `Shares are sized so the stop (${form.sipFixedStopPct === true ? `${form.sipStopPct || 1.2}% from the entry` : "0.8–1.5% past the day's high for a short, or low for a long; the buffer is set by each stock's ATR"}) loses at most your max loss, and your free Zerodha funds allow at Zerodha's leverage for the stock (fallback ${form.sipLeverage || 4}x). A jump through the stop can lose a little more. Target ${tr > 0 ? `${tr}x ${form.sipFixedStopPct === true ? "the stop" : `${form.sipStopPct || 1.2}% (${(tr * (n(form.sipStopPct) || 1.2)).toFixed(1)}% from the entry)`}` : "off"}${n(form.sipBreakevenAtR) > 0 ? `; the stop moves to ${n(form.sipBreakevenLockR) > 0 ? `entry +${form.sipBreakevenLockR}x` : "the entry"} at +${form.sipBreakevenAtR}x` : ""}${form.sipProfitLock !== false ? ", then locks +0.5x at +1.5x and +1.5x at +2.5x" : ""}; otherwise 15:05.`,
+          targetPerTrade: perTrade && tr > 0 ? perTrade * tr : null,
+          basis: `Shares are sized so the stop (${form.sipFixedStopPct === true ? `${form.sipStopPct || 1.2}% from the entry` : "0.8–1.5% past the day's high for a short, or low for a long; the buffer is set by each stock's ATR"}) loses at most your max loss, and your free Zerodha funds allow at Zerodha's leverage for the stock (fallback ${form.sipLeverage || 4}x). A jump through the stop can lose a little more. Target ${tr > 0 ? `${tr}x ${form.sipFixedStopPct === true ? "the stop" : `the max loss${perTrade ? ` (₹${Math.round(perTrade * tr)})` : ""}`}` : "off"}${n(form.sipBreakevenAtR) > 0 ? `; the stop moves to ${n(form.sipBreakevenLockR) > 0 ? `entry +${form.sipBreakevenLockR}x` : "the entry"} at +${form.sipBreakevenAtR}x` : ""}${form.sipProfitLock !== false ? ", then locks +0.5x at +1.5x and +1.5x at +2.5x" : ""}; otherwise 15:05.`,
         };
       }
       if (form.sipSetup === "OI") {

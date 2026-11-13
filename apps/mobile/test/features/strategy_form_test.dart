@@ -31,6 +31,17 @@ void main() {
       expect(config.containsKey('breakevenAtR'), isFalse);
     });
 
+    test('In-play Fade structural stop: multiples of the max loss shown in ₹', () {
+      final form = withType(createDefaultForm(), 'STOCKS_IN_PLAY')
+        ..['stopLossRs'] = '500'
+        ..['sipTargetR'] = '1.5'
+        ..['sipBreakevenLockR'] = '0';
+      expect(fadeRupees(form, 'sipTargetR'), ' = ₹750');
+      expect(fadeRupees(form, 'sipBreakevenLockR'), '');
+      expect(buildStrategyConfig(form)['fixedStopPct'], false);
+      expect(estimateRisk(form).targetPerTrade, 750);
+    });
+
     test('a "0" target is kept (no target), a blank one takes the default', () {
       final form = withType(createDefaultForm(), 'STOCKS_IN_PLAY')..['sipTargetR'] = '0';
       expect(buildStrategyConfig(form)['targetR'], 0);

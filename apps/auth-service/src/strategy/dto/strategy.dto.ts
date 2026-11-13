@@ -134,8 +134,8 @@ export interface StocksInPlayConfig {
   setup?: 'ORB' | 'FADE' | 'TREND' | 'OI'; // ORB = break of the first candle (default); FADE = short the overbought rollover of a gap-up stock in play, 09:20-09:45; TREND = first 15/40 EMA crossover of the top-RVOL stock(s), with the gap; OI = short yesterday's top futures-OI short build-up in the 09:00-09:07 pre-open auction (stopPct default 1, targetR 3, 1 trade/day)
   watchCount?: number;                 // TREND: stocks watched from 09:20, highest first-candle RVOL first (default 1, max 10)
   withGapOnly?: boolean;               // TREND: never short a gap-up stock or buy a gap-down one (default true)
-  stopPct?: number;                    // FADE: 1R as % of the fill for the target and stop moves (default 1.2); also the stop distance when fixedStopPct
-  fixedStopPct?: boolean;              // FADE: true = stop at stopPct from the fill; false (default) = structural stop 0.8-1.5% (by ATR) past the day high (long: low), qty sized to it
+  stopPct?: number;                    // FADE with fixedStopPct: stop distance (= 1R) as % of the fill (default 1.2); structural stop: only the long's chase limit
+  fixedStopPct?: boolean;              // FADE: true = stop at stopPct from the fill; false (default) = structural stop 0.8-1.5% (by ATR) past the day high (long: low), qty sized to it, 1R = the max loss (targetR etc. are multiples of stopLossRs)
   targetR?: number;                    // FADE: target at this multiple of the stop (default 3; 0 = no target, exit at the stop or 15:05)
   breakevenAtR?: number;               // FADE: stop moved to the entry at this multiple of the stop in profit (default 1; 0 = off)
   breakevenLockR?: number;             // FADE: profit that first stop move locks in R (default 0.2; 0 = the entry)
