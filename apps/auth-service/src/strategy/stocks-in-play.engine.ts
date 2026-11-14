@@ -48,11 +48,7 @@ import { registerSymbolHolder, symbolHeldByOther, unregisterSymbolHolder } from 
  * - Signal: on each 5m candle closing 09:20..09:45, MFI/Stochastic/Bollinger/CMF turning down from overbought
  *   (inplay-fade-signals.ts). The earliest candle wins; several on one candle -> highest RVOL first.
  * - Entry: SHORT at market right after that candle closes (skipped if more than 2 minutes late).
- * - Stop (since 13 Nov 2026, default): structural, 0.8-1.5% (by ATR) above the day high so far (long: below the day low),
- *   quantity sized to it, and 1R = the distance to that stop (= the max loss), so targetR / breakevenAtR /
- *   breakevenLockR are multiples of the max loss (1.5 at ₹500 = a ₹750 target). fixedStopPct = the old stop at stopPct
- *   from the fill with 1R = stopPct, which every backtest below used.
- * - Exits: stop (exchange SL order), target targetR x 1R below the fill (engine-watched,
+ * - Exits: stop stopPct above the fill (exchange SL order), target targetR x the stop below it (engine-watched,
  *   market exit), stop moved to the entry (+breakevenLockR) once the trade is breakevenAtR x the stop in profit, then (profitLock)
  *   to +0.5R at +1.5R and +1.5R at +2.5R; else 15:05.
  * - Backtest (2024-09 .. 2026-09, 1m bars, Zerodha costs + slippage, 1 trade/day, ₹500 risk, 1.2% / 3R / BE at 1R,
@@ -125,20 +121,17 @@ const FADE_MAX_ENTRY_DELAY_MS = 120_000;
 /** Skip a fade candidate whose upper circuit is this close (short squeezed into the circuit cannot be covered). */
 const FADE_MIN_CIRCUIT_ROOM = 0.025;
 /**
- * FADE structural stop (the default; fixedStopPct switches back to the % stop). Asked for by the user on 13 Nov 2026 after
- * GODREJIND (12 Nov HINDCOPPER too) hit the 1.4% stop in the first pullback and then reached the target. The stop sits
- * past the day's high (short) / low (long) so far, by a buffer of STRUCT_BUFFER_ATR_FRACTION x the stock's 14-day daily
- * ATR, kept within STRUCT_BUFFER_MIN_PCT..MAX_PCT % of the price (a quiet stock gets 0.8%, a wild one 1.5%). Since
- * 14 Nov 2026 (user: "₹500 SL and ₹750 target") 1R is the distance to this stop, not stopPct. The note below is the
- * first version (13 Nov). The target
- * and the stop ladder stay measured in stopPct (unchanged prices); the quantity shrinks so the wider stop still loses at
- * most stopLossRs. Not backtested (the user asked for it as is; earlier studies had structure stops below the % stop).
+ * FADE re-entry (fadeReentries, asked for by the user on 14 Nov 2026 after HUDCO / HINDCOPPER / GODREJIND hit the
+ * 1.2% stop first and then fell). After a full stop-out the same stock is watched; on the first 5m close (by 11:30)
+ * back below the session VWAP of the 1m closes (long: above), it is entered again at market with a fresh stopPct stop
+ * and the same exits. Backtest 2y + 31 days, 1.2% stop / no target / hold to 15:05, both sides, ₹500, 2 re-entries
+ * (scratchpad dynsl/reentry-close.cjs): ₹105.9k vs ₹91.7k without (Y1 47.5 vs 39.2, Y2 46.5 vs 42.4, last 31 days
+ * 11.8 vs 10.1), worst day −₹1.5k (3 stops). Thin: ₹50–100 per re-entry, ~40% win. The watch is in memory only, so a
+ * restart ends it.
  */
-const STRUCT_BUFFER_MIN_PCT = 0.8;
-const STRUCT_BUFFER_MAX_PCT = 1.5;
-const STRUCT_BUFFER_ATR_FRACTION = 0.3;
-/** Buffer used when the stock's ATR is unknown. */
-const STRUCT_BUFFER_FALLBACK_PCT = 1;
+const FADE_MAX_REENTRIES = 2;
+/** FADE re-entry: the last 5m close that can trigger one (11:30 IST). */
+const FADE_REENTRY_LAST_CLOSE_HHMM = 11 * 60 + 30;
 /** FADE long: after the oversold turn-up, the first-candle high must break within this long. */
 const FADE_LONG_BREAK_WINDOW_MS = 30 * 60_000;
 /** Retry a failed breakeven SL modification after this long. */
@@ -212,10 +205,8 @@ interface OiState {
 
 interface ResolvedConfig {
   setup: Setup;
-  /** FADE: stop distance (= 1R) as % of the fill with fixedStopPct; with the structural stop only the long's chase limit. */
+  /** FADE: stop distance as % of the fill. */
   stopPct: number;
-  /** FADE: true = the old fixed stopPct stop; false (default) = the structural stop past the day high/low. */
-  fixedStopPct: boolean;
   /** FADE: target at this multiple of the stop distance (0 = no target). */
   targetR: number;
   /** FADE: move the stop to the entry once the trade is this multiple of the stop in profit (0 = off). */
@@ -228,6 +219,8 @@ interface ResolvedConfig {
   skipNearPdlR: number;
   /** FADE: after breakeven, lock +0.5R at +1.5R and +1.5R at +2.5R (FADE_PROFIT_LOCK_STEPS). */
   profitLock: boolean;
+  /** FADE: re-entries on the same stock after a full stop-out (0 = off, max FADE_MAX_REENTRIES). See checkFadeReentry. */
+  fadeReentries: number;
   stopLossRs: number;
   /** Daily trade cap and position slots (FADE with longs and TREND: both sides together). */
   maxPositions: number;
@@ -280,12 +273,6 @@ interface Candidate {
   stopLevel: number;
   /** TREND: sides whose first crossover of the day has been seen (only that one may be traded). */
   crossSeen: Set<Side>;
-  /** FADE structural stop: highest / lowest price seen today outside the 5m candles (quotes and ticks). */
-  seenHigh?: number;
-  seenLow?: number;
-  /** Today's circuit limits from the 09:20 quote (0 = unknown). */
-  upperCircuit?: number;
-  lowerCircuit?: number;
 }
 
 interface OpenPosition {
@@ -333,6 +320,16 @@ interface OpenPosition {
   qtyMismatch?: number | null;
   /** Problems already alerted, so a retry loop sends one alert. */
   alerted?: Set<string>;
+}
+
+/** FADE: a stopped-out stock waiting for a 5m close back on the trade's side of VWAP. */
+interface FadeReentryWatch {
+  symbol: string;
+  side: Side;
+  /** When the stop filled (epoch ms): only 5m candles closing after that minute count. */
+  stopAtMs: number;
+  /** Close time (epoch ms) of the last 5m candle already checked. */
+  checkedClose: number;
 }
 
 /** An entry whose outcome at the broker is not known. While one exists no new entry is sent; exits and stops are unaffected. */
@@ -387,6 +384,10 @@ interface EngineState {
   tradesToday: number;
   /** Entries per side today (FADE per-side cap). */
   sideTrades: Record<Side, number>;
+  /** FADE: the stock watched for a re-entry after its stop-out (null = none). */
+  reentry: FadeReentryWatch | null;
+  /** FADE: re-entry orders sent today (counted when sent, so an unconfirmed one still uses its place). */
+  reentriesToday: number;
   winsToday: number;
   lossesToday: number;
   realizedTodayRs: number;
@@ -432,31 +433,6 @@ const toOrderSnap = (o: any): OrderSnap => ({ status: o.status, filledQty: Numbe
  * client turns every Kite failure into a plain message, so anything else, a timeout included, may have gone through.
  */
 /** TREND: from the price to the day low/high, at least TREND_MIN_STOP_PCT away. */
-/** A candidate's latest price; also widens the day's high/low seen so far (structural stop). */
-const notePrice = (c: Candidate, px: number) => {
-  c.ltp = px;
-  c.ltpAt = Date.now();
-  c.seenHigh = Math.max(c.seenHigh ?? 0, px);
-  c.seenLow = Math.min(c.seenLow ?? Infinity, px);
-};
-
-/**
- * FADE structural stop for an entry at `px`: past the day's high (short) / low (long) so far, from the first candle,
- * today's completed 5m candles, the 09:20 quote's high/low, every price seen since and `px` itself. The buffer is
- * STRUCT_BUFFER_ATR_FRACTION x the 14-day daily ATR as % of the price, kept within STRUCT_BUFFER_MIN_PCT..MAX_PCT.
- */
-export function structuralStop(c: Pick<Candidate, 'side' | 'first' | 'candles' | 'seenHigh' | 'seenLow' | 'tick'>, px: number, atr: number | undefined, dayOpenMs: number) {
-  const today = (c.candles ?? []).filter((k) => k.t >= dayOpenMs);
-  const short = c.side === 'SHORT';
-  const extreme = short
-    ? Math.max(c.first.h, px, c.seenHigh ?? 0, ...today.map((k) => k.h))
-    : Math.min(c.first.l, px, c.seenLow ?? Infinity, ...today.map((k) => k.l));
-  const atrPct = atr && atr > 0 && px > 0 ? (atr / px) * 100 : null;
-  const bufPct = atrPct === null ? STRUCT_BUFFER_FALLBACK_PCT : Math.min(STRUCT_BUFFER_MAX_PCT, Math.max(STRUCT_BUFFER_MIN_PCT, STRUCT_BUFFER_ATR_FRACTION * atrPct));
-  const sl = short ? roundTo(extreme * (1 + bufPct / 100), c.tick, 'up') : roundTo(extreme * (1 - bufPct / 100), c.tick, 'down');
-  return { sl, dist: Math.abs(sl - px), extreme, bufPct, atrPct };
-}
-
 const trendStopDistance = (c: { stopLevel: number; side: Side }, px: number) => Math.max((px * TREND_MIN_STOP_PCT) / 100, (px - c.stopLevel) * (c.side === 'LONG' ? 1 : -1));
 const isDefiniteRefusal = (e: any) => e instanceof HttpException || /^(🛑|IP Access Denied|Market is currently CLOSED|Zerodha AMO Error)/.test(String(e?.message || ''));
 const roundTo =(p: number, tick: number, dir: 'up' | 'down' | 'near') => {
@@ -580,6 +556,8 @@ export class StocksInPlayEngine {
       busySince: 0,
       tradesToday: 0,
       sideTrades: { LONG: 0, SHORT: 0 },
+      reentry: null,
+      reentriesToday: 0,
       winsToday: 0,
       lossesToday: 0,
       realizedTodayRs: 0,
@@ -617,8 +595,8 @@ export class StocksInPlayEngine {
       this.log(state, `⚙ From NSE's end-of-day files: the stock that fell >= 3% yesterday while its futures open interest rose the most (5–80%, not an expiry day, >= ₹25 Cr traded) | SHORT in the 09:00–09:07 pre-open auction with a SELL LIMIT ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close (fills at the 09:15 opening price; no fill on a bigger gap down = no trade) | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Broker SL from 09:15 | Max loss/trade ₹${config.stopLossRs} | 1 trade/day | Square-off 15:05`);
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | ${config.fixedStopPct ? `Stop ${config.stopPct}%` : `Structural stop: ${STRUCT_BUFFER_MIN_PCT}–${STRUCT_BUFFER_MAX_PCT}% (by the stock's ATR) above the day high (long: below the day low), quantity sized so it loses ₹${config.stopLossRs} = 1R`} | Target ${config.targetR > 0 ? `${config.targetR}R (${config.fixedStopPct ? `${(config.stopPct * config.targetR).toFixed(2)}%` : `≈ ₹${Math.round(config.stopLossRs * config.targetR)}`})` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
-      if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | ${config.fixedStopPct ? 'same stop' : 'stop below the day low'}, same target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.fadeReentries > 0 ? ` | Re-entry: after a stop-out, the same stock again on a 5m close back below VWAP (long: above) until 11:30, up to ${config.fadeReentries}x a day` : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
+      if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
       this.log(state, `⚙ At 09:20: watch the ${config.watchCount} stock(s) with the highest first 5m candle volume vs usual (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Each side's first 15/40 EMA crossover on the 5m closes 09:25–14:30: BUY when the 15-EMA crosses above the 40-EMA with the close above VWAP, SHORT when it crosses below with the close below VWAP${config.withGapOnly ? ' | Only with the gap: a gap-up stock is never shorted, a gap-down stock never bought' : ''} | Stop at the day low/high | Exit when the 15-EMA crosses back, else 15:05 | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds`);
@@ -691,12 +669,12 @@ export class StocksInPlayEngine {
     return {
       setup,
       stopPct: Math.min(5, Math.max(0.3, num(raw.stopPct, oi ? 1 : 1.2))),
-      fixedStopPct: raw.fixedStopPct === true,
       targetR: Math.min(20, numOrZero(raw.targetR, 3)),
       breakevenAtR,
       breakevenLockR: Math.min(numOrZero(raw.breakevenLockR, 0.2), breakevenAtR * 0.8),
       skipNearPdlR: Math.min(10, numOrZero(raw.skipNearPdlR, 0)),
       profitLock: raw.profitLock !== false,
+      fadeReentries: fade ? Math.min(FADE_MAX_REENTRIES, Math.floor(numOrZero(raw.fadeReentries, 0))) : 0,
       stopLossRs,
       maxPositions: perSideTrades,
       perSideTrades,
@@ -742,19 +720,12 @@ export class StocksInPlayEngine {
       const sign = pos.side === 'LONG' ? -1 : 1;
       // Without a saved SL, cap the loss at the configured max loss for the quantity held.
       const sl = pos.slPrice && pos.slPrice > 0 ? pos.slPrice : roundTo(pos.avgPrice + sign * state.config.stopLossRs / pos.qty, tick, pos.side === 'LONG' ? 'down' : 'up');
-      // FADE and OI: the target and breakeven come from 1R, so they are rebuilt here. Fixed % stop: 1R = stopPct of the fill.
-      // FADE structural stop: 1R = the distance to the saved stop while it is still the original one (behind the
-      // entry); once a lock has moved it, the max loss over the quantity (the position was sized as maxLoss / 1R, so
-      // this is 1R or a little more when capital, not risk, capped the size).
+      // FADE and OI: the target and breakeven come from the fixed % stop, so they are rebuilt from the fill alone.
       const fade = state.config.setup === 'FADE';
-      const rTarget = fade || state.config.setup === 'OI';
-      const structural = fade && !state.config.fixedStopPct;
-      const slBehind = (sl - pos.avgPrice) * sign > 0;
-      const stopDist = structural
-        ? (pos.slPrice && pos.slPrice > 0 && slBehind ? Math.abs(pos.avgPrice - sl) : state.config.stopLossRs / pos.qty)
-        : rTarget ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
+      const pctStop = fade || state.config.setup === 'OI';
+      const stopDist = pctStop ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
       // `sign` points at the stop side, so the target is the other way.
-      const target = rTarget && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
+      const target = pctStop && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
       const probe = { side: pos.side, entryPrice: pos.avgPrice, stopDist } as OpenPosition;
       const lockedR = fade ? this.lockedROf(probe, sl) : null;
       const beDone = this.lockSteps(state.config).every(([, lk]) => lockedR !== null && lk <= lockedR + 1e-6);
@@ -969,6 +940,7 @@ export class StocksInPlayEngine {
           if (fade) {
             await this.checkFadeSignals(state, client, new Date());
             if (state.config.allowLongs) await this.checkFadeLongBreaks(state, client, new Date());
+            if (state.reentry) await this.checkFadeReentry(state, client, new Date());
           } else if (trend) await this.checkTrendSignals(state, client, new Date());
           else await this.checkEntries(state, client, now);
         }
@@ -982,7 +954,9 @@ export class StocksInPlayEngine {
     }
 
     // An entry of unknown outcome may still be a live position, so the day does not end until it is resolved.
-    if (state.completeReason && state.positions.length === 0 && !state.uncertainEntry) {
+    // A fade re-entry watch keeps the day going too (it ends itself after the 11:30 close or at 15:05).
+    if (state.reentry && getIstHhmm(new Date()) >= SQUARE_OFF_HHMM) state.reentry = null;
+    if (state.completeReason && state.positions.length === 0 && !state.uncertainEntry && !state.reentry) {
       const reason = state.completeReason;
       state.completeReason = null;
       await this.stopWithStatus(strategyId, 'COMPLETED', reason);
@@ -997,7 +971,7 @@ export class StocksInPlayEngine {
     for (const c of state.candidates || []) {
       if (c.done) continue;
       const px = ticks[`NSE:${c.symbol}`] ?? ticks[c.symbol];
-      if (px && px > 0) { notePrice(c, px); touched = true; }
+      if (px && px > 0) { c.ltp = px; c.ltpAt = Date.now(); touched = true; }
     }
     for (const p of state.positions) {
       const px = ticks[`NSE:${p.symbol}`] ?? ticks[p.symbol];
@@ -1378,13 +1352,7 @@ export class StocksInPlayEngine {
     return list.filter((c) => {
       const x = q[`NSE:${c.symbol}`];
       const upper = Number(x?.upper_circuit_limit) || 0, lower = Number(x?.lower_circuit_limit) || 0, last = Number(x?.last_price) || 0;
-      if (last > 0) notePrice(c, last);
-      // The exchange's day high/low so far and the circuit limits, for the structural stop.
-      const hi = Number(x?.ohlc?.high) || 0, lo = Number(x?.ohlc?.low) || 0;
-      if (hi > 0) c.seenHigh = Math.max(c.seenHigh ?? 0, hi);
-      if (lo > 0) c.seenLow = Math.min(c.seenLow ?? Infinity, lo);
-      c.upperCircuit = upper;
-      c.lowerCircuit = lower;
+      if (last > 0) { c.ltp = last; c.ltpAt = Date.now(); }
       if (c.side === 'SHORT' && upper > 0 && last > 0 && (upper - last) / last < FADE_MIN_CIRCUIT_ROOM) {
         this.log(state, `⏭ ${c.symbol} skipped: ₹${last} is within ${(FADE_MIN_CIRCUIT_ROOM * 100).toFixed(1)}% of its upper circuit ₹${upper} (a short there may not be coverable).`);
         return false;
@@ -1534,6 +1502,95 @@ export class StocksInPlayEngine {
     }
     if (state.positions.length === 0 && !state.completeReason && state.candidates.every((c) => c.done) && getIstHhmm(now) >= FADE_LAST_CANDLE_HHMM + 5) {
       state.completeReason = `🏁 Every fade candidate has been traded or dropped. Strategy completed.`;
+    }
+  }
+
+  /**
+   * FADE re-entry: on each 5m close after the stop-out (up to the 11:30 close), compare that close with the session
+   * VWAP of today's 1m closes. Back below it (long: above) = enter the same stock again at market, as in the backtest.
+   */
+  private async checkFadeReentry(state: EngineState, client: any, now: Date) {
+    const w = state.reentry;
+    if (!w || state.stopping) return;
+    const cfg = state.config;
+    const nowMs = now.getTime();
+    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+    const lastCloseMs = dayOpenMs + (FADE_REENTRY_LAST_CLOSE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
+    const hhmmOf = (ms: number) => { const m = getIstHhmm(new Date(ms)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+    const end = (msg: string) => {
+      state.reentry = null;
+      this.log(state, msg);
+      if (state.positions.length === 0 && !state.completeReason) state.completeReason = `🏁 Fade trade${state.tradesToday > 1 ? 's' : ''} done for today. Strategy completed.`;
+    };
+    // The latest 5m candle that closed at least FADE_SETTLE_MS ago; only candles closing after the stop's minute count.
+    const closeMs = Math.floor((nowMs - FADE_SETTLE_MS) / FIVE_MIN_MS) * FIVE_MIN_MS;
+    if (closeMs > lastCloseMs) {
+      end(`⏭ ${w.symbol}: no 5m close back ${w.side === 'SHORT' ? 'below' : 'above'} VWAP by 11:30 — no re-entry today.`);
+      return;
+    }
+    if (closeMs <= Math.floor(w.stopAtMs / 60_000) * 60_000 + 60_000 || closeMs <= w.checkedClose) return;
+    if (nowMs - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
+      w.checkedClose = closeMs;
+      this.log(state, `⏭ ${w.symbol} re-entry: the ${hhmmOf(closeMs)} close was seen over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min late — waiting for the next close.`);
+      return;
+    }
+    if (state.uncertainEntry || state.positions.some((p) => p.symbol === w.symbol)) return;
+    const c = state.candidates?.find((x) => x.symbol === w.symbol && x.side === w.side);
+    if (!c) {
+      end(`⚠ ${w.symbol}: its candidate data is gone — no re-entry.`);
+      return;
+    }
+    const m = await this.minuteCloseAndVwap(state, client, w.symbol, dayOpenMs, closeMs);
+    if (!m) {
+      if (nowMs - closeMs >= FADE_CANDLE_WAIT_MS) {
+        w.checkedClose = closeMs;
+        this.log(state, `⚠ ${w.symbol}: Kite has no 1m candles up to the ${hhmmOf(closeMs)} close yet — re-entry check skipped for that close.`);
+      }
+      return; // retried on the next tick
+    }
+    w.checkedClose = closeMs;
+    const back = w.side === 'SHORT' ? m.close < m.vwap : m.close > m.vwap;
+    if (!back) {
+      this.log(state, `ℹ ${w.symbol} re-entry: ${hhmmOf(closeMs)} close ₹${m.close} is still ${w.side === 'SHORT' ? 'above' : 'below'} VWAP ₹${m.vwap.toFixed(2)} — waiting.`);
+      return;
+    }
+    if (state.reentriesToday >= cfg.fadeReentries) {
+      end(`ℹ ${w.symbol}: no re-entry — the ${cfg.fadeReentries} for today are used.`);
+      return;
+    }
+    state.reentry = null;
+    const n = state.reentriesToday + 1;
+    this.log(state, `${w.side === 'SHORT' ? '📉' : '📈'} [FADE RE-ENTRY ${n}/${cfg.fadeReentries}] ${w.symbol} ${hhmmOf(closeMs)} close ₹${m.close} back ${w.side === 'SHORT' ? 'below' : 'above'} VWAP ₹${m.vwap.toFixed(2)} after the stop-out.`);
+    logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'FADE', event: 'REENTRY', symbol: w.symbol, side: w.side, close: m.close, vwap: m.vwap, reentry: n, isPaper: state.isPaperTrade });
+    // The long's chase guard measures from this close (not the first-candle high it first broke).
+    c.level = m.close;
+    await this.refreshCandidateLtp(state, client, c);
+    const before = state.reentriesToday;
+    await this.enterTrade(state, client, c, new Date(), { reentry: true });
+    if (state.reentriesToday === before && state.positions.length === 0 && !state.uncertainEntry && !state.completeReason) {
+      state.completeReason = `🏁 Fade re-entry in ${w.symbol} not taken. Strategy completed.`;
+    }
+  }
+
+  /** The close of the last 1m candle before `untilMs` and the session VWAP of today's 1m closes up to it; null when that candle is not published yet. */
+  private async minuteCloseAndVwap(state: EngineState, client: any, symbol: string, dayOpenMs: number, untilMs: number): Promise<{ close: number; vwap: number } | null> {
+    try {
+      const raw: any[] = await client.getHistoricalData(symbol, 'NSE', 'minute', new Date(dayOpenMs), new Date(untilMs));
+      let pv = 0, vv = 0, close = 0, lastT = 0;
+      for (const k of raw || []) {
+        const t = new Date(k.date).getTime();
+        if (t < dayOpenMs || t >= untilMs) continue;
+        const cl = Number(k.close), v = Number(k.volume) || 0;
+        if (!(cl > 0)) continue;
+        pv += cl * v;
+        vv += v;
+        if (t > lastT) { lastT = t; close = cl; }
+      }
+      if (lastT < untilMs - 60_000 || !(vv > 0)) return null;
+      return { close, vwap: pv / vv };
+    } catch (e: any) {
+      this.logger.warn(`[${state.strategyId}] ${symbol} 1m history failed: ${e?.message || e}`);
+      return null;
     }
   }
 
@@ -1714,19 +1771,13 @@ export class StocksInPlayEngine {
     }
   }
 
-  /** FADE structural stop for an entry at `px` (see structuralStop), with the stock's 14-day ATR from the baselines. */
-  private fadeStructuralStop(state: EngineState, c: Candidate, px: number, now: Date) {
-    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
-    return structuralStop(c, px, state.baselines?.get(c.symbol)?.atr, dayOpenMs);
-  }
-
   /** Fresh price right before a FADE entry (ticks if under 3s old, else REST). */
   private async refreshCandidateLtp(state: EngineState, client: any, c: Candidate) {
     if (c.ltp !== null && Date.now() - c.ltpAt < 3000) return;
     try {
       const ltps: Record<string, number> = await client.getLTP([`NSE:${c.symbol}`]);
       const px = ltps[`NSE:${c.symbol}`];
-      if (px && px > 0) notePrice(c, px);
+      if (px && px > 0) { c.ltp = px; c.ltpAt = Date.now(); }
     } catch (e: any) {
       this.logger.warn(`[${state.strategyId}] LTP for ${c.symbol} failed: ${e?.message || e}`);
     }
@@ -2078,7 +2129,7 @@ export class StocksInPlayEngine {
     const t = now.getTime();
     const stale: { symbol: string; set: (px: number) => void }[] = [];
     for (const p of state.positions) if (t - p.ltpAt > 4000) stale.push({ symbol: p.symbol, set: (px) => { p.ltp = px; p.ltpAt = Date.now(); this.trackBest(p, px); } });
-    for (const c of state.candidates || []) if (!c.done && t - c.ltpAt > 4000) stale.push({ symbol: c.symbol, set: (px) => notePrice(c, px) });
+    for (const c of state.candidates || []) if (!c.done && t - c.ltpAt > 4000) stale.push({ symbol: c.symbol, set: (px) => { c.ltp = px; c.ltpAt = Date.now(); } });
     if (stale.length === 0) return;
     try {
       const ltps: Record<string, number> = await client.getLTP(stale.map((s) => `NSE:${s.symbol}`));
@@ -2125,9 +2176,13 @@ export class StocksInPlayEngine {
     }
   }
 
-  private async enterTrade(state: EngineState, client: any, c: Candidate, now: Date) {
+  private async enterTrade(state: EngineState, client: any, c: Candidate, now: Date, opts: { reentry?: boolean } = {}) {
     const cfg = state.config;
     const fade = cfg.setup === 'FADE';
+    // A fade re-entry may go past the daily cap by the re-entries allowed (never a new stock past it).
+    const reentry = fade && opts.reentry === true && state.reentriesToday < cfg.fadeReentries;
+    if (opts.reentry && !reentry) return;
+    const tradeCap = cfg.maxPositions + (reentry ? state.reentriesToday + 1 : 0);
     // An earlier entry may be live at the broker: nothing new goes in until that is known.
     if (state.uncertainEntry) {
       if (!state.uncertainEntry.loggedBlock) {
@@ -2146,12 +2201,8 @@ export class StocksInPlayEngine {
     const trend = cfg.setup === 'TREND';
     // TREND: from the price to the day low/high (at least TREND_MIN_STOP_PCT), re-based on the real fill below.
     const trendStopDist = (px: number) => trendStopDistance(c, px);
-    // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below); with the
-    // structural stop that % only sets how far a long may chase its break (the stop is far wider).
+    // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below).
     const stopDist = fade ? (ltp * cfg.stopPct) / 100 : trend ? trendStopDist(ltp) : c.stopDist;
-    const struct = fade && !cfg.fixedStopPct ? this.fadeStructuralStop(state, c, ltp, now) : null;
-    // The distance that is really lost at the stop (= 1R): it sizes the position.
-    const riskDist = struct ? struct.dist : stopDist;
 
     // ORB and the FADE long enter on a level break and must not chase it; the FADE short and TREND enter at market on the candle close by design.
     const chase = (ltp - c.level) * sign;
@@ -2164,19 +2215,9 @@ export class StocksInPlayEngine {
     if (fade && cfg.skipNearPdlR > 0) {
       const yday = prevDayHighLow(c.candles, new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime());
       const lvl = yday ? (c.side === 'SHORT' ? yday.l : yday.h) : null;
-      const roomR = lvl !== null && riskDist > 0 ? (sign * (lvl - ltp)) / riskDist : null;
+      const roomR = lvl !== null && stopDist > 0 ? (sign * (lvl - ltp)) / stopDist : null;
       if (lvl !== null && roomR !== null && roomR > 0 && roomR < cfg.skipNearPdlR) {
         this.log(state, `⏭ ${c.symbol} skipped: yesterday's ${c.side === 'SHORT' ? 'low' : 'high'} ₹${lvl.toFixed(2)} is only ${roomR.toFixed(2)}R ${c.side === 'SHORT' ? 'below' : 'above'} ₹${ltp.toFixed(2)} (needs at least ${cfg.skipNearPdlR}R of room).`);
-        return;
-      }
-    }
-
-    // Structural stop past the circuit: Zerodha refuses a stop order outside the day's price band, and the position would
-    // then be flattened at once. Checked on the SL-limit price, which sits a little beyond the trigger.
-    if (struct) {
-      const lim = struct.sl * (c.side === 'SHORT' ? 1.005 : 0.995);
-      if ((c.side === 'SHORT' && (c.upperCircuit ?? 0) > 0 && lim >= c.upperCircuit!) || (c.side === 'LONG' && (c.lowerCircuit ?? 0) > 0 && lim <= c.lowerCircuit!)) {
-        this.log(state, `⏭ ${c.symbol} skipped: the structural stop ₹${struct.sl.toFixed(2)} is at or past the ${c.side === 'SHORT' ? 'upper' : 'lower'} circuit ₹${(c.side === 'SHORT' ? c.upperCircuit : c.lowerCircuit)!.toFixed(2)} (Zerodha would refuse the stop order).`);
         return;
       }
     }
@@ -2190,13 +2231,13 @@ export class StocksInPlayEngine {
       this.marginFor(state, c.symbol),
     ]);
     if (tradesToday === null) {
-      this.log(state, `⛔ Could not verify today's trade count (Zerodha and DB unreadable) — skipping ${c.symbol} to stay within the ${cfg.maxPositions}-trade limit.`);
-      c.done = false; // try again on the next price
+      this.log(state, `⛔ Could not verify today's trade count (Zerodha and DB unreadable) — skipping ${c.symbol} to stay within the ${tradeCap}-trade limit.`);
+      if (!reentry) c.done = false; // try again on the next price
       return;
     }
-    if (tradesToday >= cfg.maxPositions) {
+    if (tradesToday >= tradeCap) {
       state.tradesToday = Math.max(state.tradesToday, tradesToday);
-      this.log(state, `⛔ Daily trade limit reached: ${tradesToday}/${cfg.maxPositions} trades already taken today. Skipping ${c.symbol}.`);
+      this.log(state, `⛔ Daily trade limit reached: ${tradesToday}/${tradeCap} trades${reentry ? ' (re-entries included)' : ''} already taken today. Skipping ${c.symbol}.`);
       return;
     }
 
@@ -2221,15 +2262,16 @@ export class StocksInPlayEngine {
     const lev = margin?.kind === 'OK' ? margin.leverage : cfg.leverage;
     const levText = leverageText(lev, margin?.kind === 'OK' ? 'ZERODHA' : 'FALLBACK');
     const qtyByCap = qtyByCapital(slotCapital, lev, ltp);
-    const qtyByRisk = Math.floor(cfg.stopLossRs / riskDist);
+    const qtyByRisk = Math.floor(cfg.stopLossRs / stopDist);
     const qty = Math.min(qtyByCap, qtyByRisk);
     if (qty < 1) {
-      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / lev).toFixed(0)} margin at ${levText} or risks ₹${riskDist.toFixed(2)}${struct ? ` to the structural stop ₹${struct.sl.toFixed(2)}` : ''} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
+      this.log(state, `⏭ ${c.symbol} skipped: 1 share needs ₹${(ltp / lev).toFixed(0)} margin at ${levText} or risks ₹${stopDist.toFixed(2)} (capital per slot ₹${slotCapital.toFixed(0)}, max loss ₹${cfg.stopLossRs}).`);
       return;
     }
-    if (struct) this.log(state, `📐 ${c.symbol} structural stop ₹${struct.sl.toFixed(2)}: day ${c.side === 'SHORT' ? 'high' : 'low'} ₹${struct.extreme.toFixed(2)} ${c.side === 'SHORT' ? '+' : '−'} ${struct.bufPct.toFixed(2)}% buffer (${struct.atrPct !== null ? `${STRUCT_BUFFER_ATR_FRACTION} x the ${struct.atrPct.toFixed(1)}% daily ATR, kept within ${STRUCT_BUFFER_MIN_PCT}–${STRUCT_BUFFER_MAX_PCT}%` : 'ATR unknown'}) = ${((struct.dist / ltp) * 100).toFixed(2)}% from ₹${ltp.toFixed(2)}.`);
     this.log(state, trend
       ? `🚀 ${c.symbol} 15/40 EMA crossover at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
+      : reentry
+      ? `🔁 ${c.symbol} re-entry ${state.reentriesToday + 1}/${cfg.fadeReentries} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
       : fade
       ? c.side === 'SHORT'
         ? `🚀 ${c.symbol} fade signal at ₹${ltp.toFixed(2)} — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
@@ -2239,6 +2281,7 @@ export class StocksInPlayEngine {
     const entrySide: 'BUY' | 'SELL' = c.side === 'LONG' ? 'BUY' : 'SELL';
     let fill: EntryFill | null;
     if (state.isPaperTrade) {
+      if (reentry) state.reentriesToday++;
       fill = { qty, price: ltp, orderId: `PAPER_${Math.random().toString(36).substring(2, 10).toUpperCase()}` };
       await this.recordPaperOrder(state, c.symbol, entrySide, qty, ltp, fill.orderId, 'MARKET', 'COMPLETE');
     } else {
@@ -2248,6 +2291,8 @@ export class StocksInPlayEngine {
         this.log(state, `⏭ ${c.symbol}: "${holder}" already has a position in this stock on the same Zerodha account — skipping (the broker would net the two positions and break both strategies' exit checks).`);
         return;
       }
+      // Counted when sent: an order whose outcome is unknown still uses its re-entry.
+      if (reentry) state.reentriesToday++;
       state.enteringSymbol = normalizeSymbol(c.symbol);
       try {
         fill = await this.placeLiveEntry(state, client, c, entrySide, qty, ltp);
@@ -2269,12 +2314,8 @@ export class StocksInPlayEngine {
     const ltp = c.ltp ?? fill.price;
     state.tradedSymbols.add(c.symbol);
 
-    // FADE structural stop (re-read now, so a new high/low printed during the order is included): 1R = the distance
-    // from the fill to that stop, so the target and the stop ladder are multiples of the max loss (targetR 1.5 at ₹500
-    // risk = a ₹750 target). With fixedStopPct, 1R = stopPct of the fill as before.
-    const struct = fade && !cfg.fixedStopPct ? this.fadeStructuralStop(state, c, fill.price, now) : null;
-    const fillStopDist = struct ? struct.dist : fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
-    const sl = struct ? struct.sl : roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
+    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
+    const sl = roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
     // Target rounded toward the entry, so it is never further than targetR x the stop.
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
     state.tradesToday++;
@@ -2305,9 +2346,8 @@ export class StocksInPlayEngine {
         srText = '';
       }
     }
-    const slWhy = struct ? ` ${(Math.abs(fill.price - sl) / fill.price * 100).toFixed(2)}%, day ${c.side === 'SHORT' ? 'high' : 'low'} ₹${struct.extreme.toFixed(2)} ${c.side === 'SHORT' ? '+' : '−'} ${struct.bufPct.toFixed(2)}%;` : '';
-    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (${slWhy}risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions} | Order ${fill.orderId}${srText}`);
-    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(fade ? { stopMode: struct ? 'STRUCTURE' : 'PERCENT', rUnit: fillStopDist } : {}), ...(struct ? { structExtreme: struct.extreme, structBufPct: struct.bufPct, atrPct: struct.atrPct } : {}), ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
+    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions}${state.tradesToday > cfg.maxPositions ? ` (re-entry ${state.reentriesToday}/${cfg.fadeReentries})` : ''} | Order ${fill.orderId}${srText}`);
+    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
 
     if (state.isPaperTrade) {
       await this.recordPaperOrder(state, c.symbol, entrySide === 'BUY' ? 'SELL' : 'BUY', p.qty, sl, `${fill.orderId}_SL`, 'SL', 'OPEN', sl);
@@ -3099,7 +3139,23 @@ export class StocksInPlayEngine {
     logSignal('EXIT', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: state.config.setup, symbol: p.symbol, side: p.side, reason, entry: p.entryPrice, exit: exitPrice, qty: p.qty, pnl, rvol: p.rvol, heldMs: Date.now() - p.openedAt, isPaper: state.isPaperTrade });
 
     state.positions = state.positions.filter((x) => x !== p);
+    this.armFadeReentry(state, p, reason, pnl);
     strategyEvents.emit('strategy.update', { strategyId: state.strategyId, logs: state.logs, state: this.snapshot(state) });
+  }
+
+  /** FADE: after a full stop-out (the original stop, at a loss) watch the same stock for a re-entry, if any are left today. */
+  private armFadeReentry(state: EngineState, p: OpenPosition, reason: ExitReason, pnl: number) {
+    const cfg = state.config;
+    if (cfg.setup !== 'FADE' || !(cfg.fadeReentries > 0) || state.stopping) return;
+    if ((reason !== 'SL' && reason !== 'BROKER_SL') || p.lockedR !== null || !(pnl < 0)) return;
+    const now = new Date();
+    if (getIstHhmm(now) >= FADE_REENTRY_LAST_CLOSE_HHMM) return;
+    if (state.reentriesToday >= cfg.fadeReentries) {
+      this.log(state, `ℹ ${p.symbol}: no re-entry — the ${cfg.fadeReentries} re-entr${cfg.fadeReentries === 1 ? 'y' : 'ies'} for today are used.`);
+      return;
+    }
+    state.reentry = { symbol: p.symbol, side: p.side, stopAtMs: now.getTime(), checkedClose: 0 };
+    this.log(state, `👀 ${p.symbol} re-entry watch (${state.reentriesToday + 1}/${cfg.fadeReentries}): ${p.side === 'SHORT' ? 'short again on the first 5m close back below' : 'buy again on the first 5m close back above'} VWAP, until the 11:30 close.`);
   }
 
   // ── Orders and records ─────────────────────────────────────────────────────

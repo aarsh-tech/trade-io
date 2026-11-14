@@ -445,27 +445,27 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
             <p className="text-xs font-semibold text-foreground">How a trade is managed</p>
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
               <li>Entry is a market SHORT right after the 5-minute close that gave the signal.</li>
-              {form.sipFixedStopPct === true
-                ? <li>The stop-loss is placed on the exchange at once, the stop distance above the fill.</li>
-                : <li>The stop-loss is placed on the exchange at once, past the day&apos;s high so far (longs: below the low), with a 0.8–1.5% buffer set by the stock&apos;s ATR. The quantity is sized so the stop loses your max loss; the target and the stop move below are multiples of that max loss.</li>}
+              <li>The stop-loss is placed on the exchange at once, the stop distance below above the fill.</li>
               <li>The target is watched by the strategy; when price reaches it the short is covered at market.</li>
               <li>Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.</li>
               {form.sipProfitLock !== false && <li>Profit lock: at +1.5x the stop the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x.</li>}
+              {(form.sipFadeReentries || "0") !== "0" && <li>Re-entry: after a stop-out, the same stock is entered again on a 5-minute close back below VWAP (long: above), until the 11:30 close, up to {form.sipFadeReentries} times a day.</li>}
               <li>Otherwise the position is squared off at 15:05.</li>
-              {form.sipFixedStopPct === true && <li>Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1.2% / 3R / breakeven at 1R): about 4 in 10 trades win, the average loss is about ₹340, runs of 8 losing days happened, and 5 of 25 months were red.</li>}
+              <li>Backtest (Aug 2024 to Nov 2026, ₹500 risk, 1.2% stop, no target, held to 15:05): +₹91.2k, about 47% of trades win (average win ₹907, average loss ₹455), 22 of 27 months green, worst month −₹2.8k. Live fills have been about 0.1% worse than the backtest, worth about −₹16k over 2 years.</li>
             </ul>
           </div>
-          {form.sipFixedStopPct === true && <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 flex flex-wrap gap-2">
             {([
-              { label: "Recommended (≈62% wins)", stop: "1.2", tgt: "3", at: "1", lock: "0.2", text: "Backtest +₹77.6k / 2 years, worst month −₹3.0k" },
-              { label: "Highest win rate (≈73% wins)", stop: "1.8", tgt: "3", at: "0.5", lock: "0.2", text: "Backtest +₹39.3k / 2 years (half the profit), worst month −₹1.7k" },
+              { label: "Recommended: ride to 15:05 + re-entry", stop: "1.2", tgt: "0", at: "0", lock: "0", pl: false, re: "2", text: "No target, no stop move, up to 2 re-entries. Backtest +₹105.9k / 2 years, worst month −₹3.3k, worst day −₹1.5k" },
+              { label: "Target 3x + breakeven (≈63% wins)", stop: "1.2", tgt: "3", at: "1", lock: "0.2", pl: true, re: "0", text: "Backtest +₹51.1k / 2 years, worst month −₹1.8k" },
+              { label: "Highest win rate (≈72% wins)", stop: "1.8", tgt: "3", at: "0.5", lock: "0.2", pl: true, re: "0", text: "Backtest +₹5.5k / 2 years: wins often but earns almost nothing" },
             ] as const).map((p) => {
-              const active = form.sipStopPct === p.stop && form.sipTargetR === p.tgt && form.sipBreakevenAtR === p.at && (form.sipBreakevenLockR || "0") === p.lock;
+              const active = form.sipStopPct === p.stop && form.sipTargetR === p.tgt && form.sipBreakevenAtR === p.at && (form.sipBreakevenLockR || "0") === p.lock && (form.sipProfitLock !== false) === p.pl && (form.sipFadeReentries || "0") === p.re;
               return (
                 <button
                   key={p.label}
                   type="button"
-                  onClick={() => { set("sipStopPct", p.stop); set("sipTargetR", p.tgt); set("sipBreakevenAtR", p.at); set("sipBreakevenLockR", p.lock); set("sipProfitLock", true); }}
+                  onClick={() => { set("sipStopPct", p.stop); set("sipTargetR", p.tgt); set("sipBreakevenAtR", p.at); set("sipBreakevenLockR", p.lock); set("sipProfitLock", p.pl); set("sipFadeReentries", p.re); }}
                   className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors hover:bg-muted ${active ? "border-primary bg-muted" : "border-border bg-card"}`}
                 >
                   <span className="block font-semibold text-foreground">{p.label}</span>
@@ -473,82 +473,61 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
                 </button>
               );
             })}
-          </div>}
-          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted">
-            <input
-              type="checkbox"
-              checked={form.sipFixedStopPct === true}
-              onChange={(e) => set("sipFixedStopPct", e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <NumberField
+              label="Stop distance"
+              suffix="% of entry"
+              decimal
+              min={0.3}
+              value={form.sipStopPct}
+              onChange={(v) => set("sipStopPct", v)}
+              hint="1.2% was backtested. 0.8% to 1.6% were also positive."
             />
-            <span>
-              <span className="block text-xs font-semibold text-foreground">Fixed % stop instead of the structural stop</span>
-              <span className="block text-xs text-muted-foreground">Off (default): the stop sits past the day&apos;s high/low, so a normal pullback does not hit it, and fewer shares are traded. On: the old stop at a fixed % from the entry, as backtested. The structural stop has not been backtested.</span>
-            </span>
-          </label>
-          {(() => {
-            // Structural stop: every multiple below is of the max loss, so it is also shown in ₹.
-            const fixed = form.sipFixedStopPct === true;
-            const unit = fixed ? "x stop" : "x max loss";
-            const maxLoss = Number(form.stopLossRs) || 0;
-            const rs = (x: string) => (maxLoss > 0 && Number(x) > 0 ? ` = ₹${Math.round(maxLoss * Number(x)).toLocaleString("en-IN")}` : "");
-            return (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                {fixed && (
-                  <NumberField
-                    label="Stop distance"
-                    suffix="% of entry"
-                    decimal
-                    min={0.3}
-                    value={form.sipStopPct}
-                    onChange={(v) => set("sipStopPct", v)}
-                    hint="1.2% was backtested. 0.8% to 1.6% were also positive."
-                  />
-                )}
-                <NumberField
-                  label="Target"
-                  suffix={unit}
-                  decimal
-                  min={0}
-                  value={form.sipTargetR}
-                  onChange={(v) => set("sipTargetR", v)}
-                  hint={fixed
-                    ? `3 = ${((Number(form.sipStopPct) || 1.2) * 3).toFixed(1)}% below the entry. 2 and 1.5 hit more often and earned less. 0 = no target.`
-                    : `Profit at the target${rs(form.sipTargetR) || " (set your max loss first)"}. 1.5 at ₹500 max loss = ₹750. 0 = no target (held to the stop or 15:05).`}
-                />
-                <NumberField
-                  label="Stop to entry at"
-                  suffix={unit}
-                  decimal
-                  min={0}
-                  value={form.sipBreakevenAtR}
-                  onChange={(v) => set("sipBreakevenAtR", v)}
-                  hint={fixed
-                    ? "1 = once the trade is up by the stop distance. Cut the average loss from ₹513 to ₹341 for ₹2k less over 2 years. 0 = off."
-                    : `The stop moves once the trade is up${rs(form.sipBreakevenAtR)}. 0 = never.`}
-                />
-                <NumberField
-                  label="Profit locked at that step"
-                  suffix={unit}
-                  decimal
-                  min={0}
-                  value={form.sipBreakevenLockR}
-                  onChange={(v) => set("sipBreakevenLockR", v)}
-                  hint={fixed
-                    ? "0.2 = a trade that reached the step and came back still closes in profit after charges (≈62% winning trades, same total profit as 0). 0 = the stop goes exactly to the entry."
-                    : `The moved stop keeps this much profit${rs(form.sipBreakevenLockR)}. 0 = the stop goes exactly to the entry.`}
-                />
-                <NumberField
-                  label="Skip if yesterday's low is closer than"
-                  suffix={unit}
-                  decimal
-                  min={0}
-                  value={form.sipSkipNearPdlR}
-                  onChange={(v) => set("sipSkipNearPdlR", v)}
-                  hint={fixed
-                    ? "0 = off (the default). 2 = no short when yesterday's low is less than 2x the stop below the price (longs: yesterday's high above it); a later signal on another stock can still trade. Backtest 2 years: about the same profit either way (₹77.1k at 2 vs ₹77.8k off)."
-                    : "0 = off (recommended). With the wide structural stop, any value skips most trades."}
-                />
+            <NumberField
+              label="Target"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipTargetR}
+              onChange={(v) => set("sipTargetR", v)}
+              hint={`3 = ${((Number(form.sipStopPct) || 1.2) * 3).toFixed(1)}% below the entry. 2 and 1.5 hit more often and earned less. 0 = no target.`}
+            />
+            <NumberField
+              label="Stop to entry at"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipBreakevenAtR}
+              onChange={(v) => set("sipBreakevenAtR", v)}
+              hint="1 = once the trade is up by the stop distance. 0 = off. Backtest with 1.2% and no target: off +₹91.2k, at 1.2x locking 0.3x +₹77.7k (more small wins, less profit)."
+            />
+            <NumberField
+              label="Profit locked at that step"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipBreakevenLockR}
+              onChange={(v) => set("sipBreakevenLockR", v)}
+              hint="0.2 = a trade that reached the step and came back still closes in profit after charges (≈62% winning trades, same total profit as 0). 0 = the stop goes exactly to the entry."
+            />
+            <NumberField
+              label="Re-entries after a stop-out"
+              suffix="max 2"
+              min={0}
+              value={form.sipFadeReentries}
+              onChange={(v) => set("sipFadeReentries", v)}
+              hint="After the stop is hit, short the same stock again on a 5-minute close back below VWAP (long: above), until 11:30, with a fresh stop. 0 = off. Backtest with 1.2% / no target: +₹14k over 2 years at 2, worst day −₹1.5k (3 stops)."
+            />
+            <NumberField
+              label="Skip if yesterday's low is closer than"
+              suffix="x stop"
+              decimal
+              min={0}
+              value={form.sipSkipNearPdlR}
+              onChange={(v) => set("sipSkipNearPdlR", v)}
+              hint="0 = off (the default). 2 = no short when yesterday's low is less than 2x the stop below the price (longs: yesterday's high above it); a later signal on another stock can still trade. Not re-checked with the corrected backtest: keep it at 0."
+            />
             <NumberField
               label="Min avg daily value"
               prefix={"₹"}
@@ -568,9 +547,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               />
               <span>
                 <span className="block text-xs font-semibold text-foreground">Profit lock (after breakeven)</span>
-                <span className="block text-xs text-muted-foreground">{fixed
-                  ? "At +1.5x the stop, the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x. Backtest: same total profit, winning trades 39% → 51%, worst month −₹3.6k → −₹2.4k."
-                  : `At +1.5x max loss${rs("1.5")}, the exchange stop moves to lock +0.5x${rs("0.5")}; at +2.5x${rs("2.5")} it locks +1.5x${rs("1.5")}.`}</span>
+                <span className="block text-xs text-muted-foreground">At +1.5x the stop, the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x. Backtest with 1.2% / 3x / breakeven: it costs profit (+₹56.8k off, +₹51.1k on). Leave it off.</span>
               </span>
             </label>
             <NumberField
@@ -582,9 +559,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               onChange={(v) => set("sipLeverage", v)}
               hint="Sizing uses Zerodha's own intraday leverage for each stock, asked at 09:20. This is used only when Zerodha cannot say (up to 5x)."
             />
-              </div>
-            );
-          })()}
+          </div>
         </div>
       )}
 

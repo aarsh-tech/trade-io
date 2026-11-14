@@ -253,7 +253,7 @@ class StepInstrument extends StatelessWidget {
               value: 'FADE',
               title: 'In-play Fade',
               body:
-                  'Stock gapped up on 10x opening volume, then MFI, Stochastic, Bollinger or CMF turns down from overbought by 09:45: short it. Optional long side on gap-down stocks. Fixed stop and target. 2-year backtest: +₹70k at ₹500 risk, both years positive.',
+                  'Stock gapped up on 10x opening volume, then MFI, Stochastic, Bollinger or CMF turns down from overbought by 09:45: short it. Optional long side on gap-down stocks. Fixed 1.2% stop, held to 15:05. 2-year backtest: +₹91k at ₹500 risk, both years positive.',
             ),
             (
               value: 'OI',
@@ -1102,26 +1102,39 @@ class AdvancedRisk extends StatelessWidget {
 
   List<Widget> _fade(BuildContext context) {
     final stop = double.tryParse(s(form, 'sipStopPct')) ?? 1.2;
-    // Structural stop (default): the multiples below are of the max loss; fixed % stop: of the stop distance.
-    final fixed = form['sipFixedStopPct'] == true;
-    final unit = fixed ? 'x stop' : 'x max loss';
     final lock = s(form, 'sipBreakevenLockR').isEmpty ? '0' : s(form, 'sipBreakevenLockR');
+    final reentries = s(form, 'sipFadeReentries').isEmpty ? '0' : s(form, 'sipFadeReentries');
     final presets = const [
       (
-        label: 'Recommended (≈62% wins)',
+        label: 'Recommended: ride to 15:05 + re-entry',
+        stop: '1.2',
+        tgt: '0',
+        at: '0',
+        lock: '0',
+        pl: false,
+        re: '2',
+        text:
+            'No target, no stop move, up to 2 re-entries. Backtest +₹105.9k / 2 years, worst month −₹3.3k, worst day −₹1.5k',
+      ),
+      (
+        label: 'Target 3x + breakeven (≈63% wins)',
         stop: '1.2',
         tgt: '3',
         at: '1',
         lock: '0.2',
-        text: 'Backtest +₹77.6k / 2 years, worst month −₹3.0k',
+        pl: true,
+        re: '0',
+        text: 'Backtest +₹51.1k / 2 years, worst month −₹1.8k',
       ),
       (
-        label: 'Highest win rate (≈73% wins)',
+        label: 'Highest win rate (≈72% wins)',
         stop: '1.8',
         tgt: '3',
         at: '0.5',
         lock: '0.2',
-        text: 'Backtest +₹39.3k / 2 years (half the profit), worst month −₹1.7k',
+        pl: true,
+        re: '0',
+        text: 'Backtest +₹5.5k / 2 years: wins often but earns almost nothing',
       ),
     ];
     String? active;
@@ -1129,7 +1142,9 @@ class AdvancedRisk extends StatelessWidget {
       if (s(form, 'sipStopPct') == p.stop &&
           s(form, 'sipTargetR') == p.tgt &&
           s(form, 'sipBreakevenAtR') == p.at &&
-          lock == p.lock) {
+          lock == p.lock &&
+          (form['sipProfitLock'] != false) == p.pl &&
+          reentries == p.re) {
         active = p.label;
       }
     }
@@ -1137,19 +1152,17 @@ class AdvancedRisk extends StatelessWidget {
       const Text('How a trade is managed', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
       Bullets([
         'Entry is a market SHORT right after the 5-minute close that gave the signal.',
-        if (form['sipFixedStopPct'] == true)
-          'The stop-loss is placed on the exchange at once, the stop distance above the fill.'
-        else
-          "The stop-loss is placed on the exchange at once, past the day's high so far (longs: below the low), with a 0.8–1.5% buffer set by the stock's ATR. The quantity is sized so the stop loses your max loss; the target and the stop move are multiples of that max loss.",
+        'The stop-loss is placed on the exchange at once, the stop distance above the fill.',
         'The target is watched by the strategy; when price reaches it the short is covered at market.',
         'Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.',
         if (form['sipProfitLock'] != false)
           'Profit lock: at +1.5x the stop the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x.',
+        if (reentries != '0')
+          'Re-entry: after a stop-out, the same stock is entered again on a 5-minute close back below VWAP (long: above), until the 11:30 close, up to $reentries times a day.',
         'Otherwise the position is squared off at 15:05.',
-        if (fixed)
-          'Backtest (Sep 2024 to Sep 2026, ₹500 risk, 1.2% / 3R / breakeven at 1R): about 4 in 10 trades win, the average loss is about ₹340, runs of 8 losing days happened, and 5 of 25 months were red.',
+        'Backtest (Aug 2024 to Nov 2026, ₹500 risk, 1.2% stop, no target, held to 15:05): +₹91.2k, about 47% of trades win (average win ₹907, average loss ₹455), 22 of 27 months green, worst month −₹2.8k. Live fills have been about 0.1% worse than the backtest, worth about −₹16k over 2 years.',
       ]),
-      if (fixed) ChoiceCards<String>(
+      ChoiceCards<String>(
         value: active,
         onChanged: (label) {
           final p = presets.firstWhere((p) => p.label == label);
@@ -1157,74 +1170,64 @@ class AdvancedRisk extends StatelessWidget {
           set('sipTargetR', p.tgt);
           set('sipBreakevenAtR', p.at);
           set('sipBreakevenLockR', p.lock);
-          set('sipProfitLock', true);
+          set('sipProfitLock', p.pl);
+          set('sipFadeReentries', p.re);
         },
         options: [for (final p in presets) (value: p.label, title: p.label, body: p.text)],
       ),
-      ToggleCard(
-        title: 'Fixed % stop instead of the structural stop',
-        body:
-            "Off (default): the stop sits past the day's high/low, so a normal pullback does not hit it, and fewer shares are traded. On: the old stop at a fixed % from the entry, as backtested. The structural stop has not been backtested.",
-        value: form['sipFixedStopPct'] == true,
-        onChanged: (v) => set('sipFixedStopPct', v),
-      ),
-      if (fixed)
-        FieldPair(
-          BoundField(
-            label: 'Stop distance',
-            suffix: '%',
-            kind: FieldKind.decimal,
-            value: s(form, 'sipStopPct'),
-            onChanged: (v) => set('sipStopPct', v),
-            hint: '1.2% was backtested. 0.8% to 1.6% were also positive.',
-          ),
-          BoundField(
-            label: 'Target',
-            suffix: unit,
-            kind: FieldKind.decimal,
-            value: s(form, 'sipTargetR'),
-            onChanged: (v) => set('sipTargetR', v),
-            hint: '3 = ${(stop * 3).toStringAsFixed(1)}% below the entry. 0 = no target.',
-          ),
-        )
-      else
+      FieldPair(
+        BoundField(
+          label: 'Stop distance',
+          suffix: '%',
+          kind: FieldKind.decimal,
+          value: s(form, 'sipStopPct'),
+          onChanged: (v) => set('sipStopPct', v),
+          hint: '1.2% was backtested. 0.8% to 1.6% were also positive.',
+        ),
         BoundField(
           label: 'Target',
-          suffix: unit,
+          suffix: 'x stop',
           kind: FieldKind.decimal,
           value: s(form, 'sipTargetR'),
           onChanged: (v) => set('sipTargetR', v),
-          hint: 'Profit at the target${fadeRupees(form, 'sipTargetR')}. 1.5 at ₹500 max loss = ₹750. 0 = no target.',
+          hint: '3 = ${(stop * 3).toStringAsFixed(1)}% below the entry. 0 = no target.',
         ),
+      ),
       FieldPair(
         BoundField(
           label: 'Stop to entry at',
-          suffix: unit,
+          suffix: 'x stop',
           kind: FieldKind.decimal,
           value: s(form, 'sipBreakevenAtR'),
           onChanged: (v) => set('sipBreakevenAtR', v),
-          hint: fixed ? '1 = once up by the stop distance. 0 = off.' : 'Once the trade is up${fadeRupees(form, 'sipBreakevenAtR')}. 0 = never.',
+          hint:
+              '1 = once up by the stop distance. 0 = off. Backtest with 1.2% and no target: off +₹91.2k, at 1.2x +₹77.7k.',
         ),
         BoundField(
           label: 'Profit locked there',
-          suffix: unit,
+          suffix: 'x stop',
           kind: FieldKind.decimal,
           value: s(form, 'sipBreakevenLockR'),
           onChanged: (v) => set('sipBreakevenLockR', v),
-          hint: fixed
-              ? '0.2 = closes in profit after charges. 0 = exactly the entry.'
-              : 'The moved stop keeps${fadeRupees(form, 'sipBreakevenLockR')}. 0 = exactly the entry.',
+          hint: '0.2 = closes in profit after charges. 0 = exactly the entry.',
         ),
       ),
       BoundField(
+        label: 'Re-entries after a stop-out',
+        kind: FieldKind.integer,
+        value: s(form, 'sipFadeReentries'),
+        onChanged: (v) => set('sipFadeReentries', v),
+        hint:
+            'After the stop is hit, short the same stock again on a 5-minute close back below VWAP (long: above), until 11:30, with a fresh stop. 0 = off, max 2. Backtest with 1.2% / no target: +₹14k over 2 years at 2, worst day −₹1.5k (3 stops).',
+      ),
+      BoundField(
         label: "Skip if yesterday's low is closer than",
-        suffix: unit,
+        suffix: 'x stop',
         kind: FieldKind.decimal,
         value: s(form, 'sipSkipNearPdlR'),
         onChanged: (v) => set('sipSkipNearPdlR', v),
-        hint: fixed
-            ? "0 = off (the default). 2 = no short when yesterday's low is less than 2x the stop below the price (longs: yesterday's high above it). Backtest 2 years: about the same profit either way."
-            : '0 = off (recommended). With the wide structural stop, any value skips most trades.',
+        hint:
+            "0 = off (the default). 2 = no short when yesterday's low is less than 2x the stop below the price (longs: yesterday's high above it). Not re-checked with the corrected backtest: keep it at 0.",
       ),
       BoundField(
         label: 'Min avg daily value',
@@ -1238,7 +1241,7 @@ class AdvancedRisk extends StatelessWidget {
       ToggleCard(
         title: 'Profit lock (after breakeven)',
         body:
-            'At +1.5x the stop, the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x. Backtest: same total profit, winning trades 39% → 51%, worst month −₹3.6k → −₹2.4k.',
+            'At +1.5x the stop, the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x. Backtest with 1.2% / 3x / breakeven: it costs profit (+₹56.8k off, +₹51.1k on). Leave it off.',
         value: form['sipProfitLock'] != false,
         onChanged: (v) => set('sipProfitLock', v),
       ),

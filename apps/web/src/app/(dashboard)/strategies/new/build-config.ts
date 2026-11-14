@@ -26,11 +26,11 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
       }),
       ...(fade && {
         stopPct: Number(form.sipStopPct || 1.2),
-        fixedStopPct: form.sipFixedStopPct === true,
         targetR: orZero(form.sipTargetR, 3),
         breakevenAtR: orZero(form.sipBreakevenAtR, 1),
         breakevenLockR: orZero(form.sipBreakevenLockR, 0.2),
         skipNearPdlR: orZero(form.sipSkipNearPdlR, 0),
+        fadeReentries: orZero(form.sipFadeReentries, 0),
         profitLock: form.sipProfitLock !== false,
         fadeLongs: form.sipFadeLongs === true,
       }),

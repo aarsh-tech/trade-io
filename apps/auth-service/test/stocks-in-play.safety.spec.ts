@@ -160,8 +160,8 @@ function makeWorld(o: Opts = {}) {
 
 type World = ReturnType<typeof makeWorld>;
 
-const cfg = (over: Record<string, unknown> = {}) => ({ setup: 'FADE', stopPct: 1.2, fixedStopPct: true, targetR: 3, breakevenAtR: 1, breakevenLockR: 0.2, skipNearPdlR: 0, profitLock: true, stopLossRs: 500, maxPositions: 1, perSideTrades: 1, minRvol: 10, stopAtrFraction: 0.2, minAvgValueCr: 10, minPrice: 50, allowLongs: true, allowShorts: true, leverage: 5, entryCutoffTime: '15:00', watchCount: 1, withGapOnly: true, ...over });
-const makeState = (w: World, over: Record<string, unknown> = {}): any => ({ strategyId: SID, executionId: 'exec1', userId: 'u1', brokerAccountId: 'acct1', isPaperTrade: false, config: cfg(), baselines: null, baselineLoading: false, candidates: [], candidatesTriedAt: 0, tradedSymbols: new Set(), positions: [], enteringSymbol: null, uncertainEntry: null, alertedKeys: new Set(), tickErrors: 0, busySince: 0, margins: new Map(), marginCheck: null, surveillance: null, survLogged: false, tradesToday: 0, sideTrades: { LONG: 0, SHORT: 0 }, winsToday: 0, lossesToday: 0, realizedTodayRs: 0, logs: [], busy: false, stopping: false, completeReason: null, client: w.client, clientCheckedAt: Date.now(), subscribed: new Set(), lastPnlLog: FAR_FUTURE, loggedNoSession: false, loggedCutoff: false, oi: null, ...over });
+const cfg = (over: Record<string, unknown> = {}) => ({ setup: 'FADE', stopPct: 1.2, targetR: 3, breakevenAtR: 1, breakevenLockR: 0.2, skipNearPdlR: 0, fadeReentries: 0, profitLock: true, stopLossRs: 500, maxPositions: 1, perSideTrades: 1, minRvol: 10, stopAtrFraction: 0.2, minAvgValueCr: 10, minPrice: 50, allowLongs: true, allowShorts: true, leverage: 5, entryCutoffTime: '15:00', watchCount: 1, withGapOnly: true, ...over });
+const makeState = (w: World, over: Record<string, unknown> = {}): any => ({ strategyId: SID, executionId: 'exec1', userId: 'u1', brokerAccountId: 'acct1', isPaperTrade: false, config: cfg(), baselines: null, baselineLoading: false, candidates: [], candidatesTriedAt: 0, tradedSymbols: new Set(), positions: [], enteringSymbol: null, uncertainEntry: null, alertedKeys: new Set(), tickErrors: 0, busySince: 0, margins: new Map(), marginCheck: null, surveillance: null, survLogged: false, tradesToday: 0, sideTrades: { LONG: 0, SHORT: 0 }, reentry: null, reentriesToday: 0, winsToday: 0, lossesToday: 0, realizedTodayRs: 0, logs: [], busy: false, stopping: false, completeReason: null, client: w.client, clientCheckedAt: Date.now(), subscribed: new Set(), lastPnlLog: FAR_FUTURE, loggedNoSession: false, loggedCutoff: false, oi: null, ...over });
 const candidate = (over: Record<string, unknown> = {}): any => ({ symbol: 'ABC', side: 'SHORT', level: 100, stopDist: 0, rvol: 12, tick: 0.05, first: { o: 100, h: 101, l: 99, c: 100, v: 1 }, ltp: 100, ltpAt: Date.now(), done: false, candles: null, candlesAt: 0, checkedThrough: 0, armedUntil: 0, stopLevel: 0, crossSeen: new Set(), ...over });
 
 /** Marks which periodic broker checks are due on the next managePosition. */
@@ -851,65 +851,6 @@ describe('existing behaviour stays', () => {
   });
 });
 
-describe('FADE structural stop (default, fixedStopPct off)', () => {
-  const structural = (w: World, over: Record<string, unknown> = {}) => makeState(w, { config: cfg({ fixedStopPct: false }), ...over });
-
-  it('puts the stop past the first-candle high, sizes on it, and measures the target in that risk', async () => {
-    const w = makeWorld();
-    const s = structural(w);
-    const p = await enter(w, s);
-    // No ATR known: 1% past the high 101 = 102.01, rounded up to the tick.
-    expect(p.sl).toBe(102.05);
-    expect(w.stops()[0].trigger_price).toBe(102.05);
-    expect(p.qty).toBeLessThanOrEqual(Math.floor(500 / (102.05 - 100)));
-    expect((p.sl - p.entryPrice) * p.qty).toBeLessThanOrEqual(500);
-    // 1R = the distance to the structural stop, so targetR 3 = 3x the max loss.
-    expect(p.stopDist).toBeCloseTo(p.sl - p.entryPrice, 6);
-    expect(p.target).toBeCloseTo(p.entryPrice - 3 * (p.sl - p.entryPrice), 1);
-  });
-
-  it('re-adopts a structural position with 1R from its saved stop', async () => {
-    // No fixedStopPct in the saved config = structural.
-    const w = makeWorld({ config: { stopLossRs: 500, setup: 'FADE', maxPositions: 1, targetR: 1.5 } });
-    w.rows.push({ symbol: 'ABC', side: 'SELL', status: 'OPEN', isPaperTrade: false, createdAt: new Date(), brokerOrderId: 'O1', tag: ENTRY_TAG });
-    w.b.orders.push(w.mk({ symbol: 'ABC', orderType: 'MARKET', side: 'SELL', qty: 10, tag: ENTRY_TAG }, 'COMPLETE', 10, 100));
-    w.fill('ABC', 'SELL', 10);
-    w.b.orders.push(w.mk({ symbol: 'ABC', orderType: 'SL', side: 'BUY', qty: 10, triggerPrice: 104, price: 104.5, tag: 'x' }, 'TRIGGER PENDING', 0, 0));
-    await w.engine.start(SID);
-    const s = w.engine.running.get(SID);
-    const p = s.positions[0];
-    expect(p.stopDist).toBeCloseTo(4, 6);
-    expect(p.target).toBe(94);
-    s.positions.length = 0;
-    await w.engine.stop(SID);
-  });
-
-  it('uses the highest price seen today and an ATR buffer capped at 1.5%', async () => {
-    const w = makeWorld();
-    const s = structural(w, { baselines: new Map([['ABC', { avgFirstVol: 1, atr: 8, avgValueCr: 50, prevClose: 98, tick: 0.05 }]]) });
-    // 0.3 x 8% ATR = 2.4% -> capped at 1.5%; the 09:20 quote saw 103.
-    const p = await enter(w, s, candidate({ seenHigh: 103 }));
-    expect(p.sl).toBe(104.55);
-  });
-
-  it('keeps the buffer at least 0.8% on a quiet stock', async () => {
-    const w = makeWorld();
-    const s = structural(w, { baselines: new Map([['ABC', { avgFirstVol: 1, atr: 1, avgValueCr: 50, prevClose: 98, tick: 0.05 }]]) });
-    const p = await enter(w, s);
-    // 0.3 x 1% = 0.3% -> 0.8%: 101 x 1.008 = 101.808 -> 101.85.
-    expect(p.sl).toBe(101.85);
-  });
-
-  it('skips the trade when the stop order would sit past the upper circuit', async () => {
-    const w = makeWorld();
-    const s = structural(w);
-    await w.engine.enterTrade(s, w.client, candidate({ upperCircuit: 102.5 }), new Date());
-    expect(s.positions).toHaveLength(0);
-    expect(w.b.placed).toHaveLength(0);
-    expect(s.logs.some((l: any) => /past the upper circuit/.test(typeof l === 'string' ? l : l.message))).toBe(true);
-  });
-});
-
 
 describe('entry speed', () => {
   it('sends the entry without a second price lookup when the order-value limit is on', async () => {
@@ -1064,5 +1005,104 @@ describe('09:20 quote-vs-candle check (log only)', () => {
     const spy = jest.spyOn((w.engine as any).logger, 'log').mockImplementation(() => undefined);
     w.engine.logQuoteCandleCheck(s, ['ABC'], new Map([['ABC', first]]), new Map([['ABC', { ...first, v: 10_500, at: dayOpen + 302_000 }]]), new Map([['ABC', { candles: history(60, first), at: 0 }]]), at('09:20'));
     expect(spy.mock.calls.some(([m]: any) => /0\/1 shortlisted stocks/.test(m))).toBe(true);
+  });
+});
+
+describe('fade re-entry after a stop-out', () => {
+  const reCfg = (over: Record<string, unknown> = {}) => cfg({ fadeReentries: 2, targetR: 0, breakevenAtR: 0, breakevenLockR: 0, profitLock: false, ...over });
+  /** Today's 1m candles from 09:15, one per close. */
+  const minutes = (closes: number[]) => closes.map((c, i) => ({ date: new Date(at('09:15').getTime() + i * 60_000), open: c, high: c, low: c, close: c, volume: 1000 }));
+  const t = (hhmm: string, sec = 0) => new Date(at(hhmm).getTime() + sec * 1000);
+
+  /** A short in ABC that the broker stop then closed at a loss. */
+  async function stoppedOut(over: Record<string, unknown> = {}, state: Record<string, unknown> = {}) {
+    const w = makeWorld();
+    const s = makeState(w, { config: reCfg(over), ...state });
+    const c = candidate({ candles: [] });
+    s.candidates = [c];
+    const p = await enter(w, s, c);
+    const sl = w.stops()[0];
+    sl.status = 'COMPLETE'; sl.filled_quantity = sl.quantity; sl.average_price = 101.2;
+    w.fill('ABC', 'BUY', sl.quantity);
+    p.ltp = 101.2;
+    due(p, { orders: true });
+    await w.engine.managePosition(s, w.client, p, TEN());
+    expect(s.positions).toHaveLength(0);
+    return { w, s, c };
+  }
+
+  it('watches the stock after a full stop-out', async () => {
+    const { s } = await stoppedOut();
+    expect(s.reentry).toMatchObject({ symbol: 'ABC', side: 'SHORT' });
+  });
+
+  it('does not watch when re-entries are off', async () => {
+    const { s } = await stoppedOut({ fadeReentries: 0 });
+    expect(s.reentry).toBeNull();
+  });
+
+  it('does not watch once the day\'s re-entries are used', async () => {
+    const { s } = await stoppedOut({}, { reentriesToday: 2 });
+    expect(s.reentry).toBeNull();
+  });
+
+  it('shorts again past the 1-trade cap on a 5m close back below VWAP', async () => {
+    const { w, s, c } = await stoppedOut();
+    s.reentry.stopAtMs = at('10:01').getTime();
+    // Minutes later the price differs (the gateway blocks an identical order within 2 s, which only a test can send).
+    w.client.getLTP = async (keys: string[]) => Object.fromEntries(keys.map((k) => [k, 99]));
+    c.ltpAt = 0;
+    // 50 minutes 09:15-10:04: 30 at 102 then 20 at 99, so the 10:05 close (99) is under the VWAP (~100.8).
+    w.client.getHistoricalData = async () => minutes([...Array(30).fill(102), ...Array(20).fill(99)]);
+    await w.engine.checkFadeReentry(s, w.client, t('10:05', 3));
+    expect(w.entryOrders()).toHaveLength(2);
+    expect(w.entryOrders()[1].side).toBe('SELL');
+    expect(s.positions).toHaveLength(1);
+    expect(s.reentriesToday).toBe(1);
+    expect(s.reentry).toBeNull();
+    expect(w.workingStops()).toHaveLength(1);
+  });
+
+  it('waits while the close is still above VWAP', async () => {
+    const { w, s } = await stoppedOut();
+    s.reentry.stopAtMs = at('10:01').getTime();
+    w.client.getHistoricalData = async () => minutes([...Array(30).fill(99), ...Array(20).fill(102)]);
+    await w.engine.checkFadeReentry(s, w.client, t('10:05', 3));
+    expect(w.entryOrders()).toHaveLength(1);
+    expect(s.reentry).not.toBeNull();
+    expect(s.reentry.checkedClose).toBe(at('10:05').getTime());
+  });
+
+  it('ignores the 5m candle that closes in the stop\'s own minute', async () => {
+    const { w, s } = await stoppedOut();
+    s.reentry.stopAtMs = at('10:04').getTime() + 30_000;
+    const hist = jest.fn(async () => minutes(Array(50).fill(99)));
+    w.client.getHistoricalData = hist;
+    await w.engine.checkFadeReentry(s, w.client, t('10:05', 3));
+    expect(hist).not.toHaveBeenCalled();
+    expect(w.entryOrders()).toHaveLength(1);
+  });
+
+  it('waits when the last 1m candle is not published yet', async () => {
+    const { w, s } = await stoppedOut();
+    s.reentry.stopAtMs = at('10:01').getTime();
+    w.client.getHistoricalData = async () => minutes([...Array(30).fill(102), ...Array(19).fill(99)]); // up to 10:03 only
+    await w.engine.checkFadeReentry(s, w.client, t('10:05', 3));
+    expect(w.entryOrders()).toHaveLength(1);
+    expect(s.reentry.checkedClose).toBe(0);
+  });
+
+  it('ends the watch after the 11:30 close', async () => {
+    const { w, s } = await stoppedOut();
+    await w.engine.checkFadeReentry(s, w.client, t('11:35', 3));
+    expect(s.reentry).toBeNull();
+    expect(s.completeReason).toBeTruthy();
+    expect(w.entryOrders()).toHaveLength(1);
+  });
+
+  it('keeps the normal 1-trade cap for a new stock', async () => {
+    const { w, s } = await stoppedOut();
+    await w.engine.enterTrade(s, w.client, candidate({ symbol: 'XYZ' }), new Date());
+    expect(w.entryOrders()).toHaveLength(1);
   });
 });

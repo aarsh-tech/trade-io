@@ -44,11 +44,11 @@ StrategyForm createDefaultForm() => {
   'sipWatchCount': '1',
   'sipWithGapOnly': true,
   'sipStopPct': '1.2',
-  'sipFixedStopPct': false,
   'sipTargetR': '3',
   'sipBreakevenAtR': '1',
   'sipBreakevenLockR': '0.2',
   'sipSkipNearPdlR': '0',
+  'sipFadeReentries': '0',
   'sipProfitLock': true,
   'sipFadeLongs': false,
   'sipMinRvol': '10',
@@ -174,11 +174,11 @@ Map<String, dynamic> buildStrategyConfig(StrategyForm f) {
       if (trend) ...{'watchCount': _numOr(f['sipWatchCount'], 1), 'withGapOnly': f['sipWithGapOnly'] != false},
       if (fade) ...{
         'stopPct': _numOr(f['sipStopPct'], 1.2),
-        'fixedStopPct': f['sipFixedStopPct'] == true,
         'targetR': orZero('sipTargetR', 3),
         'breakevenAtR': orZero('sipBreakevenAtR', 1),
         'breakevenLockR': orZero('sipBreakevenLockR', 0.2),
         'skipNearPdlR': orZero('sipSkipNearPdlR', 0),
+        'fadeReentries': orZero('sipFadeReentries', 0),
         'profitLock': f['sipProfitLock'] != false,
         'fadeLongs': f['sipFadeLongs'] == true,
       },
@@ -362,11 +362,11 @@ StrategyForm strategyToForm({
     'sipWatchCount': _str(c['watchCount'], bs('sipWatchCount')),
     'sipWithGapOnly': c['withGapOnly'] != false,
     'sipStopPct': _str(c['stopPct'], setup == 'OI' ? '1' : bs('sipStopPct')),
-    'sipFixedStopPct': c['fixedStopPct'] == true,
     'sipTargetR': _str(c['targetR'], bs('sipTargetR')),
     'sipBreakevenAtR': _str(c['breakevenAtR'], bs('sipBreakevenAtR')),
     'sipBreakevenLockR': _str(c['breakevenLockR'], bs('sipBreakevenLockR')),
     'sipSkipNearPdlR': _str(c['skipNearPdlR'], bs('sipSkipNearPdlR')),
+    'sipFadeReentries': _str(c['fadeReentries'], bs('sipFadeReentries')),
     'sipProfitLock': c['profitLock'] != false,
     'sipFadeLongs': c['fadeLongs'] == true,
     'sipMinRvol': _str(c['minRvol'], bs('sipMinRvol')),
@@ -614,13 +614,6 @@ double _n(Object? v) {
 
 String _fmt(Object? v) => _text(v);
 
-/// In-play Fade with the structural stop: a multiple of the max loss in ₹, as " = ₹750" for the field hints
-/// ('' when the max loss or the multiple is not set). Matches the web Step 3 hints.
-String fadeRupees(StrategyForm f, String key) {
-  final maxLoss = _n(f['stopLossRs']), x = _n(f[key]);
-  return maxLoss > 0 && x > 0 ? ' = ${inr(maxLoss * x)}' : '';
-}
-
 RiskEstimate estimateRisk(StrategyForm f) {
   final trades = _n(f['maxTradesPerDay']).floor().clamp(0, 1 << 30);
   final perTrade = _n(f['stopLossRs']);
@@ -633,19 +626,12 @@ RiskEstimate estimateRisk(StrategyForm f) {
           final tr = _n(f['sipTargetR']);
           final beAt = _n(f['sipBreakevenAtR']), beLock = _n(f['sipBreakevenLockR']);
           final stop = _has(f['sipStopPct']) ? _fmt(f['sipStopPct']) : '1.2';
-          final fixed = f['sipFixedStopPct'] == true;
-          final stopText = fixed
-              ? '$stop% from the entry'
-              : "0.8–1.5% past the day's high for a short, or low for a long; the buffer is set by each stock's ATR";
-          final tgtText = fixed
-              ? '${_fmt(f['sipTargetR'])}x the stop'
-              : '${_fmt(f['sipTargetR'])}x the max loss${perTrade > 0 ? ' (${inr(perTrade * tr)})' : ''}';
           return RiskEstimate(
             perTrade: orNull(perTrade),
             perDay: orNull(perTrade * trades),
             targetPerTrade: perTrade > 0 && tr > 0 ? perTrade * tr : null,
             basis:
-                "Shares are sized so the stop ($stopText) loses at most your max loss, and your free Zerodha funds allow at Zerodha's leverage for the stock (fallback ${lev}x). A jump through the stop can lose a little more. Target ${tr > 0 ? tgtText : 'off'}"
+                "Shares are sized so the stop ($stop% from the entry) loses at most your max loss, and your free Zerodha funds allow at Zerodha's leverage for the stock (fallback ${lev}x). A jump through the stop can lose a little more. Target ${tr > 0 ? '${_fmt(f['sipTargetR'])}x the stop' : 'off'}"
                 "${beAt > 0 ? '; the stop moves to ${beLock > 0 ? 'entry +${_fmt(f['sipBreakevenLockR'])}x' : 'the entry'} at +${_fmt(f['sipBreakevenAtR'])}x' : ''}"
                 "${f['sipProfitLock'] != false ? ', then locks +0.5x at +1.5x and +1.5x at +2.5x' : ''}; otherwise 15:05.",
           );

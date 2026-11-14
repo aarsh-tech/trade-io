@@ -31,22 +31,20 @@ void main() {
       expect(config.containsKey('breakevenAtR'), isFalse);
     });
 
-    test('In-play Fade structural stop: multiples of the max loss shown in ₹', () {
-      final form = withType(createDefaultForm(), 'STOCKS_IN_PLAY')
-        ..['stopLossRs'] = '500'
-        ..['sipTargetR'] = '1.5'
-        ..['sipBreakevenLockR'] = '0';
-      expect(fadeRupees(form, 'sipTargetR'), ' = ₹750');
-      expect(fadeRupees(form, 'sipBreakevenLockR'), '');
-      expect(buildStrategyConfig(form)['fixedStopPct'], false);
-      expect(estimateRisk(form).targetPerTrade, 750);
-    });
-
     test('a "0" target is kept (no target), a blank one takes the default', () {
       final form = withType(createDefaultForm(), 'STOCKS_IN_PLAY')..['sipTargetR'] = '0';
       expect(buildStrategyConfig(form)['targetR'], 0);
       form['sipTargetR'] = '';
       expect(buildStrategyConfig(form)['targetR'], 3);
+    });
+
+    test('fade re-entries are saved and read back', () {
+      final form = withType(createDefaultForm(), 'STOCKS_IN_PLAY')..['sipFadeReentries'] = '2';
+      final config = buildStrategyConfig(form);
+      expect(config['fadeReentries'], 2);
+      expect(validateStrategyConfig('STOCKS_IN_PLAY', config), isEmpty);
+      expect(strategyToForm(name: 'x', type: 'STOCKS_IN_PLAY', config: config)['sipFadeReentries'], '2');
+      expect(validateStrategyConfig('STOCKS_IN_PLAY', {...config, 'fadeReentries': 3}), isNotEmpty);
     });
 
     test('lots × lot size gives qty for an index', () {

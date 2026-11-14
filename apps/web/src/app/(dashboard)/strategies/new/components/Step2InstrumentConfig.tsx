@@ -73,7 +73,7 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 {
                   value: "FADE",
                   title: "In-play Fade",
-                  text: "Stock gapped up on 10x opening volume, then MFI, Stochastic, Bollinger or CMF turns down from overbought by 09:45: short it. Optional long side on gap-down stocks. Fixed stop and target. 2-year backtest: +₹70k at ₹500 risk, both years positive.",
+                  text: "Stock gapped up on 10x opening volume, then MFI, Stochastic, Bollinger or CMF turns down from overbought by 09:45: short it. Optional long side on gap-down stocks. Fixed 1.2% stop, held to 15:05. 2-year backtest: +₹91k at ₹500 risk, both years positive.",
                 },
                 {
                   value: "OI",
