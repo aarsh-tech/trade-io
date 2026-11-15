@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { getSharedInstruments } from '../brokers/instrument-store';
 import { toKiteError, withKiteRetry } from '../brokers/kite-errors';
 import { NIFTY_500_UNIVERSE } from '../market/market.constants';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChartPayload, rankRs, rsScore, SwingChartStore } from './swing-chart.store';
 import { analyzeStock, DailyCandle } from './vcp.analyzer';
 
 // Nifty 500 + F&O stocks still listed on NSE, kept only if they trade at least this much a day.
@@ -11,6 +12,10 @@ const MIN_AVG_TURNOVER_CR = 5;
 // Best setups kept per pattern. A single overall cap let the high-scoring daily inside /
 // momentum setups crowd out every weekly inside, monthly inside and EMA pullback result.
 const MAX_PER_PATTERN = 500;
+// Patterns are found on the last year of daily bars; the chart gets ~500 days so a 200-day
+// average covers its visible window. One Kite call either way.
+const ANALYSIS_DAYS = 365;
+const CHART_DAYS = 500;
 
 export interface ScanResult {
   rank: number;
@@ -49,6 +54,9 @@ export class SwingScannerService {
   private readonly logger = new Logger(SwingScannerService.name);
   // Cache last run per user
   private cache = new Map<string, ScanRun>();
+  // Daily bars of matched stocks for the chart view, shared by all users.
+  private readonly charts = new SwingChartStore();
+  private readonly chartFetches = new Map<string, Promise<ChartPayload>>();
   // Active running scans per user
   private activeScans = new Map<string, {
     status: 'running' | 'completed' | 'error';
@@ -184,6 +192,7 @@ export class SwingScannerService {
     const results: ScanResult[] = [];
     let scanned = 0;
     let candleFetchFailures = 0;
+    const rsScores = new Map<string, number>();
 
     for (let i = 0; i < scanList.length; i += 5) {
       const batch = scanList.slice(i, i + 5);
@@ -193,7 +202,8 @@ export class SwingScannerService {
             const token = tokenMap.get(symbol);
             if (!token) return;
 
-            let candles = await this.fetchDailyCandles(kite, token, 365); // ~1.5 years for VCP patterns
+            const history = await this.fetchDailyCandles(kite, token, CHART_DAYS);
+            const candles = this.analysisWindow(history);
             // INTRADAY_MOMENTUM needs only 50 candles; VCP needs ~200.
             // Accept any stock with at least 50 candles so intraday picks aren't dropped.
             if (!candles || candles.length < 50) return;
@@ -219,8 +229,11 @@ export class SwingScannerService {
             }
 
             scanned++;
+            const rs = rsScore(history.map((c) => c.close));
+            if (rs !== null) rsScores.set(symbol, rs);
             const patterns = analyzeStock(symbol, candles);
             if (!patterns || patterns.length === 0) return;
+            this.charts.put(symbol, history, patterns);
 
             const isFnO = fnoLotSizes.has(symbol.toUpperCase());
             const lotSize = fnoLotSizes.get(symbol.toUpperCase()) ?? 1;
@@ -267,6 +280,8 @@ export class SwingScannerService {
       // Small delay between batches to respect rate limits
       await new Promise(r => setTimeout(r, 350));
     }
+
+    this.charts.setRsRatings(rankRs(rsScores));
 
     if (candleFetchFailures > 0) {
       this.logger.warn(`Historical candle fetch failed for ${candleFetchFailures}/${scanList.length} stocks (network/rate-limit — excluded from results)`);
@@ -399,7 +414,55 @@ export class SwingScannerService {
     };
   }
 
+  /**
+   * Daily bars + pattern bases for one stock's chart. Served from memory when the stock was in
+   * a scan since the last restart; otherwise fetched once from Kite with the caller's session.
+   */
+  async getChart(userId: string, rawSymbol: string): Promise<ChartPayload> {
+    const symbol = (rawSymbol || '').trim().toUpperCase();
+    if (!/^[A-Z0-9&_.-]{1,30}$/.test(symbol)) throw new BadRequestException('Invalid symbol');
+
+    const cached = this.charts.get(symbol);
+    if (cached) return cached;
+
+    let pending = this.chartFetches.get(symbol);
+    if (!pending) {
+      pending = this.fetchChart(userId, symbol).finally(() => this.chartFetches.delete(symbol));
+      this.chartFetches.set(symbol, pending);
+    }
+    return pending;
+  }
+
+  private async fetchChart(userId: string, symbol: string): Promise<ChartPayload> {
+    const account = await this.prisma.brokerAccount.findFirst({
+      where: { userId, isActive: true, accessToken: { not: null } },
+    });
+    if (!account?.accessToken) {
+      throw new BadRequestException('No active broker session found. Please connect and login to Zerodha first.');
+    }
+    const kite = this.factory.createClient(account)['kite'];
+    const instruments = await getSharedInstruments(kite, 'NSE');
+    const inst = instruments.find(
+      (i: any) => i.tradingsymbol === symbol && i.instrument_type === 'EQ' && i.segment === 'NSE',
+    );
+    if (!inst) throw new NotFoundException(`${symbol} is not an NSE equity`);
+
+    const history = await this.fetchDailyCandles(kite, inst.instrument_token, CHART_DAYS);
+    if (history.length === 0) throw new NotFoundException(`No daily data for ${symbol}`);
+    this.charts.put(symbol, history, analyzeStock(symbol, this.analysisWindow(history)));
+    return this.charts.get(symbol)!;
+  }
+
   // ── Private helpers ─────────────────────────────────────────────────────────
+
+  /** The last ANALYSIS_DAYS calendar days of bars: what the pattern rules were tuned on. */
+  private analysisWindow(history: DailyCandle[]): DailyCandle[] {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - ANALYSIS_DAYS);
+    cutoff.setHours(0, 0, 0, 0);
+    return history.filter((c) => c.date >= cutoff);
+  }
+
 
   private async fetchDailyCandles(kite: any, token: number, days: number): Promise<DailyCandle[]> {
     const to   = new Date();

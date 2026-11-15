@@ -1748,4 +1748,892 @@ as List<String>,
 
 }
 
+
+/// @nodoc
+mixin _$SwingChart {
+
+ String get symbol; String get asOf; int? get rsRating; List<SwingChartBase> get bases; SwingChartBars get bars;
+/// Create a copy of SwingChart
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SwingChartCopyWith<SwingChart> get copyWith => _$SwingChartCopyWithImpl<SwingChart>(this as SwingChart, _$identity);
+
+  /// Serializes this SwingChart to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SwingChart&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.asOf, asOf) || other.asOf == asOf)&&(identical(other.rsRating, rsRating) || other.rsRating == rsRating)&&const DeepCollectionEquality().equals(other.bases, bases)&&(identical(other.bars, bars) || other.bars == bars));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,symbol,asOf,rsRating,const DeepCollectionEquality().hash(bases),bars);
+
+@override
+String toString() {
+  return 'SwingChart(symbol: $symbol, asOf: $asOf, rsRating: $rsRating, bases: $bases, bars: $bars)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SwingChartCopyWith<$Res>  {
+  factory $SwingChartCopyWith(SwingChart value, $Res Function(SwingChart) _then) = _$SwingChartCopyWithImpl;
+@useResult
+$Res call({
+ String symbol, String asOf, int? rsRating, List<SwingChartBase> bases, SwingChartBars bars
+});
+
+
+$SwingChartBarsCopyWith<$Res> get bars;
+
+}
+/// @nodoc
+class _$SwingChartCopyWithImpl<$Res>
+    implements $SwingChartCopyWith<$Res> {
+  _$SwingChartCopyWithImpl(this._self, this._then);
+
+  final SwingChart _self;
+  final $Res Function(SwingChart) _then;
+
+/// Create a copy of SwingChart
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? symbol = null,Object? asOf = null,Object? rsRating = freezed,Object? bases = null,Object? bars = null,}) {
+  return _then(_self.copyWith(
+symbol: null == symbol ? _self.symbol : symbol // ignore: cast_nullable_to_non_nullable
+as String,asOf: null == asOf ? _self.asOf : asOf // ignore: cast_nullable_to_non_nullable
+as String,rsRating: freezed == rsRating ? _self.rsRating : rsRating // ignore: cast_nullable_to_non_nullable
+as int?,bases: null == bases ? _self.bases : bases // ignore: cast_nullable_to_non_nullable
+as List<SwingChartBase>,bars: null == bars ? _self.bars : bars // ignore: cast_nullable_to_non_nullable
+as SwingChartBars,
+  ));
+}
+/// Create a copy of SwingChart
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SwingChartBarsCopyWith<$Res> get bars {
+  
+  return $SwingChartBarsCopyWith<$Res>(_self.bars, (value) {
+    return _then(_self.copyWith(bars: value));
+  });
+}
+}
+
+
+/// Adds pattern-matching-related methods to [SwingChart].
+extension SwingChartPatterns on SwingChart {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SwingChart value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SwingChart() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SwingChart value)  $default,){
+final _that = this;
+switch (_that) {
+case _SwingChart():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SwingChart value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SwingChart() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String symbol,  String asOf,  int? rsRating,  List<SwingChartBase> bases,  SwingChartBars bars)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SwingChart() when $default != null:
+return $default(_that.symbol,_that.asOf,_that.rsRating,_that.bases,_that.bars);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String symbol,  String asOf,  int? rsRating,  List<SwingChartBase> bases,  SwingChartBars bars)  $default,) {final _that = this;
+switch (_that) {
+case _SwingChart():
+return $default(_that.symbol,_that.asOf,_that.rsRating,_that.bases,_that.bars);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String symbol,  String asOf,  int? rsRating,  List<SwingChartBase> bases,  SwingChartBars bars)?  $default,) {final _that = this;
+switch (_that) {
+case _SwingChart() when $default != null:
+return $default(_that.symbol,_that.asOf,_that.rsRating,_that.bases,_that.bars);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _SwingChart implements SwingChart {
+  const _SwingChart({required this.symbol, this.asOf = '', this.rsRating, final  List<SwingChartBase> bases = const [], required this.bars}): _bases = bases;
+  factory _SwingChart.fromJson(Map<String, dynamic> json) => _$SwingChartFromJson(json);
+
+@override final  String symbol;
+@override@JsonKey() final  String asOf;
+@override final  int? rsRating;
+ final  List<SwingChartBase> _bases;
+@override@JsonKey() List<SwingChartBase> get bases {
+  if (_bases is EqualUnmodifiableListView) return _bases;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_bases);
+}
+
+@override final  SwingChartBars bars;
+
+/// Create a copy of SwingChart
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SwingChartCopyWith<_SwingChart> get copyWith => __$SwingChartCopyWithImpl<_SwingChart>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$SwingChartToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SwingChart&&(identical(other.symbol, symbol) || other.symbol == symbol)&&(identical(other.asOf, asOf) || other.asOf == asOf)&&(identical(other.rsRating, rsRating) || other.rsRating == rsRating)&&const DeepCollectionEquality().equals(other._bases, _bases)&&(identical(other.bars, bars) || other.bars == bars));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,symbol,asOf,rsRating,const DeepCollectionEquality().hash(_bases),bars);
+
+@override
+String toString() {
+  return 'SwingChart(symbol: $symbol, asOf: $asOf, rsRating: $rsRating, bases: $bases, bars: $bars)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SwingChartCopyWith<$Res> implements $SwingChartCopyWith<$Res> {
+  factory _$SwingChartCopyWith(_SwingChart value, $Res Function(_SwingChart) _then) = __$SwingChartCopyWithImpl;
+@override @useResult
+$Res call({
+ String symbol, String asOf, int? rsRating, List<SwingChartBase> bases, SwingChartBars bars
+});
+
+
+@override $SwingChartBarsCopyWith<$Res> get bars;
+
+}
+/// @nodoc
+class __$SwingChartCopyWithImpl<$Res>
+    implements _$SwingChartCopyWith<$Res> {
+  __$SwingChartCopyWithImpl(this._self, this._then);
+
+  final _SwingChart _self;
+  final $Res Function(_SwingChart) _then;
+
+/// Create a copy of SwingChart
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? symbol = null,Object? asOf = null,Object? rsRating = freezed,Object? bases = null,Object? bars = null,}) {
+  return _then(_SwingChart(
+symbol: null == symbol ? _self.symbol : symbol // ignore: cast_nullable_to_non_nullable
+as String,asOf: null == asOf ? _self.asOf : asOf // ignore: cast_nullable_to_non_nullable
+as String,rsRating: freezed == rsRating ? _self.rsRating : rsRating // ignore: cast_nullable_to_non_nullable
+as int?,bases: null == bases ? _self._bases : bases // ignore: cast_nullable_to_non_nullable
+as List<SwingChartBase>,bars: null == bars ? _self.bars : bars // ignore: cast_nullable_to_non_nullable
+as SwingChartBars,
+  ));
+}
+
+/// Create a copy of SwingChart
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SwingChartBarsCopyWith<$Res> get bars {
+  
+  return $SwingChartBarsCopyWith<$Res>(_self.bars, (value) {
+    return _then(_self.copyWith(bars: value));
+  });
+}
+}
+
+
+/// @nodoc
+mixin _$SwingChartBars {
+
+ List<int> get t; List<double> get o; List<double> get h; List<double> get l; List<double> get c; List<double> get v;
+/// Create a copy of SwingChartBars
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SwingChartBarsCopyWith<SwingChartBars> get copyWith => _$SwingChartBarsCopyWithImpl<SwingChartBars>(this as SwingChartBars, _$identity);
+
+  /// Serializes this SwingChartBars to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SwingChartBars&&const DeepCollectionEquality().equals(other.t, t)&&const DeepCollectionEquality().equals(other.o, o)&&const DeepCollectionEquality().equals(other.h, h)&&const DeepCollectionEquality().equals(other.l, l)&&const DeepCollectionEquality().equals(other.c, c)&&const DeepCollectionEquality().equals(other.v, v));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(t),const DeepCollectionEquality().hash(o),const DeepCollectionEquality().hash(h),const DeepCollectionEquality().hash(l),const DeepCollectionEquality().hash(c),const DeepCollectionEquality().hash(v));
+
+@override
+String toString() {
+  return 'SwingChartBars(t: $t, o: $o, h: $h, l: $l, c: $c, v: $v)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SwingChartBarsCopyWith<$Res>  {
+  factory $SwingChartBarsCopyWith(SwingChartBars value, $Res Function(SwingChartBars) _then) = _$SwingChartBarsCopyWithImpl;
+@useResult
+$Res call({
+ List<int> t, List<double> o, List<double> h, List<double> l, List<double> c, List<double> v
+});
+
+
+
+
+}
+/// @nodoc
+class _$SwingChartBarsCopyWithImpl<$Res>
+    implements $SwingChartBarsCopyWith<$Res> {
+  _$SwingChartBarsCopyWithImpl(this._self, this._then);
+
+  final SwingChartBars _self;
+  final $Res Function(SwingChartBars) _then;
+
+/// Create a copy of SwingChartBars
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? t = null,Object? o = null,Object? h = null,Object? l = null,Object? c = null,Object? v = null,}) {
+  return _then(_self.copyWith(
+t: null == t ? _self.t : t // ignore: cast_nullable_to_non_nullable
+as List<int>,o: null == o ? _self.o : o // ignore: cast_nullable_to_non_nullable
+as List<double>,h: null == h ? _self.h : h // ignore: cast_nullable_to_non_nullable
+as List<double>,l: null == l ? _self.l : l // ignore: cast_nullable_to_non_nullable
+as List<double>,c: null == c ? _self.c : c // ignore: cast_nullable_to_non_nullable
+as List<double>,v: null == v ? _self.v : v // ignore: cast_nullable_to_non_nullable
+as List<double>,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [SwingChartBars].
+extension SwingChartBarsPatterns on SwingChartBars {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SwingChartBars value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SwingChartBars() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SwingChartBars value)  $default,){
+final _that = this;
+switch (_that) {
+case _SwingChartBars():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SwingChartBars value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SwingChartBars() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( List<int> t,  List<double> o,  List<double> h,  List<double> l,  List<double> c,  List<double> v)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SwingChartBars() when $default != null:
+return $default(_that.t,_that.o,_that.h,_that.l,_that.c,_that.v);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( List<int> t,  List<double> o,  List<double> h,  List<double> l,  List<double> c,  List<double> v)  $default,) {final _that = this;
+switch (_that) {
+case _SwingChartBars():
+return $default(_that.t,_that.o,_that.h,_that.l,_that.c,_that.v);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( List<int> t,  List<double> o,  List<double> h,  List<double> l,  List<double> c,  List<double> v)?  $default,) {final _that = this;
+switch (_that) {
+case _SwingChartBars() when $default != null:
+return $default(_that.t,_that.o,_that.h,_that.l,_that.c,_that.v);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _SwingChartBars implements SwingChartBars {
+  const _SwingChartBars({final  List<int> t = const [], final  List<double> o = const [], final  List<double> h = const [], final  List<double> l = const [], final  List<double> c = const [], final  List<double> v = const []}): _t = t,_o = o,_h = h,_l = l,_c = c,_v = v;
+  factory _SwingChartBars.fromJson(Map<String, dynamic> json) => _$SwingChartBarsFromJson(json);
+
+ final  List<int> _t;
+@override@JsonKey() List<int> get t {
+  if (_t is EqualUnmodifiableListView) return _t;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_t);
+}
+
+ final  List<double> _o;
+@override@JsonKey() List<double> get o {
+  if (_o is EqualUnmodifiableListView) return _o;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_o);
+}
+
+ final  List<double> _h;
+@override@JsonKey() List<double> get h {
+  if (_h is EqualUnmodifiableListView) return _h;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_h);
+}
+
+ final  List<double> _l;
+@override@JsonKey() List<double> get l {
+  if (_l is EqualUnmodifiableListView) return _l;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_l);
+}
+
+ final  List<double> _c;
+@override@JsonKey() List<double> get c {
+  if (_c is EqualUnmodifiableListView) return _c;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_c);
+}
+
+ final  List<double> _v;
+@override@JsonKey() List<double> get v {
+  if (_v is EqualUnmodifiableListView) return _v;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_v);
+}
+
+
+/// Create a copy of SwingChartBars
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SwingChartBarsCopyWith<_SwingChartBars> get copyWith => __$SwingChartBarsCopyWithImpl<_SwingChartBars>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$SwingChartBarsToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SwingChartBars&&const DeepCollectionEquality().equals(other._t, _t)&&const DeepCollectionEquality().equals(other._o, _o)&&const DeepCollectionEquality().equals(other._h, _h)&&const DeepCollectionEquality().equals(other._l, _l)&&const DeepCollectionEquality().equals(other._c, _c)&&const DeepCollectionEquality().equals(other._v, _v));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_t),const DeepCollectionEquality().hash(_o),const DeepCollectionEquality().hash(_h),const DeepCollectionEquality().hash(_l),const DeepCollectionEquality().hash(_c),const DeepCollectionEquality().hash(_v));
+
+@override
+String toString() {
+  return 'SwingChartBars(t: $t, o: $o, h: $h, l: $l, c: $c, v: $v)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SwingChartBarsCopyWith<$Res> implements $SwingChartBarsCopyWith<$Res> {
+  factory _$SwingChartBarsCopyWith(_SwingChartBars value, $Res Function(_SwingChartBars) _then) = __$SwingChartBarsCopyWithImpl;
+@override @useResult
+$Res call({
+ List<int> t, List<double> o, List<double> h, List<double> l, List<double> c, List<double> v
+});
+
+
+
+
+}
+/// @nodoc
+class __$SwingChartBarsCopyWithImpl<$Res>
+    implements _$SwingChartBarsCopyWith<$Res> {
+  __$SwingChartBarsCopyWithImpl(this._self, this._then);
+
+  final _SwingChartBars _self;
+  final $Res Function(_SwingChartBars) _then;
+
+/// Create a copy of SwingChartBars
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? t = null,Object? o = null,Object? h = null,Object? l = null,Object? c = null,Object? v = null,}) {
+  return _then(_SwingChartBars(
+t: null == t ? _self._t : t // ignore: cast_nullable_to_non_nullable
+as List<int>,o: null == o ? _self._o : o // ignore: cast_nullable_to_non_nullable
+as List<double>,h: null == h ? _self._h : h // ignore: cast_nullable_to_non_nullable
+as List<double>,l: null == l ? _self._l : l // ignore: cast_nullable_to_non_nullable
+as List<double>,c: null == c ? _self._c : c // ignore: cast_nullable_to_non_nullable
+as List<double>,v: null == v ? _self._v : v // ignore: cast_nullable_to_non_nullable
+as List<double>,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$SwingChartBase {
+
+ String get pattern; String get direction; int get from; double get high; double get low;
+/// Create a copy of SwingChartBase
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SwingChartBaseCopyWith<SwingChartBase> get copyWith => _$SwingChartBaseCopyWithImpl<SwingChartBase>(this as SwingChartBase, _$identity);
+
+  /// Serializes this SwingChartBase to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SwingChartBase&&(identical(other.pattern, pattern) || other.pattern == pattern)&&(identical(other.direction, direction) || other.direction == direction)&&(identical(other.from, from) || other.from == from)&&(identical(other.high, high) || other.high == high)&&(identical(other.low, low) || other.low == low));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,pattern,direction,from,high,low);
+
+@override
+String toString() {
+  return 'SwingChartBase(pattern: $pattern, direction: $direction, from: $from, high: $high, low: $low)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SwingChartBaseCopyWith<$Res>  {
+  factory $SwingChartBaseCopyWith(SwingChartBase value, $Res Function(SwingChartBase) _then) = _$SwingChartBaseCopyWithImpl;
+@useResult
+$Res call({
+ String pattern, String direction, int from, double high, double low
+});
+
+
+
+
+}
+/// @nodoc
+class _$SwingChartBaseCopyWithImpl<$Res>
+    implements $SwingChartBaseCopyWith<$Res> {
+  _$SwingChartBaseCopyWithImpl(this._self, this._then);
+
+  final SwingChartBase _self;
+  final $Res Function(SwingChartBase) _then;
+
+/// Create a copy of SwingChartBase
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? pattern = null,Object? direction = null,Object? from = null,Object? high = null,Object? low = null,}) {
+  return _then(_self.copyWith(
+pattern: null == pattern ? _self.pattern : pattern // ignore: cast_nullable_to_non_nullable
+as String,direction: null == direction ? _self.direction : direction // ignore: cast_nullable_to_non_nullable
+as String,from: null == from ? _self.from : from // ignore: cast_nullable_to_non_nullable
+as int,high: null == high ? _self.high : high // ignore: cast_nullable_to_non_nullable
+as double,low: null == low ? _self.low : low // ignore: cast_nullable_to_non_nullable
+as double,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [SwingChartBase].
+extension SwingChartBasePatterns on SwingChartBase {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SwingChartBase value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SwingChartBase() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SwingChartBase value)  $default,){
+final _that = this;
+switch (_that) {
+case _SwingChartBase():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SwingChartBase value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SwingChartBase() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String pattern,  String direction,  int from,  double high,  double low)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SwingChartBase() when $default != null:
+return $default(_that.pattern,_that.direction,_that.from,_that.high,_that.low);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String pattern,  String direction,  int from,  double high,  double low)  $default,) {final _that = this;
+switch (_that) {
+case _SwingChartBase():
+return $default(_that.pattern,_that.direction,_that.from,_that.high,_that.low);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String pattern,  String direction,  int from,  double high,  double low)?  $default,) {final _that = this;
+switch (_that) {
+case _SwingChartBase() when $default != null:
+return $default(_that.pattern,_that.direction,_that.from,_that.high,_that.low);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _SwingChartBase implements SwingChartBase {
+  const _SwingChartBase({required this.pattern, this.direction = 'LONG', required this.from, required this.high, required this.low});
+  factory _SwingChartBase.fromJson(Map<String, dynamic> json) => _$SwingChartBaseFromJson(json);
+
+@override final  String pattern;
+@override@JsonKey() final  String direction;
+@override final  int from;
+@override final  double high;
+@override final  double low;
+
+/// Create a copy of SwingChartBase
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SwingChartBaseCopyWith<_SwingChartBase> get copyWith => __$SwingChartBaseCopyWithImpl<_SwingChartBase>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$SwingChartBaseToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SwingChartBase&&(identical(other.pattern, pattern) || other.pattern == pattern)&&(identical(other.direction, direction) || other.direction == direction)&&(identical(other.from, from) || other.from == from)&&(identical(other.high, high) || other.high == high)&&(identical(other.low, low) || other.low == low));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,pattern,direction,from,high,low);
+
+@override
+String toString() {
+  return 'SwingChartBase(pattern: $pattern, direction: $direction, from: $from, high: $high, low: $low)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SwingChartBaseCopyWith<$Res> implements $SwingChartBaseCopyWith<$Res> {
+  factory _$SwingChartBaseCopyWith(_SwingChartBase value, $Res Function(_SwingChartBase) _then) = __$SwingChartBaseCopyWithImpl;
+@override @useResult
+$Res call({
+ String pattern, String direction, int from, double high, double low
+});
+
+
+
+
+}
+/// @nodoc
+class __$SwingChartBaseCopyWithImpl<$Res>
+    implements _$SwingChartBaseCopyWith<$Res> {
+  __$SwingChartBaseCopyWithImpl(this._self, this._then);
+
+  final _SwingChartBase _self;
+  final $Res Function(_SwingChartBase) _then;
+
+/// Create a copy of SwingChartBase
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? pattern = null,Object? direction = null,Object? from = null,Object? high = null,Object? low = null,}) {
+  return _then(_SwingChartBase(
+pattern: null == pattern ? _self.pattern : pattern // ignore: cast_nullable_to_non_nullable
+as String,direction: null == direction ? _self.direction : direction // ignore: cast_nullable_to_non_nullable
+as String,from: null == from ? _self.from : from // ignore: cast_nullable_to_non_nullable
+as int,high: null == high ? _self.high : high // ignore: cast_nullable_to_non_nullable
+as double,low: null == low ? _self.low : low // ignore: cast_nullable_to_non_nullable
+as double,
+  ));
+}
+
+
+}
+
 // dart format on

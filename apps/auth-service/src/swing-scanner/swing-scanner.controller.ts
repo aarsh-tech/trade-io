@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards, Request, Query } from '@nestjs/common';
+import { Controller, Get, Header, Param, Post, UseGuards, Request, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SwingScannerService } from './swing-scanner.service';
@@ -14,6 +14,15 @@ export class SwingScannerController {
   @ApiOperation({ summary: 'Run a full swing scan (VCP / Rocket Base / Tight Area)' })
   async run(@Request() req) {
     const data = await this.scanner.runScan(req.user.id);
+    return { success: true, data };
+  }
+
+  @Get('chart/:symbol')
+  @ApiOperation({ summary: 'Daily bars, pattern bases and RS rating for one stock (chart view)' })
+  // Clients add ?v=<scannedAt>, so a new scan changes the URL and skips this cache.
+  @Header('Cache-Control', 'private, max-age=3600')
+  async chart(@Request() req, @Param('symbol') symbol: string) {
+    const data = await this.scanner.getChart(req.user.id, symbol);
     return { success: true, data };
   }
 

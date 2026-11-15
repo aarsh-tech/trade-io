@@ -39,6 +39,8 @@ export interface PatternResult {
   contractions: number;
   direction?: 'LONG' | 'SHORT';
   notes: string[];
+  /** The range the setup is built on, for the chart: drawn from the first daily bar at/after `from` to the last bar. */
+  base?: { from: Date; high: number; low: number };
 }
 
 // ─── Utility Functions ────────────────────────────────────────────────────────
@@ -296,6 +298,7 @@ export function detectVCP(candles: DailyCandle[]): PatternResult | null {
     volumeSignal,
     contractions: contractionCount,
     direction: 'LONG',
+    base: { from: baseCandles[0].date, high: pivot, low: Math.min(...baseCandles.map((c) => c.low)) },
     notes: [
       `VCP ${contractionCount}T Setup: Volatility contracted from ${(depth1 * 100).toFixed(1)}% → ${(depth2 * 100).toFixed(1)}% → ${(depth3 * 100).toFixed(1)}%`,
       `Volume ${volRatio < 1 ? 'drying up' : 'stable'} (${(volRatio * 100).toFixed(0)}% of 50-day avg)`,
@@ -389,6 +392,7 @@ export function detectRocketBase(candles: DailyCandle[]): PatternResult | null {
     volumeSignal,
     contractions: 0,
     direction: 'LONG',
+    base: { from: candles[baseStart].date, high: baseHigh, low: baseLow },
     notes: [
       `Rocket Base: Prior momentum +${(priorMove * 100).toFixed(1)}%`,
       `Tight Consolidation: ${(baseRange * 100).toFixed(1)}% base range over ${n - baseStart} days`,
@@ -461,6 +465,7 @@ export function detectTightArea(candles: DailyCandle[]): PatternResult | null {
     volumeSignal: 'AVERAGE',
     contractions: 0,
     direction: 'LONG',
+    base: { from: winSlice[0].date, high: baseHigh, low: baseLow },
     notes: [
       `${bestWindow}-day Tight Area: Closes within ${(bestRange * 100).toFixed(1)}%`,
       `Range: ₹${baseLow.toFixed(2)} — ₹${baseHigh.toFixed(2)}`,
@@ -498,6 +503,8 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
   const motherLow = motherCandle.low;
   const insideHigh = insideCandle.high;
   const insideLow = insideCandle.low;
+  // Weekly/monthly candles are dated by their last day, so the mother period starts just after the candle before it.
+  const base = { from: i >= 2 ? new Date(candles[i - 2].date.getTime() + 1) : motherCandle.date, high: motherHigh, low: motherLow };
 
   const patternMap: Record<string, PatternType> = {
     DAILY: 'DAILY_INSIDE',
@@ -548,6 +555,7 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
       volumeSignal: 'AVERAGE',
       contractions: 0,
       direction: 'LONG',
+      base,
       notes: [
         `🟢 ${label} Setup (LONG)`,
         `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
@@ -590,6 +598,7 @@ export function detectInsideCandle(candles: DailyCandle[], type: 'DAILY' | 'WEEK
       volumeSignal: 'AVERAGE',
       contractions: 0,
       direction: 'SHORT',
+      base,
       notes: [
         `🔴 ${label} Setup (SHORT)`,
         `Mother Range: ₹${motherLow.toFixed(2)} → ₹${motherHigh.toFixed(2)}`,
@@ -651,6 +660,7 @@ export function detectIntradayMomentum(candles: DailyCandle[]): PatternResult | 
     volumeSignal: volRatio > 1.2 ? 'EXPANDING' : 'AVERAGE',
     contractions: 0,
     direction: 'LONG',
+    base: { from: curr.date, high: curr.high, low: curr.low },
     notes: [
       `🔥 Bullish Momentum: +${(returnToday * 100).toFixed(1)}% gain`,
       `Volume Pace: ${(volRatio).toFixed(1)}x 20-day average`,
@@ -706,6 +716,7 @@ export function detectIntradayMomentumShort(candles: DailyCandle[]): PatternResu
     volumeSignal: volRatio > 1.2 ? 'EXPANDING' : 'AVERAGE',
     contractions: 0,
     direction: 'SHORT',
+    base: { from: curr.date, high: curr.high, low: curr.low },
     notes: [
       `📉 Bearish Momentum: ${(returnToday * 100).toFixed(1)}% drop`,
       `Volume Pace: ${(volRatio).toFixed(1)}x 20-day average`,

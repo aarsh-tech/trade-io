@@ -6,65 +6,75 @@ part of 'scanner_models.dart';
 // JsonSerializableGenerator
 // **************************************************************************
 
-_ScreenerData _$ScreenerDataFromJson(Map<String, dynamic> json) => _ScreenerData(
-  stocks:
-      (json['stocks'] as List<dynamic>?)?.map((e) => ScreenerStock.fromJson(e as Map<String, dynamic>)).toList() ??
-      const [],
-  timestamp: json['timestamp'] as String?,
-);
+_ScreenerData _$ScreenerDataFromJson(Map<String, dynamic> json) =>
+    _ScreenerData(
+      stocks:
+          (json['stocks'] as List<dynamic>?)
+              ?.map((e) => ScreenerStock.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      timestamp: json['timestamp'] as String?,
+    );
 
-Map<String, dynamic> _$ScreenerDataToJson(_ScreenerData instance) => <String, dynamic>{
-  'stocks': instance.stocks,
-  'timestamp': instance.timestamp,
-};
+Map<String, dynamic> _$ScreenerDataToJson(_ScreenerData instance) =>
+    <String, dynamic>{
+      'stocks': instance.stocks,
+      'timestamp': instance.timestamp,
+    };
 
-_ScreenerStock _$ScreenerStockFromJson(Map<String, dynamic> json) => _ScreenerStock(
-  symbol: json['symbol'] as String,
-  exchange: json['exchange'] as String? ?? 'NSE',
-  ltp: (json['ltp'] as num?)?.toDouble() ?? 0,
-  changePct: (json['changePct'] as num?)?.toDouble() ?? 0,
-  open: (json['open'] as num?)?.toDouble() ?? 0,
-  close: (json['close'] as num?)?.toDouble() ?? 0,
-  volume: (json['volume'] as num?)?.toDouble() ?? 0,
-  signal: json['signal'] as String? ?? 'NEUTRAL',
-  suggestedAction: json['suggestedAction'] as String? ?? 'WATCH',
-  suggestedSL: (json['suggestedSL'] as num?)?.toDouble() ?? 0,
-  suggestedTarget: (json['suggestedTarget1'] as num?)?.toDouble() ?? 0,
-  suggestedTarget2: (json['suggestedTarget2'] as num?)?.toDouble() ?? 0,
-  lotSize: (json['lotSize'] as num?)?.toInt() ?? 1,
-);
+_ScreenerStock _$ScreenerStockFromJson(Map<String, dynamic> json) =>
+    _ScreenerStock(
+      symbol: json['symbol'] as String,
+      exchange: json['exchange'] as String? ?? 'NSE',
+      ltp: (json['ltp'] as num?)?.toDouble() ?? 0,
+      changePct: (json['changePct'] as num?)?.toDouble() ?? 0,
+      open: (json['open'] as num?)?.toDouble() ?? 0,
+      close: (json['close'] as num?)?.toDouble() ?? 0,
+      volume: (json['volume'] as num?)?.toDouble() ?? 0,
+      signal: json['signal'] as String? ?? 'NEUTRAL',
+      suggestedAction: json['suggestedAction'] as String? ?? 'WATCH',
+      suggestedSL: (json['suggestedSL'] as num?)?.toDouble() ?? 0,
+      suggestedTarget: (json['suggestedTarget1'] as num?)?.toDouble() ?? 0,
+      suggestedTarget2: (json['suggestedTarget2'] as num?)?.toDouble() ?? 0,
+      lotSize: (json['lotSize'] as num?)?.toInt() ?? 1,
+    );
 
-Map<String, dynamic> _$ScreenerStockToJson(_ScreenerStock instance) => <String, dynamic>{
-  'symbol': instance.symbol,
-  'exchange': instance.exchange,
-  'ltp': instance.ltp,
-  'changePct': instance.changePct,
-  'open': instance.open,
-  'close': instance.close,
-  'volume': instance.volume,
-  'signal': instance.signal,
-  'suggestedAction': instance.suggestedAction,
-  'suggestedSL': instance.suggestedSL,
-  'suggestedTarget1': instance.suggestedTarget,
-  'suggestedTarget2': instance.suggestedTarget2,
-  'lotSize': instance.lotSize,
-};
+Map<String, dynamic> _$ScreenerStockToJson(_ScreenerStock instance) =>
+    <String, dynamic>{
+      'symbol': instance.symbol,
+      'exchange': instance.exchange,
+      'ltp': instance.ltp,
+      'changePct': instance.changePct,
+      'open': instance.open,
+      'close': instance.close,
+      'volume': instance.volume,
+      'signal': instance.signal,
+      'suggestedAction': instance.suggestedAction,
+      'suggestedSL': instance.suggestedSL,
+      'suggestedTarget1': instance.suggestedTarget,
+      'suggestedTarget2': instance.suggestedTarget2,
+      'lotSize': instance.lotSize,
+    };
 
-_MoveAlertsData _$MoveAlertsDataFromJson(Map<String, dynamic> json) => _MoveAlertsData(
-  day: json['day'] as String?,
-  status: json['status'] as String?,
-  updatedAt: json['updatedAt'] as String?,
-  alerts:
-      (json['alerts'] as List<dynamic>?)?.map((e) => MoveAlert.fromJson(e as Map<String, dynamic>)).toList() ??
-      const [],
-);
+_MoveAlertsData _$MoveAlertsDataFromJson(Map<String, dynamic> json) =>
+    _MoveAlertsData(
+      day: json['day'] as String?,
+      status: json['status'] as String?,
+      updatedAt: json['updatedAt'] as String?,
+      alerts:
+          (json['alerts'] as List<dynamic>?)
+              ?.map((e) => MoveAlert.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+    );
 
-Map<String, dynamic> _$MoveAlertsDataToJson(_MoveAlertsData instance) => <String, dynamic>{
-  'day': instance.day,
-  'status': instance.status,
-  'updatedAt': instance.updatedAt,
-  'alerts': instance.alerts,
-};
+Map<String, dynamic> _$MoveAlertsDataToJson(_MoveAlertsData instance) =>
+    <String, dynamic>{
+      'day': instance.day,
+      'status': instance.status,
+      'updatedAt': instance.updatedAt,
+      'alerts': instance.alerts,
+    };
 
 _MoveAlert _$MoveAlertFromJson(Map<String, dynamic> json) => _MoveAlert(
   id: json['id'] as String,
@@ -79,18 +89,19 @@ _MoveAlert _$MoveAlertFromJson(Map<String, dynamic> json) => _MoveAlert(
   stopRef: (json['stopRef'] as num?)?.toDouble() ?? 0,
 );
 
-Map<String, dynamic> _$MoveAlertToJson(_MoveAlert instance) => <String, dynamic>{
-  'id': instance.id,
-  'symbol': instance.symbol,
-  'type': instance.type,
-  'hhmm': instance.hhmm,
-  'text': instance.text,
-  'level': instance.level,
-  'ltp': instance.ltp,
-  'changePct': instance.changePct,
-  'volPace': instance.volPace,
-  'stopRef': instance.stopRef,
-};
+Map<String, dynamic> _$MoveAlertToJson(_MoveAlert instance) =>
+    <String, dynamic>{
+      'id': instance.id,
+      'symbol': instance.symbol,
+      'type': instance.type,
+      'hhmm': instance.hhmm,
+      'text': instance.text,
+      'level': instance.level,
+      'ltp': instance.ltp,
+      'changePct': instance.changePct,
+      'volPace': instance.volPace,
+      'stopRef': instance.stopRef,
+    };
 
 _SwingScan _$SwingScanFromJson(Map<String, dynamic> json) => _SwingScan(
   id: json['id'] as String?,
@@ -101,20 +112,23 @@ _SwingScan _$SwingScanFromJson(Map<String, dynamic> json) => _SwingScan(
   page: (json['page'] as num?)?.toInt() ?? 1,
   totalPages: (json['totalPages'] as num?)?.toInt() ?? 1,
   results:
-      (json['results'] as List<dynamic>?)?.map((e) => SwingResult.fromJson(e as Map<String, dynamic>)).toList() ??
+      (json['results'] as List<dynamic>?)
+          ?.map((e) => SwingResult.fromJson(e as Map<String, dynamic>))
+          .toList() ??
       const [],
 );
 
-Map<String, dynamic> _$SwingScanToJson(_SwingScan instance) => <String, dynamic>{
-  'id': instance.id,
-  'scannedAt': instance.scannedAt,
-  'isScanning': instance.isScanning,
-  'totalScanned': instance.totalScanned,
-  'totalResults': instance.totalResults,
-  'page': instance.page,
-  'totalPages': instance.totalPages,
-  'results': instance.results,
-};
+Map<String, dynamic> _$SwingScanToJson(_SwingScan instance) =>
+    <String, dynamic>{
+      'id': instance.id,
+      'scannedAt': instance.scannedAt,
+      'isScanning': instance.isScanning,
+      'totalScanned': instance.totalScanned,
+      'totalResults': instance.totalResults,
+      'page': instance.page,
+      'totalPages': instance.totalPages,
+      'results': instance.results,
+    };
 
 _SwingResult _$SwingResultFromJson(Map<String, dynamic> json) => _SwingResult(
   symbol: json['symbol'] as String,
@@ -130,22 +144,108 @@ _SwingResult _$SwingResultFromJson(Map<String, dynamic> json) => _SwingResult(
   riskReward: (json['riskReward'] as num?)?.toDouble() ?? 0,
   riskPct: (json['riskPct'] as num?)?.toDouble() ?? 0,
   direction: json['direction'] as String?,
-  notes: (json['notes'] as List<dynamic>?)?.map((e) => e as String).toList() ?? const [],
+  notes:
+      (json['notes'] as List<dynamic>?)?.map((e) => e as String).toList() ??
+      const [],
 );
 
-Map<String, dynamic> _$SwingResultToJson(_SwingResult instance) => <String, dynamic>{
-  'symbol': instance.symbol,
-  'exchange': instance.exchange,
-  'pattern': instance.pattern,
-  'score': instance.score,
-  'confidence': instance.confidence,
-  'currentPrice': instance.currentPrice,
-  'entryPrice': instance.entryPrice,
-  'stopLoss': instance.stopLoss,
-  'target1': instance.target1,
-  'target2': instance.target2,
-  'riskReward': instance.riskReward,
-  'riskPct': instance.riskPct,
-  'direction': instance.direction,
-  'notes': instance.notes,
-};
+Map<String, dynamic> _$SwingResultToJson(_SwingResult instance) =>
+    <String, dynamic>{
+      'symbol': instance.symbol,
+      'exchange': instance.exchange,
+      'pattern': instance.pattern,
+      'score': instance.score,
+      'confidence': instance.confidence,
+      'currentPrice': instance.currentPrice,
+      'entryPrice': instance.entryPrice,
+      'stopLoss': instance.stopLoss,
+      'target1': instance.target1,
+      'target2': instance.target2,
+      'riskReward': instance.riskReward,
+      'riskPct': instance.riskPct,
+      'direction': instance.direction,
+      'notes': instance.notes,
+    };
+
+_SwingChart _$SwingChartFromJson(Map<String, dynamic> json) => _SwingChart(
+  symbol: json['symbol'] as String,
+  asOf: json['asOf'] as String? ?? '',
+  rsRating: (json['rsRating'] as num?)?.toInt(),
+  bases:
+      (json['bases'] as List<dynamic>?)
+          ?.map((e) => SwingChartBase.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const [],
+  bars: SwingChartBars.fromJson(json['bars'] as Map<String, dynamic>),
+);
+
+Map<String, dynamic> _$SwingChartToJson(_SwingChart instance) =>
+    <String, dynamic>{
+      'symbol': instance.symbol,
+      'asOf': instance.asOf,
+      'rsRating': instance.rsRating,
+      'bases': instance.bases,
+      'bars': instance.bars,
+    };
+
+_SwingChartBars _$SwingChartBarsFromJson(Map<String, dynamic> json) =>
+    _SwingChartBars(
+      t:
+          (json['t'] as List<dynamic>?)
+              ?.map((e) => (e as num).toInt())
+              .toList() ??
+          const [],
+      o:
+          (json['o'] as List<dynamic>?)
+              ?.map((e) => (e as num).toDouble())
+              .toList() ??
+          const [],
+      h:
+          (json['h'] as List<dynamic>?)
+              ?.map((e) => (e as num).toDouble())
+              .toList() ??
+          const [],
+      l:
+          (json['l'] as List<dynamic>?)
+              ?.map((e) => (e as num).toDouble())
+              .toList() ??
+          const [],
+      c:
+          (json['c'] as List<dynamic>?)
+              ?.map((e) => (e as num).toDouble())
+              .toList() ??
+          const [],
+      v:
+          (json['v'] as List<dynamic>?)
+              ?.map((e) => (e as num).toDouble())
+              .toList() ??
+          const [],
+    );
+
+Map<String, dynamic> _$SwingChartBarsToJson(_SwingChartBars instance) =>
+    <String, dynamic>{
+      't': instance.t,
+      'o': instance.o,
+      'h': instance.h,
+      'l': instance.l,
+      'c': instance.c,
+      'v': instance.v,
+    };
+
+_SwingChartBase _$SwingChartBaseFromJson(Map<String, dynamic> json) =>
+    _SwingChartBase(
+      pattern: json['pattern'] as String,
+      direction: json['direction'] as String? ?? 'LONG',
+      from: (json['from'] as num).toInt(),
+      high: (json['high'] as num).toDouble(),
+      low: (json['low'] as num).toDouble(),
+    );
+
+Map<String, dynamic> _$SwingChartBaseToJson(_SwingChartBase instance) =>
+    <String, dynamic>{
+      'pattern': instance.pattern,
+      'direction': instance.direction,
+      'from': instance.from,
+      'high': instance.high,
+      'low': instance.low,
+    };

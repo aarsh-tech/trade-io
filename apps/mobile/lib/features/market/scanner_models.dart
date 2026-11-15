@@ -87,3 +87,42 @@ abstract class SwingResult with _$SwingResult {
   }) = _SwingResult;
   factory SwingResult.fromJson(Map<String, dynamic> json) => _$SwingResultFromJson(json);
 }
+
+/// GET /swing-scanner/chart/:symbol — daily bars (columns), the setups' base ranges and RS rating.
+@freezed
+abstract class SwingChart with _$SwingChart {
+  const factory SwingChart({
+    required String symbol,
+    @Default('') String asOf,
+    int? rsRating,
+    @Default([]) List<SwingChartBase> bases,
+    required SwingChartBars bars,
+  }) = _SwingChart;
+  factory SwingChart.fromJson(Map<String, dynamic> json) => _$SwingChartFromJson(json);
+}
+
+/// Columns of equal length; `t` is the IST trading day as UTC-midnight epoch seconds.
+@freezed
+abstract class SwingChartBars with _$SwingChartBars {
+  const factory SwingChartBars({
+    @Default([]) List<int> t,
+    @Default([]) List<double> o,
+    @Default([]) List<double> h,
+    @Default([]) List<double> l,
+    @Default([]) List<double> c,
+    @Default([]) List<double> v,
+  }) = _SwingChartBars;
+  factory SwingChartBars.fromJson(Map<String, dynamic> json) => _$SwingChartBarsFromJson(json);
+}
+
+@freezed
+abstract class SwingChartBase with _$SwingChartBase {
+  const factory SwingChartBase({
+    required String pattern,
+    @Default('LONG') String direction,
+    required int from,
+    required double high,
+    required double low,
+  }) = _SwingChartBase;
+  factory SwingChartBase.fromJson(Map<String, dynamic> json) => _$SwingChartBaseFromJson(json);
+}

@@ -262,9 +262,21 @@ export const orderApi = {
 
 export const swingApi = {
   run: () => api.post("/swing-scanner/run"),
-  last: (params?: { page?: number; pageSize?: number; pattern?: string; sortBy?: string }) => 
+  last: (params?: { page?: number; pageSize?: number; pattern?: string; sortBy?: string }) =>
     api.get("/swing-scanner/last", { params }),
+  /** Daily bars for the chart view. `v` = the scan's scannedAt, so a new scan skips the browser cache. */
+  chart: async (symbol: string, v?: string | null): Promise<SwingChartData> =>
+    (await api.get(`/swing-scanner/chart/${encodeURIComponent(symbol)}`, { params: v ? { v } : undefined })).data.data,
 };
+
+/** GET /swing-scanner/chart/:symbol. Bars are columns; `t` is the IST trading day as UTC-midnight epoch seconds. */
+export interface SwingChartData {
+  symbol: string;
+  asOf: string;
+  rsRating: number | null;
+  bases: { pattern: string; direction: "LONG" | "SHORT"; from: number; high: number; low: number }[];
+  bars: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
+}
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 export const adminApi = {

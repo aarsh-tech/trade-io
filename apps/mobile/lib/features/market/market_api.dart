@@ -53,6 +53,16 @@ class MarketApi {
 
   Future<void> runSwing() async => unwrapData<dynamic>(await _dio.post<dynamic>('/swing-scanner/run'));
 
+  /// [version] is the scan's scannedAt, so a new scan skips the HTTP cache (same as swingApi.chart on the web).
+  Future<SwingChart> swingChart(String symbol, {String? version}) async => SwingChart.fromJson(
+    unwrapData<Map<String, dynamic>>(
+      await _dio.get<dynamic>(
+        '/swing-scanner/chart/${Uri.encodeComponent(symbol)}',
+        queryParameters: {if (version != null) 'v': version},
+      ),
+    ),
+  );
+
   Future<MarketOverview> overview() async =>
       MarketOverview.fromJson(unwrapData<Map<String, dynamic>>(await _dio.get<dynamic>('/market/overview')));
 
