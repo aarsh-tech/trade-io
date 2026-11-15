@@ -1,5 +1,8 @@
 "use client";
 
+// Cloudflare (next-on-pages) requires every dynamic route to run on the Edge runtime.
+export const runtime = "edge";
+
 // Full-window chart (opened in a new tab from the swing scanner, like Kite's chart window).
 // Outside the (dashboard) group on purpose: no sidebar, top bar or market socket, just the chart.
 import { Suspense, useEffect, useMemo } from "react";
