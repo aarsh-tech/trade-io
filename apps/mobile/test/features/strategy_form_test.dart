@@ -47,6 +47,15 @@ void main() {
       expect(validateStrategyConfig('STOCKS_IN_PLAY', {...config, 'fadeReentries': 3}), isNotEmpty);
     });
 
+    test('fade wick stop limit is saved and read back', () {
+      final form = withType(createDefaultForm(), 'STOCKS_IN_PLAY')..['sipWickStopMaxPct'] = '3';
+      final config = buildStrategyConfig(form);
+      expect(config['wickStopMaxPct'], 3);
+      expect(validateStrategyConfig('STOCKS_IN_PLAY', config), isEmpty);
+      expect(strategyToForm(name: 'x', type: 'STOCKS_IN_PLAY', config: config)['sipWickStopMaxPct'], '3');
+      expect(validateStrategyConfig('STOCKS_IN_PLAY', {...config, 'wickStopMaxPct': 7}), isNotEmpty);
+    });
+
     test('lots × lot size gives qty for an index', () {
       final form =
           withType(createDefaultForm(), 'BREAKOUT_15MIN')

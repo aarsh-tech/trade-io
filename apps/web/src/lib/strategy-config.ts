@@ -54,6 +54,7 @@ const RANGES: [string, string, number, number, boolean][] = [
   ['breakevenAtR', 'Stop to entry at (x stop)', 0, 20, false],
   ['breakevenLockR', 'Profit locked at that step (x stop)', 0, 20, false],
   ['fadeReentries', 'Re-entries after a stop-out', 0, 2, true],
+  ['wickStopMaxPct', "Stop past the day's high/low when within (%)", 0, 6, false],
   ['skipNearPdlR', "Skip if yesterday's low/high is closer than (x stop)", 0, 10, false],
   ['minAvgValueCr', 'Min avg daily value (₹ Cr)', 0, 100_000, false],
   ['minPrice', 'Min stock price (₹)', 1, 1_000_000, false],

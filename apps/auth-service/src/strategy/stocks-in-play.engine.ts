@@ -121,6 +121,17 @@ const FADE_MAX_ENTRY_DELAY_MS = 120_000;
 /** Skip a fade candidate whose upper circuit is this close (short squeezed into the circuit cannot be covered). */
 const FADE_MIN_CIRCUIT_ROOM = 0.025;
 /**
+ * FADE wick stop (wickStopMaxPct > 0; off by default). Asked for by the user on 16 Nov 2026 after PFOCUS: short ₹285.55,
+ * 1.5% stop ₹289.85, the 09:45 candle came within ₹0.10 of it (a 1.2% stop was hit) and the trade then made ₹2,181;
+ * the user wanted the stop above the 09:20 wick (₹292.50). When the day's high so far (long: low) lies beyond the
+ * stopPct stop but within wickStopMaxPct % of the price, the stop goes WICK_STOP_BUFFER_PCT past that high/low and the
+ * quantity is sized to it; the target, stop ladder and room check then use that distance as 1R. Otherwise the stopPct
+ * stop is used unchanged. Backtest 2y + 31 days, hold to 15:05, ₹500, both sides, worse candle order (scratchpad
+ * 28ae25d7/wick.cjs): 1.2% alone ₹91.2k; 1.2% + wick up to 2% ₹81.9k, 2.5% ₹72.9k, 3% ₹65.2k; 1.5% alone ₹66.6k,
+ * + wick up to 3% ₹50.6k; always past the wick ₹48.1k. Fewer stop-outs (48% -> 41%) but less money: wider = lower.
+ */
+const WICK_STOP_BUFFER_PCT = 0.05;
+/**
  * FADE re-entry (fadeReentries, asked for by the user on 14 Nov 2026 after HUDCO / HINDCOPPER / GODREJIND hit the
  * 1.2% stop first and then fell). After a full stop-out the same stock is watched; on the first 5m close (by 11:30)
  * back below the session VWAP of the 1m closes (long: above), it is entered again at market with a fresh stopPct stop
@@ -207,6 +218,8 @@ interface ResolvedConfig {
   setup: Setup;
   /** FADE: stop distance as % of the fill. */
   stopPct: number;
+  /** FADE: when the day's high (short) / low (long) is beyond the stopPct stop but within this % of the price, the stop goes just past it (0 = off). See WICK_STOP_BUFFER_PCT. */
+  wickStopMaxPct: number;
   /** FADE: target at this multiple of the stop distance (0 = no target). */
   targetR: number;
   /** FADE: move the stop to the entry once the trade is this multiple of the stop in profit (0 = off). */
@@ -273,6 +286,14 @@ interface Candidate {
   stopLevel: number;
   /** TREND: sides whose first crossover of the day has been seen (only that one may be traded). */
   crossSeen: Set<Side>;
+  /** FADE wick stop: highest / lowest price seen today outside the 5m candles (quotes and ticks). */
+  seenHigh?: number;
+  seenLow?: number;
+  /** Today's circuit limits from the 09:20 quote (0 = unknown). */
+  upperCircuit?: number;
+  lowerCircuit?: number;
+  /** FADE wick stop chosen when the order was sized (null/undefined = the stopPct stop). */
+  wickSl?: number | null;
 }
 
 interface OpenPosition {
@@ -432,6 +453,33 @@ const toOrderSnap = (o: any): OrderSnap => ({ status: o.status, filledQty: Numbe
  * True when an order was refused before it could reach the exchange (our own gateway or client guards). The broker
  * client turns every Kite failure into a plain message, so anything else, a timeout included, may have gone through.
  */
+/** A candidate's latest price; also widens the day's high/low seen so far (wick stop). */
+const notePrice = (c: Candidate, px: number) => {
+  c.ltp = px;
+  c.ltpAt = Date.now();
+  c.seenHigh = Math.max(c.seenHigh ?? 0, px);
+  c.seenLow = Math.min(c.seenLow ?? Infinity, px);
+};
+
+/**
+ * FADE wick stop for an entry at `px`: just past the day's high (short) / low (long) so far, taken from the first
+ * candle, today's completed 5m candles, the 09:20 quote's high/low and every price seen since. Returns null when the
+ * stopPct stop applies: the setting is off, the wick is no further than that stop, or it is further than maxPct.
+ */
+export function wickStop(c: Pick<Candidate, 'side' | 'first' | 'candles' | 'seenHigh' | 'seenLow' | 'tick'>, px: number, stopPct: number, maxPct: number, dayOpenMs: number) {
+  if (!(maxPct > 0) || !(px > 0)) return null;
+  const today = (c.candles ?? []).filter((k) => k.t >= dayOpenMs);
+  const short = c.side === 'SHORT';
+  const extreme = short
+    ? Math.max(c.first.h, px, c.seenHigh ?? 0, ...today.map((k) => k.h))
+    : Math.min(c.first.l, px, c.seenLow ?? Infinity, ...today.map((k) => k.l));
+  const sl = short ? roundTo(extreme * (1 + WICK_STOP_BUFFER_PCT / 100), c.tick, 'up') : roundTo(extreme * (1 - WICK_STOP_BUFFER_PCT / 100), c.tick, 'down');
+  const dist = Math.abs(sl - px);
+  const pct = (dist / px) * 100;
+  if (pct <= stopPct || pct > maxPct) return null;
+  return { sl, dist, extreme, pct };
+}
+
 /** TREND: from the price to the day low/high, at least TREND_MIN_STOP_PCT away. */
 const trendStopDistance = (c: { stopLevel: number; side: Side }, px: number) => Math.max((px * TREND_MIN_STOP_PCT) / 100, (px - c.stopLevel) * (c.side === 'LONG' ? 1 : -1));
 const isDefiniteRefusal = (e: any) => e instanceof HttpException || /^(🛑|IP Access Denied|Market is currently CLOSED|Zerodha AMO Error)/.test(String(e?.message || ''));
@@ -595,7 +643,7 @@ export class StocksInPlayEngine {
       this.log(state, `⚙ From NSE's end-of-day files: the stock that fell >= 3% yesterday while its futures open interest rose the most (5–80%, not an expiry day, >= ₹25 Cr traded) | SHORT in the 09:00–09:07 pre-open auction with a SELL LIMIT ${OI_LIMIT_BELOW_CLOSE * 100}% under yesterday's close (fills at the 09:15 opening price; no fill on a bigger gap down = no trade) | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Broker SL from 09:15 | Max loss/trade ₹${config.stopLossRs} | 1 trade/day | Square-off 15:05`);
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
-      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}% | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.fadeReentries > 0 ? ` | Re-entry: after a stop-out, the same stock again on a 5m close back below VWAP (long: above) until 11:30, up to ${config.fadeReentries}x a day` : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
+      this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}%${config.wickStopMaxPct > 0 ? `, or just past the day's high (long: low) when that is further away but within ${config.wickStopMaxPct}% (fewer shares, same max loss)` : ''} | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.fadeReentries > 0 ? ` | Re-entry: after a stop-out, the same stock again on a 5m close back below VWAP (long: above) until 11:30, up to ${config.fadeReentries}x a day` : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
@@ -675,6 +723,7 @@ export class StocksInPlayEngine {
       skipNearPdlR: Math.min(10, numOrZero(raw.skipNearPdlR, 0)),
       profitLock: raw.profitLock !== false,
       fadeReentries: fade ? Math.min(FADE_MAX_REENTRIES, Math.floor(numOrZero(raw.fadeReentries, 0))) : 0,
+      wickStopMaxPct: fade ? Math.min(6, numOrZero(raw.wickStopMaxPct, 0)) : 0,
       stopLossRs,
       maxPositions: perSideTrades,
       perSideTrades,
@@ -723,7 +772,10 @@ export class StocksInPlayEngine {
       // FADE and OI: the target and breakeven come from the fixed % stop, so they are rebuilt from the fill alone.
       const fade = state.config.setup === 'FADE';
       const pctStop = fade || state.config.setup === 'OI';
-      const stopDist = pctStop ? (pos.avgPrice * state.config.stopPct) / 100 : Math.abs(pos.avgPrice - sl);
+      const pctDist = (pos.avgPrice * state.config.stopPct) / 100;
+      // FADE wick stop: a saved stop still on the loss side and wider than the % stop is the original stop, so it is 1R. Once a profit lock has moved it, the original distance is not known and the % distance is used (later lock steps then come sooner).
+      const wickDist = fade && state.config.wickStopMaxPct > 0 && (sl - pos.avgPrice) * sign > pctDist ? Math.abs(pos.avgPrice - sl) : null;
+      const stopDist = wickDist !== null ? wickDist : pctStop ? pctDist : Math.abs(pos.avgPrice - sl);
       // `sign` points at the stop side, so the target is the other way.
       const target = pctStop && state.config.targetR > 0 ? roundTo(pos.avgPrice - sign * state.config.targetR * stopDist, tick, pos.side === 'LONG' ? 'down' : 'up') : null;
       const probe = { side: pos.side, entryPrice: pos.avgPrice, stopDist } as OpenPosition;
@@ -971,7 +1023,7 @@ export class StocksInPlayEngine {
     for (const c of state.candidates || []) {
       if (c.done) continue;
       const px = ticks[`NSE:${c.symbol}`] ?? ticks[c.symbol];
-      if (px && px > 0) { c.ltp = px; c.ltpAt = Date.now(); touched = true; }
+      if (px && px > 0) { notePrice(c, px); touched = true; }
     }
     for (const p of state.positions) {
       const px = ticks[`NSE:${p.symbol}`] ?? ticks[p.symbol];
@@ -1352,7 +1404,13 @@ export class StocksInPlayEngine {
     return list.filter((c) => {
       const x = q[`NSE:${c.symbol}`];
       const upper = Number(x?.upper_circuit_limit) || 0, lower = Number(x?.lower_circuit_limit) || 0, last = Number(x?.last_price) || 0;
-      if (last > 0) { c.ltp = last; c.ltpAt = Date.now(); }
+      if (last > 0) notePrice(c, last);
+      // The exchange's day high/low so far and the circuit limits, for the wick stop.
+      const hi = Number(x?.ohlc?.high) || 0, lo = Number(x?.ohlc?.low) || 0;
+      if (hi > 0) c.seenHigh = Math.max(c.seenHigh ?? 0, hi);
+      if (lo > 0) c.seenLow = Math.min(c.seenLow ?? Infinity, lo);
+      c.upperCircuit = upper;
+      c.lowerCircuit = lower;
       if (c.side === 'SHORT' && upper > 0 && last > 0 && (upper - last) / last < FADE_MIN_CIRCUIT_ROOM) {
         this.log(state, `⏭ ${c.symbol} skipped: ₹${last} is within ${(FADE_MIN_CIRCUIT_ROOM * 100).toFixed(1)}% of its upper circuit ₹${upper} (a short there may not be coverable).`);
         return false;
@@ -1777,7 +1835,7 @@ export class StocksInPlayEngine {
     try {
       const ltps: Record<string, number> = await client.getLTP([`NSE:${c.symbol}`]);
       const px = ltps[`NSE:${c.symbol}`];
-      if (px && px > 0) { c.ltp = px; c.ltpAt = Date.now(); }
+      if (px && px > 0) notePrice(c, px);
     } catch (e: any) {
       this.logger.warn(`[${state.strategyId}] LTP for ${c.symbol} failed: ${e?.message || e}`);
     }
@@ -2129,7 +2187,7 @@ export class StocksInPlayEngine {
     const t = now.getTime();
     const stale: { symbol: string; set: (px: number) => void }[] = [];
     for (const p of state.positions) if (t - p.ltpAt > 4000) stale.push({ symbol: p.symbol, set: (px) => { p.ltp = px; p.ltpAt = Date.now(); this.trackBest(p, px); } });
-    for (const c of state.candidates || []) if (!c.done && t - c.ltpAt > 4000) stale.push({ symbol: c.symbol, set: (px) => { c.ltp = px; c.ltpAt = Date.now(); } });
+    for (const c of state.candidates || []) if (!c.done && t - c.ltpAt > 4000) stale.push({ symbol: c.symbol, set: (px) => notePrice(c, px) });
     if (stale.length === 0) return;
     try {
       const ltps: Record<string, number> = await client.getLTP(stale.map((s) => `NSE:${s.symbol}`));
@@ -2202,7 +2260,23 @@ export class StocksInPlayEngine {
     // TREND: from the price to the day low/high (at least TREND_MIN_STOP_PCT), re-based on the real fill below.
     const trendStopDist = (px: number) => trendStopDistance(c, px);
     // ORB: a fixed ₹ distance from the ATR. FADE: a fixed % of the price (re-based on the real fill below).
-    const stopDist = fade ? (ltp * cfg.stopPct) / 100 : trend ? trendStopDist(ltp) : c.stopDist;
+    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+    // FADE wick stop: past the day's high/low when that is beyond the % stop but within wickStopMaxPct. It then is the stop distance (1R) for the size, the room check and the exits.
+    const wick = fade ? wickStop(c, ltp, cfg.stopPct, cfg.wickStopMaxPct, dayOpenMs) : null;
+    c.wickSl = wick ? wick.sl : null;
+    const stopDist = wick ? wick.dist : fade ? (ltp * cfg.stopPct) / 100 : trend ? trendStopDist(ltp) : c.stopDist;
+    // Zerodha refuses a stop order outside the day's price band; checked on the SL-limit price, a little beyond the trigger. The % stop is used then.
+    if (wick) {
+      const lim = wick.sl * (c.side === 'SHORT' ? 1.005 : 0.995);
+      if ((c.side === 'SHORT' && (c.upperCircuit ?? 0) > 0 && lim >= c.upperCircuit!) || (c.side === 'LONG' && (c.lowerCircuit ?? 0) > 0 && lim <= c.lowerCircuit!)) {
+        this.log(state, `⏭ ${c.symbol} skipped: the stop past the day's ${c.side === 'SHORT' ? 'high' : 'low'} ₹${wick.sl.toFixed(2)} is at or past the ${c.side === 'SHORT' ? 'upper' : 'lower'} circuit ₹${(c.side === 'SHORT' ? c.upperCircuit : c.lowerCircuit)!.toFixed(2)} (Zerodha would refuse the stop order).`);
+        return;
+      }
+      this.log(state, `📐 ${c.symbol} stop ₹${wick.sl.toFixed(2)}: just past the day's ${c.side === 'SHORT' ? 'high' : 'low'} ₹${wick.extreme.toFixed(2)} (${wick.pct.toFixed(2)}% from ₹${ltp.toFixed(2)}, instead of ${cfg.stopPct}%).`);
+    } else if (fade && cfg.wickStopMaxPct > 0) {
+      const far = wickStop(c, ltp, 0, 100, dayOpenMs);
+      this.log(state, `📐 ${c.symbol} stop stays at ${cfg.stopPct}%: the day's ${c.side === 'SHORT' ? 'high' : 'low'} ₹${far ? far.extreme.toFixed(2) : '—'} is ${far ? `${far.pct.toFixed(2)}% away` : 'unknown'} (${far && far.pct > cfg.wickStopMaxPct ? `more than ${cfg.wickStopMaxPct}%` : 'inside the % stop'}).`);
+    }
 
     // ORB and the FADE long enter on a level break and must not chase it; the FADE short and TREND enter at market on the candle close by design.
     const chase = (ltp - c.level) * sign;
@@ -2314,8 +2388,10 @@ export class StocksInPlayEngine {
     const ltp = c.ltp ?? fill.price;
     state.tradedSymbols.add(c.symbol);
 
-    const fillStopDist = fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
-    const sl = roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
+    // FADE wick stop: the price chosen when the order was sized stays the stop (the quantity was sized to it); 1R is its distance from the real fill.
+    const wickSl = fade && c.wickSl != null && (fill.price - c.wickSl) * sign > 0 ? c.wickSl : null;
+    const fillStopDist = wickSl !== null ? Math.abs(fill.price - wickSl) : fade ? (fill.price * cfg.stopPct) / 100 : trend ? trendStopDistance(c, fill.price) : c.stopDist;
+    const sl = wickSl !== null ? wickSl : roundTo(fill.price - sign * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up');
     // Target rounded toward the entry, so it is never further than targetR x the stop.
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
     state.tradesToday++;
@@ -2347,7 +2423,7 @@ export class StocksInPlayEngine {
       }
     }
     this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions}${state.tradesToday > cfg.maxPositions ? ` (re-entry ${state.reentriesToday}/${cfg.fadeReentries})` : ''} | Order ${fill.orderId}${srText}`);
-    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
+    logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(fade ? { stopMode: wickSl !== null ? 'WICK' : 'PERCENT', stopPctOfFill: Number(((Math.abs(fill.price - sl) / fill.price) * 100).toFixed(3)) } : {}), ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
 
     if (state.isPaperTrade) {
       await this.recordPaperOrder(state, c.symbol, entrySide === 'BUY' ? 'SELL' : 'BUY', p.qty, sl, `${fill.orderId}_SL`, 'SL', 'OPEN', sl);

@@ -449,6 +449,7 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               <li>The target is watched by the strategy; when price reaches it the short is covered at market.</li>
               <li>Once the trade is in profit by the breakeven step, the exchange stop is moved to the entry price.</li>
               {form.sipProfitLock !== false && <li>Profit lock: at +1.5x the stop the exchange stop moves to lock +0.5x; at +2.5x it locks +1.5x.</li>}
+              {Number(form.sipWickStopMaxPct || 0) > 0 && <li>Wider stop: when the day&apos;s high so far (long: low) is beyond the % stop but within {form.sipWickStopMaxPct}% of the price, the stop goes just past it and the quantity is cut to keep the same max loss.</li>}
               {(form.sipFadeReentries || "0") !== "0" && <li>Re-entry: after a stop-out, the same stock is entered again on a 5-minute close back below VWAP (long: above), until the 11:30 close, up to {form.sipFadeReentries} times a day.</li>}
               <li>Otherwise the position is squared off at 15:05.</li>
               <li>Backtest (Aug 2024 to Nov 2026, ₹500 risk, 1.2% stop, no target, held to 15:05): +₹91.2k, about 47% of trades win (average win ₹907, average loss ₹455), 22 of 27 months green, worst month −₹2.8k. Live fills have been about 0.1% worse than the backtest, worth about −₹16k over 2 years.</li>
@@ -510,6 +511,15 @@ export function Step3RiskAdvanced({ form, set }: Step3Props) {
               value={form.sipBreakevenLockR}
               onChange={(v) => set("sipBreakevenLockR", v)}
               hint="0.2 = a trade that reached the step and came back still closes in profit after charges (≈62% winning trades, same total profit as 0). 0 = the stop goes exactly to the entry."
+            />
+            <NumberField
+              label="Stop past the day's high when within"
+              suffix="% of price"
+              decimal
+              min={0}
+              value={form.sipWickStopMaxPct}
+              onChange={(v) => set("sipWickStopMaxPct", v)}
+              hint="0 = off: the stop is always the % above. 3 = when the day's high so far (long: low) is further than the % stop but within 3% of the price, the stop goes just past that high and fewer shares are taken, so the max loss stays the same. Fewer stop-outs, but less profit in the backtest: 1.2% stop / no target over 2 years ₹91k at 0, ₹82k at 2, ₹73k at 2.5, ₹65k at 3."
             />
             <NumberField
               label="Re-entries after a stop-out"

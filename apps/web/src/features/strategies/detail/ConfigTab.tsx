@@ -130,6 +130,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
           ]
         : []),
       { label: "Entry window", value: cfg.fadeLongs === true ? "Signals on 5m closes 09:20 to 09:45 IST; long breaks until 10:15" : "5m closes 09:20 to 09:45 IST" },
+      { label: "Stop past the day's high", value: Number(cfg.wickStopMaxPct ?? 0) > 0 ? `When the day's high${cfg.fadeLongs === true ? " (long: low)" : ""} is beyond the % stop but within ${cfg.wickStopMaxPct}% of the price: stop just past it, fewer shares, same max loss` : "Off" },
       { label: "Re-entry after a stop-out", value: Number(cfg.fadeReentries ?? 0) > 0 ? `Up to ${cfg.fadeReentries}x a day: the same stock again on a 5m close back below VWAP${cfg.fadeLongs === true ? " (long: above)" : ""}, until 11:30` : "Off" },
       { label: "Room to yesterday's low", value: Number(cfg.skipNearPdlR ?? 0) > 0 ? `Skip when yesterday's low${cfg.fadeLongs === true ? " (long: high)" : ""} is less than ${cfg.skipNearPdlR}x the stop away` : "Off" },
     );

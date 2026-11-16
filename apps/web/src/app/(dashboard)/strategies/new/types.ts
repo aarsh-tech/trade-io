@@ -57,6 +57,8 @@ export interface StrategyFormState {
   /** FADE: skip when yesterday's low (short) / high (long) is closer than this, in x stop ("0" = off). */
   sipSkipNearPdlR: string;
   sipFadeReentries: string;
+  /** FADE: stop just past the day's high (short) / low (long) when that is beyond the % stop but within this % ("0" = off). */
+  sipWickStopMaxPct: string;
   /** FADE: lock +0.5R at +1.5R and +1.5R at +2.5R after breakeven. */
   sipProfitLock: boolean;
   /** FADE: also trade the long mirror on gap-down stocks (trades per day then count per side). */

@@ -1106,3 +1106,54 @@ describe('fade re-entry after a stop-out', () => {
     expect(w.entryOrders()).toHaveLength(1);
   });
 });
+
+describe('FADE wick stop (wickStopMaxPct)', () => {
+  const wick = (w: World, max: number, over: Record<string, unknown> = {}) => makeState(w, { config: cfg({ wickStopMaxPct: max }), ...over });
+
+  it('puts the stop just past the day high when that is beyond the % stop and within the limit, and sizes on it', async () => {
+    const w = makeWorld();
+    const p = await enter(w, wick(w, 3), candidate({ seenHigh: 102 }));
+    // 102 + 0.05% = 102.051, rounded up to the tick.
+    expect(p.sl).toBe(102.1);
+    expect(w.stops()[0].trigger_price).toBe(102.1);
+    expect(p.qty).toBeLessThanOrEqual(Math.floor(500 / (102.1 - 100)));
+    expect((p.sl - p.entryPrice) * p.qty).toBeLessThanOrEqual(500);
+    // 1R for the target and the ladder is the real stop distance.
+    expect(p.stopDist).toBeCloseTo(p.sl - p.entryPrice, 6);
+    expect(p.target).toBeCloseTo(p.entryPrice - 3 * p.stopDist, 1);
+  });
+
+  it('keeps the % stop when the day high is inside it', async () => {
+    const w = makeWorld();
+    const p = await enter(w, wick(w, 3));
+    expect(Math.abs(p.sl - p.entryPrice * 1.012)).toBeLessThan(0.06);
+  });
+
+  it('keeps the % stop when the day high is further than the limit', async () => {
+    const w = makeWorld();
+    const p = await enter(w, wick(w, 3), candidate({ seenHigh: 104 }));
+    expect(Math.abs(p.sl - p.entryPrice * 1.012)).toBeLessThan(0.06);
+  });
+
+  it('is off at 0', async () => {
+    const w = makeWorld();
+    const p = await enter(w, wick(w, 0), candidate({ seenHigh: 102 }));
+    expect(Math.abs(p.sl - p.entryPrice * 1.012)).toBeLessThan(0.06);
+  });
+
+  it('works below the day low for a long', async () => {
+    const w = makeWorld();
+    const p = await enter(w, wick(w, 3), candidate({ side: 'LONG', seenLow: 98 }));
+    // 98 - 0.05% = 97.951, rounded down to the tick.
+    expect(p.sl).toBe(97.95);
+    expect((p.entryPrice - p.sl) * p.qty).toBeLessThanOrEqual(500);
+  });
+
+  it('skips the trade when the stop order would sit past the upper circuit', async () => {
+    const w = makeWorld();
+    const s = wick(w, 3);
+    await w.engine.enterTrade(s, w.client, candidate({ seenHigh: 102, upperCircuit: 102.5 }), new Date());
+    expect(s.positions).toHaveLength(0);
+    expect(w.entryOrders()).toHaveLength(0);
+  });
+});

@@ -1213,6 +1213,15 @@ class AdvancedRisk extends StatelessWidget {
         ),
       ),
       BoundField(
+        label: "Stop past the day's high when within",
+        suffix: '% of price',
+        kind: FieldKind.decimal,
+        value: s(form, 'sipWickStopMaxPct'),
+        onChanged: (v) => set('sipWickStopMaxPct', v),
+        hint:
+            "0 = off: the stop is always the % above. 3 = when the day's high so far (long: low) is further than the % stop but within 3% of the price, the stop goes just past that high and fewer shares are taken, so the max loss stays the same. Fewer stop-outs, but less profit in the backtest: 1.2% stop / no target over 2 years ₹91k at 0, ₹82k at 2, ₹73k at 2.5, ₹65k at 3.",
+      ),
+      BoundField(
         label: 'Re-entries after a stop-out',
         kind: FieldKind.integer,
         value: s(form, 'sipFadeReentries'),
