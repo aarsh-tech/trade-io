@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { HttpException, Injectable, Logger } from '@nestjs/common';
+import { HttpException, Injectable, Logger, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { BrokerClientFactory } from '../brokers/broker-client.factory';
 import { OrderParams } from '../brokers/interfaces/broker-client.interface';
 import { getSharedInstruments } from '../brokers/instrument-store';
@@ -15,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getCompletedBrokerExitDetails, getLiveBrokerPosition, isSafeToExit, normalizeSymbol } from './broker-position-guard';
 import { StocksInPlayConfig } from './dto/strategy.dto';
 import { getIstDateStr, getIstHhmm } from './emavwap-signals';
+import { EmaVwapCrossoverEngine } from './emavwap.engine';
 import { FADE_MIN_HISTORY, FadeCandle, fadeLongTrigger, fadeReadings, fadeShortTrigger, FadeTrigger, toCompletedCandles } from './inplay-fade-signals';
 import { buildSrZones, describeZonesAhead, prevDayHighLow, zonesAhead } from './inplay-sr-zones';
 import { crossedBack, crossSide, TREND_SLOW, trendReadings, vwapAgrees } from './inplay-trend-signals';
@@ -234,6 +236,8 @@ interface ResolvedConfig {
   profitLock: boolean;
   /** FADE: re-entries on the same stock after a full stop-out (0 = off, max FADE_MAX_REENTRIES). See checkFadeReentry. */
   fadeReentries: number;
+  /** FADE: when the 09:20 scan finds no candidate at all, start the user's Intraday Stock Picker for the rest of the day. */
+  pickerFallback: boolean;
   stopLossRs: number;
   /** Daily trade cap and position slots (FADE with longs and TREND: both sides together). */
   maxPositions: number;
@@ -503,6 +507,7 @@ export class StocksInPlayEngine {
     private factory: BrokerClientFactory,
     private tickerService: TickerService,
     private readonly orderGateway: OrderGateway,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {
     // Kite pushes every order change on the websocket. A final state seen there ends a fill wait at once,
     // instead of at the next order-book poll; the order book stays the fallback and the source for everything else.
@@ -644,6 +649,7 @@ export class StocksInPlayEngine {
     } else if (config.setup === 'FADE') {
       this.log(state, `▶ In-play Fade (${config.allowLongs ? 'short + long' : 'short'}) started | ${mode}`);
       this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}%${config.wickStopMaxPct > 0 ? `, or just past the day's high (long: low) when that is further away but within ${config.wickStopMaxPct}% (fewer shares, same max loss)` : ''} | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.fadeReentries > 0 ? ` | Re-entry: after a stop-out, the same stock again on a 5m close back below VWAP (long: above) until 11:30, up to ${config.fadeReentries}x a day` : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
+      if (config.pickerFallback) this.log(state, `⚙ No candidate at 09:20 → your Intraday Stock Picker (EMA-VWAP) runs for the rest of the day instead (still 1 trade/day: the fade has none that day)`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
@@ -724,6 +730,7 @@ export class StocksInPlayEngine {
       profitLock: raw.profitLock !== false,
       fadeReentries: fade ? Math.min(FADE_MAX_REENTRIES, Math.floor(numOrZero(raw.fadeReentries, 0))) : 0,
       wickStopMaxPct: fade ? Math.min(6, numOrZero(raw.wickStopMaxPct, 0)) : 0,
+      pickerFallback: fade && raw.pickerFallback !== false,
       stopLossRs,
       maxPositions: perSideTrades,
       perSideTrades,
@@ -1321,6 +1328,7 @@ export class StocksInPlayEngine {
         : trend
           ? `📭 No first 5m candle could be read for the ${eligible.length} liquid stocks — nothing to watch today.`
           : `📭 No stock in play today (no first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks${cfg.allowLongs ? '' : ' with a red candle'}).`);
+      if (fade && cfg.pickerFallback && state.positions.length === 0 && state.tradesToday === 0) await this.startPickerFallback(state);
       if (state.positions.length === 0) state.completeReason = `🏁 Nothing to trade today. Strategy completed.`;
       return;
     }
@@ -1390,6 +1398,57 @@ export class StocksInPlayEngine {
       this.logger.log(`[${state.strategyId}] Quote-vs-candle check (log only): ${sameDecision}/${compared} shortlisted stocks get the same decision from the quote-built 09:15 candle (quotes read ${(ageMs / 1000).toFixed(1)} s after the close).`);
     } catch (e: any) {
       this.logger.warn(`[${state.strategyId}] Quote-vs-candle check failed: ${e?.message || e}`);
+    }
+  }
+
+  /**
+   * FADE fallback (asked for 18 Nov 2026, a day with no fade candidate): when the 09:20 scan finds no candidate at all,
+   * start the same user's Intraday Stock Picker (EMA_VWAP_CROSSOVER, same broker account, same paper/live mode) for the
+   * rest of the day. Live-feasible: "no candidate" is known at 09:20 and the picker mostly enters 09:25-09:35. Only on
+   * zero-candidate days: a fade that has candidates but no signal by 09:45 does not fall back (picker entries after 09:45
+   * had no edge). Backtest 2y, Rs500 risk: 40 such days, picker +Rs9.7k (Y1 +4.0k, Y2 +5.7k, 53% win). The fade took no
+   * trade, so the day still has one trade at most.
+   */
+  private async startPickerFallback(state: EngineState): Promise<void> {
+    const mode = state.isPaperTrade ? 'paper' : 'live';
+    try {
+      const engine = this.moduleRef?.get(EmaVwapCrossoverEngine, { strict: false });
+      if (!engine) return;
+      const pickers = await this.prisma.strategy.findMany({
+        where: {
+          userId: state.userId,
+          type: 'EMA_VWAP_CROSSOVER',
+          isPaperTrade: state.isPaperTrade,
+          OR: [{ brokerAccountId: state.brokerAccountId }, { brokerAccountId: null }],
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (pickers.length === 0) {
+        this.log(state, `ℹ No ${mode} Intraday Stock Picker strategy on this account, so there is nothing to switch to today.`);
+        return;
+      }
+      const running = pickers.find((p) => engine.isRunning(p.id));
+      if (running) {
+        this.log(state, `🔀 No fade candidate: "${running.name}" (Intraday Stock Picker) is already running and takes today's trade.`);
+        return;
+      }
+      const user = await this.prisma.user.findUnique({ where: { id: state.userId }, select: { killSwitchActive: true } });
+      if (user?.killSwitchActive) {
+        this.log(state, `🛑 No fade candidate, but the kill switch is on: the Stock Picker is not started.`);
+        return;
+      }
+      const dayStart = istDayStart();
+      for (const p of pickers) {
+        const ranToday = await this.prisma.strategyExecution.findFirst({ where: { strategyId: p.id, startedAt: { gte: dayStart }, status: { in: ['COMPLETED', 'STOPPED'] } } });
+        if (ranToday) continue;
+        const { executionId } = await engine.start(p.id);
+        this.log(state, `🔀 No fade candidate → started "${p.name}" (Intraday Stock Picker, ${mode}) for the rest of the day; its own rules, stop and 15:05 exit apply (execution ${executionId}).`);
+        this.logger.log(`Fade fallback: started picker ${p.id} for ${state.strategyId}`);
+        return;
+      }
+      this.log(state, `ℹ No fade candidate, and the Stock Picker already ran or was stopped today: not started again.`);
+    } catch (e: any) {
+      this.log(state, `⚠ No fade candidate, but the Stock Picker could not be started: ${e?.message ?? e}`);
     }
   }
 

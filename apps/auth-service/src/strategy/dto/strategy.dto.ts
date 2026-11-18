@@ -143,6 +143,7 @@ export interface StocksInPlayConfig {
   skipNearPdlR?: number;               // FADE: skip a signal when yesterday's low (short) / high (long) is less than this many R ahead (default 0 = off)
   profitLock?: boolean;                // FADE: then lock +0.5R at +1.5R and +1.5R at +2.5R (default true)
   fadeLongs?: boolean;                 // FADE: also buy gap-down stocks on an oversold turn-up + first-candle-high break (default false; maxPositions = trades a day over both sides)
+  pickerFallback?: boolean;           // FADE: when the 09:20 scan finds no candidate, start the user's Intraday Stock Picker (same account, paper/live) for the day (default true)
   stopLossRs: number;                  // Max loss per trade (₹): qty = stopLossRs / stop distance, capped by capital
   maxPositions?: number;               // positions open together and trades per day (default 2, max 5)
   minRvol?: number;                    // first 5m candle volume vs its 10-session average (default 10)

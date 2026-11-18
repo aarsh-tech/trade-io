@@ -1157,3 +1157,55 @@ describe('FADE wick stop (wickStopMaxPct)', () => {
     expect(w.entryOrders()).toHaveLength(0);
   });
 });
+
+describe('fade: Stock Picker fallback on a day with no candidate', () => {
+  const mkState = () => ({ strategyId: SID, userId: 'u1', brokerAccountId: 'acct1', isPaperTrade: false, logs: [] as string[] });
+  const setup = (o: { pickers?: any[]; running?: string[]; ranToday?: string[]; killSwitch?: boolean }) => {
+    const started: string[] = [];
+    const picker = { isRunning: (id: string) => (o.running ?? []).includes(id), start: async (id: string) => { started.push(id); return { executionId: 'ex1' }; } };
+    const prisma: any = {
+      strategy: { findMany: async ({ where }: any) => (o.pickers ?? []).filter((p) => p.userId === where.userId && p.type === where.type && p.isPaperTrade === where.isPaperTrade) },
+      user: { findUnique: async () => ({ killSwitchActive: !!o.killSwitch }) },
+      strategyExecution: { findFirst: async ({ where }: any) => ((o.ranToday ?? []).includes(where.strategyId) ? { id: 'x' } : null) },
+    };
+    const moduleRef: any = { get: () => picker };
+    const engine: any = new StocksInPlayEngine(prisma, {} as any, { registerOrderListener: () => () => undefined } as any, {} as any, moduleRef);
+    engine.log = (s: any, m: string) => s.logs.push(m);
+    return { engine, started };
+  };
+  const P = (id: string, extra: any = {}) => ({ id, name: `Picker ${id}`, userId: 'u1', type: 'EMA_VWAP_CROSSOVER', isPaperTrade: false, ...extra });
+
+  it('starts the live picker of the same user', async () => {
+    const { engine, started } = setup({ pickers: [P('p1'), P('p2', { isPaperTrade: true }), P('p3', { userId: 'u2' })] });
+    const s = mkState();
+    await engine.startPickerFallback(s);
+    expect(started).toEqual(['p1']);
+    expect(s.logs.join('\n')).toMatch(/started "Picker p1"/);
+  });
+  it('does not start a second one when a picker is already running', async () => {
+    const { engine, started } = setup({ pickers: [P('p1')], running: ['p1'] });
+    await engine.startPickerFallback(mkState());
+    expect(started).toEqual([]);
+  });
+  it('skips a picker that already ran or was stopped today, and respects the kill switch', async () => {
+    const a = setup({ pickers: [P('p1')], ranToday: ['p1'] });
+    await a.engine.startPickerFallback(mkState());
+    expect(a.started).toEqual([]);
+    const k = setup({ pickers: [P('p1')], killSwitch: true });
+    await k.engine.startPickerFallback(mkState());
+    expect(k.started).toEqual([]);
+  });
+  it('logs and does nothing without a picker strategy', async () => {
+    const { engine, started } = setup({ pickers: [] });
+    const s = mkState();
+    await engine.startPickerFallback(s);
+    expect(started).toEqual([]);
+    expect(s.logs[0]).toMatch(/No live Intraday Stock Picker/);
+  });
+  it('is on by default for the fade and can be switched off', () => {
+    const { engine } = setup({});
+    expect(engine.resolveConfig({ setup: 'FADE', stopLossRs: 500 }).pickerFallback).toBe(true);
+    expect(engine.resolveConfig({ setup: 'FADE', stopLossRs: 500, pickerFallback: false }).pickerFallback).toBe(false);
+    expect(engine.resolveConfig({ setup: 'ORB', stopLossRs: 500 }).pickerFallback).toBe(false);
+  });
+});
