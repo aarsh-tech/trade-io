@@ -134,6 +134,7 @@ export function ConfigTab({ ctx }: { ctx: DetailCtx }) {
       { label: "Re-entry after a stop-out", value: Number(cfg.fadeReentries ?? 0) > 0 ? `Up to ${cfg.fadeReentries}x a day: the same stock again on a 5m close back below VWAP${cfg.fadeLongs === true ? " (long: above)" : ""}, until 11:30` : "Off" },
       { label: "Room to yesterday's low", value: Number(cfg.skipNearPdlR ?? 0) > 0 ? `Skip when yesterday's low${cfg.fadeLongs === true ? " (long: high)" : ""} is less than ${cfg.skipNearPdlR}x the stop away` : "Off" },
       { label: "No candidate at 09:20", value: cfg.pickerFallback === false ? "Nothing to trade: the day ends" : "Your Intraday Stock Picker (same account, paper/live) is started for the rest of the day" },
+      { label: "Run-up short add-on", value: cfg.runShort === true ? "On: any liquid stock up >= 4% from its open with >= 2x usual volume is shorted on the same rollover (5m closes 09:30 to 10:15); 1 extra trade a day, same stop and exits" : "Off" },
     );
   } else if (strategy.type === "STOCKS_IN_PLAY" && cfg.setup === "OI") {
     entry.push(

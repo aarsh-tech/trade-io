@@ -145,6 +145,28 @@ const WICK_STOP_BUFFER_PCT = 0.05;
 const FADE_MAX_REENTRIES = 2;
 /** FADE re-entry: the last 5m close that can trigger one (11:30 IST). */
 const FADE_REENTRY_LAST_CLOSE_HHMM = 11 * 60 + 30;
+/**
+ * FADE run-up short add-on (runShort; off by default). Asked for by the user on 20 Nov 2026 after TATACHEM (opened 0.66%
+ * below yesterday's close, ran +5% to ₹678 by 09:50, fell to ₹637) while the fade took FSL. Any liquid stock (not a fade
+ * candidate still being watched, not traded or held today) that is up >= RUN_MIN_UP_PCT from today's open on a 5m close
+ * 09:30..10:15, with today's volume so far >= RUN_MIN_VOL_X x its usual volume to that candle, AND the fade's overbought
+ * rollover on that close -> SHORT at market with the fade's stopPct stop, target and stop ladder; 15:05 square-off.
+ * It is its own trade: at most RUN_MAX_TRADES a day on top of the fade's maxPositions (never takes the fade's slot).
+ * Backtest 2y + 37 days (scratchpad 2a6aad97 run2.cjs; 1.8% stop, PFOCUS ladder, worst candle order, ₹500 risk, 523 stocks):
+ * alone ₹47.5k (Y1 ₹27.2k, Y2 ₹20.5k, 21/27 green months); fade + this as 2 trades a day ₹87.3k vs the fade alone ₹48.1k,
+ * max drawdown ₹7.4k, daily P&L correlation with the fade 0.16. Best of 48 settings (neighbours ₹34–44k), so expect less.
+ * With the +0.8R→+0.2R stop step instead of the ladder it made only ₹24k. The long mirror lost in 47/48 settings.
+ */
+const RUN_MIN_UP_PCT = 4;
+const RUN_MIN_VOL_X = 2;
+const RUN_MAX_TRADES = 1;
+/** Run-up short: signals on the candles starting 09:25..10:10 (closing 09:30..10:15). */
+const RUN_FIRST_CANDLE_HHMM = 9 * 60 + 25;
+const RUN_LAST_CANDLE_HHMM = 10 * 60 + 10;
+/** Baseline cumulative volume per 5m candle from 09:15 through the last run-up candle (12 candles). */
+const RUN_CUM_CANDLES = (RUN_LAST_CANDLE_HHMM - (9 * 60 + 15)) / 5 + 1;
+/** Run-up short: most stocks whose 5m history is read on one close (the quote screen picks the biggest run-ups first). */
+const RUN_MAX_SHORTLIST = 12;
 /** FADE long: after the oversold turn-up, the first-candle high must break within this long. */
 const FADE_LONG_BREAK_WINDOW_MS = 30 * 60_000;
 /** Retry a failed breakeven SL modification after this long. */
@@ -238,6 +260,8 @@ interface ResolvedConfig {
   fadeReentries: number;
   /** FADE: when the 09:20 scan finds no candidate at all, start the user's Intraday Stock Picker for the rest of the day. */
   pickerFallback: boolean;
+  /** FADE: the run-up short add-on (RUN_MIN_UP_PCT), its own extra trade a day. See checkRunSignals. */
+  runShort: boolean;
   stopLossRs: number;
   /** Daily trade cap and position slots (FADE with longs and TREND: both sides together). */
   maxPositions: number;
@@ -266,6 +290,8 @@ interface Baseline {
   tick: number;
   /** Today's 09:15 candle when the history was loaded after 09:20. */
   first?: { o: number; h: number; l: number; c: number; v: number };
+  /** Run-up short: average volume from 09:15 through each 5m candle up to 10:10 (RUN_CUM_CANDLES values) over the previous sessions. */
+  avgCumVol?: number[];
 }
 
 interface Candidate {
@@ -298,6 +324,8 @@ interface Candidate {
   lowerCircuit?: number;
   /** FADE wick stop chosen when the order was sized (null/undefined = the stopPct stop). */
   wickSl?: number | null;
+  /** A run-up short add-on entry (its own trade slot). */
+  run?: boolean;
 }
 
 interface OpenPosition {
@@ -345,7 +373,25 @@ interface OpenPosition {
   qtyMismatch?: number | null;
   /** Problems already alerted, so a retry loop sends one alert. */
   alerted?: Set<string>;
+  /** Opened by the run-up short add-on (no fade re-entry after it). */
+  run?: boolean;
 }
+
+/** FADE run-up short add-on: the day's watch. */
+interface RunWatch {
+  /** Nothing more to do today (traded, or the 10:15 close is past). */
+  done: boolean;
+  /** Start (epoch ms) of the last 5m candle already checked. */
+  checkedThrough: number;
+  /** 5m history (previous sessions + today) of the stocks read so far. */
+  hist: Map<string, { candles: FadeCandle[]; at: number }>;
+  /** The "fade done, add-on still watching" line was logged. */
+  loggedWaiting: boolean;
+  /** The quote screen of one close, kept while its candles are waited for (one screen per close). */
+  screen?: { target: number; list: RunScreened[] } | null;
+}
+
+interface RunScreened { sym: string; upPct: number; high: number; upper: number; lower: number }
 
 /** FADE: a stopped-out stock waiting for a 5m close back on the trade's side of VWAP. */
 interface FadeReentryWatch {
@@ -413,6 +459,12 @@ interface EngineState {
   reentry: FadeReentryWatch | null;
   /** FADE: re-entry orders sent today (counted when sent, so an unconfirmed one still uses its place). */
   reentriesToday: number;
+  /** FADE run-up short add-on watch (null = off). */
+  run?: RunWatch | null;
+  /** Run-up add-on entries sent today (counted when sent: an unconfirmed or rejected one still uses the add-on's trade). */
+  runTradesToday?: number;
+  /** Run-up add-on positions actually opened today: these are the trades not counted against the fade's maxPositions. */
+  runBooked?: number;
   winsToday: number;
   lossesToday: number;
   realizedTodayRs: number;
@@ -611,6 +663,9 @@ export class StocksInPlayEngine {
       sideTrades: { LONG: 0, SHORT: 0 },
       reentry: null,
       reentriesToday: 0,
+      run: config.runShort ? { done: false, checkedThrough: 0, hist: new Map(), loggedWaiting: false } : null,
+      runTradesToday: 0,
+      runBooked: 0,
       winsToday: 0,
       lossesToday: 0,
       realizedTodayRs: 0,
@@ -651,6 +706,7 @@ export class StocksInPlayEngine {
       this.log(state, `⚙ At 09:20: stocks that opened ABOVE yesterday's close and whose first 5m candle traded >= ${config.minRvol}x their usual volume (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | SHORT on the first 5m close from 09:20 to 09:45 where MFI, Stochastic, Bollinger or CMF turns down from overbought | Stop ${config.stopPct}%${config.wickStopMaxPct > 0 ? `, or just past the day's high (long: low) when that is further away but within ${config.wickStopMaxPct}% (fewer shares, same max loss)` : ''} | Target ${config.targetR > 0 ? `${config.targetR}R (${(config.stopPct * config.targetR).toFixed(2)}%)` : 'none'} | Stop to ${config.breakevenLockR > 0 ? `entry +${config.breakevenLockR}R` : 'entry'} at ${config.breakevenAtR > 0 ? `+${config.breakevenAtR}R` : 'never'}${config.profitLock ? ' | Profit lock: +0.5R at +1.5R, +1.5R at +2.5R' : ''}${config.fadeReentries > 0 ? ` | Re-entry: after a stop-out, the same stock again on a 5m close back below VWAP (long: above) until 11:30, up to ${config.fadeReentries}x a day` : ''}${config.skipNearPdlR > 0 ? ` | Skip when yesterday's low is less than ${config.skipNearPdlR}R below the price` : ''} | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds | Square-off 15:05`);
       if (config.pickerFallback) this.log(state, `⚙ No candidate at 09:20 → your Intraday Stock Picker (EMA-VWAP) runs for the rest of the day instead (still 1 trade/day: the fade has none that day)`);
       if (config.allowLongs) this.log(state, `⚙ Longs: stocks that opened BELOW yesterday's close with the same volume | on an oversold turn-up (MFI, Stochastic, Bollinger or CMF) from 09:20 to 09:45, BUY only when price breaks the first 5m candle's high within 30 min | same stop, target and stop ladder | ${config.maxPositions} trade(s) a day over both sides: the first entry, short or long, takes it`);
+      if (config.runShort) this.log(state, `⚙ Run-up short add-on: any liquid stock up >= ${RUN_MIN_UP_PCT}% from today's open with >= ${RUN_MIN_VOL_X}x its usual volume so far | SHORT on the same overbought rollover on a 5m close from 09:30 to 10:15 | same stop, target and stop ladder | ${RUN_MAX_TRADES} extra trade a day, on top of the fade's ${config.maxPositions}`);
     } else if (config.setup === 'TREND') {
       this.log(state, `▶ 15/40 EMA trend (${sides}) started | ${mode}`);
       this.log(state, `⚙ At 09:20: watch the ${config.watchCount} stock(s) with the highest first 5m candle volume vs usual (NIFTY 500 + F&O, price >= ₹${config.minPrice}, avg daily value >= ₹${config.minAvgValueCr} Cr) | Each side's first 15/40 EMA crossover on the 5m closes 09:25–14:30: BUY when the 15-EMA crosses above the 40-EMA with the close above VWAP, SHORT when it crosses below with the close below VWAP${config.withGapOnly ? ' | Only with the gap: a gap-up stock is never shorted, a gap-down stock never bought' : ''} | Stop at the day low/high | Exit when the 15-EMA crosses back, else 15:05 | Max loss/trade ₹${config.stopLossRs} | ${config.maxPositions} trade(s)/day, Zerodha's leverage per stock (fallback ${config.leverage}x) on the free Zerodha funds`);
@@ -682,12 +738,18 @@ export class StocksInPlayEngine {
       sideCounted.add(o.symbol);
       state.sideTrades[o.side === 'BUY' ? 'LONG' : 'SHORT']++;
     }
+    // Run-up add-on orders sent earlier today (saved when sent): they use up the add-on's trade, and the ones that may
+    // have filled are not counted against the fade's own cap.
+    const runSymbols = config.setup === 'FADE' ? this.readRunSymbols(strategyId) : new Set<string>();
+    state.runTradesToday = Array.from(runSymbols).filter((s) => state.tradedSymbols.has(s)).length;
+    state.runBooked = Array.from(runSymbols).filter((s) => sideCounted.has(s)).length;
 
     await this.recoverOpenPositions(state, strategy.brokerAccount);
+    for (const p of state.positions) if (runSymbols.has(p.symbol)) p.run = true;
     if (state.positions.length > state.tradesToday) state.tradesToday = state.positions.length;
     if (state.oi) await this.recoverOiOrder(state);
 
-    if (state.positions.length === 0 && state.tradesToday >= config.maxPositions) {
+    if (state.positions.length === 0 && this.fadeTrades(state) >= config.maxPositions && !this.runOpen(state, new Date())) {
       await this.stopWithStatus(strategyId, 'COMPLETED', `⛔ Max ${config.maxPositions} trades already taken today. Strategy completed.`);
       return { executionId: execution.id };
     }
@@ -731,6 +793,7 @@ export class StocksInPlayEngine {
       fadeReentries: fade ? Math.min(FADE_MAX_REENTRIES, Math.floor(numOrZero(raw.fadeReentries, 0))) : 0,
       wickStopMaxPct: fade ? Math.min(6, numOrZero(raw.wickStopMaxPct, 0)) : 0,
       pickerFallback: fade && raw.pickerFallback !== false,
+      runShort: fade && raw.runShort === true,
       stopLossRs,
       maxPositions: perSideTrades,
       perSideTrades,
@@ -978,6 +1041,8 @@ export class StocksInPlayEngine {
       const fade = state.config.setup === 'FADE';
       const trend = state.config.setup === 'TREND';
       const sessionOver = hhmm >= SQUARE_OFF_HHMM;
+      // FADE run-up short add-on: its own 09:30..10:15 closes, whether or not the fade has candidates or a trade.
+      if (fade && state.run && !state.run.done && state.baselines && !sessionOver) await this.checkRunSignals(state, client, new Date());
       // FADE only signals on the 09:20..09:45 closes, TREND on 09:25..14:30; started (or still without candidates) after that, nothing is left today.
       const windowOver = !state.candidates && ((fade && hhmm >= FADE_LAST_CANDLE_HHMM + 7) || (trend && hhmm >= TREND_LAST_CANDLE_HHMM + 7));
       if (sessionOver) {
@@ -1015,7 +1080,13 @@ export class StocksInPlayEngine {
     // An entry of unknown outcome may still be a live position, so the day does not end until it is resolved.
     // A fade re-entry watch keeps the day going too (it ends itself after the 11:30 close or at 15:05).
     if (state.reentry && getIstHhmm(new Date()) >= SQUARE_OFF_HHMM) state.reentry = null;
-    if (state.completeReason && state.positions.length === 0 && !state.uncertainEntry && !state.reentry) {
+    // The run-up add-on watches until the 10:15 close even when the fade is done for the day.
+    if (state.completeReason && state.positions.length === 0 && !state.uncertainEntry && !state.reentry && state.run && this.runOpen(state, new Date())) {
+      if (!state.run.loggedWaiting) {
+        state.run.loggedWaiting = true;
+        this.log(state, `⏳ The fade is done for today; the run-up short add-on keeps watching until the 10:15 close.`);
+      }
+    } else if (state.completeReason && state.positions.length === 0 && !state.uncertainEntry && !state.reentry) {
       const reason = state.completeReason;
       state.completeReason = null;
       await this.stopWithStatus(strategyId, 'COMPLETED', reason);
@@ -1185,16 +1256,18 @@ export class StocksInPlayEngine {
 
   /** Previous sessions' first-candle volume, 14-day ATR and traded value from 5m candles; plus today's first candle. */
   private baselineFrom(raw: any[], today: string, tick: number): Baseline | null {
-    const days = new Map<string, { first: number | null; h: number; l: number; c: number; value: number; f?: any }>();
+    const days = new Map<string, { first: number | null; h: number; l: number; c: number; value: number; f?: any; vols: number[] }>();
     for (const k of raw || []) {
       const d = new Date(k.date);
       const dayStr = getIstDateStr(d);
       const hhmm = getIstHhmm(d);
       if (hhmm < 9 * 60 + 15 || hhmm >= 15 * 60 + 30) continue;
       let r = days.get(dayStr);
-      if (!r) { r = { first: null, h: -Infinity, l: Infinity, c: 0, value: 0 }; days.set(dayStr, r); }
+      if (!r) { r = { first: null, h: -Infinity, l: Infinity, c: 0, value: 0, vols: new Array(RUN_CUM_CANDLES).fill(0) }; days.set(dayStr, r); }
       const o = Number(k.open), h = Number(k.high), l = Number(k.low), c = Number(k.close), v = Number(k.volume) || 0;
       if (hhmm === 9 * 60 + 15) { r.first = v; r.f = { o, h, l, c, v }; }
+      const slot = (hhmm - (9 * 60 + 15)) / 5;
+      if (Number.isInteger(slot) && slot < RUN_CUM_CANDLES) r.vols[slot] = v;
       r.h = Math.max(r.h, h); r.l = Math.min(r.l, l); r.c = c; r.value += c * v;
     }
     const prior = Array.from(days.keys()).filter((d) => d < today).sort();
@@ -1210,12 +1283,17 @@ export class StocksInPlayEngine {
     if (trN < 8) return null;
     const last = days.get(prior[prior.length - 1])!;
     const todayRow = days.get(today);
+    // Run-up short: the usual volume from 09:15 through each 5m candle, over the same sessions as the first-candle average.
+    const cumSessions = prior.slice(-BASELINE_SESSIONS).map((d) => days.get(d)!).filter((r) => !!r.first);
+    const avgCumVol = Array.from({ length: RUN_CUM_CANDLES }, (_, j) =>
+      cumSessions.reduce((a, r) => a + r.vols.slice(0, j + 1).reduce((x, y) => x + y, 0), 0) / Math.max(1, cumSessions.length));
     return {
       avgFirstVol: firstVols.reduce((a, b) => a + b, 0) / firstVols.length,
       atr: trSum / trN,
       avgValueCr: valSum / trN / 1e7,
       prevClose: last.c,
       tick,
+      avgCumVol,
       ...(todayRow?.f ? { first: todayRow.f } : {}),
     };
   }
@@ -1328,7 +1406,7 @@ export class StocksInPlayEngine {
         : trend
           ? `📭 No first 5m candle could be read for the ${eligible.length} liquid stocks — nothing to watch today.`
           : `📭 No stock in play today (no first candle >= ${cfg.minRvol}x its usual volume in the ${eligible.length} liquid stocks${cfg.allowLongs ? '' : ' with a red candle'}).`);
-      if (fade && cfg.pickerFallback && state.positions.length === 0 && state.tradesToday === 0) await this.startPickerFallback(state);
+      if (fade && cfg.pickerFallback && state.positions.length === 0 && this.fadeTrades(state) === 0) await this.startPickerFallback(state);
       if (state.positions.length === 0) state.completeReason = `🏁 Nothing to trade today. Strategy completed.`;
       return;
     }
@@ -1491,14 +1569,14 @@ export class StocksInPlayEngine {
     const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
     const lastStart = dayOpenMs + (FADE_LAST_CANDLE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
     // A side that used up its trades stops watching; armed longs wait for their break in checkFadeLongBreaks.
-    for (const c of state.candidates) if (!c.done && state.sideTrades[c.side] >= cfg.perSideTrades) c.done = true;
+    for (const c of state.candidates) if (!c.done && this.fadeSideTrades(state, c.side) >= cfg.perSideTrades) c.done = true;
     const live = state.candidates.filter((c) => !c.done && !c.armedUntil);
     const armed = state.candidates.some((c) => !c.done && c.armedUntil > 0);
 
-    if (state.tradesToday >= cfg.maxPositions || nowMs > lastStart + FIVE_MIN_MS + FADE_CANDLE_WAIT_MS) {
+    if (this.fadeTrades(state) >= cfg.maxPositions || nowMs > lastStart + FIVE_MIN_MS + FADE_CANDLE_WAIT_MS) {
       for (const c of live) c.done = true;
       if (state.positions.length === 0 && !state.completeReason && !armed) {
-        state.completeReason = state.tradesToday >= cfg.maxPositions
+        state.completeReason = this.fadeTrades(state) >= cfg.maxPositions
           ? `⛔ Max ${cfg.maxPositions} trade(s) done for today. Strategy completed.`
           : `🏁 No ${cfg.allowLongs ? 'fade setup' : 'overbought rollover'} in the candidates by the 09:45 close — no ${state.tradesToday > 0 ? 'more fade trades' : 'fade trade'} today. Strategy completed.`;
       }
@@ -1588,7 +1666,7 @@ export class StocksInPlayEngine {
         continue;
       }
       s.c.done = true;
-      if (state.tradesToday >= cfg.maxPositions || state.sideTrades.SHORT >= cfg.perSideTrades || state.stopping) continue;
+      if (this.fadeTrades(state) >= cfg.maxPositions || this.fadeSideTrades(state, 'SHORT') >= cfg.perSideTrades || state.stopping) continue;
       if (Date.now() - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
         this.log(state, `⏭ ${s.c.symbol} fade signal is over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min old — not entering late.`);
         continue;
@@ -1608,7 +1686,7 @@ export class StocksInPlayEngine {
     const cfg = state.config;
     for (const c of state.candidates) {
       if (c.done || !c.armedUntil) continue;
-      if (state.tradesToday >= cfg.maxPositions || state.sideTrades.LONG >= cfg.perSideTrades) { c.done = true; continue; }
+      if (this.fadeTrades(state) >= cfg.maxPositions || this.fadeSideTrades(state, 'LONG') >= cfg.perSideTrades) { c.done = true; continue; }
       if (now.getTime() > c.armedUntil) {
         c.done = true;
         this.log(state, `⏭ ${c.symbol} did not break its first-candle high ₹${c.level} within ${FADE_LONG_BREAK_WINDOW_MS / 60_000} min of the turn-up — no long.`);
@@ -1619,6 +1697,211 @@ export class StocksInPlayEngine {
     }
     if (state.positions.length === 0 && !state.completeReason && state.candidates.every((c) => c.done) && getIstHhmm(now) >= FADE_LAST_CANDLE_HHMM + 5) {
       state.completeReason = `🏁 Every fade candidate has been traded or dropped. Strategy completed.`;
+    }
+  }
+
+  // ── FADE run-up short add-on (5m closes 09:30..10:15) ──────────────────────
+
+  /** Trades today that count against the fade's own cap (an opened run-up add-on trade does not). */
+  private fadeTrades(state: EngineState): number {
+    return Math.max(0, state.tradesToday - (state.runBooked ?? 0));
+  }
+
+  private fadeSideTrades(state: EngineState, side: Side): number {
+    return Math.max(0, state.sideTrades[side] - (side === 'SHORT' ? state.runBooked ?? 0 : 0));
+  }
+
+  /** The run-up add-on may still trade today (on, its trade not used, the 10:15 close not long past). */
+  private runOpen(state: EngineState, now: Date): boolean {
+    const r = state.run;
+    if (!r || r.done || state.stopping || !state.config.runShort) return false;
+    if ((state.runTradesToday ?? 0) >= RUN_MAX_TRADES) return false;
+    return now.getTime() <= new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime() + (RUN_LAST_CANDLE_HHMM + 5 - FADE_FIRST_CANDLE_HHMM) * 60_000 + FADE_CANDLE_WAIT_MS;
+  }
+
+  private runFile(strategyId: string, day: string) {
+    return path.join(process.env.SIP_STATE_DIR || path.join(process.cwd(), 'logs', 'stocks-in-play'), `run-${strategyId}-${day}.json`);
+  }
+
+  /** Stocks the run-up add-on sent an entry for today (read at start, so a restart neither re-trades it nor gives its slot to the fade). */
+  private readRunSymbols(strategyId: string): Set<string> {
+    try {
+      const list = JSON.parse(fs.readFileSync(this.runFile(strategyId, getIstDateStr(new Date())), 'utf8'));
+      return new Set(Array.isArray(list) ? list.map(String) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  /** Counts a run-up add-on entry as sent and saves its stock for a restart. */
+  private noteRunSent(state: EngineState, symbol: string) {
+    state.runTradesToday = (state.runTradesToday ?? 0) + 1;
+    try {
+      const file = this.runFile(state.strategyId, getIstDateStr(new Date()));
+      const list = Array.from(new Set([...this.readRunSymbols(state.strategyId), symbol]));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(list));
+    } catch (e: any) {
+      this.logger.warn(`[${state.strategyId}] Could not save the run-up add-on trade: ${e?.message || e}`);
+    }
+  }
+
+  /**
+   * Run-up short add-on (runShort), on each 5m close 09:30..10:15: one batch of quotes screens every liquid stock for a
+   * day high >= RUN_MIN_UP_PCT above today's open and today's volume >= RUN_MIN_VOL_X x usual for that time; the biggest
+   * run-ups (at most RUN_MAX_SHORTLIST) then get their 5m history, and the rule is checked on the candles themselves:
+   * the high since the open >= RUN_MIN_UP_PCT above the open, the volume since the open >= RUN_MIN_VOL_X x avgCumVol for
+   * that candle, and fadeShortTrigger on the candle that just closed. Several on one close: the highest volume first.
+   * Fade candidates still being watched, stocks already traded or held today and NSE ASM/GSM stocks are skipped.
+   */
+  private async checkRunSignals(state: EngineState, client: any, now: Date) {
+    const r = state.run!;
+    const cfg = state.config;
+    if ((state.runTradesToday ?? 0) >= RUN_MAX_TRADES) { r.done = true; return; }
+    const nowMs = now.getTime();
+    const dayOpenMs = new Date(`${getIstDateStr(now)}T09:15:00.000+05:30`).getTime();
+    const firstStart = dayOpenMs + (RUN_FIRST_CANDLE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
+    const lastStart = dayOpenMs + (RUN_LAST_CANDLE_HHMM - FADE_FIRST_CANDLE_HHMM) * 60_000;
+    const hhmmOf = (ms: number) => { const m = getIstHhmm(new Date(ms)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+    if (r.checkedThrough >= lastStart || nowMs > lastStart + FIVE_MIN_MS + FADE_CANDLE_WAIT_MS) {
+      r.done = true;
+      this.log(state, `🏁 Run-up short add-on: its window (09:30–10:15 closes) is over — no add-on trade today.`);
+      return;
+    }
+    const closedStart = Math.floor((nowMs - FADE_SETTLE_MS) / FIVE_MIN_MS) * FIVE_MIN_MS - FIVE_MIN_MS;
+    if (closedStart < firstStart) return;
+    const target = Math.min(closedStart, lastStart);
+    if (r.checkedThrough >= target) return;
+    const closeMs = target + FIVE_MIN_MS;
+    if (nowMs - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
+      r.checkedThrough = target;
+      this.log(state, `⏭ Run-up add-on: the ${hhmmOf(closeMs)} close was seen over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min late — waiting for the next close.`);
+      return;
+    }
+    // An earlier entry of unknown outcome blocks every new entry; retried on the next tick while the close is fresh.
+    if (state.uncertainEntry) return;
+
+    const j = Math.round((target - dayOpenMs) / FIVE_MIN_MS);
+    const base = state.baselines!;
+    const kite = client['kite'] || client;
+    const watchedByFade = new Set((state.candidates ?? []).filter((c) => !c.done).map((c) => c.symbol));
+    const held = new Set(state.positions.map((p) => normalizeSymbol(p.symbol)));
+    const surv = state.surveillance;
+    const pool = Array.from(base.entries()).filter(([s, b]) =>
+      b.avgValueCr >= cfg.minAvgValueCr && b.prevClose >= cfg.minPrice && (b.avgCumVol?.[j] ?? 0) > 0
+      && !state.tradedSymbols.has(s) && !watchedByFade.has(s) && !held.has(s) && !surv?.bySymbol.has(s));
+
+    // Screen: quotes for the whole pool (500 per call), once per close. A little slack: the candles decide below.
+    if (r.screen?.target !== target) {
+      const list = await this.runScreen(state, kite, pool, j);
+      if (!list) return; // retried on the next tick while the close is fresh
+      r.screen = { target, list };
+    }
+    const shortlist = r.screen.list.slice(0, RUN_MAX_SHORTLIST);
+
+    // The rule on the candles: high and volume since the open through this candle, then the overbought rollover.
+    const signals: { s: RunScreened; candles: FadeCandle[]; idx: number; trigger: FadeTrigger; upPct: number; volX: number; open: number; hi: number }[] = [];
+    let waiting = false;
+    for (let i = 0; i < shortlist.length; i += 3) {
+      await Promise.all(shortlist.slice(i, i + 3).map(async (s) => {
+        const cached = r.hist.get(s.sym);
+        let candles = cached?.candles ?? null;
+        if (!(cached && cached.at >= closeMs + FADE_SETTLE_MS && cached.candles.some((k) => k.t === target))) {
+          const from = new Date(dayOpenMs);
+          if (!cached) from.setDate(from.getDate() - FADE_HISTORY_DAYS);
+          try {
+            const fresh = toCompletedCandles(await client.getHistoricalData(s.sym, 'NSE', '5minute', from, new Date()), Date.now());
+            candles = cached ? [...cached.candles.filter((k) => k.t < dayOpenMs), ...fresh.filter((k) => k.t >= dayOpenMs)] : fresh;
+            r.hist.set(s.sym, { candles, at: Date.now() });
+          } catch (e: any) {
+            this.logger.warn(`[${state.strategyId}] ${s.sym} 5m history failed (run-up add-on): ${e?.message || e}`);
+            waiting = true;
+            return;
+          }
+        }
+        const idx = candles!.findIndex((k) => k.t === target);
+        if (idx < 0) { waiting = true; return; }
+        const today = candles!.filter((k) => k.t >= dayOpenMs && k.t <= target);
+        if (today.length === 0 || today[0].t !== dayOpenMs || idx < FADE_MIN_HISTORY) return;
+        const open = today[0].o;
+        const hi = Math.max(...today.map((k) => k.h));
+        const volX = today.reduce((a, k) => a + k.v, 0) / base.get(s.sym)!.avgCumVol![j];
+        const upPct = (hi / open - 1) * 100;
+        if (upPct < RUN_MIN_UP_PCT || volX < RUN_MIN_VOL_X) return;
+        const trigger = fadeShortTrigger(candles!, idx);
+        if (trigger) signals.push({ s, candles: candles!, idx, trigger, upPct, volX, open, hi });
+      }));
+    }
+    // A candle Kite has not published yet: try again shortly, unless it has been waited for long enough.
+    if (waiting && signals.length === 0 && nowMs - closeMs < FADE_CANDLE_WAIT_MS) return;
+    r.checkedThrough = target;
+    if (signals.length === 0) return;
+    await this.enterRunSignal(state, client, signals, closeMs, dayOpenMs, base);
+    if ((state.runTradesToday ?? 0) >= RUN_MAX_TRADES) r.done = true;
+  }
+
+  /** Run-up add-on quote screen of one close: biggest run-ups first; null when the quotes could not be read. */
+  private async runScreen(state: EngineState, kite: any, pool: [string, Baseline][], j: number): Promise<RunScreened[] | null> {
+    const screened: RunScreened[] = [];
+    for (let i = 0; i < pool.length; i += 500) {
+      const part = pool.slice(i, i + 500);
+      let q: Record<string, any>;
+      try {
+        q = await kite.getQuote(part.map(([s]) => `NSE:${s}`));
+      } catch (e: any) {
+        this.logger.warn(`[${state.strategyId}] Run-up add-on quotes failed: ${e?.message || e}`);
+        return null;
+      }
+      for (const [sym, b] of part) {
+        const x = q[`NSE:${sym}`];
+        const open = Number(x?.ohlc?.open) || 0, high = Number(x?.ohlc?.high) || 0, last = Number(x?.last_price) || 0, vol = Number(x?.volume) || 0;
+        if (!(open > 0) || !(high > 0)) continue;
+        const upPct = (high / open - 1) * 100;
+        if (upPct < RUN_MIN_UP_PCT - 0.25 || vol < RUN_MIN_VOL_X * b.avgCumVol![j] * 0.8) continue;
+        const upper = Number(x?.upper_circuit_limit) || 0;
+        // A short close to the upper circuit may not be coverable (as for the fade).
+        if (upper > 0 && last > 0 && (upper - last) / last < FADE_MIN_CIRCUIT_ROOM) continue;
+        screened.push({ sym, upPct, high, upper, lower: Number(x?.lower_circuit_limit) || 0 });
+      }
+    }
+    return screened.sort((a, b) => b.upPct - a.upPct);
+  }
+
+  /** Run-up add-on: logs the signals of one close and enters the first one Zerodha takes (highest volume first). */
+  private async enterRunSignal(
+    state: EngineState, client: any,
+    signals: { s: RunScreened; candles: FadeCandle[]; idx: number; trigger: FadeTrigger; upPct: number; volX: number; open: number; hi: number }[],
+    closeMs: number, dayOpenMs: number, base: Map<string, Baseline>,
+  ) {
+    const hhmmOf = (ms: number) => { const m = getIstHhmm(new Date(ms)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`; };
+    signals.sort((a, b) => b.volX - a.volX);
+    for (const g of signals) {
+      if ((state.runTradesToday ?? 0) >= RUN_MAX_TRADES || state.stopping || state.uncertainEntry) break;
+      if (Date.now() - closeMs > FADE_MAX_ENTRY_DELAY_MS) {
+        this.log(state, `⏭ ${g.s.sym} run-up short signal is over ${FADE_MAX_ENTRY_DELAY_MS / 60_000} min old — not entering late.`);
+        break;
+      }
+      const k = g.candles[g.idx];
+      const rd = fadeReadings(g.candles, g.idx)!;
+      const why: Record<FadeTrigger, string> = {
+        MFI: `MFI fell back to ${rd.mfi.toFixed(1)} from above 80`,
+        STOCH: `Stochastic %K ${rd.stochK.toFixed(1)} crossed under %D ${rd.stochD.toFixed(1)} from above 80`,
+        BB: `closed ₹${k.c} back under the upper Bollinger band ₹${rd.bbUpper.toFixed(2)}`,
+        CMF: `CMF fell to ${rd.cmf.toFixed(3)} (below -0.1)`,
+      };
+      this.log(state, `📉 [RUN-UP SHORT] ${g.s.sym} ${hhmmOf(closeMs)} close ₹${k.c} — up ${g.upPct.toFixed(1)}% from today's open ₹${g.open} (high ₹${g.hi}), volume ${g.volX.toFixed(1)}x usual so far, ${why[g.trigger]}`);
+      logSignal('SETUP', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: 'FADE', event: 'RUN_SIGNAL', symbol: g.s.sym, side: 'SHORT', trigger: g.trigger, candle: k, readings: rd, upPct: g.upPct, volX: g.volX, isPaper: state.isPaperTrade });
+      const f = g.candles.find((x) => x.t === dayOpenMs)!;
+      const c: Candidate = {
+        symbol: g.s.sym, side: 'SHORT', level: k.c, stopDist: 0, rvol: g.volX, tick: base.get(g.s.sym)!.tick || 0.05,
+        first: { o: f.o, h: f.h, l: f.l, c: f.c, v: f.v }, ltp: null, ltpAt: 0, done: false, candles: g.candles, candlesAt: Date.now(), checkedThrough: g.candles[g.idx].t,
+        armedUntil: 0, stopLevel: 0, crossSeen: new Set(), seenHigh: g.s.high, upperCircuit: g.s.upper, lowerCircuit: g.s.lower, run: true,
+      };
+      try { await this.tickerService.subscribeSymbol(state.brokerAccountId, c.symbol); state.subscribed.add(c.symbol); } catch { /* REST prices cover it */ }
+      // Zerodha's intraday leverage for this stock (also refuses 1x / not-allowed stocks); the entry waits for it briefly.
+      state.marginCheck = this.checkMargins(state, client, [{ symbol: c.symbol, side: 'SHORT', price: k.c, tick: c.tick }]).catch(() => undefined);
+      await this.refreshCandidateLtp(state, client, c);
+      await this.enterTrade(state, client, c, new Date(), { run: true });
     }
   }
 
@@ -2293,13 +2576,20 @@ export class StocksInPlayEngine {
     }
   }
 
-  private async enterTrade(state: EngineState, client: any, c: Candidate, now: Date, opts: { reentry?: boolean } = {}) {
+  private async enterTrade(state: EngineState, client: any, c: Candidate, now: Date, opts: { reentry?: boolean; run?: boolean } = {}) {
     const cfg = state.config;
     const fade = cfg.setup === 'FADE';
     // A fade re-entry may go past the daily cap by the re-entries allowed (never a new stock past it).
     const reentry = fade && opts.reentry === true && state.reentriesToday < cfg.fadeReentries;
     if (opts.reentry && !reentry) return;
-    const tradeCap = cfg.maxPositions + (reentry ? state.reentriesToday + 1 : 0);
+    // The run-up add-on has its own slot on top of the fade's: the fade's cap and re-entries are left to the fade.
+    const run = fade && opts.run === true && cfg.runShort;
+    if (opts.run && (!run || (state.runTradesToday ?? 0) >= RUN_MAX_TRADES)) return;
+    // Hard cap on the day's trades at the broker: the add-on may use the fade's trades, its re-entries and its own one;
+    // a fade entry may use the fade's trades plus any add-on trade already opened.
+    const tradeCap = run
+      ? cfg.maxPositions + cfg.fadeReentries + RUN_MAX_TRADES
+      : cfg.maxPositions + (state.runBooked ?? 0) + (reentry ? state.reentriesToday + 1 : 0);
     // An earlier entry may be live at the broker: nothing new goes in until that is known.
     if (state.uncertainEntry) {
       if (!state.uncertainEntry.loggedBlock) {
@@ -2403,6 +2693,8 @@ export class StocksInPlayEngine {
     }
     this.log(state, trend
       ? `🚀 ${c.symbol} 15/40 EMA crossover at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
+      : run
+      ? `🚀 ${c.symbol} run-up short at ₹${ltp.toFixed(2)} (add-on trade) — shorting ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
       : reentry
       ? `🔁 ${c.symbol} re-entry ${state.reentriesToday + 1}/${cfg.fadeReentries} at ₹${ltp.toFixed(2)} — ${c.side === 'SHORT' ? 'shorting' : 'buying'} ${qty} (risk allows ${qtyByRisk}, capital allows ${qtyByCap} at ${levText}).`
       : fade
@@ -2415,6 +2707,7 @@ export class StocksInPlayEngine {
     let fill: EntryFill | null;
     if (state.isPaperTrade) {
       if (reentry) state.reentriesToday++;
+      if (run) this.noteRunSent(state, c.symbol);
       fill = { qty, price: ltp, orderId: `PAPER_${Math.random().toString(36).substring(2, 10).toUpperCase()}` };
       await this.recordPaperOrder(state, c.symbol, entrySide, qty, ltp, fill.orderId, 'MARKET', 'COMPLETE');
     } else {
@@ -2424,8 +2717,9 @@ export class StocksInPlayEngine {
         this.log(state, `⏭ ${c.symbol}: "${holder}" already has a position in this stock on the same Zerodha account — skipping (the broker would net the two positions and break both strategies' exit checks).`);
         return;
       }
-      // Counted when sent: an order whose outcome is unknown still uses its re-entry.
+      // Counted when sent: an order whose outcome is unknown still uses its re-entry (or the add-on's trade).
       if (reentry) state.reentriesToday++;
+      if (run) this.noteRunSent(state, c.symbol);
       state.enteringSymbol = normalizeSymbol(c.symbol);
       try {
         fill = await this.placeLiveEntry(state, client, c, entrySide, qty, ltp);
@@ -2455,11 +2749,13 @@ export class StocksInPlayEngine {
     const target = fade && cfg.targetR > 0 ? roundTo(fill.price + sign * cfg.targetR * fillStopDist, c.tick, c.side === 'LONG' ? 'down' : 'up') : null;
     state.tradesToday++;
     state.sideTrades[c.side]++;
+    if (c.run) state.runBooked = (state.runBooked ?? 0) + 1;
     const p: OpenPosition = {
       symbol: c.symbol, side: c.side, entryPrice: fill.price, qty: fill.qty, sl, target, stopDist: fillStopDist, beDone: this.lockSteps(cfg).length === 0, lastBeAttempt: 0, lockedR: null, bestR: 0, tick: c.tick, rvol: c.rvol,
       slOrderId: null, openedAt: now.getTime(), ltp: ltp, ltpAt: Date.now(), slBreachAt: null, retryExit: null, lastExitAttempt: 0, lastOrdersCheck: 0, lastBrokerPosCheck: 0,
       candles: trend ? c.candles : null, trendCheckedThrough: 0, trendFetchAt: 0,
       pendingEntry: fill.remainderOpen ? { orderId: fill.orderId, filledQty: fill.qty, lastCheck: 0, cancelAfter: fill.cancelAfter ?? 0 } : null,
+      ...(c.run ? { run: true } : {}),
     };
     state.positions.push(p);
     const exitPlan = fade
@@ -2481,7 +2777,7 @@ export class StocksInPlayEngine {
         srText = '';
       }
     }
-    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | Trade ${state.tradesToday}/${cfg.maxPositions}${state.tradesToday > cfg.maxPositions ? ` (re-entry ${state.reentriesToday}/${cfg.fadeReentries})` : ''} | Order ${fill.orderId}${srText}`);
+    this.log(state, `📋 Placed Trade: NSE:${c.symbol} — ${c.side} Entry: ₹${fill.price.toFixed(2)} | Qty: ${fill.qty} | SL: ₹${sl.toFixed(2)} (risk ₹${(Math.abs(fill.price - sl) * fill.qty).toFixed(2)}) | ${exitPlan} | ${c.run ? `Run-up add-on trade (${RUN_MAX_TRADES} extra a day)` : `Trade ${this.fadeTrades(state)}/${cfg.maxPositions}${this.fadeTrades(state) > cfg.maxPositions ? ` (re-entry ${state.reentriesToday}/${cfg.fadeReentries})` : ''}`} | Order ${fill.orderId}${srText}`);
     logSignal('ENTRY', state.strategyId, { engine: 'STOCKS_IN_PLAY', setup: cfg.setup, symbol: c.symbol, side: c.side, level: c.level, entry: fill.price, sl, target, qty: fill.qty, rvol: c.rvol, ...(fade ? { stopMode: wickSl !== null ? 'WICK' : 'PERCENT', stopPctOfFill: Number(((Math.abs(fill.price - sl) / fill.price) * 100).toFixed(3)) } : {}), ...(srZones ? { srZones } : {}), isPaper: state.isPaperTrade });
 
     if (state.isPaperTrade) {
@@ -3281,7 +3577,7 @@ export class StocksInPlayEngine {
   /** FADE: after a full stop-out (the original stop, at a loss) watch the same stock for a re-entry, if any are left today. */
   private armFadeReentry(state: EngineState, p: OpenPosition, reason: ExitReason, pnl: number) {
     const cfg = state.config;
-    if (cfg.setup !== 'FADE' || !(cfg.fadeReentries > 0) || state.stopping) return;
+    if (cfg.setup !== 'FADE' || !(cfg.fadeReentries > 0) || state.stopping || p.run) return;
     if ((reason !== 'SL' && reason !== 'BROKER_SL') || p.lockedR !== null || !(pnl < 0)) return;
     const now = new Date();
     if (getIstHhmm(now) >= FADE_REENTRY_LAST_CLOSE_HHMM) return;

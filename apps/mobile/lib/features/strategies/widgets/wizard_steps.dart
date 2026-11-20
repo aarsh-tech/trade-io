@@ -344,6 +344,14 @@ class StepInstrument extends StatelessWidget {
                 value: fadeLongs,
                 onChanged: (v) => set('sipFadeLongs', v),
               ),
+              const SizedBox(height: 12),
+              ToggleCard(
+                title: 'Add-on: run-up short (optional, 1 extra trade a day)',
+                body:
+                    "Any liquid stock that is up 4% or more from today's open, with at least 2x its usual volume so far, is shorted on the same overbought rollover on a 5-minute close from 09:30 to 10:15 (like TATACHEM on 20 Nov). Same stop, target and stop ladder as the fade. It is its own trade on top of the fade's, so a day can have one more trade and one more stop. Backtest 2 years (1.8% stop, profit lock): alone +₹47.5k; fade + add-on +₹87.3k vs fade alone +₹48.1k, worst drawdown ₹7.4k. Best of 48 settings, so expect less.",
+                value: b(form, 'sipRunShort'),
+                onChanged: (v) => set('sipRunShort', v),
+              ),
             ],
             if (setup == 'ORB') ...[
               const SizedBox(height: 12),

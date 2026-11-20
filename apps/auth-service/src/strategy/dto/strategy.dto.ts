@@ -144,6 +144,7 @@ export interface StocksInPlayConfig {
   profitLock?: boolean;                // FADE: then lock +0.5R at +1.5R and +1.5R at +2.5R (default true)
   fadeLongs?: boolean;                 // FADE: also buy gap-down stocks on an oversold turn-up + first-candle-high break (default false; maxPositions = trades a day over both sides)
   pickerFallback?: boolean;           // FADE: when the 09:20 scan finds no candidate, start the user's Intraday Stock Picker (same account, paper/live) for the day (default true)
+  runShort?: boolean;                 // FADE: run-up short add-on — any liquid stock up >= 4% from its open on >= 2x usual volume, shorted on the same overbought rollover (5m closes 09:30-10:15); 1 extra trade a day (default false)
   stopLossRs: number;                  // Max loss per trade (₹): qty = stopLossRs / stop distance, capped by capital
   maxPositions?: number;               // positions open together and trades per day (default 2, max 5)
   minRvol?: number;                    // first 5m candle volume vs its 10-session average (default 10)

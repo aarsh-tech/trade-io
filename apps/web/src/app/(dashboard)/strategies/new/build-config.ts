@@ -34,6 +34,7 @@ export function buildStrategyConfig(form: StrategyFormState): Record<string, any
         wickStopMaxPct: orZero(form.sipWickStopMaxPct, 0),
         profitLock: form.sipProfitLock !== false,
         fadeLongs: form.sipFadeLongs === true,
+        runShort: form.sipRunShort === true,
       }),
       // OI: 1 trade a day (the top pick), short only, fixed % stop and R target.
       ...(oi && {

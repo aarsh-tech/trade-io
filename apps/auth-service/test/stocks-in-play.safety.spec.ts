@@ -1209,3 +1209,123 @@ describe('fade: Stock Picker fallback on a day with no candidate', () => {
     expect(engine.resolveConfig({ setup: 'ORB', stopLossRs: 500 }).pickerFallback).toBe(false);
   });
 });
+
+describe('fade: run-up short add-on (runShort)', () => {
+  process.env.SIP_STATE_DIR = require('path').join(require('os').tmpdir(), `sip-run-spec-${process.pid}`);
+  const dayOpen = at('09:15').getTime();
+  const iso = (t: number) => new Date(t).toISOString();
+  /** 60 quiet 5m candles from earlier sessions, then today: a steady run-up from ₹100 to ₹107.2 and a drop to ₹104 on the 09:55 candle (MFI rollover). */
+  const raw = () => {
+    const k: any[] = [];
+    for (let i = 60; i > 0; i--) { const c = 100 + Math.sin(i) * 0.5; k.push({ date: iso(dayOpen - i * 300_000 - 18 * 3600_000), open: c, high: c + 0.3, low: c - 0.3, close: c, volume: 1000 }); }
+    const closes = [100.5, 101.5, 102.5, 103.5, 104.5, 105.5, 106.5, 107.2, 104.0];
+    closes.forEach((c, j) => { const o = j ? closes[j - 1] : 100; k.push({ date: iso(dayOpen + j * 300_000), open: o, high: Math.max(o, c) + 0.3, low: Math.min(o, c) - 0.3, close: c, volume: 5000 }); });
+    return k;
+  };
+  const baseline = (over: Record<string, unknown> = {}) => ({ avgFirstVol: 1000, prevClose: 99, avgValueCr: 50, tick: 0.05, atr: 1, avgCumVol: Array.from({ length: 12 }, (_, j) => (j + 1) * 1000), ...over });
+  const quote = (over: Record<string, unknown> = {}) => ({ ohlc: { open: 100, high: 107.5 }, last_price: 104, volume: 45_000, upper_circuit_limit: 120, lower_circuit_limit: 80, ...over });
+  const runWorld = (o: { quotes?: Record<string, any>; base?: Map<string, any>; state?: Record<string, unknown> } = {}) => {
+    const w = makeWorld();
+    w.client.kite.getQuote = async (keys: string[]) => Object.fromEntries(keys.filter((k) => (o.quotes ?? { 'NSE:ABC': quote() })[k]).map((k) => [k, (o.quotes ?? { 'NSE:ABC': quote() })[k]]));
+    w.client.getHistoricalData = async () => raw();
+    const s = makeState(w, {
+      config: cfg({ runShort: true, stopPct: 1.8, targetR: 0, breakevenAtR: 0, breakevenLockR: 0 }),
+      baselines: o.base ?? new Map([['ABC', baseline()]]),
+      run: { done: false, checkedThrough: 0, hist: new Map(), loggedWaiting: false }, runTradesToday: 0, runBooked: 0,
+      ...o.state,
+    });
+    return { w, s };
+  };
+  beforeEach(() => jest.setSystemTime(at('10:00').getTime() + 3000));
+  afterEach(() => jest.setSystemTime(at('10:00')));
+
+  it('is off by default and only for the fade', () => {
+    const { w } = runWorld();
+    expect(w.engine.resolveConfig({ setup: 'FADE', stopLossRs: 500 }).runShort).toBe(false);
+    expect(w.engine.resolveConfig({ setup: 'FADE', stopLossRs: 500, runShort: true }).runShort).toBe(true);
+    expect(w.engine.resolveConfig({ setup: 'ORB', stopLossRs: 500, runShort: true }).runShort).toBe(false);
+  });
+
+  it('shorts a run-up stock on the rollover as an extra trade after the fade has traded', async () => {
+    const { w, s } = runWorld({ state: { tradesToday: 1, sideTrades: { LONG: 0, SHORT: 1 } } });
+    await w.engine.checkRunSignals(s, w.client, new Date());
+    expect(s.positions).toHaveLength(1);
+    expect(s.positions[0].symbol).toBe('ABC');
+    expect(s.positions[0].side).toBe('SHORT');
+    expect(s.positions[0].run).toBe(true);
+    expect(w.workingStops()).toHaveLength(1);
+    expect(s.runTradesToday).toBe(1);
+    expect(s.runBooked).toBe(1);
+    expect(w.engine.fadeTrades(s)).toBe(1); // the fade's own count is unchanged
+    expect(s.logs.join('\n')).toMatch(/RUN-UP SHORT\] ABC 10:00 close ₹104 — up 7\.5% from today's open/);
+    expect(s.run.done).toBe(true);
+    // Saved for a restart.
+    expect([...w.engine.readRunSymbols(SID)]).toContain('ABC');
+  });
+
+  it('takes no second add-on trade', async () => {
+    const { w, s } = runWorld({ state: { runTradesToday: 1 } });
+    await w.engine.checkRunSignals(s, w.client, new Date());
+    expect(s.positions).toHaveLength(0);
+    expect(w.entryOrders()).toHaveLength(0);
+    const p = await w.engine.enterTrade(s, w.client, candidate({ run: true }), new Date(), { run: true });
+    expect(p).toBeUndefined();
+    expect(w.entryOrders()).toHaveLength(0);
+  });
+
+  it('skips a run-up below 4%, low volume, a live fade candidate and a stock near its upper circuit', async () => {
+    const cases: Record<string, unknown>[] = [
+      { quotes: { 'NSE:ABC': quote({ ohlc: { open: 100, high: 103 } }) } },
+      { quotes: { 'NSE:ABC': quote({ volume: 5000 }) } },
+      { state: { candidates: [candidate({ symbol: 'ABC' })] } },
+      { quotes: { 'NSE:ABC': quote({ upper_circuit_limit: 105 }) } },
+    ];
+    for (const o of cases) {
+      const { w, s } = runWorld(o as any);
+      await w.engine.checkRunSignals(s, w.client, new Date());
+      expect(w.entryOrders()).toHaveLength(0);
+    }
+  });
+
+  it('does not run when the setting is off', async () => {
+    const { w, s } = runWorld();
+    s.config = cfg({ runShort: false });
+    await w.engine.enterTrade(s, w.client, candidate({ run: true }), new Date(), { run: true });
+    expect(w.entryOrders()).toHaveLength(0);
+  });
+
+  it('leaves the fade its own trade after an add-on trade', async () => {
+    const { w, s } = runWorld();
+    await w.engine.checkRunSignals(s, w.client, new Date());
+    expect(s.positions).toHaveLength(1);
+    // The fade signals later on another stock: still allowed (1 fade trade + 1 add-on trade).
+    await w.engine.enterTrade(s, w.client, candidate({ symbol: 'DEF' }), new Date());
+    expect(s.positions.map((p: any) => p.symbol)).toEqual(['ABC', 'DEF']);
+    // A second fade trade is not.
+    await w.engine.enterTrade(s, w.client, candidate({ symbol: 'GHI' }), new Date());
+    expect(s.positions).toHaveLength(2);
+  });
+
+  it('keeps the day open until the 10:15 close while the add-on can still trade', () => {
+    const { w, s } = runWorld();
+    expect(w.engine.runOpen(s, at('10:10'))).toBe(true);
+    expect(w.engine.runOpen(s, at('10:25'))).toBe(false);
+    s.runTradesToday = 1;
+    expect(w.engine.runOpen(s, at('10:10'))).toBe(false);
+  });
+
+  it('builds the usual volume up to each 5m candle from the history', () => {
+    const { w } = runWorld();
+    const today = getIstDateStr(new Date());
+    const rows: any[] = [];
+    for (let d = 1; d <= 12; d++) {
+      const day = new Date(dayOpen - d * 86400_000);
+      for (let j = 0; j < 75; j++) rows.push({ date: iso(day.getTime() + j * 300_000), open: 100, high: 101, low: 99, close: 100, volume: j < 12 ? (j + 1) * 100 : 10 });
+    }
+    const b = w.engine.baselineFrom(rows, today, 0.05);
+    expect(b.avgCumVol).toHaveLength(12);
+    expect(b.avgCumVol[0]).toBe(100);
+    expect(b.avgCumVol[2]).toBe(600);
+    expect(b.avgCumVol[11]).toBe(7800);
+  });
+});

@@ -94,6 +94,7 @@ Map<String, dynamic> defaultStrategyConfig(String type) => switch (type) {
     'wickStopMaxPct': 0,
     'profitLock': true,
     'fadeLongs': false,
+    'runShort': false,
     'stopLossRs': 500,
     'maxPositions': 1,
     'maxTradesPerDay': 1,

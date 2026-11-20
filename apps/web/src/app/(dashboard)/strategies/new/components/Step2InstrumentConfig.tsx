@@ -192,6 +192,20 @@ export function Step2InstrumentConfig({ form, set, brokers, brokersLoading, brok
                 </span>
               </label>
               )}
+              {form.sipSetup === "FADE" && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.sipRunShort === true}
+                  onChange={(e) => set("sipRunShort", e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border"
+                />
+                <span>
+                  <span className="block text-xs font-semibold text-foreground">Add-on: run-up short (optional, 1 extra trade a day)</span>
+                  <span className="block text-xs text-muted-foreground">Any liquid stock that is up 4% or more from today&apos;s open, with at least 2x its usual volume so far, is shorted on the same overbought rollover on a 5-minute close from 09:30 to 10:15 (like TATACHEM on 20 Nov). Same stop, target and stop ladder as the fade. It is its own trade on top of the fade&apos;s, so a day can have one more trade and one more stop. Backtest 2 years (1.8% stop, profit lock): alone +₹47.5k; fade + add-on +₹87.3k vs fade alone +₹48.1k, worst drawdown ₹7.4k. Best of 48 settings, so expect less.</span>
+                </span>
+              </label>
+              )}
               {form.sipSetup === "ORB" && (
               <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted sm:col-span-2">
                 <input

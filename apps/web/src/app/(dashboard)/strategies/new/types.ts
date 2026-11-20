@@ -63,6 +63,8 @@ export interface StrategyFormState {
   sipProfitLock: boolean;
   /** FADE: also trade the long mirror on gap-down stocks (trades per day then count per side). */
   sipFadeLongs: boolean;
+  /** FADE: run-up short add-on (any liquid stock up >= 4% from its open, shorted on the same rollover 09:30-10:15), 1 extra trade a day. */
+  sipRunShort: boolean;
   sipMinRvol: string;
   sipStopAtr: string;
   sipMinAvgValueCr: string;
